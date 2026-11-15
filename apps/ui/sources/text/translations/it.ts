@@ -1879,6 +1879,7 @@ export const it: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'Apri i backup',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Esito non confermato. Controlla la macchina.' },
             failureGeneric: 'L’azione non è stata completata.',

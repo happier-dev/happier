@@ -1878,6 +1878,7 @@ export const zhHans: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: '打开备份',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: '结果尚未确认。请检查机器。' },
             failureGeneric: '操作未完成。',

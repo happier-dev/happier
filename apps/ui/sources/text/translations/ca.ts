@@ -1900,6 +1900,7 @@ export const ca: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'Obre les còpies de seguretat',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Resultat sense confirmar. Comprova la màquina.' },
             failureGeneric: 'L’acció no s’ha completat.',

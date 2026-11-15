@@ -2064,6 +2064,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: '開啟備份',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: '結果尚未確認。請檢查機器。' },
             failureGeneric: '操作未完成。',

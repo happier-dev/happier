@@ -2101,6 +2101,7 @@ export const pt: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'Abrir backups',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Resultado não confirmado. Verifique a máquina.' },
             failureGeneric: 'A ação não foi concluída.',

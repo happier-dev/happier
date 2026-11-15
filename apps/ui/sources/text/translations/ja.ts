@@ -2047,6 +2047,7 @@ export const ja: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'バックアップを開く',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: '結果を確認できていません。マシンを確認してください。' },
             failureGeneric: '操作が完了しませんでした。',

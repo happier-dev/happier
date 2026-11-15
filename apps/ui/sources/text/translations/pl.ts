@@ -1893,6 +1893,7 @@ export const pl: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'Otwórz kopie zapasowe',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Wynik nie został potwierdzony. Sprawdź maszynę.' },
             failureGeneric: 'Akcja nie została ukończona.',

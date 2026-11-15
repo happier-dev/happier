@@ -16,6 +16,9 @@ import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistItemS
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentBackupRunResultV1Schema, type DeploymentBackupSourceV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 export type MachineSetupOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineSetup' }>;
@@ -82,6 +85,8 @@ export type ActionOperationDetailProjection = Readonly<{
     agentIsolationReview: AgentIsolationReviewDetail | null;
     fields: readonly ActionOperationDetailField[];
     resultSummary: readonly ActionOperationDetailSummaryRow[];
+    /** Structured result values, whole, for the Technical details disclosure; never a summary row. */
+    resultTechnicalLines: readonly TechnicalDetailsLine[];
     failure: ActionOperationDetailFailure | null;
     warning: Readonly<{ code: string; message: string }> | null;
     recovery: ActionOperationDetailRecovery | null;
@@ -89,6 +94,8 @@ export type ActionOperationDetailProjection = Readonly<{
         | Readonly<{ kind: 'open_session'; sessionId: string }>
         | Readonly<{ kind: 'resume_handoff'; handoffId: string; sessionId: string; targetMachineId: string }>
         | Readonly<{ kind: 'open_output'; serverId: string; machineId: string; workspaceRefId?: string; cwd?: string; terminalId: string }>
+        /** The Environment's Backups, where a completed backup run's snapshots now live. */
+        | Readonly<{ kind: 'open_deployment_backups'; serverId: string; environmentId: string }>
         | null;
     canCancel: boolean;
 }>;
@@ -106,6 +113,7 @@ const EMPTY_DETAIL = Object.freeze({
     agentIsolationReview: null,
     fields: Object.freeze([]),
     resultSummary: Object.freeze([]),
+    resultTechnicalLines: Object.freeze([]),
     failure: null,
     warning: null,
     recovery: null,
@@ -141,30 +149,70 @@ function stableJsonValue(value: unknown): unknown {
     return ordered;
 }
 
-function formatSummaryValue(value: unknown): string | null {
+function formatScalarValue(value: unknown): string | null {
     const scalar = readString(value);
     if (scalar) return scalar;
     if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
+    return null;
+}
+
+function formatStructuredValue(value: unknown): string | null {
     if (value === undefined) return null;
     try {
-        const serialized = JSON.stringify(stableJsonValue(value));
-        if (!serialized) return null;
-        return serialized.length > 240 ? `${serialized.slice(0, 237)}…` : serialized;
+        return JSON.stringify(stableJsonValue(value)) || null;
     } catch {
         return null;
     }
 }
 
-function summarizeResult(value: unknown): readonly ActionOperationDetailSummaryRow[] {
+type ResultFacts = Pick<ActionOperationDetailProjection, 'resultSummary' | 'resultTechnicalLines'>;
+const NO_RESULT_FACTS: ResultFacts = Object.freeze({ resultSummary: Object.freeze([]), resultTechnicalLines: Object.freeze([]) });
+
+/** A generic result as a person reads it: readable values are facts; structured values stay whole behind Technical details. */
+function summarizeResult(value: unknown): ResultFacts {
     const record = readRecord(value);
-    if (!record) {
-        const formatted = formatSummaryValue(value);
-        return formatted ? [{ label: 'result', value: formatted }] : [];
+    const entries: ReadonlyArray<readonly [string, unknown]> = record
+        ? Object.keys(record).sort().slice(0, 8).map(label => [label, record[label]] as const)
+        : [['result', value]];
+    const resultSummary: ActionOperationDetailSummaryRow[] = [];
+    const resultTechnicalLines: TechnicalDetailsLine[] = [];
+    for (const [label, entry] of entries) {
+        const scalar = formatScalarValue(entry);
+        if (scalar !== null) { resultSummary.push({ label, value: scalar }); continue; }
+        const structured = formatStructuredValue(entry);
+        if (structured !== null) resultTechnicalLines.push({ key: `result.${label}`, label, value: structured });
     }
-    return Object.keys(record).sort().slice(0, 8).flatMap((label) => {
-        const formatted = formatSummaryValue(record[label]);
-        return formatted ? [{ label, value: formatted }] : [];
-    });
+    return { resultSummary, resultTechnicalLines };
+}
+
+function succeededResultFacts(snapshot: ActionOperationSnapshot, value: unknown = snapshot.result): ResultFacts {
+    return snapshot.state === 'succeeded' ? summarizeResult(value) : NO_RESULT_FACTS;
+}
+
+function backupSourceLabel(source: DeploymentBackupSourceV1 | undefined, sourceId: string): string {
+    if (!source) return sourceId;
+    return source.kind === 'dump' ? t('projects.deployments.backupSourceDump', { service: source.service })
+        : t('projects.deployments.backupSourceVolume', { service: source.service, volume: source.volume });
+}
+
+/** A completed backup run says what it saved (each source and its size) and opens the Environment's Backups. */
+function projectDeploymentBackupRun(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
+    const detail = projectPlugin(snapshot);
+    const parsed = snapshot.state === 'succeeded' ? DeploymentBackupRunResultV1Schema.safeParse(unwrapResult(snapshot)) : null;
+    if (!parsed?.success) return detail;
+    const sources = new Map(parsed.data.restoreCaptures?.flatMap(capture =>
+        capture.configuration.sources.map(source => [source.sourceId, source] as const)) ?? []);
+    const reference = snapshot.domainRef;
+    return {
+        ...detail,
+        resultSummary: parsed.data.manifests.map(manifest => ({
+            label: backupSourceLabel(sources.get(manifest.sourceId), manifest.sourceId),
+            value: formatMachineBytes(manifest.totalBytesProcessed, 'storage'),
+        })),
+        resultTechnicalLines: [],
+        nextAction: reference?.kind === 'deployment'
+            ? { kind: 'open_deployment_backups', serverId: reference.serverId, environmentId: reference.environmentId } : null,
+    };
 }
 
 /** The shared failure presenter reads the operation's failure: readable words first, the code only as a detail. */
@@ -288,7 +336,7 @@ function projectPlugin(snapshot: ActionOperationSnapshot): Omit<ActionOperationD
     return {
         ...EMPTY_DETAIL,
         kind: 'plugin',
-        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+        ...succeededResultFacts(snapshot),
         failure: presentFailure(snapshot),
     };
 }
@@ -308,6 +356,7 @@ const DETAIL_PROJECTORS_BY_ACTION_ID: Readonly<Record<string, DetailProjector>> 
     'session.handoff': projectHandoff,
     'sessions.external.materialize.start': projectExternal,
     'sessions.external.takeover.start': projectExternal,
+    [DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1]: projectDeploymentBackupRun,
 });
 
 function projectProjectCommand(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
@@ -318,7 +367,7 @@ function projectProjectCommand(snapshot: ActionOperationSnapshot): Omit<ActionOp
         kind: 'projectCommand',
         projectCommand: attachment,
         failure: presentFailure(snapshot),
-        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+        ...succeededResultFacts(snapshot),
         nextAction: attachment.terminalId ? {
             kind: 'open_output', serverId: attachment.serverId, machineId: attachment.machineId,
             workspaceRefId: attachment.workspaceRefId, cwd: attachment.cwd, terminalId: attachment.terminalId,
@@ -366,7 +415,7 @@ function projectMachineSetup(snapshot: ActionOperationSnapshot): Omit<ActionOper
         machineSetup: attachment,
         machineFirewallRecovery,
         failure: presentFailure(snapshot),
-        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(summary) : [],
+        ...succeededResultFacts(snapshot, summary),
         nextAction: attachment.terminalId ? {
             kind: 'open_output', serverId: attachment.serverId, machineId: attachment.machineId, terminalId: attachment.terminalId,
         } : null,
@@ -414,7 +463,7 @@ function projectMachineReboot(snapshot: ActionOperationSnapshot): Omit<ActionOpe
         kind: 'machineReboot',
         machineReboot: attachment,
         failure: presentFailure(snapshot),
-        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+        ...succeededResultFacts(snapshot),
     };
 }
 

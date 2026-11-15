@@ -51,6 +51,7 @@ import {
 } from './actionOperationDetailPresentation';
 import { resumeActionOperationHandoff } from './resumeActionOperationHandoff';
 import { ActionOperationDetailControls } from './ActionOperationDetailControls';
+import { OpenDeploymentBackupsButton } from './OpenDeploymentBackupsButton';
 import {
   AgentIsolationRecovery,
   AgentIsolationReview,
@@ -586,7 +587,7 @@ export const ActionOperationDetailModal = React.memo(
           </Text>
         ) : null}
 
-        {detail.resultSummary.length > 0 ? (
+        {detail.resultSummary.length > 0 || detail.resultTechnicalLines.length > 0 ? (
           <ItemGroup title={t('inbox.actionOperations.resultSummary')}>
             {detail.resultSummary.map((row) => (
               <Item
@@ -598,6 +599,13 @@ export const ActionOperationDetailModal = React.memo(
                 subtitleLines={0}
               />
             ))}
+            {detail.resultTechnicalLines.length > 0 ? (
+              <TechnicalDetailsDisclosure
+                testID="action-operation-result-technical-details"
+                title={t('approvals.technicalDetails')}
+                lines={detail.resultTechnicalLines}
+              />
+            ) : null}
           </ItemGroup>
         ) : null}
 
@@ -631,6 +639,13 @@ export const ActionOperationDetailModal = React.memo(
           onClose={props.onClose}
           leading={
             <>
+              {detail.nextAction?.kind === 'open_deployment_backups' ? (
+                <OpenDeploymentBackupsButton
+                  serverId={detail.nextAction.serverId}
+                  environmentId={detail.nextAction.environmentId}
+                  onOpened={props.onClose}
+                />
+              ) : null}
               {operation.serverId &&
               detail.nextAction?.kind === 'resume_handoff' ? (
                 <RoundButton

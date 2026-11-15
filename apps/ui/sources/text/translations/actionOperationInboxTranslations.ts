@@ -146,6 +146,7 @@ export const actionOperationInboxTranslations = {
         unavailableTitle: 'Status unavailable',
         unavailableDescription: 'This action is no longer available in the current activity history.',
         detailAccessibilityLabel: 'Action details',
+        openBackups: 'Open backups',
         emptyDescription: 'Long-running actions will appear here.',
     },
 } as const;

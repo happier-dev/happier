@@ -1894,6 +1894,7 @@ export const ru: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'Открыть резервные копии',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Результат не подтверждён. Проверьте машину.' },
             failureGeneric: 'Действие не завершено.',

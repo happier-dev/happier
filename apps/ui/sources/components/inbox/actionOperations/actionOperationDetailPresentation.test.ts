@@ -4,6 +4,8 @@ import { MachineAgentIsolationPreviewResultV1Schema } from '@happier-dev/protoco
 import isolationPreviews from '../../../../../../packages/tests/fixtures/machines/agentIsolationRecoveryPreviews.json';
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 
 import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist } from './actionOperationDetailPresentation';
 
@@ -336,10 +338,13 @@ describe('action operation detail presentation', () => {
             },
         }), 'available');
         expect(succeeded.kind).toBe('plugin');
+        // Readable values are facts; structured values are kept whole behind Technical details, never a JSON row.
         expect(succeeded.resultSummary).toEqual([
-            { label: 'deployment', value: '{"region":"zrh","revision":7}' },
             { label: 'published', value: 'true' },
             { label: 'url', value: 'https://preview.example' },
+        ]);
+        expect(succeeded.resultTechnicalLines).toEqual([
+            { key: 'result.deployment', label: 'deployment', value: '{"region":"zrh","revision":7}' },
         ]);
 
         const failed = projectActionOperationDetail(operation({
@@ -387,6 +392,50 @@ describe('action operation detail presentation', () => {
             progress: { kind: 'phase', phase: 'awaiting_user_resume', label: 'Needs resume' } });
         expect(projectActionOperationDetail(external, 'available')).toMatchObject({ nextAction: { kind: 'open_session', sessionId: 'external-session' }, canCancel: true });
         expect(projectActionOperationDetail(external, 'unavailable').canCancel).toBe(false);
+    });
+
+    describe('a completed backup run', () => {
+        const digest = (seed: string) => seed.repeat(64).slice(0, 64);
+        const manifest = (sourceId: string, kind: 'dump' | 'volume', bytes: number) => ({
+            schemaVersion: 1, environmentId: 'env-1', sourceId, kind, configRevision: 1, repositoryId: digest('a'),
+            snapshot: { snapshotId: digest('b'), treeId: digest('c'), hostname: 'host', time: '2026-11-13T10:00:00Z', paths: ['/data'], tags: [] },
+            totalBytesProcessed: bytes, totalFilesProcessed: 3, ...(kind === 'dump' ? { producerChecksumSha256: digest('d') } : {}),
+        });
+        const backup = (result: unknown) => operation({
+            actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, title: 'Back up deployment', state: 'succeeded', settledAt: 2_000,
+            domainRef: { kind: 'deployment', serverId: 'server-1', environmentId: 'env-1', deploymentId: 'receipt-1' },
+            result,
+        });
+
+        it('says what was saved, with each source and its size, and opens the Environment backups', () => {
+            const detail = projectActionOperationDetail(backup({ kind: 'verified', operationId: 'operation-1',
+                manifests: [manifest('db', 'dump', 2_500_000)] }), 'available');
+            expect(detail.resultSummary).toEqual([{ label: 'db', value: formatMachineBytes(2_500_000, 'storage') }]);
+            expect(detail.resultTechnicalLines).toEqual([]);
+            expect(detail.nextAction).toEqual({ kind: 'open_deployment_backups', serverId: 'server-1', environmentId: 'env-1' });
+        });
+
+        it('names sources the way Backup settings does when the run kept its capture', () => {
+            const configuration = {
+                configRevision: 1, destinationRef: { pluginId: 'happier.backup-destinations', localId: 'local' }, occurrenceId: 'occurrence-1',
+                config: { path: '/backups' }, credentialBindings: [],
+                sources: [
+                    { kind: 'dump', sourceId: 'db', service: 'postgres', consistency: 'logical' },
+                    { kind: 'volume', sourceId: 'files', service: 'app', volume: 'uploads', consistency: 'stopDuringCopy' },
+                ],
+                ownership: { environmentId: 'env-1', prefix: 'env-1' }, retention: { kind: 'keepEverything' },
+            };
+            const detail = projectActionOperationDetail(backup({ kind: 'verified', operationId: 'operation-1',
+                manifests: [manifest('db', 'dump', 2_500_000), manifest('files', 'volume', 40_000_000)],
+                restoreCaptures: [{ source: manifest('files', 'volume', 40_000_000), sourceFormat: 'volume',
+                    target: { service: 'app', adapter: 'volume-v1', volume: 'uploads' }, configuration,
+                    repository: { repository: '/backups/env-1' } }],
+            }), 'available');
+            expect(detail.resultSummary).toEqual([
+                { label: t('projects.deployments.backupSourceDump', { service: 'postgres' }), value: formatMachineBytes(2_500_000, 'storage') },
+                { label: t('projects.deployments.backupSourceVolume', { service: 'app', volume: 'uploads' }), value: formatMachineBytes(40_000_000, 'storage') },
+            ]);
+        });
     });
 
 });

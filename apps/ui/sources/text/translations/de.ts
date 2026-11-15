@@ -1687,6 +1687,7 @@ export const de: TranslationStructure = {
         ...actionOperationInboxTranslations,
         actionOperations: {
             ...actionOperationInboxTranslations.actionOperations,
+            openBackups: 'Backups öffnen',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
                 outcomeUncertain: 'Ergebnis nicht bestätigt. Prüfe den Rechner.' },
             failureGeneric: 'Die Aktion wurde nicht abgeschlossen.',
