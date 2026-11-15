@@ -3171,6 +3171,19 @@ describe('WorkflowRunScreen', () => {
             expect(nativeRecoveryReads).toContain(step.id);
             expect(readContentProps()?.onRetryFreshAgent).toBeTypeOf('function');
             expect(screen.findByTestId('workflow-run-retry-fresh')).not.toBeNull();
+            if (machineProjection === 'present') {
+                const scope = requireDefined(getStorage().getState().profileScope ?? undefined, 'Account scope');
+                const observed = getStorage().getState().workflowRunInvocationsByRunId[workflowRunStoreKey(step.runId, scope)];
+                const opened = requireDefined(observed?.factsById[step.id]?.opened, 'Exact recovery content');
+                // A history response issued before the exact read may settle afterwards.
+                // Its content carries no recovery decision and must not withdraw the offered choice.
+                await act(async () => getStorage().getState().applyWorkflowRunInvocationPage({
+                    runId: step.runId, scope, invocations: [step], invocationDetails: [{ ...opened, parentRevision: 6 }],
+                    parentRevision: 6, nextCursor: null, mode: 'refresh',
+                }));
+                expect(readContentProps()?.onRetryFreshAgent).toBeTypeOf('function');
+                expect(screen.findByTestId('workflow-run-retry-fresh')).not.toBeNull();
+            }
         } else {
             expect(availability?.continueFreshAgent).toEqual({ kind: 'unavailable', reason: 'run_not_interrupted' });
             expect(readContentProps()?.onRetryFreshAgent).toBeUndefined();

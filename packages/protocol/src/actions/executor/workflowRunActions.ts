@@ -1808,13 +1808,21 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       restoreWorkspaces: recordedWorkspaces });
     const causalSet = retryCausalSet ?? (initial.retry.kind === 'available'
       ? await deriveRetryCausalSet(currentGraph, prior.index.id, run, signal) : initial.retry);
-    let canContinueConversation = evidence.canContinueConversation;
+    // The executor rejoins this exact attempt lineage. A live native runtime
+    // alone cannot supply correspondence missing from the Workflow record.
+    const canRetainConversation = async (row: typeof prior, observation: WorkflowInvocationRecoveryEvidence) =>
+      observation.canContinueConversation
+        && await resolveWorkflowRetainedConversationAttemptV1({ invocation: row,
+          readInvocation: async id => currentGraph.get(id) }) !== undefined;
+    let canContinueConversation = await canRetainConversation(prior, evidence);
     if (canContinueConversation && causalSet.kind === 'available') {
       for (const id of causalSet.causalInvocationIds) {
         const row = currentGraph.get(id);
         if (!row || row.progress.blockKind !== 'step' || row.index.id === prior.index.id) continue;
+        const observation = await recoveryEvidence(run, row, signal);
         const leaf = deriveExactInvocationRecoveryAvailability({ run, index: row.index, progress: row.progress,
-          evidence: await recoveryEvidence(run, row, signal), current: isCurrentInvocation(currentGraph, row) });
+          evidence: { ...observation, canContinueConversation: await canRetainConversation(row, observation) },
+          current: isCurrentInvocation(currentGraph, row) });
         if (leaf.continueSameConversation.kind !== 'available') {
           canContinueConversation = false;
           break;

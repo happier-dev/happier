@@ -20,6 +20,7 @@ import {
     selectWorkflowRunFirstFailedInvocation,
     selectWorkflowRunMemberInvocation,
     selectWorkflowRunWindowInvocations,
+    selectWorkflowInvocationRecoveryAvailability,
     workflowRunRowFromAutomationRun,
     workflowRunRowFromSummary,
     workflowRunListWindowStoreKey,
@@ -446,6 +447,28 @@ describe('workflow run body store', () => {
             invocationDetails: [{ ...contentOnly, index: nextIndex, parentRevision: 5 }] });
         expect(store.getState().workflowRunInvocationsByRunId['run-1']!.openedReadMetadataById?.[index.id]?.recoveryAvailability)
             .toBeUndefined();
+    });
+
+    it('keeps newer exact recovery choices when an older content page arrives for the same row', () => {
+        const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
+        const index = createWorkflowInvocationIndexFixture({ contentRevision: '4', lifecycle: 'failed' });
+        const unavailable = { kind: 'unavailable' as const, reason: 'invocation_not_recoverable' as const };
+        const recoveryAvailability = { reattach: unavailable,
+            retry: { kind: 'available' as const, causalInvocationIds: [index.id] },
+            continueSameConversation: { kind: 'available' as const },
+            continueFreshAgent: { kind: 'available' as const }, restoreWorkspace: unavailable };
+        const content = { index, progress: { kind: 'happier.workflow-progress.v1' as const,
+            blockKind: 'step' as const, invocationPath: { blockId: 'analyze', scope: [] }, attempt: index.attempt,
+            logicalInvocationRecordId: index.id, reason: { code: 'execution_run_input_failed' } } };
+        store.getState().upsertWorkflowRunInvocation({ runId: index.runId,
+            invocation: { ...index, opened: { ...content, parentRevision: 5, recoveryAvailability } }, parentRevision: 5 });
+        const exact = store.getState().workflowRunInvocationsByRunId[index.runId]!;
+        store.getState().applyWorkflowRunInvocationPage({ runId: index.runId, invocations: [index],
+            invocationDetails: [{ ...content, parentRevision: 4 }], parentRevision: 4, nextCursor: null, mode: 'replace' });
+        const latePage = store.getState().workflowRunInvocationsByRunId[index.runId]!;
+        expect(selectWorkflowInvocationRecoveryAvailability(latePage, index.id)).toEqual(recoveryAvailability);
+        expect(latePage.openedReadMetadataById).toBe(exact.openedReadMetadataById);
+        expect(latePage.factsById).toBe(exact.factsById);
     });
 
     it('holds Automation attention in the shared row owner and removes it on a complete refresh', () => {

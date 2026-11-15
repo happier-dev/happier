@@ -28,6 +28,23 @@ function resolve(definition: WorkflowDefinitionV1, rows: readonly WorkflowInvoca
     ...(frozenChildren ? { frozenChildren } : {}) });
 }
 
+it.each([false, true])('retains a recovered leaf across replaced parent frames (different logical slot: %s)', async differentSlot => {
+  const prior = row(1, 0, '0', 'step', 'judge', {
+    execution: { kind: 'detached_run', runId: 'native-judge', localInputId: 'old-input', runtimeSelection: {} },
+  });
+  prior.index.lifecycle = 'superseded';
+  const replacement = row(3, 2, '0', 'step', 'judge', {
+    attempt: '1', logicalInvocationRecordId: differentSlot ? ids[3] : prior.progress.logicalInvocationRecordId,
+    previousAttemptRecordId: prior.index.id,
+    recovery: { conversation: 'same_conversation', input: { kind: 'original' } },
+  });
+  replacement.index.attempt = '1';
+  const result = await resolveWorkflowRetainedConversationAttemptV1({ invocation: replacement,
+    readInvocation: async id => id === prior.index.id ? prior : undefined });
+  if (differentSlot) expect(result).toBeUndefined();
+  else expect(result).toBe(prior);
+});
+
 describe('frozen invocation structure owner', () => {
   it.each(['running', 'cancel_requested', 'cancelled', 'completed'] as const)(
     'checks ancestry eligibility without rejecting a completed loop source (%s)', async lifecycle => {

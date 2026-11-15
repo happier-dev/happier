@@ -3210,6 +3210,7 @@ describe('shared Account workflow run owner', () => {
     { activity: 'active', lifecycle: 'failed', same: false, fresh: false, reattach: false, continuation: true },
     { activity: 'not_active', lifecycle: 'failed', same: true, fresh: true, reattach: false, continuation: true },
     { activity: 'not_active', lifecycle: 'failed', same: false, fresh: true, reattach: false, continuation: false },
+    { activity: 'not_active', lifecycle: 'failed', same: false, fresh: true, reattach: false, continuation: true, noExecution: true },
     { activity: 'unknown', lifecycle: 'needs_attention', same: false, fresh: false, reattach: true, continuation: true },
     { activity: 'active', lifecycle: 'cancel_requested', same: false, fresh: false, reattach: true, continuation: true },
     { activity: 'unknown', lifecycle: 'failed', same: false, fresh: false, reattach: false, continuation: false },

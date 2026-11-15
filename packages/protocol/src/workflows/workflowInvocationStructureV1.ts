@@ -43,7 +43,9 @@ export async function resolveWorkflowRetainedConversationAttemptV1(params: Reado
     if (row.progress.recovery?.conversation !== 'same_conversation' || !previousId || seen.has(previousId)) return undefined;
     const previous = await params.readInvocation(previousId);
     if (!previous || previous.index.id !== previousId || previous.index.lifecycle !== 'superseded'
-      || previous.index.runId !== row.index.runId || previous.index.parentRecordId !== row.index.parentRecordId
+      // Causal recovery replaces enclosing frames too. Their physical ids
+      // change; this leaf's logical slot and exact attempt lineage do not.
+      || previous.index.runId !== row.index.runId
       || previous.index.memberOrdinal !== row.index.memberOrdinal
       || BigInt(previous.index.attempt) + 1n !== BigInt(row.index.attempt)
       || previous.progress.logicalInvocationRecordId !== row.progress.logicalInvocationRecordId

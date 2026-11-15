@@ -283,17 +283,20 @@ function mergeInvocationFacts(
         const notificationCondition = mergeWorkflowNotificationConditionV1(known?.notificationCondition, invocation.notificationCondition);
         if (notificationCondition && candidate.notificationCondition !== notificationCondition) candidate = { ...candidate, notificationCondition };
         if ((known?.provenanceLoaded || invocation.provenanceLoaded) && !candidate.provenanceLoaded) candidate = { ...candidate, provenanceLoaded: true };
-        // A content-only page is not a new recovery decision. Carry its exact
-        // read projection only while both the prior row and parent tokens match.
+        // A content-only page is not a new recovery decision. An older parent
+        // read cannot replace newer recovery evidence for the same row token.
         if (!older && incomingOpened && incomingParentRevision !== undefined) {
             const previousMetadata = (openedReadMetadataById ?? previous.openedReadMetadataById)?.[invocation.id];
+            const sameRowToken = known?.opened?.index.id === incomingOpened.index.id
+                && known.opened.index.contentRevision === incomingOpened.index.contentRevision;
             const recoveryAvailability = incomingOpened.recoveryAvailability ?? (
-                known?.opened?.index.id === incomingOpened.index.id
-                    && known.opened.index.contentRevision === incomingOpened.index.contentRevision
-                    && incomingParentRevision === previousMetadata?.parentRevision
+                sameRowToken && incomingParentRevision === previousMetadata?.parentRevision
                     ? previousMetadata.recoveryAvailability : undefined);
-            const metadata: WorkflowInvocationReadMetadata = { parentRevision: incomingParentRevision,
-                ...(recoveryAvailability === undefined ? {} : { recoveryAvailability }) };
+            const metadata: WorkflowInvocationReadMetadata = sameRowToken && previousMetadata
+                && incomingParentRevision < previousMetadata.parentRevision
+                ? previousMetadata
+                : { parentRevision: incomingParentRevision,
+                    ...(recoveryAvailability === undefined ? {} : { recoveryAvailability }) };
             // Content and read projections partition the admitted value; neither
             // comparison traverses the other's fields.
             if (!previousMetadata || !sameStrictJsonValue(previousMetadata, metadata)) {
