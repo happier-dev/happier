@@ -3,7 +3,6 @@ import type { GestureResponderEvent, StyleProp, TextStyle, ViewStyle } from 'rea
 import { useUnistyles } from 'react-native-unistyles';
 import {
     HappierWorkMapView,
-    resolveHappierWorkTextStep,
     type HappierWorkHost,
     type HappierWorkMapNode,
     type HappierWorkMapViewProps,
@@ -16,7 +15,7 @@ import { projectPluginUiHostPalette, projectPluginUiTheme } from '@/components/p
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Text } from '@/components/ui/text/Text';
 import { projectWorkColors } from '@/components/work/status/workStatusTreatment';
-import { Typography } from '@/constants/Typography';
+import { workTextStyle } from '@/components/work/workTextStyle';
 import type { Theme } from '@/theme';
 
 /**
@@ -46,29 +45,6 @@ export function useWorkTheme(): HappierWorkTheme {
     return React.useMemo(() => projectWorkTheme(theme), [
         theme.colors, theme.dark, theme.space, theme.borderRadius, theme.finish, theme.parts, theme.typography,
     ]);
-}
-
-type WorkTextStyle = Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontVariant' | 'fontSize' | 'lineHeight' | 'letterSpacing'>;
-const workTextStyles = new Map<string, WorkTextStyle>();
-
-/**
- * A Work text role in core's own family for its weight (and tabular figures where the role asks). A host
- * that must draw a shared slot with its own text (a find-aware transcript card) uses the same step.
- */
-export function workTextStyle(role: HappierWorkTextProps['role'], strong?: boolean): WorkTextStyle {
-    const key = `${role}:${strong === true ? 'strong' : 'plain'}`;
-    const existing = workTextStyles.get(key);
-    if (existing) return existing;
-    const step = resolveHappierWorkTextStep(role, strong);
-    const style: WorkTextStyle = {
-        ...Typography.default(step.weight),
-        ...(step.tabular ? Typography.tabular() : null),
-        fontSize: step.fontSize,
-        lineHeight: step.lineHeight,
-        ...(step.letterSpacing === undefined ? null : { letterSpacing: step.letterSpacing }),
-    };
-    workTextStyles.set(key, style);
-    return style;
 }
 
 /** The shared primitives pass colour and layout only; core's text owner keeps the user's font scale. */

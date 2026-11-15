@@ -6,7 +6,8 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CardGrid } from '@/components/ui/cardGrid/CardGrid';
-import { SurfaceCard, SURFACE_CARD_PADDING_PX } from '@/components/ui/cards/SurfaceCard';
+import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
+import { SURFACE_CARD_PADDING_PX } from '@/components/ui/cards/surfaceCardMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 

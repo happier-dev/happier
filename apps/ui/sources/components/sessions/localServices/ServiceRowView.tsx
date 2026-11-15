@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SURFACE_CARD_PADDING_PX, SURFACE_CARD_RADIUS_PX } from '@/components/ui/cards/SurfaceCard';
+import { SURFACE_CARD_PADDING_PX, SURFACE_CARD_RADIUS_PX } from '@/components/ui/cards/surfaceCardMetrics';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { HappierDivider, happierPageRowDividerWidth, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';

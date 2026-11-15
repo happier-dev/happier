@@ -10,7 +10,8 @@ import { executeSessionFollowAction } from '@/sync/api/session/sessionFollowApi'
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, HappierDisclosureToggle, HappierWorkUpdateCard, type HappierWorkUpdateCardFact, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
-import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST, workTextStyle } from '@/components/work/map/WorkMapView';
+import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
+import { workTextStyle } from '@/components/work/workTextStyle';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';

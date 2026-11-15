@@ -11,7 +11,7 @@ import {
 } from '@/components/sessions/transcript/structured/structuredFindText';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { SURFACE_CARD_RADIUS_PX } from '@/components/ui/cards/SurfaceCard';
+import { SURFACE_CARD_RADIUS_PX } from '@/components/ui/cards/surfaceCardMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useScmResultReceiptUndo } from './useScmResultReceiptUndo';

@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { type StyleProp, type ViewStyle } from 'react-native';
-import { HAPPIER_PAGE_METRICS, HappierSurface, type HappierMaterialSurfaceRender, type HappierSurfaceProps } from '@happier-dev/plugin-ui/presentation';
+import { HappierSurface, type HappierMaterialSurfaceRender, type HappierSurfaceProps } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveThemeCardChromeStyle, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
-import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { SURFACE_CARD_PADDING_PX, SURFACE_CARD_RADIUS_PX, type SurfaceCardPadding } from './surfaceCardMetrics';
 
 /**
  * `flat` draws no chrome at all: the content is one section of a column that already
@@ -15,30 +16,6 @@ import { GlassSurface } from '@/components/ui/glass/GlassSurface';
  * so a host that switches tone never remounts its content.
  */
 type SurfaceCardTone = 'surface' | 'muted' | 'flat';
-export type SurfaceCardPadding = 'none' | 'sm' | 'md' | 'lg';
-
-/**
- * The card's corner and inset, published rather than copied.
- *
- * A consumer that has to reach the card's true edge — full-bleed media, an
- * embedded surface, a renderer that owns its own frame — needs the exact numbers
- * this card draws with. Publishing them keeps that consumer correct at every
- * padding step; hardcoding "18" beside it silently overhangs the card at `sm`
- * and clips outside its rounded corner.
- */
-export const SURFACE_CARD_RADIUS_PX: number = GROUPED_SURFACE_RADIUS_PX;
-
-export const SURFACE_CARD_PADDING_PX: Readonly<Record<
-    SurfaceCardPadding,
-    Readonly<{ horizontal: number; vertical: number }>
->> = Object.freeze({
-    none: Object.freeze({ horizontal: 0, vertical: 0 }),
-    // `md` is the card role (the sheet rows' inset); `sm` and `lg` are the steps either side of it.
-    sm: Object.freeze({ horizontal: 12, vertical: 12 }),
-    md: Object.freeze({ horizontal: HAPPIER_PAGE_METRICS.cardPaddingPx, vertical: HAPPIER_PAGE_METRICS.cardPaddingPx }),
-    lg: Object.freeze({ horizontal: 20, vertical: 20 }),
-});
-
 type SurfaceCardProps = Readonly<{
     children: React.ReactNode;
     testID?: string;
