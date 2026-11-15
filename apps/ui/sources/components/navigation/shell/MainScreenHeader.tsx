@@ -224,6 +224,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   under: {
     width: '100%',
+    // The controls under the purpose (tabs, chips, the open field, the count) are their own group: one step
+    // from the purpose, wider than the title-to-purpose air (OWNER-UI-1115B A1).
+    paddingTop: theme.space.s12,
     paddingBottom: theme.space.s8,
     gap: theme.space.s8,
   },

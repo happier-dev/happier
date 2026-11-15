@@ -1033,7 +1033,8 @@ const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
   pageStatus: { paddingTop: theme.space.s12 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-  phoneScope: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'center', paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(), marginBottom: theme.space.s8 },
+  // In MainScreenHeader's band, which already stands on the sheets' edge: no second inset (OWNER-UI-1115B A1, chip under the title).
+  phoneScope: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'center', marginBottom: theme.space.s8 },
   // On the page text edge with the section titles above it.
   more: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s12,
     paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },

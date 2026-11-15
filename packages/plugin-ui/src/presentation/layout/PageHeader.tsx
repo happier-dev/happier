@@ -373,11 +373,10 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
       {props.titleAccessory}
     </View>
   ) : title;
-  // The split title line keeps a control's height so its actions never move it. That room is already air
-  // under the title, so the purpose line takes only what the line gap has left: title and purpose read as one block.
-  const titleLineSlackPx = !centered && !inlineActions
-    ? Math.max(0, HAPPIER_PAGE_METRICS.controlHeightPx - titleLineHeight) / 2 : 0;
-  const titleToDescriptionGapPx = Math.max(0, HAPPIER_PAGE_METRICS.pageHeaderLineGapPx - titleLineSlackPx);
+  // The purpose sits directly under the title: the title's own line box is the air between them, so title and
+  // purpose read as one block and whatever comes after (tabs, chips, the count) starts a group of its own
+  // (OWNER-UI-1115B A1: a line gap here read as more space than the step to the controls).
+  const titleToDescriptionGapPx = 0;
   const textBelowTitleContent = (
     <>
       {props.description ? (
