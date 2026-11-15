@@ -124,14 +124,18 @@ export async function readCurrentAccountPluginEnablements(input: AccountReadBind
 export async function readCurrentAccountPluginExecutionSelection(input: AccountReadBinding & Readonly<{
     pluginId: string; bundled?: AccountBundledSelection;
 }>): Promise<PluginAccountExecutionSelectionV1> {
-    const declaration = input.bundled ? undefined
-        : loadCurrentBundledPluginLocatorResult({ pluginIds: [input.pluginId] }).loadedPlugins
-            .find(plugin => plugin.pluginId === input.pluginId);
-    const bundled = input.bundled ?? (declaration ? createPluginAccountBundledSelectionV1({
-        packageName: declaration.sourceSpec.locator, manifest: declaration.manifest,
-    }) : undefined);
-    return resolvePluginAccountExecutionSelectionV1({ pluginId: input.pluginId, intentRead: await readIntent(input),
-        ...(bundled ? { bundled } : {}) });
+    const intentRead = await readIntent(input);
+    const selection = resolvePluginAccountExecutionSelectionV1({ pluginId: input.pluginId, intentRead,
+        ...(input.bundled ? { bundled: input.bundled } : {}) });
+    // Only the policy owner's no-selection result needs host bundled facts.
+    if (input.bundled || selection.kind === 'available' || selection.code !== 'plugin_account_execution_unavailable') return selection;
+    const declaration = loadCurrentBundledPluginLocatorResult({ pluginIds: [input.pluginId] }).loadedPlugins
+        .find(plugin => plugin.pluginId === input.pluginId);
+    if (!declaration) return selection;
+    return resolvePluginAccountExecutionSelectionV1({ pluginId: input.pluginId, intentRead,
+        bundled: createPluginAccountBundledSelectionV1({
+            packageName: declaration.sourceSpec.locator, manifest: declaration.manifest,
+        }) });
 }
 
 /** Cold discovery uses Account custody without loading or activating a daemon module. */

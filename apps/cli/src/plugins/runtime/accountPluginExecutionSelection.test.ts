@@ -1,10 +1,11 @@
 import fastify from 'fastify';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as fileSystem from 'node:fs';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema,
-    normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
+    createPluginAccountBundledSelectionV1, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,41 @@ import { createCommittedContributedActionInvoker } from './invocation/actions/cr
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 
 describe('captured Account execution selection transport', () => {
+    it.each(['release', 'disabled', 'missing-release', 'provided-bundle', 'home-unavailable'] as const)(
+        'performs zero bundled filesystem reads when Account selection is %s', async mode => {
+        const app = fastify();
+        const pluginId = 'happier.machine.agent37';
+        const manifest = normalizePluginManifestV2(createPluginManifestV2Fixture({ id: pluginId, entrypoints: {} }));
+        let reads = 0;
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async (_request, reply) => {
+            reads += 1;
+            if (mode === 'home-unavailable') return reply.code(503).send({ error: 'Home unavailable' });
+            return { availabilityCursor: 1, hostingCapability: { enabled: false },
+                intent: { pluginId, desiredVersion: mode === 'release' || mode === 'missing-release' ? manifest.version : null,
+                    enabled: mode !== 'disabled', offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+                release: mode === 'release' ? normalizePluginReleaseFactsV1({ ref: { pluginId, version: manifest.version },
+                    normalizedManifest: manifest, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                    collectionContracts: [], uiSlots: [],
+                    packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } }) : null,
+                uiArtifacts: [], packageAssets: [] };
+        });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-selection-cost.test' });
+        // Observe the OS boundary without replacing bundled discovery or selection logic.
+        const filesystemReads = vi.spyOn(fileSystem, 'readFileSync');
+        try {
+            const result = readCurrentAccountPluginExecutionSelection({ pluginId,
+                credentials: { token: 'account', encryption: null }, serverUrl: 'http://account-selection-cost.test',
+                ...(mode === 'provided-bundle' ? { bundled: createPluginAccountBundledSelectionV1({
+                    packageName: '@happier-dev/plugins-machine-agent37', manifest }) } : {}) });
+            if (mode === 'home-unavailable') await expect(result).rejects.toMatchObject({ response: { status: 503 } });
+            else expect(await result).toMatchObject(mode === 'release' || mode === 'provided-bundle'
+                ? { kind: 'available', sourceCustody: { kind: mode === 'release' ? 'account_release' : 'bundled_first_party' } }
+                : { kind: 'unavailable', code: mode === 'disabled' ? 'plugin_disabled' : 'plugin_release_unavailable' });
+            expect(reads).toBe(1);
+            expect(filesystemReads).toHaveBeenCalledTimes(0);
+        } finally { filesystemReads.mockRestore(); restore(); await app.close(); }
+    });
     it('selects a bundled Machine provider for controllerless Account controls without an explicit release', async () => {
         const app = fastify();
         const pluginId = 'happier.machine.agent37';
