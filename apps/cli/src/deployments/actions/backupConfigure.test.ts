@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentTemplateProvenanceV1Schema } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
 import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
@@ -59,6 +60,21 @@ function fixture() {
 }
 
 describe('backup configure coordinator', () => {
+    it('refuses an unpublished SQLite dump before native effects or configuration publication', async () => {
+        const f = fixture();
+        f.environment.content.template = DeploymentEnvironmentTemplateProvenanceV1Schema.parse({
+            templateRef: { sourceId: 'data', itemId: 'sqlite', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+            definition: f.environment.content.definition, services: ['db'],
+            data: [{ engine: 'sqlite', service: 'db', logicalBackup: { adapter: 'sqlite-v1', path: '/data/database.sqlite' } }],
+        });
+        const result = await createDeploymentBackupConfigureActionForHost(f.host)({ ...f.input, intent: 'save',
+            configuration: { ...configuration, sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }] } }, {});
+        expect(result).toMatchObject({ ok: false, errorCode: 'deployment_sqlite_runtime_unavailable',
+            details: { reason: 'sqlite_backup_helper_not_published', remedy: 'wait_for_sqlite_backup_helper_publication' } });
+        expect(f.counts.native).toBe(0);
+        expect(f.counts.saves).toBe(0);
+    });
+
     it('retains attempted repository initialization when Home publication throws', async () => {
         const f = fixture();
         const result = await createDeploymentBackupConfigureActionForHost({ ...f.host,

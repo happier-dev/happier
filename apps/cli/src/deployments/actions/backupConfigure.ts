@@ -124,9 +124,11 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                 if (!occurrenceId) return failure('destination_changed');
                 const prepared = prepareDeploymentBackupConfigurationV1({ environmentId: input.environmentId,
                     configuration: { ...configuration, ...(selectedRetention ? { retention: selectedRetention } : {}) },
-                    bindings: candidateEnvironment.content.bindings, destination: { ref: descriptor.identity,
+                    data: environment.content.template?.data, bindings: candidateEnvironment.content.bindings, destination: { ref: descriptor.identity,
                         occurrenceId, descriptor: descriptor.definition } });
-                if (!prepared.ok) return failure(prepared.code);
+                if (!prepared.ok) return 'reason' in prepared
+                    ? retainSetupFailure({ ...projectDeploymentFailure(prepared.code), error: prepared.message,
+                        details: { reason: prepared.reason, remedy: prepared.remedy } }) : failure(prepared.code);
                 if (prepared.bindingState === 'needsBinding') return { kind: 'needsBinding', configuration: prepared.configuration,
                     missingRoles: prepared.missingRoles, ...settledSetup, ...(review ? { review } : {}) };
                 nativeEffectAttempted = input.intent === 'initializeAndSave';

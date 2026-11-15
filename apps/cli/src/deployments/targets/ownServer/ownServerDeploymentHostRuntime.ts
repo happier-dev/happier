@@ -1,4 +1,3 @@
-import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import { refuseDeploymentAuthorization } from '@/deployments/deploymentAuthorizationFailure';
 import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
@@ -21,7 +20,7 @@ import { logger } from '@/ui/logger';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readDeploymentSourceIntentForHost } from '@/deployments/readDeploymentSourceIntentForHost';
-import { createDeploymentDumpBackupSourceV1, createDeploymentVolumeBackupSourceIdV1 } from '@happier-dev/deployments';
+import { createDeploymentLogicalBackupSourceChoicesV1, createDeploymentVolumeBackupSourceIdV1 } from '@happier-dev/deployments';
 import { readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveEnvironmentDeploymentFactForHost } from '@/deployments/secrets/deploymentFacts';
@@ -482,13 +481,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     sourceKind: intent.kind, files: [compose.path],
                     profiles: compose.profiles, services: compose.services });
                 const review = await project.reviewDefinition({ signal });
-                const choices: import('@happier-dev/deployment-protocol').DeploymentBackupSourceV1[] = [];
-                for (const data of environment.content.template?.data ?? []) {
-                    if (!(data.engine === 'postgres' && data.logicalBackup?.adapter === 'postgres-v1'
-                        || data.engine === 'sqlite' && data.logicalBackup?.adapter === 'sqlite-v1' && data.logicalBackup.path && SQLITE_RUNTIME_V1)
-                        || !review.services.some(service => service.name === data.service)) continue;
-                    choices.push(createDeploymentDumpBackupSourceV1(data.service));
-                }
+                const choices = createDeploymentLogicalBackupSourceChoicesV1(environment.content.template?.data,
+                    review.services.map(service => service.name));
                 const seen = new Set<string>();
                 for (const service of review.services) for (const mount of service.mounts) {
                     if (mount.type !== 'volume' || !mount.source) continue;

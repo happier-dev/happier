@@ -2,7 +2,7 @@ import { classifyNativeComposeFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
+import { readSQLiteRuntimeAvailabilityV1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { tmpdir } from 'node:os';
 import { nativeComposeContainerDnsName } from './nativeComposeDnsName';
@@ -1384,8 +1384,9 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             return admittedImageEffect(request.context, async authority => {
                 const signal = request.context.operation.signal;
                 const declared = input.sqliteRuntime;
-                const runtime = SQLITE_RUNTIME_V1;
-                if (!declared && !runtime) return nativeRefusal('deployment_sqlite_runtime_unavailable');
+                const availability = readSQLiteRuntimeAvailabilityV1();
+                const runtime = availability.ok ? availability.runtime : undefined;
+                if (!declared && !availability.ok) return nativeRefusal(availability.code);
                 const image = declared?.image ?? (await capture.identity.resolveVariants({ service: 'sqlite',
                     reference: runtime!.image, platforms: [request.render.platform] }, { signal }))[0];
                 if (!image) return nativeRefusal('deployment_image_unavailable');

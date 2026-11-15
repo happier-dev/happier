@@ -2,11 +2,14 @@ import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinat
     type DeploymentBackupConfigurationV1, type DeploymentBackupRetentionV1, type DeploymentEnvironmentBackupV1,
     type EnvironmentSecretBindingInputV1 } from '@happier-dev/deployment-protocol';
 
+import { readSQLiteRuntimeAvailabilityV1, type SQLiteRuntimeUnavailableV1 } from './sqliteRuntime.js';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+
 type Destination = Readonly<{ ref: DeploymentBackupConfigurationV1['destinationRef']; occurrenceId: string;
     descriptor: Parameters<typeof validateDeploymentBackupDestinationConfigurationV1>[0]['descriptor'] }>;
 type ConfigurationFailure = Readonly<{ ok: false; code: 'invalid_backup_configuration' | 'invalid_backup_sources'
     | 'destination_changed' | 'environment_mismatch' | 'invalid_destination_config' | 'unsupported_credential_role' }>;
-export type DeploymentBackupConfigurationPreparationV1 = ConfigurationFailure | Readonly<{ ok: true;
+export type DeploymentBackupConfigurationPreparationV1 = ConfigurationFailure | SQLiteRuntimeUnavailableV1 | Readonly<{ ok: true;
     configuration: DeploymentBackupConfigurationV1; bindingState: 'bound' | 'needsBinding'; missingRoles: string[] }>;
 
 /** Stable native dump identity, including services namespaced by catalog Add. */
@@ -19,6 +22,17 @@ export function createDeploymentDumpBackupSourceV1(service: string): Extract<Dep
     return { kind: 'dump', sourceId: createDeploymentDumpBackupSourceIdV1(service), service, consistency: 'logical' };
 }
 
+/** Definition review offers only logical sources whose runtime is published. */
+export function createDeploymentLogicalBackupSourceChoicesV1(data: NonNullable<DeploymentEnvironmentContentV1['template']>['data'],
+    services: readonly string[]): DeploymentBackupConfigurationV1['sources'] {
+    return (data ?? []).flatMap(row => {
+        if (!services.includes(row.service) || !(row.engine === 'postgres' && row.logicalBackup?.adapter === 'postgres-v1'
+            || row.engine === 'sqlite' && row.logicalBackup?.adapter === 'sqlite-v1' && row.logicalBackup.path
+                && readSQLiteRuntimeAvailabilityV1().ok)) return [];
+        return [createDeploymentDumpBackupSourceV1(row.service)];
+    });
+}
+
 /** Stable native volume identity, including catalog Add resource aliases. */
 export function createDeploymentVolumeBackupSourceIdV1(service: string, volume: string): string {
     return JSON.stringify(['volume', service, volume]);
@@ -26,6 +40,7 @@ export function createDeploymentVolumeBackupSourceIdV1(service: string, volume: 
 
 /** Configure admission consumes the selected catalog descriptor and the opened Environment bindings once. */
 export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environmentId: string; configuration: unknown;
+    data?: NonNullable<DeploymentEnvironmentContentV1['template']>['data'];
     destination: Destination; bindings: readonly EnvironmentSecretBindingInputV1[] }>): DeploymentBackupConfigurationPreparationV1 {
     const raw = input.configuration;
     const withDefault = raw && typeof raw === 'object' && !Array.isArray(raw)
@@ -41,6 +56,11 @@ export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environ
     if (configuration.ownership.environmentId !== input.environmentId) return { ok: false, code: 'environment_mismatch' };
     if (!validateDeploymentBackupDestinationConfigurationV1({ descriptor: destination.descriptor, config: configuration.config })) {
         return { ok: false, code: 'invalid_destination_config' };
+    }
+    for (const source of configuration.sources) {
+        if (source.kind !== 'dump' || input.data?.find(row => row.service === source.service)?.logicalBackup?.adapter !== 'sqlite-v1') continue;
+        const availability = readSQLiteRuntimeAvailabilityV1();
+        if (!availability.ok) return availability;
     }
     const roles = destination.descriptor.credentialRoles.map(entry => entry.role);
     if (configuration.credentialBindings.some(binding => !roles.includes(binding.role))) return { ok: false, code: 'unsupported_credential_role' };

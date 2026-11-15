@@ -28,7 +28,7 @@ import { createDeploymentBackupActionForHost } from '@/deployments/actions/backu
 import { createDeploymentRestoreActionForHost } from '@/deployments/actions/restore';
 import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
 import * as identityStore from '@/daemon/identity/store';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { accountSettingsParse, type ActionExecutorContext } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -324,16 +324,17 @@ it.each(['first-party', 'external'] as const)('prepares selected sources through
             const seed = new Uint8Array(32).fill(73);
             const publicKey = nacl.sign.keyPair.fromSeed(seed).publicKey;
             const subject = { v: 1 as const, environmentId: 'environment', machineId: 'machine', installationId: 'installed' };
-            const database: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> = {
-                purpose: 'variable', phase: 'runtime', name: 'DB_NAME', source: { kind: 'value', value: 'actual_database' } };
+            const databaseDefinition = { kind: 'value' as const, value: 'actual_database' };
+            const database = createDeploymentVariableBindingV1({ phase: 'runtime', name: 'DB_NAME', source: databaseDefinition });
             const uses = configuration.credentialBindings.map(binding => ({ ...binding,
                 source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(binding.role), resourceRevision: 1 } }));
             const grants = uses.map(binding => sealMachineSecretGrant({ subject: { ...subject, kind: 'secret',
                 resourceId: binding.role, resourceRevision: 1 }, installationPublicKey: publicKey,
                 content: { kind: 'secret', value: `credential-${binding.role}` } }));
             grants.push(sealMachineSecretGrant({ subject: { ...subject, kind: 'environmentValues',
-                binding: { purpose: 'variable', phase: 'runtime', name: database.name } }, installationPublicKey: publicKey,
-                content: { kind: 'environmentValues', definition: database.source } }));
+                binding: { purpose: 'variable', phase: 'runtime', grantRef: database.grantRef } }, installationPublicKey: publicKey,
+                content: { kind: 'environmentValues', binding: { purpose: 'variable', phase: 'runtime',
+                    name: database.name, grantRef: database.grantRef }, definition: databaseDefinition } }));
             const data = { engine: 'postgres', service: 'postgres', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } as const;
             const unrelated = { engine: 'mysql', service: 'mysql', logicalBackup: { adapter: 'mysql-v1' } } as const;
             const operands = { registry, configuration, data: [unrelated, data], context: {}, signal: request.signal, isCurrent: () => true,
@@ -360,15 +361,12 @@ it.each(['first-party', 'external'] as const)('prepares selected sources through
             if (kind === 'first-party') {
                 const sqlite = { engine: 'sqlite', service: 'application', logicalBackup: {
                     adapter: 'sqlite-v1', path: '/data/application.sqlite' } } as const;
-                const selected = await prepareRun({ ...operands, data: [data, sqlite],
+                await expect(prepareRun({ ...operands, data: [data, sqlite],
                     configuration: { ...configuration, sources: [{ kind: 'dump', sourceId: 'application',
-                        service: 'application', consistency: 'logical' }] } });
-                const selectedAttachment = await selected.execEnv.prepare({ backupDestination: { configKey: 'destination' } });
-                try {
-                    expect(selected.data).toEqual([sqlite]);
-                    expect(selected.destinations).toEqual([{ environmentId: 'environment', service: 'application',
-                        adapter: 'sqlite-v1', path: '/data/application.sqlite' }]);
-                } finally { selectedAttachment.dispose(); await selected.dispose(); }
+                        service: 'application', consistency: 'logical' }] } })).rejects.toMatchObject({
+                    cause: { errorCode: 'deployment_sqlite_runtime_unavailable', details: {
+                        reason: 'sqlite_backup_helper_not_published', remedy: 'wait_for_sqlite_backup_helper_publication' } },
+                });
             }
             const volume = await prepareRun({ ...operands, data: [],
                 configuration: { ...configuration, sources: [{ kind: 'volume', sourceId: 'uploads', service: 'app',

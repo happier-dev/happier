@@ -5,6 +5,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRunInputV1, DeploymentRestoreDatabaseDestinationV1 } from '@happier-dev/deployments';
+import { readSQLiteRuntimeAvailabilityV1 } from '@happier-dev/deployments';
 import { readStoragePathCapacity } from '@/storage/pathCapacity';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createDeploymentBackupEnvironmentForHost, prepareDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -254,6 +255,11 @@ export async function prepareOwnServerBackupRunOperandsForHost(input: BackupDest
             return refuse('unsupported_action');
         if (data.logicalBackup.adapter === 'sqlite-v1') {
             if (!data.logicalBackup.path) return refuse('unsupported_action');
+            const availability = readSQLiteRuntimeAvailabilityV1();
+            if (!availability.ok) throw Object.assign(new Error(availability.message, { cause: {
+                ok: false, errorCode: availability.code, error: availability.message, effectAttempted: false,
+                details: { reason: availability.reason, remedy: availability.remedy },
+            } }), { code: availability.code });
             return { data, path: data.logicalBackup.path };
         }
         const databaseKey = data.logicalBackup.database;

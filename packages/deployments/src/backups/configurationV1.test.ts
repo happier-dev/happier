@@ -28,6 +28,19 @@ function prepare(input: unknown): unknown {
 const input = { environmentId: 'environment-a', configuration, destination, bindings };
 
 describe('backup configuration preparation', () => {
+    it('keeps review and configure aligned when the SQLite helper is unpublished', () => {
+        const data = [{ engine: 'sqlite', service: 'db', logicalBackup: { adapter: 'sqlite-v1', path: '/data/database.sqlite' } }] as const;
+        expect(owners.createDeploymentLogicalBackupSourceChoicesV1([...data], ['db'])).toEqual([]);
+        expect(prepare({ ...input, data })).toMatchObject({ ok: false, code: 'deployment_sqlite_runtime_unavailable',
+            reason: 'sqlite_backup_helper_not_published', remedy: 'wait_for_sqlite_backup_helper_publication' });
+        const postgres = [{ engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1' } }] as const;
+        expect(owners.createDeploymentLogicalBackupSourceChoicesV1([...postgres], ['db']))
+            .toEqual([owners.createDeploymentDumpBackupSourceV1('db')]);
+        expect(prepare({ ...input, data: postgres })).toMatchObject({ ok: true });
+        expect(prepare({ ...input, data, configuration: { ...configuration, sources: [{ kind: 'volume',
+            sourceId: 'data', service: 'db', volume: 'data', consistency: 'stopDuringCopy' }] } })).toMatchObject({ ok: true });
+    });
+
     it('changes only person-selected retention counts while retaining capture identity and rejects a stale choice', () => {
         const owner = Reflect.get(owners, 'prepareDeploymentBackupRetentionV1');
         const change = (value: unknown) => typeof owner === 'function' ? owner(value) : undefined;
