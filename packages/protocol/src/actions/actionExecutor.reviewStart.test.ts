@@ -263,7 +263,7 @@ describe('createActionExecutor (review.start)', () => {
     const input = { engineIds: ['codex', 'claude'], instructions: 'Review.', display: { groupId: 'caller-forged' } };
     await executor.execute('review.start', { ...input, sessionId: 's1' }, { surface: 'ui' });
     await executor.execute('review.start', input, {
-      surface: 'agent', executionRunTargetMachineId: 'machine-1',
+      surface: 'agent', defaultSessionId: 'origin-session', executionRunTargetMachineId: 'machine-1',
       agentStartContext: workflowStartContext,
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
       actionCaller: { kind: 'workflowRun', runId: 'workflow-1', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } },
@@ -296,7 +296,7 @@ describe('createActionExecutor (review.start)', () => {
     }
   });
 
-  it.each([undefined, { kind: 'detached' as const }])('starts an originless workflow review with target %j and carries trusted workflow identity outside input', async (target) => {
+  it.each([undefined, { kind: 'detached' as const }, { sessionId: 'origin-session' }])('starts an originless workflow review with target %j and carries trusted workflow identity outside input', async (target) => {
     // Execution start/capability adapters are the machine transport boundary.
     const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({ runId: 'review-1', callId: 'call-review', sidechainId: 'call-review' }));
     const reviewEnginesList = vi.fn<ActionExecutorDeps['reviewEnginesList']>(async () => ({ items: [{ value: 'codex', label: 'Codex' }] }));
@@ -306,11 +306,11 @@ describe('createActionExecutor (review.start)', () => {
       reviewEnginesList,
     } as ActionExecutorDeps);
     const result = await executor.execute('review.start', {
-      ...(target ? { target } : {}), engineIds: ['codex'], instructions: 'Review the workspace.',
+      ...(target && 'sessionId' in target ? target : target ? { target } : {}), engineIds: ['codex'], instructions: 'Review the workspace.',
       cwd: '/caller/other-checkout',
       workflowRunId: 'forged-input-id',
     }, {
-      surface: 'agent', executionRunTargetMachineId: 'machine-1',
+      surface: 'agent', defaultSessionId: 'origin-session', executionRunTargetMachineId: 'machine-1',
       agentStartContext: workflowStartContext,
       actionRequestId: 'review-request',
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },

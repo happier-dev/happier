@@ -434,7 +434,8 @@ export function toAutomationRunV3DetailApiDto(
             }
         }
         return AutomationV3RunDetailSchema.parse({
-            ...common, workflowRun: { recipeKind: "workflow-v2", workflowRunId: item.id },
+            ...common, ...(item.workflowAcceptedSnapshotEnvelope != null
+                ? { workflowRun: { recipeKind: "workflow-v2" as const, workflowRunId: item.id } } : {}),
             triggerEvidenceEnvelope: null, executionInputEnvelope: null,
             resultEnvelope: item.resultEnvelope, legacySummaryCiphertext: null,
             errorDetailEnvelope: storedFailureDetail(item.errorMessage, mode),

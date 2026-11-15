@@ -684,6 +684,16 @@ describe("Automation API projections", () => {
             .toThrow("Automation row has no sessionLifecycle status for its declared arm");
     });
 
+    it("keeps a missed occurrence readable without claiming an accepted Workflow body", () => {
+        const run = { ...eventRun(), state: "missed", workflowCustodyState: "pending" as const,
+            workflowAcceptedSnapshotEnvelope: null, resultEnvelope: null,
+            errorCode: "machine_offline", startedAt: null };
+        const detail = toAutomationRunV3DetailApiDto(run, "plain");
+        expect(detail.state).toBe("missed");
+        expect(detail.workflowRun).toBeUndefined();
+        expect(detail.errorCode).toBe("machine_offline");
+    });
+
     it.each(["plain", "e2ee"] as const)("preserves a %s Workflow result on the bound Automation recovery detail", (mode) => {
         const resultEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
             ...(mode === "plain" ? { mode } : { mode, runDataKey: new Uint8Array(32).fill(3),
@@ -693,6 +703,7 @@ describe("Automation API projections", () => {
                 producerInvocation: { recordId: "prompt-invocation" } },
         }));
         const run = { ...eventRun(), state: "succeeded" as const, workflowCustodyState: "settled" as const,
+            workflowAcceptedSnapshotEnvelope: "opaque-accepted-snapshot",
             // Automation Workflow admission freezes its Account definition body here;
             // accepted snapshot and result custody remain on the canonical Run reader.
             executionInputEnvelope: JSON.stringify(mode === "plain" ? { t: "plain", v: { workspace: { directory: "/repo" }, executionTarget: { kind: "session" } } }

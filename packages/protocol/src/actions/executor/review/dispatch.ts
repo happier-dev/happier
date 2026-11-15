@@ -202,7 +202,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
       if (actionId === 'review.start') {
         if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const detached = readRecord(data.target).kind === 'detached'
-          || (ctx.actionCaller?.kind === 'workflowRun' && data.sessionId === undefined);
+          || ctx.actionCaller?.kind === 'workflowRun';
         const sessionId = detached ? null : resolveSessionIdFromInput(parsed.data, ctx);
         if (!detached && !sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
         const machineTarget = detached && ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget : undefined;
