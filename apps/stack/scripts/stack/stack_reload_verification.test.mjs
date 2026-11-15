@@ -10,7 +10,7 @@ import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveStackRootFromMeta } from '../testkit/core/stack_root.mjs';
 import { recordStackRuntimeStart } from '../utils/stack/runtime_state.mjs';
 import { readStackInfoSnapshot } from './stack_info_snapshot.mjs';
-import { runVerifiedStackStart } from './stack_reload_verification.mjs';
+import { probeStackAgentStart, runVerifiedStackStart } from './stack_reload_verification.mjs';
 
 function readyInfo() {
   return { runtime: { mode: 'source-snapshot', running: true, valid: true,
@@ -27,7 +27,7 @@ test('reload without a baseline requires an identified available replacement and
     const info = readyInfo();
     info.runtime.sourceRuntimeIdentities.server.sourceTime = '2026-11-09T03:38:00.000Z';
     info.runtime.sourceRuntimeIdentities.daemon.sourceTime = '2026-11-09T03:39:00.000Z';
-    const input = { info, beforeManagedCli, auth: { authenticated: true } };
+    const input = { info, beforeManagedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
     const verdict = projectStackReloadVerification(input);
     assert.equal(verdict.status, 'READY');
     assert.equal(verdict.baseline, 'unavailable');
@@ -83,7 +83,7 @@ test('reload failure retains the cleanup owner reason without exposing its diagn
 
 test('reload verdict requires loaded source entries and authenticated control, not just live processes', () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
   assert.equal(projectStackReloadVerification(input).status, 'READY');
   info.runtime.sourceRuntimeIdentities.daemon.loaded = 'daemon-old';
   assert.equal(projectStackReloadVerification(input).check, 'identity:daemon');
@@ -97,7 +97,7 @@ test('reload verdict requires loaded source entries and authenticated control, n
 
 test('matching recorded IDs cannot admit a promoted daemon entry or missing loaded-entry evidence', () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
   info.runtime.daemonEntry.loaded = '/managed/cli/package-dist/index.mjs';
   assert.deepEqual(projectStackReloadVerification(input), {
     status: 'NOT_READY', check: 'daemon_entry_mismatch', evidence: info.runtime.daemonEntry,
@@ -110,7 +110,7 @@ test('matching recorded IDs cannot admit a promoted daemon entry or missing load
 
 test('reload verdict refuses missing sign-in, pending readiness, changed managed CLI, and unrendered UI', () => {
   const info = readyInfo();
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: false } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: false }, agent: { status: 'ready' } };
   assert.equal(projectStackReloadVerification(input).check, 'auth');
   input.auth.authenticated = true;
   info.runtime.health = { status: 'degraded', issues: ['runtime_preparing'] };
@@ -130,10 +130,57 @@ test('export snapshots use the existing selection and loaded projection; disable
   info.runtime.mode = 'require';
   info.runtime.selectedSnapshotId = 'new';
   info.runtime.loadedSnapshotId = 'old';
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
   assert.equal(projectStackReloadVerification(input).check, 'identity:snapshot');
   info.runtime.loadedSnapshotId = 'new';
   assert.equal(projectStackReloadVerification(input).status, 'READY');
   delete info.runtime.managedCli;
   assert.equal(projectStackReloadVerification(input).check, 'managed-cli');
+});
+
+// The child CLI process is the boundary: each fake returns what the retained
+// runtime's `happier ... --json` would print, and the probe/verdict stay real.
+function fakeRuntimeCli(replies) {
+  const calls = [];
+  const run = async (_cmd, args) => {
+    const happierArgs = args.slice(args.indexOf('--') + 1);
+    calls.push(happierArgs);
+    const reply = replies[happierArgs.slice(0, 2).join(' ')];
+    return { ok: reply.ok !== false, out: `preparing runtime\n${JSON.stringify(reply)}\n` };
+  };
+  return { calls, run };
+}
+
+test('READY requires one real Agent start; a child that exits before webhook keeps the stack NOT_READY', async () => {
+  const info = readyInfo();
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true } };
+  assert.equal(projectStackReloadVerification(input).check, 'agent');
+
+  const failing = fakeRuntimeCli({ 'session create': { ok: false, kind: 'session_create',
+    error: { code: 'spawn_failed', launchError: { code: 'CHILD_EXITED_BEFORE_WEBHOOK', message: 'private child log' } } } });
+  input.agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', run: failing.run });
+  assert.deepEqual(projectStackReloadVerification(input), { status: 'NOT_READY', check: 'agent',
+    evidence: { status: 'failed', phase: 'create', code: 'spawn_failed', launchErrorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' } });
+  assert.equal(failing.calls.length, 1);
+
+  const working = fakeRuntimeCli({
+    'session create': { ok: true, kind: 'session_create', data: { created: true, session: { id: 'probe-1' } } },
+    'session stop': { ok: true, kind: 'session_stop', data: { sessionId: 'probe-1', stopped: true } },
+    'session archive': { ok: true, kind: 'session_archive', data: { sessionId: 'probe-1' } },
+  });
+  input.agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', run: working.run });
+  assert.equal(projectStackReloadVerification(input).status, 'READY');
+  assert.deepEqual(working.calls.slice(1).map(args => args.slice(0, 3)),
+    [['session', 'stop', 'probe-1'], ['session', 'archive', 'probe-1']]);
+});
+
+test('a probe Session the stop owner cannot stop keeps the stack NOT_READY', async () => {
+  const info = readyInfo();
+  const leaking = fakeRuntimeCli({
+    'session create': { ok: true, kind: 'session_create', data: { created: true, session: { id: 'probe-2' } } },
+    'session stop': { ok: false, kind: 'session_stop', error: { code: 'session_stop_failed', message: 'private' } },
+  });
+  const agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', run: leaking.run });
+  assert.deepEqual(projectStackReloadVerification({ info, beforeManagedCli: info.runtime.managedCli,
+    auth: { authenticated: true }, agent }).evidence, { status: 'failed', phase: 'stop', code: 'session_stop_failed' });
 });

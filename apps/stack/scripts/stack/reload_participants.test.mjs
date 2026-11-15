@@ -20,7 +20,7 @@ test('a stale registered daemon identity prevents READY and reports every partic
     { identity: 'account-b', status: 'running', selected: 'daemon-new', loaded: 'daemon-old', sourceTime: '2026-11-03T12:59:00.000Z', reason: 'participant_source_stale' },
   ];
   info.runtime.daemonParticipants = participants;
-  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true } };
+  const input = { info, beforeManagedCli: info.runtime.managedCli, auth: { authenticated: true }, agent: { status: 'ready' } };
   const refused = projectStackReloadVerification(input);
   assert.equal(refused.status, 'NOT_READY');
   assert.equal(refused.check, 'participant:account-b');

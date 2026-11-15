@@ -160,6 +160,24 @@ test('admission pushes post once per slot without rerunning source graphs', asyn
   assert.equal(graphLoads, 1, 'admission-only pushes perform zero additional source graph loads');
 });
 
+test('a restarted sentinel keeps announced overruns off the board and rolls them into its status file', async t => {
+  const { fixture } = await fixtureGraph(t);
+  const posts = [];
+  const overruns = [{ slotId: '11111111-2222-3333-4444-555555555555', durationClass: 'targeted-validation', ageMs: 201, p99DurationMs: 100 }];
+  const start = () => createLoadSentinel({ repoDir: fixture.root, graphs: [], post: async notice => { posts.push(notice); },
+    readAdmissionSamples: async () => [{ target: 'fixture', overruns }] });
+  await start().sampleAdmissions();
+  assert.equal(posts.length, 1, 'first sight posts once');
+  // A new process (unit restart) sees the same still-running slot and one new slot.
+  overruns.push({ slotId: '66666666-7777-8888-9999-000000000000', durationClass: 'targeted-validation', ageMs: 300, p99DurationMs: 100 });
+  await start().sampleAdmissions();
+  assert.equal(posts.length, 2, 'only the newly seen slot reaches the board after a restart');
+  assert.match(String(posts[1]), /slot=66666666-7777-8888-9999-000000000000/);
+  const status = JSON.parse(await readFile(fixture.path('.project/tmp/load-sentinel/OVERRUNS.json'), 'utf8'));
+  assert.deepEqual(status.active.map(row => row.slotId).sort(), overruns.map(row => row.slotId).sort(),
+    'repeat sightings are recorded in the sentinel status file');
+});
+
 test('real graph load transitions post one failure and one clear; unchanged failures stay quiet', async t => {
   const { fixture, graph, entry } = await fixtureGraph(t);
   const posts = [];

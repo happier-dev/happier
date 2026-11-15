@@ -14,6 +14,10 @@ import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../..
 import { loadDevTargetsConfig } from '../utils/dev_targets/config.mjs';
 import { watchDevTargetAdmission } from '../utils/dev_targets/executor.mjs';
 import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../utils/stack/repo_stack_identity.mjs';
+import { readJsonIfExists, writeJsonAtomic } from '../utils/fs/json.mjs';
+
+// The sentinel's own status directory: pass history and the overrun ledger.
+const STATUS_DIR = '.project/tmp/load-sentinel';
 
 export function sentinelGraphs() {
   // The incident corridor; entry paths, loaders and execution stay with the owner.
@@ -95,26 +99,46 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
   // cycle so per-lane post-write gates never wait behind it.
   let headRunning;
   let headPending = false;
-  const announcedOverruns = new Map();
+  // Overruns reach the board once per slot, across sentinel restarts: the
+  // announced set lives in the sentinel's status file, and every later sighting
+  // of a still-running slot is rolled into that file instead of the board.
+  const overrunStatusPath = join(repoDir, STATUS_DIR, 'OVERRUNS.json');
+  let announcedOverruns;
+  const activeOverruns = new Map();
+  let writtenActiveKeys = '';
   let admissionPending = false;
   let admissionRunning;
   async function sampleAdmissions() {
+    announcedOverruns ??= new Map(Object.entries((await readJsonIfExists(overrunStatusPath))?.announced ?? {}));
     do {
       admissionPending = false;
       const samples = await readAdmissionSamples();
+      let announcedNow = false;
       for (const sample of samples) {
         if (!/^[a-z0-9][a-z0-9._-]*$/.test(sample.target ?? '') || !Array.isArray(sample.overruns)) continue;
-        const announced = announcedOverruns.get(sample.target) ?? new Set();
+        // A successor can report an empty snapshot before retained client
+        // metadata arrives, so absence never forgets an announced slot.
+        for (const key of activeOverruns.keys()) if (key.startsWith(`${sample.target}/`)) activeOverruns.delete(key);
         for (const slot of sample.overruns) {
           if (!/^[a-f0-9-]{36}$/.test(slot.slotId ?? '') || !/^[a-z][a-z0-9-]*$/.test(slot.durationClass ?? '')
             || !Number.isFinite(slot.ageMs) || !Number.isFinite(slot.p99DurationMs)) continue;
-          if (announced.has(slot.slotId)) continue;
+          const key = `${sample.target}/${slot.slotId}`;
+          activeOverruns.set(key, { target: sample.target, slotId: slot.slotId, durationClass: slot.durationClass,
+            ageMs: slot.ageMs, recordedP99Ms: slot.p99DurationMs });
+          if (announcedOverruns.has(key)) continue;
           const details = `target=${sample.target}; slot=${slot.slotId}; class=${slot.durationClass}; ageMs=${slot.ageMs}; recordedP99Ms=${slot.p99DurationMs}`;
-          if (await announce('admission', 'overrun', details)) announced.add(slot.slotId);
+          if (await announce('admission', 'overrun', details)) {
+            announcedOverruns.set(key, new Date().toISOString());
+            announcedNow = true;
+          }
         }
-        // A successor can report an empty snapshot before retained client
-        // metadata arrives. Notices remain once per slot for this sentinel.
-        if (announced.size) announcedOverruns.set(sample.target, announced);
+      }
+      // Rewrite the status file only when the announced or active set changed.
+      const activeKeys = [...activeOverruns.keys()].sort().join('\n');
+      if (announcedNow || activeKeys !== writtenActiveKeys) {
+        await writeJsonAtomic(overrunStatusPath, { updatedAt: new Date().toISOString(),
+          active: [...activeOverruns.values()], announced: Object.fromEntries(announcedOverruns) });
+        writtenActiveKeys = activeKeys;
       }
     } while (admissionPending && !signal?.aborted);
   }
@@ -341,7 +365,7 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
  * partial/in-progress passes never manufacture a green result. */
 export async function readLoadSentinelPasses(repoDir) {
   let history;
-  try { history = await readFile(join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt'), 'utf8'); }
+  try { history = await readFile(join(repoDir, STATUS_DIR, 'HISTORY.txt'), 'utf8'); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   return history.split('\n').flatMap(line => {
     const match = /^\S+ PASS failed=0 passStartedAt~(\S+) passEndedAt~(\S+) graphs=\d+\s*$/.exec(line);

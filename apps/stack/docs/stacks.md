@@ -188,8 +188,11 @@ existing preparation result. A non-starting daemon is never counted as restored.
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification
 consumes Stack's selected/loaded identities and authenticated daemon-control
-observation, checks the retained runtime's sign-in through `auth status`, and
-boots the current UI in the managed QA browser pool. The browser loads after
+observation, checks the retained runtime's sign-in through `auth status`,
+starts one real Agent Session through the daemon's Session host, runner and
+attach (`session create` with no prompt, so no model turn), then stops and
+archives it, and boots the current UI in the managed QA browser pool. A failed
+start reports `check: "agent"` with only the owner's error codes. The browser loads after
 the serving process has started; an old `Web Bundled` log line cannot satisfy
 this check. Stacks with UI disabled skip the browser step. Borrowed Expo is
 verified without restarting its producer.

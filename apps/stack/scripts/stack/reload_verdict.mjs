@@ -1,7 +1,7 @@
 import { readSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 
 /** Project the existing lifecycle owners' evidence into one reload verdict. */
-export function projectStackReloadVerification({ info, beforeManagedCli, auth, render, failure } = {}) {
+export function projectStackReloadVerification({ info, beforeManagedCli, auth, agent, render, failure } = {}) {
   const runtime = info?.runtime;
   const hasBaseline = beforeManagedCli?.status === 'installed' && Boolean(beforeManagedCli.binaryPath);
   const baseline = hasBaseline ? {} : { baseline: 'unavailable' };
@@ -50,6 +50,8 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
     || (hasBaseline && beforeManagedCli.binaryPath !== afterManagedCli.binaryPath)) {
     return notReady('managed-cli', { before: beforeManagedCli ?? null, after: afterManagedCli ?? null });
   }
+  // Health alone admitted stacks whose every Agent child exited before webhook.
+  if (agent?.status !== 'ready') return notReady('agent', agent ?? { status: 'pending' });
   if (info.urls?.uiUrl && render?.status !== 'ready') {
     return notReady('render', { status: render?.status ?? 'pending' });
   }
@@ -59,5 +61,5 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
   } } : {};
   return { status: 'READY', ...baseline, ...participants, ...sourceTimes, identities: runtime.sourceRuntimeIdentities ?? {
     snapshot: { selected: runtime.selectedSnapshotId, loaded: runtime.loadedSnapshotId },
-  }, managedCli: afterManagedCli, render: info.urls?.uiUrl ? render : { status: 'disabled' } };
+  }, managedCli: afterManagedCli, agent, render: info.urls?.uiUrl ? render : { status: 'disabled' } };
 }
