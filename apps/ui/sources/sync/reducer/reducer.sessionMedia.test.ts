@@ -1,11 +1,51 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-import type { NormalizedMessage } from '../typesRaw';
+import { normalizeRawMessage, type NormalizedMessage } from '../typesRaw';
 import { parseSessionMediaMessageMeta } from '../domains/sessionMedia/sessionMediaMessageMeta';
 import { createReducer, reducer } from './reducer';
 
 describe('tool-result session media ownership', () => {
+    it('accepts deeply nested pass-through result metadata admitted by normalization', () => {
+        const state = createReducer();
+        const call: NormalizedMessage = {
+            id: 'deep-call', localId: null, createdAt: 1, role: 'agent', isSidechain: false,
+            content: [{ type: 'tool-call', id: 'deep-read', name: 'Read', input: {}, description: null, uuid: 'deep-call', parentUUID: null }],
+        };
+        reducer(state, [call]);
+        // Build wire JSON directly so the fixture does not depend on a recursive serializer.
+        const metaJson = '{"providerExtra":' + '{"next":'.repeat(4000) + '0' + '}'.repeat(4000) + '}';
+        const meta = JSON.parse(metaJson);
+        const result = normalizeRawMessage('deep-result', null, 2, {
+            role: 'agent', meta,
+            content: { type: 'output', data: {
+                type: 'user', uuid: 'deep-result',
+                message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'deep-read', content: 'Read finished' }] },
+            } },
+        });
+        if (!result) throw new Error('Expected admitted tool result');
+        // Both sides of the preceding native JSON comparison accept this admitted metadata.
+        expect(() => JSON.stringify({ ...(result.meta ?? {}) })).not.toThrow();
+        const updated = reducer(state, [result]);
+        expect(updated.messages[0]).toMatchObject({ tool: { state: 'completed', result: 'Read finished' } });
+        expect(updated.messages[0]?.meta?.providerExtra).toBe(result.meta?.providerExtra);
+
+        const replay = reducer(state, [{ ...result, id: 'deep-replay', meta: JSON.parse(metaJson) }]);
+        expect(replay.messages).toEqual([]);
+        const changedMetaJson = metaJson.replace('0', '1');
+        const changed = reducer(state, [{ ...result, id: 'deep-change', meta: JSON.parse(changedMetaJson) }]);
+        expect(changed.messages).toHaveLength(1);
+        expect(JSON.stringify(changed.messages[0]?.meta)).toBe(changedMetaJson);
+        expect(JSON.stringify(updated.messages[0]?.meta)).toBe(metaJson);
+
+        // Ordered arrays and object/array shape remain distinct metadata changes.
+        for (const [index, providerExtra] of [[1, 2], [2, 1], {}, []].entries()) {
+            const next = reducer(state, [{ ...result, id: `shape-change-${index}`, meta: { providerExtra } }]);
+            expect(next.messages).toHaveLength(1);
+            expect(next.messages[0]?.meta?.providerExtra).toEqual(providerExtra);
+        }
+    });
+
     it('publishes late media for a completed nested tool without republishing equal metadata', () => {
         const state = createReducer();
         const calls: NormalizedMessage[] = ['outer', 'read'].map(id => ({
