@@ -126,7 +126,8 @@ import { runMessageToEventConversion } from "./phases/messageToEventConversion.j
 import { runAgentStatePermissionsPhase } from "./phases/agentStatePermissions.js";
 import { runUserAndTextPhase } from "./phases/userAndText.js";
 import { runToolCallsPhase } from "./phases/toolCalls.js";
-import { runToolResultsPhase } from "./phases/toolResults.js";
+import { runToolResultsPhase, resolveSidechainParentMessageId } from "./phases/toolResults.js";
+import { convertReducerMessageToMessage } from "./publishedMessages.js";
 import { runSidechainsPhase } from "./phases/sidechains.js";
 import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents.js";
 import { equalOptionalStringArrays } from "./helpers/arrays.js";
@@ -393,7 +394,7 @@ function collectMetadataUpdatedMessages(state: ReducerState, changed: Set<string
         const sidechainId = sidechainByMessageId.get(id);
         if (!sidechainId) continue;
         sidechainChanged = true;
-        const parentId = state.toolIdToMessageId.get(sidechainId);
+        const parentId = resolveSidechainParentMessageId(state, sidechainId);
         if (parentId) changed.add(parentId);
     }
     const messages: Message[] = [];
@@ -681,7 +682,7 @@ export function reducer(
         const sidechainId = sidechainChildIds.get(id);
         if (!sidechainId) continue;
         sidechainStateChanged = true;
-        const parentId = state.toolIdToMessageId.get(sidechainId);
+        const parentId = resolveSidechainParentMessageId(state, sidechainId);
         if (parentId) changed.add(parentId);
     }
 
@@ -865,115 +866,4 @@ export function projectSidechainMessages(
         if (message) projected.push(message);
     }
     return projected;
-}
-
-function convertReducerMessageToMessage(
-    reducerMsg: ReducerMessage,
-    state: ReducerState,
-    ancestorMessageIds?: ReadonlySet<string>,
-): Message | null {
-    const observationMetadata: TranscriptObservationMetadata = {
-        ...(reducerMsg.sourceCreatedAt !== undefined ? { sourceCreatedAt: reducerMsg.sourceCreatedAt } : {}),
-        ...(reducerMsg.sourceUpdatedAt !== undefined ? { sourceUpdatedAt: reducerMsg.sourceUpdatedAt } : {}),
-        ...(reducerMsg.transcriptObservationProvenance !== undefined
-            ? { transcriptObservationProvenance: reducerMsg.transcriptObservationProvenance }
-            : {}),
-        ...(reducerMsg.deliveryResolution !== undefined
-            ? { deliveryResolution: reducerMsg.deliveryResolution }
-            : {}),
-        ...(reducerMsg.followDeliveryProjection !== undefined
-            ? { followDeliveryProjection: reducerMsg.followDeliveryProjection }
-            : {}),
-            ...(reducerMsg.messageActionReference !== undefined
-            ? { messageActionReference: reducerMsg.messageActionReference }
-            : {}),
-    };
-    if (reducerMsg.role === 'user' && reducerMsg.text !== null) {
-        const displayText = typeof reducerMsg.meta?.displayText === 'string' ? reducerMsg.meta.displayText : undefined;
-        return {
-            id: reducerMsg.id,
-            realID: reducerMsg.realID,
-            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
-            localId: reducerMsg.localId,
-            createdAt: reducerMsg.createdAt,
-            kind: 'user-text',
-            text: reducerMsg.text,
-            ...(displayText !== undefined ? { displayText } : {}),
-            meta: reducerMsg.meta,
-            ...(reducerMsg.structuredPresentation !== undefined
-                ? { structuredPresentation: reducerMsg.structuredPresentation }
-                : {}),
-            ...observationMetadata,
-            ...(reducerMsg.accountActor !== undefined ? { accountActor: reducerMsg.accountActor } : {}),
-        };
-    } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
-        return {
-            id: reducerMsg.id,
-            realID: reducerMsg.realID,
-            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
-            localId: reducerMsg.localId,
-            createdAt: reducerMsg.createdAt,
-            kind: 'agent-text',
-            text: reducerMsg.text,
-            ...(reducerMsg.isThinking && { isThinking: true }),
-            ...(reducerMsg.peer && { peer: reducerMsg.peer }),
-            meta: reducerMsg.meta,
-            ...(reducerMsg.structuredPresentation !== undefined
-                ? { structuredPresentation: reducerMsg.structuredPresentation }
-                : {}),
-            ...observationMetadata,
-        };
-    } else if (reducerMsg.role === 'agent' && reducerMsg.tool !== null) {
-        if (ancestorMessageIds?.has(reducerMsg.id)) return null;
-
-        // Convert children recursively
-        let childMessages: Message[] = [];
-        const toolId = typeof reducerMsg.tool.id === 'string' ? reducerMsg.tool.id.trim() : '';
-        const sidechainKey =
-            toolId.length > 0
-                ? (!state.sidechains.has(toolId) && reducerMsg.realID ? reducerMsg.realID : toolId)
-                : reducerMsg.realID ?? null;
-        let children = sidechainKey ? state.sidechains.get(sidechainKey) || [] : [];
-        if (children.length > 0) {
-            const childAncestorMessageIds = new Set(ancestorMessageIds);
-            childAncestorMessageIds.add(reducerMsg.id);
-            for (let child of children) {
-                let childMessage = convertReducerMessageToMessage(child, state, childAncestorMessageIds);
-                if (childMessage) {
-                    childMessages.push(childMessage);
-                }
-            }
-        }
-
-        return {
-            id: reducerMsg.id,
-            realID: reducerMsg.realID,
-            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
-            localId: reducerMsg.localId,
-            createdAt: reducerMsg.createdAt,
-            kind: 'tool-call',
-            tool: { ...reducerMsg.tool },
-            children: childMessages,
-            meta: reducerMsg.meta,
-            ...observationMetadata,
-        };
-    } else if (reducerMsg.role === 'agent' && reducerMsg.event !== null) {
-        return {
-            id: reducerMsg.id,
-            realID: reducerMsg.realID,
-            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
-            ...(typeof reducerMsg.transcriptBlockIndex === 'number' ? { transcriptBlockIndex: reducerMsg.transcriptBlockIndex } : {}),
-            localId: reducerMsg.localId,
-            createdAt: reducerMsg.createdAt,
-            kind: 'agent-event',
-            event: reducerMsg.event,
-            meta: reducerMsg.meta,
-            ...observationMetadata,
-        };
-    }
-
-    return null;
 }

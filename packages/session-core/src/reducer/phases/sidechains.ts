@@ -9,7 +9,7 @@ import { upsertStreamSegmentSnapshotMessage } from "../helpers/upsertStreamSegme
 import { restoreSubagentToolFromSyntheticInterruption } from "../helpers/subagentInterruption.js";
 import { normalizeTranscriptSeq } from "../../messages/transcriptOrdering.js";
 import { drainAndApplyOrphanToolResultsToMessage } from "../helpers/drainAndApplyOrphanToolResultsToMessage.js";
-import { resolveSidechainPermissionMirror, resolveSidechainToolMessage } from "./toolResults.js";
+import { resolveSidechainParentMessageId, resolveSidechainPermissionMirror, resolveSidechainToolMessage } from "./toolResults.js";
 import { canExtendSidechainMessage, findSidechainMergeTarget, insertSidechainMessageInChronology } from "../helpers/sidechainChronology.js";
 
 export function runSidechainsPhase(params: Readonly<{
@@ -50,7 +50,7 @@ export function runSidechainsPhase(params: Readonly<{
             params.onChildInserted(message, sidechainId);
             changed.add(message.id);
         };
-        const parentMessageId = state.toolIdToMessageId.get(sidechainId) ?? null;
+        const parentMessageId = resolveSidechainParentMessageId(state, sidechainId);
         const isChainTail = (messageId: string | null): boolean =>
             messageId != null && existingSidechain[existingSidechain.length - 1]?.id === messageId;
 
@@ -357,8 +357,6 @@ export function runSidechainsPhase(params: Readonly<{
         const sidechain = resolveSidechainToolMessage(state, toolUseId);
         if (!sidechain) continue;
         drainAndApplyOrphanToolResultsToMessage({ state, toolUseId, messageId: sidechain.messageId, changed });
-        const parentId = state.toolIdToMessageId.get(sidechain.sidechainId);
-        if (parentId) changed.add(parentId);
         stateChanged = true;
     }
     return stateChanged;

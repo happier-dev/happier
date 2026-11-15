@@ -93,6 +93,17 @@ describe('compareToolCalls', () => {
         )).toBe(true);
     });
 
+    it('distinguishes empty objects and arrays in both argument directions', () => {
+        expect(compareToolCalls(
+            { name: 'Test', arguments: {} },
+            { name: 'Test', arguments: [] }
+        )).toBe(false);
+        expect(compareToolCalls(
+            { name: 'Test', arguments: [] },
+            { name: 'Test', arguments: {} }
+        )).toBe(false);
+    });
+
     it('should handle different property orders in objects', () => {
         const tool1 = { name: 'Test', arguments: { a: 1, b: 2 } };
         const tool2 = { name: 'Test', arguments: { b: 2, a: 1 } };

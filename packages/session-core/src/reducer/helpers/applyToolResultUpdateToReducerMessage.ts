@@ -1,3 +1,4 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isAsyncSubAgentLaunchToolResult } from '@happier-dev/protocol/tools/v2/subAgentFamilies';
 
 import type { MessageMeta } from "../../messages/messageMetaTypes.js";
@@ -26,7 +27,7 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
       ...(message.meta ?? {}),
       ...meta,
     };
-    if (JSON.stringify(nextMeta) !== JSON.stringify(message.meta)) {
+    if (!sameStrictJsonValue(nextMeta, message.meta, { omitUndefinedObjectMembers: true })) {
       message.meta = nextMeta;
       changed.add(messageId);
     }

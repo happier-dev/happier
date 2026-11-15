@@ -43,6 +43,13 @@ export function resolveSidechainToolMessage(state: ReducerState, toolUseId: stri
     return owner && ownerSidechainId ? { messageId: owner, sidechainId: ownerSidechainId } : null;
 }
 
+/** Actual sidechain calls own descendants; permission-only root mirrors do not. */
+export function resolveSidechainParentMessageId(state: ReducerState, sidechainId: string): string | null {
+    return state.sidechainToolIdToMessageId.get(sidechainId)
+        ?? state.toolIdToMessageId.get(sidechainId)
+        ?? null;
+}
+
 export function runToolResultsPhase(params: Readonly<{
     state: ReducerState;
     nonSidechainMessages: TracedMessage[];
@@ -91,10 +98,6 @@ export function runToolResultsPhase(params: Readonly<{
                         meta: msg.meta,
                         changed,
                     });
-                    if (sidechain) {
-                        const parentId = state.toolIdToMessageId.get(sidechain.sidechainId);
-                        if (parentId) changed.add(parentId);
-                    }
                 }
             }
         }

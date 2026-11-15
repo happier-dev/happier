@@ -1,4 +1,3 @@
-import { readToolCallObservedAtMs } from '@/sync/domains/session/subagents/toolCallActivityTimestamps';
 import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from './sessionListRuntimeClock';
 import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import * as React from 'react';
@@ -22,53 +21,6 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 
 function normalizeSessionId(sessionId: string): string {
     return String(sessionId ?? '').trim();
-}
-
-const sessionSubagentToolMessageSignatureCache = new WeakMap<Message, string>();
-
-function buildSessionSubagentToolMessageSignature(message: Message): string {
-    const cached = sessionSubagentToolMessageSignatureCache.get(message);
-    if (cached) return cached;
-
-    const tool = message.kind === 'tool-call' ? message.tool : null;
-    const signature = JSON.stringify({
-        id: message.id,
-        createdAt: message.createdAt ?? null,
-        toolId: tool?.id ?? null,
-        toolName: tool?.name ?? null,
-        toolState: tool?.state ?? null,
-        toolCreatedAt: tool?.createdAt ?? null,
-        toolStartedAt: tool?.startedAt ?? null,
-        toolCompletedAt: tool?.completedAt ?? null,
-        childObservedAt: message.kind === 'tool-call' ? readToolCallObservedAtMs(message) : null,
-        input: tool?.input ?? null,
-        result: tool?.result ?? null,
-    }) ?? 'null';
-    sessionSubagentToolMessageSignatureCache.set(message, signature);
-    return signature;
-}
-
-function buildSessionSubagentMessagesSignature(messages: readonly Message[]): string {
-    const parts: string[] = [];
-    for (const message of messages) {
-        if (!message || message.kind !== 'tool-call') continue;
-        parts.push(buildSessionSubagentToolMessageSignature(message));
-    }
-    return parts.join('|');
-}
-
-function useStableMessagesBySignature(
-    messages: readonly Message[],
-    signature: string,
-): readonly Message[] {
-    const ref = React.useRef<{ signature: string; messages: readonly Message[] }>({
-        signature,
-        messages,
-    });
-    if (ref.current.signature !== signature) {
-        ref.current = { signature, messages };
-    }
-    return ref.current.messages;
 }
 
 function buildStableJsonSignature(value: unknown): string {
@@ -119,11 +71,7 @@ export function useSessionSubagents(params: Readonly<{
         [sessionMetadata],
     );
     const stableSessionMetadata = useStableValueBySignature(sessionMetadata, sessionMetadataSignature);
-    const subagentMessagesSignature = React.useMemo(
-        () => buildSessionSubagentMessagesSignature(params.messages),
-        [params.messages],
-    );
-    const subagentMessages = useStableMessagesBySignature(params.messages, subagentMessagesSignature);
+    const subagentMessages = params.messages;
 
     const executionRunPollingEnabled = React.useMemo(() => {
         return shouldEnableExecutionRunPolling({
