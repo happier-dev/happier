@@ -1194,38 +1194,12 @@ describe('Action Spec Registry', () => {
       ...base,
       pluginCallerPolicy: { kind: 'exact_plugin', pluginId: 'happier.channels' },
     }).success).toBe(false);
+    // No policy names a plugin identity: the retired reload allowlist shape is refused.
     expect(ActionSpecSchema.safeParse({
       ...base,
       pluginCallerPolicy: {
         kind: 'self_or_inspector_admin',
         targetPluginIdField: 'pluginId',
-        administrativeCallers: [{ pluginId: 'happier.inspector', contributionLocalId: 'inspector-app' }],
-      },
-    }).success).toBe(true);
-    // The administrative surface is exact: a bare plugin id with no contribution
-    // surface, and an empty administrator list, are both refused.
-    expect(ActionSpecSchema.safeParse({
-      ...base,
-      pluginCallerPolicy: {
-        kind: 'self_or_inspector_admin',
-        targetPluginIdField: 'pluginId',
-        administrativeCallers: [{ pluginId: 'happier.inspector' }],
-      },
-    }).success).toBe(false);
-    expect(ActionSpecSchema.safeParse({
-      ...base,
-      pluginCallerPolicy: {
-        kind: 'self_or_inspector_admin',
-        targetPluginIdField: 'pluginId',
-        administrativeCallers: [],
-      },
-    }).success).toBe(false);
-    // Only the canonical target field may be named.
-    expect(ActionSpecSchema.safeParse({
-      ...base,
-      pluginCallerPolicy: {
-        kind: 'self_or_inspector_admin',
-        targetPluginIdField: 'targetPluginId',
         administrativeCallers: [{ pluginId: 'happier.inspector', contributionLocalId: 'inspector-app' }],
       },
     }).success).toBe(false);
@@ -1906,24 +1880,15 @@ describe('Action Spec Registry', () => {
     }
   });
 
-  it('classifies every non-safe Plugin Action and reserves plugin-targeted administration for reload', () => {
+  it('classifies every non-safe Plugin Action under the host-stamped caller policy', () => {
     const nonSafePluginActions = listActionSpecsForSurface('plugin').filter(
       (spec) => spec.safety !== 'safe',
     );
 
-    const callerPolicyActions = nonSafePluginActions.filter(
-      (spec) => spec.pluginCallerPolicy?.kind === 'caller',
-    );
-    const pluginTargetedAdministrationActions = nonSafePluginActions.filter(
-      (spec) => spec.pluginCallerPolicy?.kind === 'self_or_inspector_admin',
-    );
-    expect(pluginTargetedAdministrationActions.map((spec) => spec.id)).toEqual(['plugins.reload']);
-    expect(callerPolicyActions).toHaveLength(
-      nonSafePluginActions.length - pluginTargetedAdministrationActions.length,
-    );
+    expect(nonSafePluginActions).not.toHaveLength(0);
     expect(nonSafePluginActions.filter(
-      (spec) => spec.pluginCallerPolicy === undefined,
-    )).toHaveLength(0);
+      (spec) => spec.pluginCallerPolicy?.kind !== 'caller',
+    ).map((spec) => spec.id)).toEqual([]);
   });
 
   it('separates closed public targeted text from trusted plugin input', () => {

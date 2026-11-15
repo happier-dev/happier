@@ -116,15 +116,7 @@ describe('createActionExecutor plugin caller policy', () => {
     expect(nonSafePluginActions).not.toHaveLength(0);
     expect(nonSafePluginActions.filter((spec) => (
       spec.pluginCallerPolicy?.kind !== 'caller'
-    )).map((spec) => spec.id)).toEqual(['plugins.reload']);
-    expect(getActionSpec('plugins.reload').pluginCallerPolicy).toEqual({
-      kind: 'self_or_inspector_admin',
-      targetPluginIdField: 'pluginId',
-      administrativeCallers: [{
-        pluginId: 'happier.inspector',
-        contributionLocalId: 'inspector-app',
-      }],
-    });
+    )).map((spec) => spec.id)).toEqual([]);
   });
 
   it('fails closed without uninstall approval support and admits an interactive present user', async () => {
@@ -246,8 +238,11 @@ describe('createActionExecutor plugin caller policy', () => {
       proofArtifactId: context.presentUserApproval?.artifactId ?? null,
     }));
     let storedRequest: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    const sessionSendMessage = vi.fn<NonNullable<ActionExecutorDeps['sessionSendMessage']>>(async ({ localId }) => ({
+      status: 'accepted', localId: localId!,
+    }));
     const executor = createExecutor({
-      pluginsDevLoopAction,
+      pluginsDevLoopAction, sessionSendMessage,
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
         normalizeActionsSettingsV1({ v: 1 }), context),
       buildApprovalPreview: async ({ defaultPreview }) => ({
@@ -307,15 +302,20 @@ describe('createActionExecutor plugin caller policy', () => {
       artifactId: 'plugin-install-approval', decision: 'approve',
     }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'account-1', serverId: 'server-1',
     });
     expect(decided, JSON.stringify(decided)).toMatchObject({
       ok: true,
       result: { status: 'executed', execution: { ok: true, result: { proofArtifactId: 'plugin-install-approval' } } },
     });
     expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'agent-session-1', localId: 'approval-result:plugin-install-approval',
+      context: expect.objectContaining({ runtimeAccountId: 'account-1', serverId: 'server-1' }),
+    }));
   });
 
-  it.each(['ui', 'cli'] as const)('returns the ordinary install approval handle on %s with the default policy', async (surface) => {
+  it.each(['ui', 'cli'] as const)('keeps native UI install review separate from the CLI approval handle (%s)', async (surface) => {
     const requests: unknown[] = [];
     const executor = createActionExecutor({
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
@@ -327,6 +327,11 @@ describe('createActionExecutor plugin caller policy', () => {
       surface, authority: 'present_user', serverId: 'home-1', actionRequestId: 'default-install',
       actionCaller: { kind: 'host' },
     });
+    if (surface === 'ui') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+      expect(requests).toEqual([]);
+      return;
+    }
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
       result: { kind: 'approval_request_created', artifactId: 'install-review' } });
     expect(requests).toEqual([expect.objectContaining({ status: 'open', actionId: 'plugins.install',
@@ -457,59 +462,21 @@ describe('createActionExecutor plugin caller policy', () => {
     expect(pluginsDevLoopAction).not.toHaveBeenCalled();
   });
 
-  it('admits cross-plugin reload only from the exact Inspector administrative surface', async () => {
+  it('lets any host-stamped trusted plugin reload a different plugin through the same lifecycle owner', async () => {
     const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_reload' }));
     const executor = createExecutor({ pluginsDevLoopAction });
+    const caller = pluginCaller('acme.author', 'surface');
 
     await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
       surface: 'plugin',
-      actionCaller: pluginCaller('happier.inspector', 'inspector-app'),
+      actionCaller: caller,
     })).resolves.toEqual({ ok: true, result: { ok: true, kind: 'plugins_reload' } });
-    expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
 
-    pluginsDevLoopAction.mockClear();
-    for (const caller of [
-      // An Inspector clone reusing the administrative contribution local id.
-      pluginCaller('acme.inspector-clone', 'inspector-app'),
-      // The real Inspector calling from a contribution surface that is not the
-      // administrative one.
-      pluginCaller('happier.inspector', 'some-other-surface'),
-      // An arbitrary peer plugin.
-      pluginCaller('acme.author', 'surface'),
-    ]) {
-      await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
-        surface: 'plugin',
-        actionCaller: caller,
-      })).resolves.toEqual({
-        ok: false,
-        errorCode: 'plugin_action_caller_forbidden',
-        error: 'plugin_action_caller_forbidden',
-      });
-    }
-
-    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
-  });
-
-  it('rejects a target rewritten to a peer plugin after Action interception', async () => {
-    const pluginsDevLoopAction = vi.fn(async () => ({ ok: true, kind: 'plugins_reload' }));
-    const executor = createExecutor({
-      pluginsDevLoopAction,
-      interceptActionExecution: async () => ({
-        status: 'continue',
-        input: { pluginId: 'acme.victim' },
-      }),
+    expect(pluginsDevLoopAction).toHaveBeenCalledWith({
+      actionId: 'plugins.reload',
+      input: { pluginId: 'acme.target' },
+      context: expect.objectContaining({ actionCaller: caller, surface: 'plugin' }),
     });
-
-    await expect(executor.execute('plugins.reload', { pluginId: 'acme.author' }, {
-      surface: 'plugin',
-      actionCaller: pluginCaller('acme.author'),
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'plugin_action_caller_forbidden',
-      error: 'plugin_action_caller_forbidden',
-    });
-
-    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
   });
 
   it('retains the incumbent plugin binding as the authority against caller identity supplied in input', async () => {
@@ -518,20 +485,19 @@ describe('createActionExecutor plugin caller policy', () => {
 
     await expect(executor.execute('plugins.permissions.grants.request', {
       pluginId: 'acme.spoofed',
-      capability: 'network',
+      capability: 'credentials.materialize.raw',
       targetScope: { kind: 'account' },
       subject: { kind: 'general' },
       reason: 'spoofed caller identity must not reach the owner',
     }, {
       surface: 'plugin',
       actionCaller: pluginCaller('acme.author'),
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
       details: {
         issues: [
-          { code: 'invalid_value', path: ['capability'], acceptedValues: ['reviews.comments.write.direct', 'credentials.materialize.raw'] },
           { code: 'unrecognized_keys', path: [] },
         ],
       },

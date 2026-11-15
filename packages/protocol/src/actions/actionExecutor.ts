@@ -1195,13 +1195,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
   function pluginActionCallerPolicyFailure(
     spec: ActionSpec,
-    input: unknown,
     ctx: ActionExecutorContext,
   ): Extract<ActionExecuteResult, Readonly<{ ok: false }>> | null {
     // Incumbent safe Actions without a caller policy retain their released
     // behavior. An explicit policy is authoritative regardless of safety.
     if (ctx.surface !== 'plugin' || (spec.safety === 'safe' && !spec.pluginCallerPolicy)) return null;
-    return isPluginActionCallerPolicySatisfied(spec.pluginCallerPolicy, input, ctx.actionCaller)
+    return isPluginActionCallerPolicySatisfied(spec.pluginCallerPolicy, ctx.actionCaller)
       ? null
       : {
           ok: false,
@@ -2802,7 +2801,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (credentialFailure) return credentialFailure;
     const callerPolicyFailure = existingAdmission
       ? null
-      : pluginActionCallerPolicyFailure(spec, admittedInput, ctx);
+      : pluginActionCallerPolicyFailure(spec, ctx);
     if (callerPolicyFailure) {
       return actionId === 'execution.run.start'
         ? classifyExecutionRunStartFailure(callerPolicyFailure, 'noRunCreated')
@@ -7445,11 +7444,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         actionInputValidationFailure(parsedInitialInput.error),
       ));
     }
-    const initialPluginCallerPolicyFailure = pluginActionCallerPolicyFailure(
-      spec,
-      parsedInitialInput.data,
-      ctx,
-    );
+    const initialPluginCallerPolicyFailure = pluginActionCallerPolicyFailure(spec, ctx);
     if (initialPluginCallerPolicyFailure) {
       return settlePrepareResult(actionId, classifyExecutionRunStartPreDispatchFailure(actionId, initialPluginCallerPolicyFailure));
     }

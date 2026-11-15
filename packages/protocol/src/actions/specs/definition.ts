@@ -17,8 +17,6 @@ import type { ExternalActionTargetV1 } from '../externalActionApi.js';
 import { ActionSafetySchema } from '../safety.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from '../actionUiPlacements.js';
-import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
-import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { ActionApprovalSchema, ActionApprovalPolicySchema, resolveActionApprovalFlow } from '../actionApprovalMetadata.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionContextualDefaultsSchema } from '../contextualDefaults.js';
@@ -109,11 +107,6 @@ export const ActionSpecSurfaceBindingsSchema = lazyZodSchema(() => z.strictObjec
 }));
 export type ActionSpecSurfaceBindings = z.infer<typeof ActionSpecSurfaceBindingsSchema>;
 
-export const ActionPluginCallerAdministrativeSelectorSchema = lazyZodSchema(() => z.strictObject({
-  pluginId: asProtocolZod(PluginIdSchema),
-  contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
-}));
-
 /**
  * A host Action's explicit authority contract when it is callable by a
  * plugin. `caller` requires a current host-stamped plugin caller at the
@@ -121,19 +114,12 @@ export const ActionPluginCallerAdministrativeSelectorSchema = lazyZodSchema(() =
  * plugin materialization. Further identity projection occurs only where an
  * incumbent domain owner has caller-dependent authorization — for example the
  * Account-scoped Automation owner, which fences its own reads by Account and
- * current materialization rather than by which plugin is asking — and it never
- * grants authority over another plugin. `self_or_inspector_admin` is reserved
- * for the one plugin-targeted host Action and makes its exceptional Inspector
- * administration visible at the Action declaration owner.
+ * current materialization rather than by which plugin is asking. Plugins are
+ * trusted, so no policy names or compares plugin identities.
  */
 export const ActionPluginCallerPolicySchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('caller'),
-  }),
-  z.strictObject({
-    kind: z.literal('self_or_inspector_admin'),
-    targetPluginIdField: z.literal('pluginId'),
-    administrativeCallers: z.array(ActionPluginCallerAdministrativeSelectorSchema).check(z.minLength(1)),
   }),
 ]));
 export type ActionPluginCallerPolicy = z.infer<typeof ActionPluginCallerPolicySchema>;
@@ -560,26 +546,13 @@ export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
 /**
  * Evaluates the declaration-owned policy against host-stamped caller
  * provenance. Action input never manufactures, widens, or narrows caller
- * authority: it is read only to name the plugin the call *targets*, and the
- * target is then compared against the stamped caller.
+ * authority.
  */
 export function isPluginActionCallerPolicySatisfied(
   policy: ActionPluginCallerPolicy | undefined,
-  input: unknown,
   caller: ActionCaller | undefined,
 ): boolean {
-  if (!policy || caller?.kind !== 'plugin') return false;
-  if (policy.kind === 'caller') return true;
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-
-  const targetPluginId = (input as Readonly<Record<string, unknown>>)[policy.targetPluginIdField];
-  if (typeof targetPluginId !== 'string') return false;
-  if (targetPluginId === caller.pluginId) return true;
-
-  return policy.administrativeCallers.some((administrator) => (
-    administrator.pluginId === caller.pluginId
-    && administrator.contributionLocalId === caller.contributionLocalId
-  ));
+  return policy?.kind === 'caller' && caller?.kind === 'plugin';
 }
 
 export type ParsedActionSpec = z.infer<typeof ActionSpecSchema>;

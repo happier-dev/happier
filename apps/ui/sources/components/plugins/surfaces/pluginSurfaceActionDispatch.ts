@@ -2312,7 +2312,7 @@ export async function preparePluginSurfaceHostRead(input: DispatchPluginSurfaceA
     const spec = getActionSpec(actionId);
     const context = mountedHostActionContext(input, caller, null, actionId);
     if (!spec.surfaces.plugin || !spec.pluginCallerPolicy
-        || !isPluginActionCallerPolicySatisfied(spec.pluginCallerPolicy, input.input, context.actionCaller)) {
+        || !isPluginActionCallerPolicySatisfied(spec.pluginCallerPolicy, context.actionCaller)) {
         return failure('unavailable', 'plugin_action_caller_forbidden');
     }
     const prepare = input.hostAction?.execute.prepare;

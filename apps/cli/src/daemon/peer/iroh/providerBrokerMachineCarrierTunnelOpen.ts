@@ -1,3 +1,5 @@
+import { ProviderBrokerActionOpenResponseV3Schema, SignedProviderBrokerActionRouteGrantV3Schema, type ProviderBrokerActionOpenResponseV3, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { providerBrokerActionRouteGrantExpectedBindingV3, verifyProviderBrokerActionRouteGrantV3 } from '../mediation/verifyProviderBrokerRouteGrantV1';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
@@ -60,10 +62,11 @@ export type ProviderBrokerMachineCarrierTunnel = Readonly<{
   close(): Promise<void>;
   readFailureDiagnostic?(): Promise<MachineCarrierFailureDiagnostic | undefined>;
 }>;
-type BrokerOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerAccountOpenResponseV2;
-const BrokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema]);
-type BrokerAuthority = Extract<ProviderBrokerOpenResponseV1, { ok: true }>['authority'] | SignedProviderBrokerRouteGrantV2;
+type BrokerOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerAccountOpenResponseV2 | ProviderBrokerActionOpenResponseV3;
+const BrokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, ProviderBrokerActionOpenResponseV3Schema]);
+type BrokerAuthority = Extract<ProviderBrokerOpenResponseV1, { ok: true }>['authority'] | SignedProviderBrokerRouteGrantV2 | SignedProviderBrokerActionRouteGrantV3;
 function brokerAuthorityBinding(authority: BrokerAuthority) {
+  if (authority.payload.v === 3) return providerBrokerActionRouteGrantExpectedBindingV3(SignedProviderBrokerActionRouteGrantV3Schema.parse(authority));
   return authority.payload.v === 2
     ? providerBrokerRouteGrantExpectedBindingV2(SignedProviderBrokerRouteGrantV2Schema.parse(authority))
     : authorityBinding(SignedProviderBrokerRouteGrantV1Schema.parse(authority));
@@ -111,6 +114,11 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
       throw new MachineCarrierError('broker_initiator_mismatch', 'Provider broker authority is not bound to this Machine.');
     }
     const verifyAuthority = (value: BrokerAuthority, now: number, expectedAuthority = authority) => {
+      if (value.payload.v === 3) return verifyProviderBrokerActionRouteGrantV3({
+        authority: value, trustRoots: input.resolveTrustRoots(), nowMs: now,
+        expected: providerBrokerActionRouteGrantExpectedBindingV3(SignedProviderBrokerActionRouteGrantV3Schema.parse(expectedAuthority)),
+        authenticatedRemoteEndpointId: input.runtime.endpoint.endpointId,
+      });
       const personal = SignedProviderBrokerRouteGrantV2Schema.safeParse(value);
       return personal.success ? verifyProviderBrokerRouteGrantV2({
         authority: personal.data, trustRoots: input.resolveTrustRoots(), nowMs: now,
@@ -135,10 +143,6 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
       );
     }
 
-    const currentAuthority = verifyAuthority(authority, (input.nowMs ?? Date.now)());
-    if (!currentAuthority.valid) {
-      throw new MachineCarrierError(currentAuthority.reasonCode, 'Provider broker authority is no longer current.');
-    }
     const endpoint = brokerOpen.target.endpoint;
     /** Withdrawal stops ordinary streams before any remote retirement work. */
     let releasing = false;
@@ -197,7 +201,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     };
     const refreshHandshake = async () => {
       const requestId = randomUUID();
-      const consumerId = payload.consumer.kind === 'session' ? payload.consumer.sessionId : payload.consumer.executionRunId;
+      const consumerId = payload.consumer.kind === 'session' ? payload.consumer.sessionId : payload.consumer.kind === 'execution_run' ? payload.consumer.executionRunId : payload.consumer.operationId;
       const record = (details: Readonly<{
         outcome: 'started' | 'accepted' | 'refused' | 'failed';
         grantId?: string;
@@ -221,7 +225,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         throw error;
       }
     };
-    const admittedRun = payload.v === 2 && payload.consumer.kind === 'execution_run';
+    const admittedRun = payload.v === 3 || payload.v === 2 && payload.consumer.kind === 'execution_run';
     // A signed Run open owns its admission until the existing grant expiry.
     // Sessions still refresh before dial and for each later carrier stream.
     let firstHandshake = admittedRun ? handshake : refreshBrokerOpen ? await refreshHandshake() : null;
@@ -236,7 +240,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
           signal?.throwIfAborted();
           const verified = verifyAuthority(firstHandshake.authority, (input.nowMs ?? Date.now)());
           if (verified.valid) return firstHandshake;
-          if (verified.reasonCode !== 'grant_expired') {
+          if (payload.v === 3 || verified.reasonCode !== 'grant_expired') {
             throw new MachineCarrierError(verified.reasonCode, 'Provider broker authority is no longer current.');
           }
           firstHandshake = await refreshHandshake();
@@ -280,6 +284,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     };
     const retire = async (): Promise<void> => {
       if (releaseSettled) return;
+      if (payload.v === 3) { await close(); releaseSettled = true; return; }
       releasing = true;
       const requestId = randomUUID();
       // This is the only release condition that must precede runner Stop.

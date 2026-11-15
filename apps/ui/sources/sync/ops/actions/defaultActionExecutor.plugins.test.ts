@@ -472,21 +472,18 @@ describe('plugin-management Actions in the UI host', () => {
             executionRunTargetMachineId: 'admitted', actionRequestId: 'stale-inspector-list',
         })).toMatchObject({ ok: false, errorCode: 'plugin_mounted_caller_unavailable' });
     });
-    it('retains plugin caller policy and approval custody before root delivery', async () => {
+    it('retains approval custody before root delivery when a trusted plugin reloads another plugin', async () => {
         const executor = createDefaultActionExecutor();
         const context = { serverId, expectedAccountId: 'owner', surface: 'plugin' as const,
-            executionRunTargetMachineId: 'admitted', actionRequestId: 'inspector-reload' };
-        expect(await executor.execute('plugins.reload', { pluginId: 'other.plugin' }, {
-            ...context, actionCaller: caller,
-        })).toMatchObject({ ok: false, errorCode: 'plugin_action_caller_forbidden' });
+            executionRunTargetMachineId: 'admitted', actionRequestId: 'peer-reload' };
         const outcome = await executor.execute('plugins.reload', { pluginId: 'other.plugin' }, {
-            ...context, actionCaller: { ...caller, contributionLocalId: 'inspector-app' },
+            ...context, actionCaller: caller,
         });
         if (!outcome.ok) throw new Error(JSON.stringify(outcome));
         const approval = ActionApprovalRequestCreatedResultSchema.parse(outcome.result);
         expect(JSON.parse(homes.artifacts(serverId).readPlainBody(approval.artifactId)!)).toMatchObject({
             actionId: 'plugins.reload', status: 'open',
-            createdBy: { pluginId: caller.pluginId, contributionLocalId: 'inspector-app' },
+            createdBy: { pluginId: caller.pluginId, contributionLocalId: caller.contributionLocalId },
         });
         expect(homes.requestsFor('/v1/actions/plugins.reload')).toHaveLength(0);
     });

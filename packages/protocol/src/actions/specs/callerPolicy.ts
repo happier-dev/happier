@@ -5,14 +5,6 @@ import { isRuntimeActionIdV1, type ActionId } from '../actionIds.js';
 export const HOST_DOMAIN_PLUGIN_CALLER_POLICY: ActionPluginCallerPolicy = {
   kind: 'caller',
 };
-export const PLUGIN_RELOAD_CALLER_POLICY: ActionPluginCallerPolicy = {
-  kind: 'self_or_inspector_admin',
-  targetPluginIdField: 'pluginId',
-  administrativeCallers: [{
-    pluginId: 'happier.inspector',
-    contributionLocalId: 'inspector-app',
-  }],
-};
 /**
  * The one declaration census for host Actions with a caller policy on the
  * plugin surface.
@@ -22,9 +14,8 @@ export const PLUGIN_RELOAD_CALLER_POLICY: ActionPluginCallerPolicy = {
  * identity projection occurs only when the incumbent domain owner has
  * caller-dependent authorization — Account scope, publisher proof, and current
  * materialization are that owner's fences, and they do not depend on which
- * plugin is asking. Reload is the one plugin-*targeted* Action: it administers
- * a peer plugin's development generation, so its self scope and the exact
- * Inspector administrative surface live here rather than in any consumer.
+ * plugin is asking. Plugins are trusted, so a plugin may reload any installed
+ * development plugin; the reload effect owner qualifies the target.
  */
 export const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   Partial<Record<ActionId, ActionPluginCallerPolicy>>
@@ -53,7 +44,7 @@ export const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'usage.coach.dismiss': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'usage.coach.snooze': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'capture.view': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
-  'plugins.reload': PLUGIN_RELOAD_CALLER_POLICY,
+  'plugins.reload': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'plugins.permissions.grants.request': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'plugins.permissions.grants.revoke': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'automation.event.admit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
