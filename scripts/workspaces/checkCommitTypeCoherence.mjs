@@ -11,8 +11,10 @@
 // Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
 // runs directly on the machine that owns the repository. The changed-source owner returns before
 // compiler loading or admission for zero-TS packets, including finalization. For TS packets the
-// Unix CLI replaces itself with canonical shell admission before loading compiler modules or blobs;
-// the admitted checker and its API launcher reuse that reservation. Native Windows keeps its API path.
+// Unix CLI replaces itself with canonical shell admission before loading compiler modules or blobs, once it
+// knows the owner programs it may compile (changed files plus Git-grep importer candidates): they are
+// the admission identity's project set, so the broker reserves that set's measured kernel peak. The
+// admitted checker and its API launcher reuse that reservation. Native Windows keeps its API path.
 // Every compiler API, including imported and plain Node calls, uses the executor's
 // canonical admission. Admitted parents retain their reservation for this phase.
 //
@@ -210,7 +212,8 @@ function repository(repo) {
 
   // Files at `tree` with an import specifier that resolves (relative) or tail-matches (aliases and
   // workspace package subpaths) a changed module. Over-inclusion only costs check time.
-  function importersOf(tree, changed) {
+  // Git-only stage (no blob reads, no parser): files whose import strings end in a changed stem.
+  function importerCandidates(tree, changed) {
     const targets = [
       ...new Set(
         changed.map(({ path }) => {
@@ -219,7 +222,7 @@ function repository(repo) {
         }),
       ),
     ];
-    if (targets.length === 0) return [];
+    if (targets.length === 0) return { targets, candidates: [] };
     const stems = new Set(targets.map(target => posix.basename(target)));
     // Compile one pattern: a regex per changed stem exhausts Git's regex engine memory
     // on aggregate push ranges. Filter stems before loading candidate blobs instead.
@@ -254,6 +257,11 @@ function repository(repo) {
         ? [{ importer: location.slice(location.indexOf(':') + 1), match }]
         : [];
     });
+    return { targets, candidates };
+  }
+
+  function importersOf(tree, changed, { targets, candidates } = importerCandidates(tree, changed)) {
+    if (targets.length === 0) return [];
     const entries = treeEntries(tree);
     const blobs = readBlobs([...new Set(candidates.map(({ importer }) => entries.get(importer).oid))]);
     const specifiers = new Map();
@@ -384,6 +392,7 @@ function repository(repo) {
     readBlobs,
     layerFor,
     sliceOf,
+    importerCandidates,
     importersOf,
     groupRoots,
     typedRouteInputs,
@@ -402,16 +411,18 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups, beforeC
   const changed = slice.filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
   const result = { base, tree, changed: changed.length, roots: 0, unowned: [], fresh: [], groups: [], candidates: [] };
   if (changed.length === 0) return { ...result, ms: Date.now() - started };
-  beforeCompiler?.();
+  const treeIndex = git.treeEntries(tree);
+  const present = changed.filter(({ status }) => status !== 'D').map(({ path }) => path);
+  const discovery = git.importerCandidates(tree, changed);
+  // The admission identity's project set: the owner programs of the changed files and of every
+  // candidate importer, from Git's grep alone (no blob reads or parser before admission). A
+  // candidate that verification later drops can only add a program, so the reservation is never
+  // sized for fewer programs than the check compiles.
+  beforeCompiler?.([...git.groupRoots([...new Set([...present,
+    ...discovery.candidates.map(({ importer }) => importer)])], treeIndex).groups.keys()].sort());
   ts ??= require('typescript');
   const { API } = require('@typescript/native/sync');
-  const treeIndex = git.treeEntries(tree);
-  let roots = [
-    ...new Set([
-      ...changed.filter(({ status }) => status !== 'D').map(({ path }) => path),
-      ...git.importersOf(tree, changed),
-    ]),
-  ];
+  let roots = [...new Set([...present, ...git.importersOf(tree, changed, discovery)])];
   const { groups, unowned } = git.groupRoots(roots, treeIndex);
   result.candidates = [...groups].map(([id, files]) => ({ id, roots: files }));
   if (onlyGroups) for (const dir of groups.keys()) if (!onlyGroups.has(dir)) groups.delete(dir);
@@ -719,9 +730,9 @@ function main(argv) {
   let incoherent = 0;
   // This marker selects the re-entered CLI body; the API launcher still owns admission.
   // Replacing the process releases its heap while the canonical launcher queues.
-  const beforeCompiler = process.platform === 'win32' || argv.includes('--compiler-admitted') ? undefined : () => {
+  const beforeCompiler = process.platform === 'win32' || argv.includes('--compiler-admitted') ? undefined : projects => {
     const launcher = fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url));
-    process.execve(launcher, [launcher, '--heavyweight-admission', '--class=compilation',
+    process.execve(launcher, [launcher, '--heavyweight-admission', '--class=compilation', `--projects=${projects.join('\n')}`,
       `--machine=${process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
       '--exec-admitted', '--', process.execPath, ...process.execArgv, fileURLToPath(import.meta.url),
       '--compiler-admitted', ...argv], process.env);
