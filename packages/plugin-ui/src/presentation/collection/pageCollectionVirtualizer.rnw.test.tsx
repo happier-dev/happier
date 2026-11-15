@@ -8,7 +8,7 @@ import type { CollectionVirtualizerRequest } from './collectionVirtualizer.js';
 import { PageCollectionVirtualizer } from './pageCollectionVirtualizer.js';
 
 describe('page collection initial geometry', () => {
-  it('reveals the pinned row with its section header after the page position is known', async () => {
+  it('paints its first window at the page top before the page position is known, and keeps it once placed', async () => {
     // Physical page measurement is the asynchronous platform boundary.
     let resolveSpan!: (span: Readonly<{ top: number }>) => void;
     const measured = new Promise<Readonly<{ top: number }>>(resolve => { resolveSpan = resolve; });
@@ -28,8 +28,9 @@ describe('page collection initial geometry', () => {
     const mount = mountThroughReactNativeWeb(<PageCollectionVirtualizer request={request} tracker={tracker}
       geometry={{ rowHeight: () => 72, headerHeight: 40, width: 390, defaultRowHeight: 72 }} tabStopKey="uptime" />);
     try {
-      expect(mount.container.querySelector('[data-testid="row"]')).toBeNull();
-      expect(mount.container.querySelector('[data-testid="heading"]')).toBeNull();
+      // One rule with the page grid: until the page places the list, it stands at the page's top.
+      expect([...mount.container.querySelectorAll('[data-testid]')].map(node => node.textContent))
+        .toEqual(['Monitoring', 'Uptime Kuma']);
       await act(async () => { resolveSpan({ top: 100 }); await measured; });
       expect([...mount.container.querySelectorAll('[data-testid]')].map(node => node.textContent))
         .toEqual(['Monitoring', 'Uptime Kuma']);

@@ -35,14 +35,28 @@ type CollectionVirtualizerBase<Item> = Readonly<{
 
 /** The already-filtered List window, its semantic cells and platform presentation facts. */
 export type CollectionVirtualizerRequest<Item> = CollectionVirtualizerBase<Item> & (
-  | Readonly<{ kind: 'flat'; items: readonly Item[] }>
+  | Readonly<{
+      kind: 'flat';
+      items: readonly Item[];
+      /** A page list draws its rows on one sheet; windowed rows and their spacers stand inside it. */
+      renderRows?(rows: ReactNode): ReactNode;
+    }>
   | Readonly<{
       kind: 'sections';
-      sections: readonly Readonly<{ key: string; title?: string; data: readonly Item[] }>[];
+      /**
+       * `section`: consecutive sections naming one page section (a part) share one sheet under its heading when the
+       * list draws sheets (`renderSectionRows`). Each section's header then stands inside that sheet, before its rows.
+       */
+      sections: readonly Readonly<{ key: string; title?: string; data: readonly Item[]; section?: Readonly<{ key: string; title: string }> }>[];
       /** Section headers share the rows' scroller and stay pinned where they can paint their ground (not inside a translucent material). */
       renderSectionHeader(sectionIndex: number): ReactNode;
-      /** A page list draws each section's rows on its own sheet; windowed rows and their spacers stand inside it. */
+      /**
+       * A page list draws each section's rows on its own sheet, or a part's groups on their one sheet (`sectionIndex`
+       * is the part's first section); windowed rows and their spacers stand inside it.
+       */
       renderSectionRows?(sectionIndex: number, rows: ReactNode): ReactNode;
+      /** A part's heading, above its sheet (`sectionIndex` is the part's first section). */
+      renderPartHeading?(sectionIndex: number): ReactNode;
     }>
 );
 

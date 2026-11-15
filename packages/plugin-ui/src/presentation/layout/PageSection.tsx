@@ -295,6 +295,26 @@ export type HappierPageSheetGroupProps = Readonly<{
   testID?: string;
 }>;
 
+/**
+ * The light, content-width pause between two {@link HappierPageSheetGroup}s on one sheet. A windowed page list draws
+ * it before a group's sub-heading itself, so the pause is measured with the group it opens.
+ */
+export function HappierPageSheetGroupSeparator(props: Readonly<{ color: string; insetPx: number }>): ReactElement {
+  return (
+    <View
+      role="separator"
+      style={{
+        height: happierPageRowDividerWidth(),
+        backgroundColor: props.color,
+        marginLeft: props.insetPx,
+        marginRight: props.insetPx,
+        marginTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx,
+        marginBottom: HAPPIER_PAGE_METRICS.groupSeparatorGapPx,
+      }}
+    />
+  );
+}
+
 function isSheetGroup(element: ReactElement): element is ReactElement<HappierPageSheetGroupProps> {
   return element.type === HappierPageSheetGroup;
 }
@@ -363,19 +383,7 @@ export function HappierPageSheet(props: HappierPageSheetProps) {
         {/* Normalize row keys once, whether or not a peer group is present. */}
         {children.map((child, index) => (isSheetGroup(child) ? (
               <Fragment key={child.key ?? `page-sheet-group-${index}`}>
-                {index > 0 ? (
-                  <View
-                    role="separator"
-                    style={{
-                      height: happierPageRowDividerWidth(),
-                      backgroundColor: props.colors.groupDivider,
-                      marginLeft: rowInsetPx,
-                      marginRight: rowInsetPx,
-                      marginTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx,
-                      marginBottom: HAPPIER_PAGE_METRICS.groupSeparatorGapPx,
-                    }}
-                  />
-                ) : null}
+                {index > 0 ? <HappierPageSheetGroupSeparator color={props.colors.groupDivider} insetPx={rowInsetPx} /> : null}
                 {cloneElement(child, { children: withRowDividers(child.props.children) })}
               </Fragment>
             ) : cloneElement(child, {

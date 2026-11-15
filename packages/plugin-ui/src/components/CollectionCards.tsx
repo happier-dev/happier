@@ -1015,7 +1015,7 @@ function PageWindowedGridRow<Item>(props: Readonly<{
   testID?: string;
 }>): ReactElement {
   const { rows, keyOf, estimate, cardWidth, tracker } = props;
-  const { root, span, window, measure } = usePageWindow(tracker);
+  const { root, span, window, measure, near: nearPage } = usePageWindow(tracker);
   const [measured, setMeasured] = useState<Readonly<{ cardWidth: number; heights: ReadonlyMap<string, number> }>>(
     () => ({ cardWidth, heights: NO_HEIGHTS }),
   );
