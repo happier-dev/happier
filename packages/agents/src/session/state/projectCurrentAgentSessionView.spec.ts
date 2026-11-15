@@ -1,4 +1,4 @@
-import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol';
+import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { buildHappierReplayPromptFromDialog } from '../../sessions/replay/happierReplayPrompt.js';
@@ -34,6 +34,21 @@ const CLAUDE_NATIVE_VIEW = {
 } as const;
 
 describe('projectCurrentAgentSessionView — one native resume identity', () => {
+  it('publishes the target Agent in both owner and shared metadata after a cutover', () => {
+    const next = projectCurrentAgentSessionView({
+      path: '/work',
+      host: 'machine',
+      flavor: 'muse',
+      agentPresentation: { agentId: 'muse' },
+    }, { agentId: 'pi', agentScopedCurrentState: 'clear' });
+
+    const owner = createSessionOwnerMetadataV1({ metadata: next });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) throw new Error('Expected target owner metadata');
+    expect(owner.ownerMetadata.workspace?.flavor).toBe('pi');
+    expect(projectSessionSharedMetadataV1({ metadata: next }).agentPresentation?.agentId).toBe('pi');
+  });
+
   it('emits only the target Agent key and drops the source Agent key and log path', () => {
     const next = projectCurrentAgentSessionView(CLAUDE_NATIVE_VIEW, {
       agentId: 'codex',

@@ -130,7 +130,7 @@ export function projectCurrentAgentSessionView<TMetadata extends SessionMetadata
   // catalog-declared native session-log path, so the target's key below is the
   // only one that can remain.
   let next = clearSessionStateFieldFromMetadata(
-    { ...metadata, flavor: params.agentId } as SessionMetadata,
+    { ...metadata, flavor: params.agentId, agentPresentation: { agentId: params.agentId } } as SessionMetadata,
     'identity.providerSessionId',
   ) as Record<string, unknown>;
 
