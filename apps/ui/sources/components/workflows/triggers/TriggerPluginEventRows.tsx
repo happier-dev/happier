@@ -42,6 +42,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     guidedPreset?: boolean;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
+    onEditSeedApplied?: React.ComponentProps<typeof PluginEventAutomationEditor>['onEditSeedApplied'];
 }>) {
     const [inlineEditing, setInlineEditing] = React.useState(false);
     const editing = props.editing ?? inlineEditing;
@@ -91,6 +92,7 @@ export function TriggerPluginEventRows(props: Readonly<{
                 value={props.when.value} seed={needsSeed ? props.initialEventEditSeed ?? seedRead.seed : null} initialEventRef={eventRef ?? null}
                 authoringMachineId={props.initialEventSeed ? props.initialEventSeed.monitoringMachineId ?? null : props.machineId} serverId={props.serverId}
                 initialSetupSeed={props.initialEventSeed}
+                onEditSeedApplied={props.onEditSeedApplied}
                 guidedPreset={props.guidedPreset}
                 observationOnly={props.when.observationOnly}
                 maxHeight={props.editorMaxHeight}

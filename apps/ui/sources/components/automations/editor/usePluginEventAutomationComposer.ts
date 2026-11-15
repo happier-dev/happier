@@ -41,6 +41,7 @@ import {
 } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 import {
+    buildPluginEventAutomationTriggerInput,
     createPluginEventAutomationAuthoringDraft,
     resolveCurrentPluginEventAutomationEligibleEvent,
     supportsPluginEventAutomationObservationTransport,
@@ -270,6 +271,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     projectionPhase: DaemonMergedProjectionPhase;
     projectionInputs: DaemonMergedProjectionInputs | null;
     initialEditSeed?: PluginEventAutomationEditSeed | null;
+    /** The original private value, published once when the existing edit seed is applied. */
+    onEditSeedApplied?: (trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>, seed: PluginEventAutomationEditSeed) => void;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     /** The guided caller has already bound every setup operand. */
@@ -851,12 +854,18 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSourceStatus('configured');
         setSourceFailure(null);
         appliedEditSeedKeyRef.current = editSeedKey;
+        if (params.onEditSeedApplied) {
+            const trigger = buildPluginEventAutomationTriggerInput({ eligibleEvents, draft: authoringDraft, watcherOrigin });
+            if (trigger) params.onEditSeedApplied({ ...trigger, enabled: initialEditSeed.enabled }, initialEditSeed);
+        }
         advanceRevision();
     }, [
         editSeedKey,
         editSeedEvent,
         eventCatalogStatus,
+        eligibleEvents,
         initialEditSeed,
+        params.onEditSeedApplied,
         seededWebhookBinding,
         watcherCandidates,
     ]);

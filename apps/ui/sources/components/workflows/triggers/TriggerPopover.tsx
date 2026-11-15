@@ -142,6 +142,7 @@ type TriggerPopoverBaseProps = Readonly<{
     initialActionTargets?: readonly TriggerTargetV1[];
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
+    onEditSeedApplied?: React.ComponentProps<typeof TriggerPluginEventRows>['onEditSeedApplied'];
     /**
      * The Machine whose options an Action's fields and "A session…" read: the session's own Machine,
      * or the trigger set's Runs on Machine.
@@ -548,6 +549,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                 <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
                     machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed}
                     initialEventEditSeed={props.initialEventEditSeed}
+                    onEditSeedApplied={props.onEditSeedApplied}
                     eventEdit={props.eventEdit} activityEvent={props.activityEvent}
                     editing onEditingChange={setEventEditing} editorMaxHeight={maxHeight} />
             ) : (
@@ -648,6 +650,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 testID={props.testID} when={when} onChange={setWhen} machineId={props.machineId ?? null}
                                 serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed}
                                 initialEventEditSeed={props.initialEventEditSeed}
+                                onEditSeedApplied={props.onEditSeedApplied}
                                 onEditingChange={setEventEditing} /> : null}
                             {(when.kind === 'prComment' || when.kind === 'ciFailed') && props.sessionId !== null ? (
                                 <SessionTriggerPullRequestPicker

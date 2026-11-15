@@ -2047,6 +2047,12 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         workflowDefinitionId={saved?.definitionId}
                         set={triggers.set}
                         draft={triggers.draft}
+                        onEditSeedApplied={(trigger, seed) => {
+                            const current = snapshotRef.current;
+                            if (current) snapshotRef.current = { ...current, triggers: triggers.captureSnapshot(undefined, {
+                                triggerId: seed.triggerId, revision: seed.expectedTriggerRevision, trigger,
+                            }) };
+                        }}
                         onChangeDraft={(next) => {
                             editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
                         }}

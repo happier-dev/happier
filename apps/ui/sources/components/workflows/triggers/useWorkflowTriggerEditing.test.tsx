@@ -273,6 +273,41 @@ afterEach(async () => {
 });
 
 describe('workflow trigger editing lifetime', () => {
+    it('restores a demand-loaded private Event value through Undo and Redo before and after Save', async () => {
+        const original = { ...privateEvent, maximumObservationAgeMs: 120_000 };
+        const savedId = AutomationTriggerIdSchema.parse('saved-private-event');
+        seed(WorkflowTriggerSetV1Schema.parse({ ...set, triggers: [persistedTrigger(savedId, original)] }));
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'private-loaded-history', projectTarget }));
+        await flushHookEffects();
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: null }]);
+        // The Event editor already read this private input before the person changes it.
+        const before = hook.getCurrent().captureSnapshot(undefined, { triggerId: savedId, revision: 1, trigger: original });
+        expect(before.rows).toMatchObject([{ trigger: original }]);
+        expect(hook.getCurrent().dirty).toBe(false);
+        const changed = { ...original, maximumObservationAgeMs: 120_001 };
+        const { enabled: _enabled, ...changedDefinition } = changed;
+        const next = editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'update', triggerId: savedId, trigger: changedDefinition });
+        const after = hook.getCurrent().captureSnapshot(next);
+        await act(async () => hook.getCurrent().setDraft(next));
+        await act(async () => { hook.getCurrent().restoreSnapshot(before); });
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: original }]);
+        expect(hook.getCurrent().dirty).toBe(false);
+        await act(async () => { hook.getCurrent().restoreSnapshot(after); });
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: changed }]);
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(hook.getCurrent().captureSnapshot(undefined, { triggerId: savedId, revision: 1, trigger: original }).rows)
+            .toMatchObject([{ trigger: changed }]);
+        await act(async () => { hook.getCurrent().restoreSnapshot(before); });
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: original }]);
+        expect(hook.getCurrent().draft.updates[savedId]?.trigger).toMatchObject({ maximumObservationAgeMs: 120_000 });
+        expect(hook.getCurrent().dirty).toBe(true);
+        await act(async () => { hook.getCurrent().restoreSnapshot(WorkflowDraftTriggerSnapshotV1Schema.parse(after)); });
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ trigger: changed }]);
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(writes).toHaveLength(1);
+    });
+
     it('settles a private Event Save and preserves Undo/Redo before and after acknowledgement', async () => {
         const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'private-save', projectTarget }));
         const before = hook.getCurrent().captureSnapshot();

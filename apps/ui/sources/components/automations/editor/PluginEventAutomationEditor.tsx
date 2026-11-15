@@ -151,6 +151,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
     clientId: string;
     value: PluginEventDefinitionInput | null;
     seed: PluginEventAutomationEditSeed | null;
+    onEditSeedApplied?: Parameters<typeof usePluginEventAutomationComposer>[0]['onEditSeedApplied'];
     /** Intent from retained activity; source setup still comes from the current catalog's real Action. */
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
@@ -202,6 +203,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         projectionPhase: projection.phase,
         projectionInputs: projection.inputs,
         initialEditSeed: currentSeed,
+        onEditSeedApplied: props.onEditSeedApplied,
         initialEventRef: props.initialEventRef,
         initialSetupSeed: props.initialSetupSeed,
         guidedPreset: props.guidedPreset,

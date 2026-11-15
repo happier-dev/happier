@@ -24,6 +24,7 @@ import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDae
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -32,6 +33,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
@@ -48,6 +50,9 @@ const MATERIALIZATION_ID = 'github-materialization-a';
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
+// The portal is a native boundary; the pushed Event page and its composer stay real.
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
 const { publishDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
@@ -300,6 +305,31 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
+    it('publishes the original private edit input through the pushed Event page before newer draft values', async () => {
+        const { TriggerPopover } = await import('@/components/workflows/triggers/TriggerPopover');
+        const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult() });
+        const event = eligibleEvent();
+        const seed = { ...editSeed(event), maximumObservationAgeMs: 120_000 };
+        const loaded: AutomationTriggerDefinitionInput[] = [];
+        const screen = await renderScreen(<TriggerPopover testID="loaded-private-event" anchorRef={React.createRef()}
+            onRequestClose={() => {}} whenKinds={['pluginEvent']} sessionId={null} showThen={false}
+            initial={{ when: { kind: 'pluginEvent', value: null, eventRef: seed.eventRef }, enabled: true,
+                then: { kind: 'runWorkflow', ref: 'workflow-1', inputs: {} } }}
+            workflowOptions={[]} machineId={WATCHER_MACHINE_ID} serverId={serverId}
+            eventEdit={{ automationId: seed.automationId, triggerId: seed.triggerId }} initialEventEditSeed={seed}
+            onEditSeedApplied={(trigger) => { loaded.push(trigger); }} onSubmit={async () => {}} />);
+        await screen.pressByTestIdAsync('loaded-private-event-configure-event');
+        const model = () => screen.findByType(InlinePluginEventEditor).props.model as ReturnType<typeof usePluginEventAutomationComposer>;
+        await waitForHomeGovernance(() => expect(model().sourceStatus).toBe('configured'));
+        expect(loaded).toMatchObject([{ kind: 'pluginEvent', sourceConfig: seed.source.sourceConfig,
+            maximumObservationAgeMs: 120_000, observationTransport: { kind: 'durablePush', webhookEndpointId: WEBHOOK_ENDPOINT_ID } }]);
+        await act(async () => model().setMaximumObservationAgeMsText('120001'));
+        expect(model().createDraft?.draft.maximumObservationAgeMs).toBe(120_001);
+        expect(loaded).toMatchObject([{ maximumObservationAgeMs: 120_000 }]);
+        expect(endpointReads()).toHaveLength(1);
+    });
+
     it('preserves pending plugin availability until the Event catalog answers', async () => {
         const event = eligibleEvent();
         const inputs = publishDaemonMergedProjectionInputs({

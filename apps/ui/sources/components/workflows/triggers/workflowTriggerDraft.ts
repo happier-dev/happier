@@ -44,8 +44,8 @@ export type WorkflowTriggerSnapshot = Readonly<Omit<WorkflowDraftTriggerSnapshot
     rows: readonly Readonly<WorkflowDraftTriggerSnapshotV1['rows'][number]>[];
 }>;
 
-/** Private inputs accepted in this editor, tied to the saved row they describe. */
-export type WorkflowTriggerAcknowledgedDefinitions = ReadonlyMap<AutomationTriggerId, Readonly<{
+/** Private inputs loaded or accepted in this editor, tied to the saved row they describe. */
+export type WorkflowTriggerKnownDefinitions = ReadonlyMap<AutomationTriggerId, Readonly<{
     revision: number;
     trigger: AutomationTriggerDefinition;
 }>>;
@@ -60,7 +60,7 @@ export class WorkflowTriggerSnapshotRestoreError extends Error {
 }
 
 function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][number],
-    acknowledged?: WorkflowTriggerAcknowledgedDefinitions): AutomationTriggerDefinitionInput | null {
+    acknowledged?: WorkflowTriggerKnownDefinitions): AutomationTriggerDefinitionInput | null {
     switch (saved.kind) {
         case 'schedule': return { kind: saved.kind, schedule: saved.schedule, enabled: saved.enabled };
         case 'sessionLifecycle': return { kind: saved.kind, sourceSessionId: saved.sourceSessionId, events: saved.events,
@@ -80,7 +80,7 @@ export function captureWorkflowTriggerSnapshot(
     set: WorkflowTriggerSetV1 | null,
     draft: WorkflowTriggerDraft,
     identify: (clientId: string, triggerId?: AutomationTriggerId) => WorkflowTriggerSnapshotIdentity,
-    acknowledged?: WorkflowTriggerAcknowledgedDefinitions,
+    acknowledged?: WorkflowTriggerKnownDefinitions,
 ): WorkflowTriggerSnapshot {
     const rows: WorkflowTriggerSnapshot['rows'][number][] = [];
     for (const saved of set?.triggers ?? []) {
@@ -101,7 +101,7 @@ export function captureWorkflowTriggerSnapshot(
 
 /** Rebase a history snapshot onto the current saved set after any successful writes. */
 export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null, snapshot: WorkflowTriggerSnapshot,
-    acknowledged?: WorkflowTriggerAcknowledgedDefinitions): WorkflowTriggerDraft {
+    acknowledged?: WorkflowTriggerKnownDefinitions): WorkflowTriggerDraft {
     const adds: WorkflowTriggerDraftAdd[] = [];
     const updates: Record<string, WorkflowTriggerDraftUpdate> = {};
     const retained = new Set<AutomationTriggerId>();

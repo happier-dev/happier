@@ -49,6 +49,7 @@ export type WorkflowTriggerSectionProps = Readonly<{
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
+    onEditSeedApplied?: React.ComponentProps<typeof TriggerPopover>['onEditSeedApplied'];
     status: 'loading' | 'ready' | 'failed';
     onRetry: () => void;
     /** The steps have unsaved changes, so the description adds "Save to include your changes." */
@@ -301,6 +302,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     sessionId={null}
                     showThen={false}
                     initial={initial}
+                    onEditSeedApplied={props.onEditSeedApplied}
                     workflowOptions={[]}
                     machineId={runsOn?.machineId ?? null}
                     {...(row?.kind === 'saved' && props.set && initial?.when.kind === 'pluginEvent'
