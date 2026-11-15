@@ -35,7 +35,7 @@ export type TimelineProps<Item> = Readonly<{
   accessibilityLabelKey?: string;
   header?: ReactNode;
   empty?: ReactNode;
-  /** Content after the stream, on the sentences' column, scrolling with its rows. */
+  /** Content after the stream, on the sentences' column, scrolling with its rows; with no event, on the page's edge. */
   endContent?: ReactNode;
   /** Delegates keyed prepend anchoring to the shared List owner. */
   preserveVisibleContentPositionOnPrepend?: boolean;
@@ -139,6 +139,8 @@ export function Timeline<Item>({ renderItem, endContent, timeAlign = 'sentence',
   const theme = usePluginTheme();
   const lastIndex = props.items.length - 1;
   const sentenceColumn = { paddingLeft: TIMELINE_METRICS.markerPx + theme.spacing.medium };
+  // With no event there is no rail to line up with, so what follows stands where the empty state does.
+  const endColumn = props.items.length === 0 ? undefined : sentenceColumn;
   const inlineLabel = resolveAuthorText(usePluginTranslation(), props.accessibilityLabel, props.accessibilityLabelKey);
   if (inline) {
     // In place, inside the page's own scroller: the same rows and rail, no second scroll owner.
@@ -155,7 +157,7 @@ export function Timeline<Item>({ renderItem, endContent, timeAlign = 'sentence',
             ))}
           </HappierList>
         )}
-        {endContent === undefined ? null : <View style={sentenceColumn}>{endContent}</View>}
+        {endContent === undefined ? null : <View style={endColumn}>{endContent}</View>}
       </View>
     );
   }
@@ -165,7 +167,7 @@ export function Timeline<Item>({ renderItem, endContent, timeAlign = 'sentence',
       // The rows' own inset is the rhythm, so the rail runs unbroken from one marker to the next.
       density="flush"
       {...(endContent === undefined ? {} : {
-        endContent: <View style={sentenceColumn}>{endContent}</View>,
+        endContent: <View style={endColumn}>{endContent}</View>,
       })}
       renderItem={(item: Item, index: number) => (
         <View role="listitem">

@@ -548,9 +548,10 @@ function FilesPanel({
     <Stack gap="small">
       <PageFailureBanner state={state} />
       <SettledReadEvidence state={iterations} />
+      {/* The same quiet line GitHub's Files keeps for its progress: a fact about the page, never the page's lead. */}
       <Text
         variant="micro"
-        tone="neutral"
+        tone="secondary"
         valueKey={currentIterationId === undefined
           ? 'plugins.azureDevops.ui.noComparisonIteration'
           : 'plugins.azureDevops.ui.comparingIteration'}

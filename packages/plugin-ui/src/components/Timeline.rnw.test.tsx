@@ -88,4 +88,50 @@ describe('Timeline', () => {
       await page.dispose();
     }
   });
+  it('stands the end content on the page edge when no event draws the rail, and on the sentences beside one', async () => {
+    // The left inset an element's box starts at inside the surface (its own padding excluded), read from the inline
+    // styles the adapter writes.
+    const inset = (element: Element | null): number => {
+      let total = 0;
+      for (let node = element?.parentElement ?? null; node !== null && node !== document.body; node = node.parentElement) {
+        total += Number.parseFloat(node.style.paddingLeft || '0') + Number.parseFloat(node.style.marginLeft || '0');
+      }
+      return total;
+    };
+    const render = (items: readonly string[]) => createPluginUiTestkit({
+      identity: { instanceId: `timeline-end-${items.length}`, mountNonce: `timeline-end-${items.length}` },
+      authorPlugin: { id: 'example.timeline', version: '0.0.0' },
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      surface: defineUiSurface(() => (
+        <Timeline
+          accessibilityLabel="Comments"
+          items={items}
+          keyForItem={(item) => item}
+          header={<Button title="Read again" onPress={() => undefined} />}
+          empty={<Text variant="label">No comments yet</Text>}
+          endContent={<Button title="Publish comment" onPress={() => undefined} />}
+          renderItem={(item) => ({ glyph: <Icon name="check" />, heading: <Text variant="label">{item}</Text> })}
+        />
+      )),
+    });
+    const empty = await render([]);
+    let pageEdge: number;
+    try {
+      await expect(empty.getByText('No comments yet')).resolves.toBeDefined();
+      // An empty stream has no rail to hang a sentence column on: the composer shares the header's edge.
+      pageEdge = inset(document.querySelector('[aria-label="Read again"]'));
+      expect(inset(document.querySelector('[aria-label="Publish comment"]'))).toBe(pageEdge);
+    } finally {
+      await empty.dispose();
+    }
+    const stream = await render(['commented']);
+    try {
+      await expect(stream.getByText('commented')).resolves.toBeDefined();
+      // Beside events it stays on the sentences' column, past the rail's markers.
+      expect(inset(document.querySelector('[aria-label="Publish comment"]'))).toBeGreaterThan(pageEdge);
+    } finally {
+      await stream.dispose();
+    }
+  });
 });
