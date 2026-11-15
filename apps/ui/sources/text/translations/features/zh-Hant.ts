@@ -8447,6 +8447,18 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             title: "這裡執行的內容",
             description: ({ count }: { count: number }) => count === 1 ? "這台機器上執行著 1 個環境。" : `這台機器上執行著 ${count} 個環境。`,
         },
+        machineDataDisclosure: {
+            title: "離開這台機器的內容",
+            e2eeDescription: "此帳戶已端對端加密。",
+            plainDescription: "此帳戶未端對端加密。",
+            daemonSends: "守護程序傳送",
+            daemonSendsDetail: "主機名稱和版本、作業系統、就緒狀態、服務數量和非機密端點",
+            devicesRead: "只有你的裝置能讀取",
+            devicesReadDetail: "機器詳細資料、守護程序狀態和工作階段內容",
+            serverReads: "Happier 伺服器能讀取",
+            serverReadsE2ee: "ID、類型、狀態、時間和數量；絕不包括名稱、路徑、命令、輸出或機密",
+            serverReadsPlain: "機器詳細資料、守護程序狀態和工作階段內容",
+        },
         machineFleetUpdates: {
             title: "更新",
             description: "此 Home 中每台機器上等待安裝的作業系統套件。Happier 本身的 App、CLI 與常駐程式更新仍在 設定 → 更新 中。",

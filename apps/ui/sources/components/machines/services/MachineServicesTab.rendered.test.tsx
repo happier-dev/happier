@@ -817,14 +817,15 @@ describe('MachineServicesTab rendered production wiring', () => {
         await act(async () => { pending.resolve({ body: { ok: true, items: [], nextCursor: null } }); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.groups.environmentUnavailable')));
         expect(screen.findHostByTestId('machine-services-environment-hidden-environment:open')).toBeNull();
-        // The row's disclosure says whether its services are shown, before and after the person opens it.
+        // The row's disclosure says whether its services are shown: open on arrival (lab dMachineSvc), and the person
+        // can put them away.
         const disclosure = () => screen.findHostByTestId('machine-services-environment-hidden-environment:disclosure');
         const expanded = () => disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded;
-        expect(expanded()).toBe(false);
-        expect(screen.findHostByTestId('machine-service-web')).toBeNull();
-        await screen.pressByTestIdAsync('machine-services-environment-hidden-environment');
-        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
         expect(expanded()).toBe(true);
+        expect(screen.findHostByTestId('machine-service-web')).not.toBeNull();
+        await screen.pressByTestIdAsync('machine-services-environment-hidden-environment');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).toBeNull());
+        expect(expanded()).toBe(false);
         expect(router.push).not.toHaveBeenCalled();
     });
 
@@ -845,20 +846,23 @@ describe('MachineServicesTab rendered production wiring', () => {
             authority: 'project', lifecyclePurpose: 'deployment', environmentId: environment.id,
         })] }));
         const { screen } = await mount();
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Storefront · Production'));
-        // One row per Environment (lab `services/list`): its services stay under it until the person opens the row.
+        // The app is the band (lab dMachineSvc "billing-api · 2 environments · 5 services"); its Environment row says the
+        // Environment, with its services under it on arrival.
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Storefront'));
+        expect(screen.getTextContent()).toContain([t('machineServices.groups.environments', { count: 1 }),
+            t('machineServices.environmentRow.services', { count: 1 })].join(' · '));
+        expect(screen.getTextContent()).not.toContain('Storefront · Production');
         expect(screen.findHostByTestId(`machine-services-environment-${environment.id}`)).not.toBeNull();
-        expect(screen.findHostByTestId('machine-service-web')).toBeNull();
-        expect(screen.getTextContent()).toContain(t('machineServices.environmentRow.services', { count: 1 }));
+        expect(screen.findHostByTestId('machine-service-web')).not.toBeNull();
         // Its disclosure says whether its services are shown.
         const disclosure = () => screen.findHostByTestId(`machine-services-environment-${environment.id}:disclosure`);
-        expect(disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded).toBe(false);
-        await screen.pressByTestIdAsync(`machine-services-environment-${environment.id}`);
-        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
         expect(disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded).toBe(true);
+        await screen.pressByTestIdAsync(`machine-services-environment-${environment.id}`);
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).toBeNull());
+        expect(disclosure()?.props['aria-expanded'] ?? disclosure()?.props.accessibilityState?.expanded).toBe(false);
         const linkId = `machine-services-environment-${environment.id}:open`;
         expect(screen.findHostByTestId(linkId)?.props.accessibilityLabel)
-            .toBe(`${t('machineServices.groups.openEnvironment')}, Storefront · Production`);
+            .toBe(`${t('machineServices.groups.openEnvironment')}, Production`);
         await screen.pressByTestIdAsync(linkId);
         expect(router.push).toHaveBeenCalledWith({ pathname: '/deployments/[projectSourceId]', params: {
             serverId, projectSourceId: 'shop-source', deploymentEnvironment: environment.id,

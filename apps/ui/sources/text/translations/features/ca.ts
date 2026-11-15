@@ -8458,6 +8458,18 @@ const machineDetailPageTranslations = { ca: translated({
             title: "Què s’hi executa",
             description: ({ count }: { count: number }) => count === 1 ? "1 entorn s’executa en aquesta màquina." : `${count} entorns s’executen en aquesta màquina.`,
         },
+        machineDataDisclosure: {
+            title: "Què surt d’aquesta màquina",
+            e2eeDescription: "Aquest compte està xifrat d’extrem a extrem.",
+            plainDescription: "Aquest compte no està xifrat d’extrem a extrem.",
+            daemonSends: "El daemon envia",
+            daemonSendsDetail: "Nom i versió de l’amfitrió, sistema operatiu, disponibilitat, recompte de serveis i punts d’accés no secrets",
+            devicesRead: "Només els teus dispositius poden llegir",
+            devicesReadDetail: "Detalls de la màquina, estat del daemon i contingut de les sessions",
+            serverReads: "El servidor de Happier pot llegir",
+            serverReadsE2ee: "Identificadors, tipus, estats, hores i recomptes; mai noms, camins, ordres, sortides ni secrets",
+            serverReadsPlain: "Detalls de la màquina, estat del daemon i contingut de les sessions",
+        },
         machineFleetUpdates: {
             title: "Actualitzacions",
             description: "Paquets del sistema operatiu pendents a cada màquina d’aquest Home. Les actualitzacions de l’app, la CLI i el daemon de Happier continuen a Configuració → Actualitzacions.",

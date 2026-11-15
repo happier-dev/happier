@@ -149,31 +149,56 @@ function MachineServicesList(
   // link opens the Environment. Never an id: until its header is read the row says so.
   // The list geometry draws one level, so the page owns which Environments are open: an open one lists its
   // services right under its row. Nothing is open on arrival.
-  const [openEnvironments, setOpenEnvironments] = React.useState<ReadonlySet<string>>(NO_OPEN_ENVIRONMENTS);
-  const items = React.useMemo(() => machineServicesListItems(rows, openEnvironments), [rows, openEnvironments]);
-  const toggleEnvironment = React.useCallback((environmentId: string) => setOpenEnvironments((current) => {
+  // Every Environment shows its services on arrival (lab dMachineSvc); the person can put an Environment's away.
+  const [closedEnvironments, setClosedEnvironments] = React.useState<ReadonlySet<string>>(NO_CLOSED_ENVIRONMENTS);
+  const items = React.useMemo(() => machineServicesListItems(rows, closedEnvironments), [rows, closedEnvironments]);
+  const toggleEnvironment = React.useCallback((environmentId: string) => setClosedEnvironments((current) => {
     const next = new Set(current);
     if (!next.delete(environmentId)) next.add(environmentId);
     return next;
   }), []);
   const phone = useDeviceType() === 'phone';
   const environmentTitle = React.useCallback((environmentId: string) => {
+    // The app's band names the Source, so the row says the Environment alone.
     const header = environments.headers.get(environmentId);
-    const source = header ? sourceNames.get(header.projectSourceId) : undefined;
-    return header ? (source ? `${source} · ${header.title}` : header.title)
+    return header ? header.title
       : environments.settled ? t('machineServices.groups.environmentUnavailable') : t('machineServices.groups.environmentReading');
-  }, [environments, sourceNames]);
-  const groups = React.useMemo(
-    () => ({
-      axis: machineServiceListGroupKeys(rows).map((key) => key === 'deployed'
-        ? { key, title: t('machineServices.groups.deployed'),
-          detail: t('machineServices.groups.environments', { count: environmentIds.length }) }
-        : { key, title: t(`machineServices.groups.${key}`),
-          ...(key === 'infrastructure' ? { description: t('machineServices.groups.infrastructureDescription') } : {}) }),
-      groupOf: listItemGroup,
-    }),
-    [rows, environmentIds.length],
-  );
+  }, [environments]);
+  // Deployed services stand in one band per app (lab dMachineSvc "billing-api · 2 environments · 5 services"): its
+  // Environment rows, each with its services under it. An Environment whose header isn't read yet stays in
+  // Deployed by Happier until it is.
+  const groups = React.useMemo(() => {
+    const sourceOf = (environmentId: string) => environments.headers.get(environmentId)?.projectSourceId ?? null;
+    const bands = new Map<string, { environments: number; services: number }>();
+    let unbanded = 0;
+    for (const environmentId of environmentIds) {
+      const source = sourceOf(environmentId);
+      const services = rows.filter((row) => machineServiceGroupEnvironmentId(machineServiceGroupOf(row)) === environmentId).length;
+      if (source === null) { unbanded += 1; continue; }
+      const band = bands.get(source) ?? { environments: 0, services: 0 };
+      bands.set(source, { environments: band.environments + 1, services: band.services + services });
+    }
+    const title = (source: string) => sourceNames.get(source) ?? t('machineServices.groups.deployed');
+    const ordered = [...bands].sort(([left], [right]) => title(left).localeCompare(title(right)) || left.localeCompare(right));
+    return {
+      axis: machineServiceListGroupKeys(rows).flatMap((key) => key === 'deployed' ? [
+        ...ordered.map(([source, band]) => ({ key: `${SOURCE_GROUP_PREFIX}${source}`, title: title(source),
+          description: [t('machineServices.groups.environments', { count: band.environments }),
+            t('machineServices.environmentRow.services', { count: band.services })].join(' · ') })),
+        ...(unbanded > 0 ? [{ key, title: t('machineServices.groups.deployed'),
+          detail: t('machineServices.groups.environments', { count: unbanded }) }] : []),
+      ] : [{ key, title: t(`machineServices.groups.${key}`),
+        ...(key === 'infrastructure' ? { description: t('machineServices.groups.infrastructureDescription') } : {}) }]),
+      groupOf: (item: ServicesListItem): string => {
+        const group = listItemGroup(item);
+        if (group !== 'deployed') return group;
+        const environmentId = item.kind === 'environment' ? item.environmentId
+          : machineServiceGroupEnvironmentId(machineServiceGroupOf(item.row));
+        const source = environmentId === null ? null : sourceOf(environmentId);
+        return source === null ? group : `${SOURCE_GROUP_PREFIX}${source}`;
+      },
+    };
+  }, [environments, environmentIds, rows, sourceNames]);
   const model = useHappierCollection<ServicesListItem>({
     items,
     keyOf: keyOfItem,
@@ -232,8 +257,8 @@ function MachineServicesList(
       titleControls: (item) => item.kind !== 'environment' ? null : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
           <IconButton testID={`machine-services-environment-${item.environmentId}:disclosure`} variant="plain"
-            iconName={openEnvironments.has(item.environmentId) ? 'caret-up' : 'caret-down'}
-            expanded={openEnvironments.has(item.environmentId)}
+            iconName={closedEnvironments.has(item.environmentId) ? 'caret-down' : 'caret-up'}
+            expanded={!closedEnvironments.has(item.environmentId)}
             accessibilityLabel={t('machineServices.environmentRow.disclosure', { environment: environmentTitle(item.environmentId) })}
             onPress={() => toggleEnvironment(item.environmentId)} />
           {phone ? environmentLink(item.environmentId) : null}
@@ -260,7 +285,7 @@ function MachineServicesList(
         ? `machine-services-environment-${item.environmentId}` : `machine-service-${item.row.serviceId}`,
       columnTitles: { title: t('machineServices.columns.service'), titleMeta: t('machineServices.columns.port') },
     }),
-    [environmentLink, environmentTitle, openEnvironments, phone, theme.colors.text.secondary, theme.space.s20, theme.space.s8,
+    [closedEnvironments, environmentLink, environmentTitle, phone, theme.colors.text.secondary, theme.space.s20, theme.space.s8,
       toggleEnvironment],
   );
 
@@ -525,10 +550,11 @@ type ServicesListItem =
   | Readonly<{ kind: 'service'; row: MachineServiceRowV1 }>;
 type ServicesListGroupKey = 'deployed' | Exclude<ReturnType<typeof machineServiceGroupOf>, `environment:${string}`>;
 const ENVIRONMENT_ITEM_PREFIX = 'environment-row:';
-const NO_OPEN_ENVIRONMENTS: ReadonlySet<string> = new Set();
+const NO_CLOSED_ENVIRONMENTS: ReadonlySet<string> = new Set();
+const SOURCE_GROUP_PREFIX = 'source:';
 
 /** One row per Environment, each open one followed by its services, then every service no Environment keeps. */
-function machineServicesListItems(rows: readonly MachineServiceRowV1[], open: ReadonlySet<string>): readonly ServicesListItem[] {
+function machineServicesListItems(rows: readonly MachineServiceRowV1[], closed: ReadonlySet<string>): readonly ServicesListItem[] {
   const byEnvironment = new Map<string, MachineServiceRowV1[]>();
   const loose: ServicesListItem[] = [];
   for (const row of rows) {
@@ -539,7 +565,7 @@ function machineServicesListItems(rows: readonly MachineServiceRowV1[], open: Re
   return [
     ...[...byEnvironment].sort(([left], [right]) => left.localeCompare(right)).flatMap(([environmentId, members]) => [
       { kind: 'environment' as const, environmentId, rows: members },
-      ...(open.has(environmentId) ? [...members].sort(compareMachineServices).map((row) => ({ kind: 'service' as const, row })) : []),
+      ...(!closed.has(environmentId) ? [...members].sort(compareMachineServices).map((row) => ({ kind: 'service' as const, row })) : []),
     ]),
     ...loose,
   ];

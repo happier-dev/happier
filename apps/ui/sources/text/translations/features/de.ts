@@ -8450,6 +8450,18 @@ const machineDetailPageTranslations = { de: translated({
             title: "Was hier läuft",
             description: ({ count }: { count: number }) => count === 1 ? "1 Umgebung läuft auf dieser Maschine." : `${count} Umgebungen laufen auf dieser Maschine.`,
         },
+        machineDataDisclosure: {
+            title: "Was diese Maschine verlässt",
+            e2eeDescription: "Dieses Konto ist Ende-zu-Ende-verschlüsselt.",
+            plainDescription: "Dieses Konto ist nicht Ende-zu-Ende-verschlüsselt.",
+            daemonSends: "Der Daemon sendet",
+            daemonSendsDetail: "Hostname und Version, Betriebssystem, Bereitschaft, Dienstanzahlen und nicht geheime Endpunkte",
+            devicesRead: "Nur deine Geräte können lesen",
+            devicesReadDetail: "Maschinendetails, Daemon-Status und Sitzungsinhalte",
+            serverReads: "Der Happier-Server kann lesen",
+            serverReadsE2ee: "IDs, Arten, Zustände, Zeiten und Anzahlen; niemals Namen, Pfade, Befehle, Ausgaben oder Geheimnisse",
+            serverReadsPlain: "Maschinendetails, Daemon-Status und Sitzungsinhalte",
+        },
         machineFleetUpdates: {
             title: "Updates",
             description: "Betriebssystempakete, die auf jeder Maschine dieses Homes warten. Updates für Happiers App, CLI und Daemon bleiben unter Einstellungen → Updates.",

@@ -2081,6 +2081,18 @@ export const english = {
         title: "What runs here",
         description: ({ count }: { count: number }) => count === 1 ? "1 environment runs on this machine." : `${count} environments run on this machine.`,
     },
+    machineDataDisclosure: {
+        title: "What leaves this Machine",
+        e2eeDescription: "This Account is end-to-end encrypted.",
+        plainDescription: "This Account isn’t end-to-end encrypted.",
+        daemonSends: "The daemon sends",
+        daemonSendsDetail: "Host name and version, OS, readiness, service counts and non-secret endpoints",
+        devicesRead: "Only your devices can read",
+        devicesReadDetail: "Machine details, daemon state and Session content",
+        serverReads: "The Happier server can read",
+        serverReadsE2ee: "IDs, kinds, states, times and counts; never names, paths, commands, output or secrets",
+        serverReadsPlain: "Machine details, daemon state and Session content",
+    },
     machineFleetUpdates: {
         title: "Updates",
         description: "Operating-system packages waiting on each machine of this Home. Happier’s own app, CLI and daemon updates stay in Settings → Updates.",

@@ -8448,6 +8448,18 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             title: "这里运行的内容",
             description: ({ count }: { count: number }) => count === 1 ? "这台机器上运行着 1 个环境。" : `这台机器上运行着 ${count} 个环境。`,
         },
+        machineDataDisclosure: {
+            title: "离开这台机器的内容",
+            e2eeDescription: "此账户已端到端加密。",
+            plainDescription: "此账户未端到端加密。",
+            daemonSends: "守护进程发送",
+            daemonSendsDetail: "主机名和版本、操作系统、就绪状态、服务数量和非机密端点",
+            devicesRead: "只有你的设备能读取",
+            devicesReadDetail: "机器详情、守护进程状态和会话内容",
+            serverReads: "Happier 服务器能读取",
+            serverReadsE2ee: "ID、类型、状态、时间和数量；绝不包括名称、路径、命令、输出或机密",
+            serverReadsPlain: "机器详情、守护进程状态和会话内容",
+        },
         machineFleetUpdates: {
             title: "更新",
             description: "此 Home 中每台机器上等待安装的操作系统软件包。Happier 自身的应用、CLI 和守护进程更新仍在 设置 → 更新 中。",

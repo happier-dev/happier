@@ -15,6 +15,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ThisComputerServiceNotice } from '@/components/settings/machines/localControl/ThisComputerServiceNotice';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { MachineDataDisclosureSection } from './MachineDataDisclosureSection';
 import { SetupPathPanel, type SetupPath } from '@/components/ui/setupBlocks/SetupPathPanel';
 import { Text } from '@/components/ui/text/Text';
 import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
@@ -229,6 +230,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
                         />
                     ))}
                 </ItemGroup>
+                <MachineDataDisclosureSection testID={`${props.testID}.disclosure`} />
             </View>
         );
     }
@@ -261,6 +263,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
             </View>
             </ItemGroup>
             {pane}
+            <MachineDataDisclosureSection testID={`${props.testID}.disclosure`} />
         </View>
     );
 }

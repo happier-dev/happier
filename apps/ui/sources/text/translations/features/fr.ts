@@ -8456,6 +8456,18 @@ const machineDetailPageTranslations = { fr: translated({
             title: "Ce qui tourne ici",
             description: ({ count }: { count: number }) => count === 1 ? "1 environnement tourne sur cette machine." : `${count} environnements tournent sur cette machine.`,
         },
+        machineDataDisclosure: {
+            title: "Ce qui quitte cette machine",
+            e2eeDescription: "Ce compte est chiffré de bout en bout.",
+            plainDescription: "Ce compte n’est pas chiffré de bout en bout.",
+            daemonSends: "Le daemon envoie",
+            daemonSendsDetail: "Nom et version de l’hôte, système, disponibilité, nombre de services et points d’accès non secrets",
+            devicesRead: "Seuls vos appareils peuvent lire",
+            devicesReadDetail: "Détails de la machine, état du daemon et contenu des sessions",
+            serverReads: "Le serveur Happier peut lire",
+            serverReadsE2ee: "Identifiants, types, états, heures et comptes ; jamais les noms, chemins, commandes, sorties ni secrets",
+            serverReadsPlain: "Détails de la machine, état du daemon et contenu des sessions",
+        },
         machineFleetUpdates: {
             title: "Mises à jour",
             description: "Paquets du système d’exploitation en attente sur chaque machine de ce Home. Les mises à jour de l’app, du CLI et du daemon Happier restent dans Réglages → Mises à jour.",

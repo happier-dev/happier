@@ -8453,6 +8453,18 @@ const machineDetailPageTranslations = { ja: translated({
             title: "ここで動いているもの",
             description: ({ count }: { count: number }) => count === 1 ? "このマシンで 1 個の環境が動いています。" : `このマシンで ${count} 個の環境が動いています。`,
         },
+        machineDataDisclosure: {
+            title: "このマシンから出るもの",
+            e2eeDescription: "このアカウントはエンドツーエンドで暗号化されています。",
+            plainDescription: "このアカウントはエンドツーエンドで暗号化されていません。",
+            daemonSends: "デーモンが送るもの",
+            daemonSendsDetail: "ホスト名とバージョン、OS、準備状態、サービス数、秘密でないエンドポイント",
+            devicesRead: "あなたのデバイスだけが読めるもの",
+            devicesReadDetail: "マシンの詳細、デーモンの状態、セッションの内容",
+            serverReads: "Happier サーバーが読めるもの",
+            serverReadsE2ee: "ID、種類、状態、時刻、件数。名前、パス、コマンド、出力、シークレットは読めません",
+            serverReadsPlain: "マシンの詳細、デーモンの状態、セッションの内容",
+        },
         machineFleetUpdates: {
             title: "アップデート",
             description: "この Home の各マシンで待機中の OS パッケージです。Happier のアプリ、CLI、デーモンのアップデートは 設定 → アップデート にあります。",
