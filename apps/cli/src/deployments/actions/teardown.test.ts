@@ -5,6 +5,115 @@ import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/deployment-protocol';
 
 describe('teardown operation custody', () => {
     it.each([
+        { nextOutcome: 'unknown', retrySameStep: false },
+        { nextOutcome: 'failed', retrySameStep: false },
+        { nextOutcome: 'failed', retrySameStep: true },
+    ] as const)('retains an unknown cause on equal replay without attributing it to $nextOutcome (same step retry=$retrySameStep)', async ({ nextOutcome, retrySameStep }) => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const link = environment.targetLinks[0].targetLink;
+        const member = link.members[0];
+        const sample = createDeploymentReceiptDetailV1();
+        let receipt = createDeploymentReceiptDetailV1({ deployment: { ...sample.deployment,
+            operation: 'teardown', state: 'running', environmentId: environment.environment.id,
+            targetLinkId: link.id, actionOperationId: 'remove-operation' }, content: { ...sample.content,
+            teardown: { reason: 'manual', targetLinkRevision: link.revision,
+                machines: [{ machineId: member.machineId, installationId: member.installationId }], resources: [],
+                proofs: DEPLOYMENT_TEARDOWN_STEPS_V1.slice(0, 2).map(step => ({ step,
+                    machineId: member.machineId, installationId: member.installationId, state: 'succeeded', resources: [] })) } } });
+        let writes = 0;
+        let effects = 0;
+        let reconciled = false;
+        const execute = createDeploymentTeardownExecutor({ serverId: 'home', machineId: member.machineId,
+            readEnvironment: async () => environment, readReceipt: async () => receipt,
+            writeTransition: async transition => {
+                writes++;
+                receipt = createDeploymentReceiptDetailV1({ deployment: { ...receipt.deployment,
+                    revision: receipt.deployment.revision + 1, state: transition.state }, content: transition.content });
+                return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                    deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
+            },
+            boundary: { observe: async operation => reconciled && !retrySameStep
+                ? operation.step === 'removeTarget' ? { kind: 'proved', resources: [] }
+                    : { kind: nextOutcome, reason: 'domain_removal_failed' }
+                : { kind: 'needed' }, execute: async () => {
+                effects++;
+                if (reconciled) return { kind: 'failed', reason: 'network_removal_failed' };
+                throw Object.assign(new Error('private native output'), { code: 'EACCES' });
+            } } });
+        const request = { actionId: 'deployments.teardown' as const, input: { serverId: 'home',
+            environmentId: environment.environment.id, targetLinkId: link.id, expectedRevision: environment.environment.revision,
+            expectedTargetLinkRevision: link.revision, requestKey: receipt.deployment.requestKey, reason: 'manual' as const,
+            contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
+            receipt: { ok: true as const, environmentId: environment.environment.id, revision: environment.environment.revision,
+                deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
+            context: { surface: 'cli' as const, operationAcceptance: { operationId: 'remove-operation', accept() {} } } };
+        const first = await execute(request);
+        expect(first).toMatchObject({ ok: false, errorCode: 'outcome_unknown', failureCause: { errorCode: 'EACCES' } });
+        expect(receipt.content.failure?.failureCause).toEqual(first.ok ? undefined : first.failureCause);
+        const initialWrites = writes;
+        expect(await execute(request)).toMatchObject(first);
+        expect(writes).toBe(initialWrites);
+        expect(effects).toBe(1);
+        expect(JSON.stringify(receipt)).not.toContain('private native output');
+        if (retrySameStep) {
+            // A persisted known failure can retain a cause from its earlier attempt.
+            receipt = createDeploymentReceiptDetailV1({ deployment: { ...receipt.deployment, state: 'failed' },
+                content: { ...receipt.content, teardown: { ...receipt.content.teardown!,
+                    proofs: receipt.content.teardown!.proofs.map(proof => proof.step === 'removeTarget'
+                        ? { ...proof, state: 'failed' } : proof) } } });
+        }
+        reconciled = true;
+        const next = await execute(request);
+        expect(next).toMatchObject({ ok: false, errorCode: nextOutcome === 'failed' ? 'deployment_failed' : 'outcome_unknown',
+            details: { step: retrySameStep ? 'removeTarget' : 'removeDomain',
+                reason: retrySameStep ? 'network_removal_failed' : 'domain_removal_failed' } });
+        expect(next).not.toHaveProperty('failureCause');
+        expect(receipt.content.failure).toBeUndefined();
+        expect(effects).toBe(retrySameStep ? 2 : 1);
+    });
+
+    it.each([false, true])('reconciles an unknown step without repeating its effect (absence proved=%s)', async absent => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const link = environment.targetLinks[0].targetLink;
+        const sample = createDeploymentReceiptDetailV1();
+        const member = link.members[0];
+        let receipt = createDeploymentReceiptDetailV1({ deployment: { ...sample.deployment,
+            operation: 'teardown', state: 'outcome_unknown', environmentId: environment.environment.id,
+            targetLinkId: link.id, actionOperationId: 'remove-operation' }, content: { ...sample.content,
+            teardown: { reason: 'manual', targetLinkRevision: link.revision,
+                machines: [{ machineId: member.machineId, installationId: member.installationId }], resources: [],
+                proofs: DEPLOYMENT_TEARDOWN_STEPS_V1.slice(0, 3).map(step => ({ step,
+                    machineId: member.machineId, installationId: member.installationId,
+                    state: step === 'removeTarget' ? 'outcome_unknown' : 'succeeded', resources: [],
+                    ...(step === 'removeTarget' ? { reason: 'action_failed' } : {}) })) } } });
+        let writes = 0;
+        let effects = 0;
+        const observed: string[] = [];
+        const execute = createDeploymentTeardownExecutor({ serverId: 'home', machineId: member.machineId,
+            readEnvironment: async () => environment, readReceipt: async () => receipt,
+            writeTransition: async transition => {
+                writes++;
+                receipt = createDeploymentReceiptDetailV1({ deployment: { ...receipt.deployment,
+                    revision: receipt.deployment.revision + 1, state: transition.state }, content: transition.content });
+                return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                    deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
+            },
+            boundary: { observe: async request => { observed.push(request.step); return absent
+                ? { kind: 'proved', resources: [] } : { kind: 'needed' }; },
+                execute: async () => { effects++; return { kind: 'unknown', reason: 'action_failed' }; } } });
+        const request = { actionId: 'deployments.teardown' as const, input: { serverId: 'home',
+            environmentId: environment.environment.id, targetLinkId: link.id, expectedRevision: environment.environment.revision,
+            expectedTargetLinkRevision: link.revision, requestKey: receipt.deployment.requestKey, reason: 'manual' as const,
+            contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
+            receipt: { ok: true as const, environmentId: environment.environment.id, revision: environment.environment.revision,
+                deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
+            context: { surface: 'cli' as const, operationAcceptance: { operationId: 'remove-operation', accept() {} } } };
+        expect(await execute(request)).toMatchObject(absent ? { ok: true, state: 'succeeded' } : { ok: false, errorCode: 'outcome_unknown' });
+        expect(effects).toBe(0);
+        expect(observed[0]).toBe('removeTarget');
+        if (!absent) expect(writes).toBe(0);
+    });
+    it.each([
         { machineCount: 1, resuming: false, cancel: false },
         { machineCount: 3, resuming: false, cancel: false },
         { machineCount: 1, resuming: true, cancel: false },

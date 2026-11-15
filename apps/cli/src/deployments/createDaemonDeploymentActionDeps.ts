@@ -900,7 +900,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
                     deploymentId: receipt.deployment.id, context: request.context });
             }
-            if (receipt.deployment.state !== 'succeeded' && receipt.deployment.state !== 'cancelled') {
+            // Native step proofs are written only after Domain retirement settles.
+            // Resume from that recorded progress instead of re-entering its owner.
+            if (receipt.deployment.state !== 'succeeded' && receipt.deployment.state !== 'cancelled'
+                && !receipt.content.teardown?.proofs.length && receipt.deployment.state !== 'outcome_unknown') {
                 request.context.signal?.throwIfAborted();
                 const retirement = await domainActions.retireEnvironment({ ...request.input,
                     deploymentId: receipt.deployment.id }, request.context);

@@ -13,6 +13,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { DeploymentTeardownEnvironmentPartialDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { projectDeploymentTransitionOutcomeUnknownForHost } from '../deploymentTransitionResult';
+import { projectDeploymentReceiptFailure } from '../deploymentFailure';
 import type { DeploymentReceiptDispatchV1 } from '../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentTransition } from '../targets/ownServer/ownServerDeploymentTarget';
 
@@ -44,8 +45,8 @@ export type DeploymentTeardownBoundary = Readonly<{
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
-/** Resume the admitted receipt before any Domain, provider or native child spends
- * its active-job custody. Step proofs and original teardown choices stay intact. */
+/** A known failed step may retry under the same admitted receipt. Unknown
+ * effects retain their state until the resource owner proves completion. */
 export async function resumeDeploymentTeardownReceiptForHost(input: Readonly<{
     request: Extract<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>;
     receipt: DeploymentReceiptDetailV1;
@@ -55,7 +56,7 @@ export async function resumeDeploymentTeardownReceiptForHost(input: Readonly<{
     if (receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'cancelled') return null;
     if (request.context.operationAcceptance?.operationId !== receipt.deployment.actionOperationId) return failure('deployment_conflict');
     if (receipt.deployment.cancelRequestedAtMs !== undefined || request.context.signal?.aborted) return failure('cancelled');
-    if (receipt.deployment.state !== 'failed' && receipt.deployment.state !== 'outcome_unknown') return null;
+    if (receipt.deployment.state !== 'failed') return null;
     return input.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
         receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision,
         state: 'running', content: receipt.content, context: request.context });
@@ -115,11 +116,15 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             receipt = await read();
         }
 
-        const write = async (state: OwnServerDeploymentTransition['state'], proof?: DeploymentTeardownStepProofV1) => {
+        const write = async (state: OwnServerDeploymentTransition['state'], proof?: DeploymentTeardownStepProofV1,
+            recordedFailure?: DeploymentReceiptDetailV1['content']['failure']) => {
             const current = receipt.content.teardown!;
             const proofs = proof ? [...current.proofs.filter(item => item.step !== proof.step || item.machineId !== proof.machineId), proof] : current.proofs;
             const { failure: _failure, ...withoutFailure } = receipt.content;
-            const currentContent = state === 'succeeded' ? withoutFailure : receipt.content;
+            // A new proof replaces the previous cause. Equal uncertainty passes
+            // its retained failure explicitly, so replay stays quiet.
+            const currentContent = state === 'succeeded' || (proof && !recordedFailure) ? withoutFailure
+                : recordedFailure ? { ...receipt.content, failure: recordedFailure } : receipt.content;
             const content = proof ? { ...currentContent, teardown: { ...current, proofs } } : currentContent;
             if (state === receipt.deployment.state && isDeepStrictEqual(content, receipt.content)) {
                 // A resumed running proof still needs the same cancellation read
@@ -185,6 +190,9 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     failureCause = normalizeActionExecutorThrownError(error, 'deployment.teardown.observe').failureCause;
                     observed = { kind: 'unknown', reason: failureCause?.errorCode ?? 'observation_unavailable' };
                 }
+                if (observed.kind === 'needed' && prior?.state === 'outcome_unknown') {
+                    observed = { kind: 'unknown', reason: prior.reason ?? 'removal_unproved' };
+                }
                 if (observed.kind === 'needed') {
                     const started = await write('running', { step, ...member, state: 'running', resources: [] });
                     if (started) return started;
@@ -205,12 +213,16 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                 } else {
                     const state = observed.kind === 'failed' ? 'failed' : 'outcome_unknown';
                     const reason = observed.kind === 'needed' ? 'removal_unproved' : observed.reason;
+                    const retainedFailure = prior?.state === 'outcome_unknown' && observed.kind === 'unknown'
+                        && prior.reason === observed.reason ? receipt.content.failure : undefined;
+                    const cause = failureCause ?? retainedFailure?.failureCause;
+                    const failureResult: ActionExecuteFailure = { ok: false,
+                        errorCode: state === 'failed' ? 'deployment_failed' : 'outcome_unknown',
+                        error: `${step}: ${state}`, ...(cause ? { failureCause: cause } : {}) };
                     const saved = await write(state, { step, ...member, state, resources: [],
-                        reason });
+                        reason }, failureCause ? projectDeploymentReceiptFailure(failureResult, 'cleanup') : retainedFailure);
                     const { ok: _ok, ...receiptDetails } = result();
-                    return saved ?? { ok: false, errorCode: state === 'failed' ? 'deployment_failed' : 'outcome_unknown',
-                        error: `${step}: ${state}`, details: { ...receiptDetails, step, reason },
-                        ...(failureCause ? { failureCause } : {}) };
+                    return saved ?? { ...failureResult, details: { ...receiptDetails, step, reason } };
                 }
             }
         }

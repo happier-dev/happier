@@ -147,7 +147,7 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
@@ -174,15 +174,15 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
             machines: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
             resources: link.machines.map(machineId => ({ id: environment.environment.id, kind: 'workload', machineId, ownership: 'owned', disposition: 'remove' })), proofs: [],
         } });
-        if (scenario === 'remote-retry') {
-            receipt.deployment.state = 'outcome_unknown';
+        if (scenario === 'remote-retry' || scenario === 'remote-reconcile' || scenario === 'remote-unknown') {
+            receipt.deployment.state = scenario === 'remote-retry' ? 'failed' : 'outcome_unknown';
             receipt.deployment.revision = 3;
             receipt.content.failure = { code: 'domain_native_failed', phase: 'cleanup', remedy: 'Retry Domain retirement.' };
             receipt.content.teardown!.proofs = [
                 ...(['admit', 'settleDeploy'] as const).map(step => ({ step, machineId: 'machine-a',
                     installationId: 'installation-a', state: 'succeeded' as const, resources: [] })),
                 { step: 'removeTarget', machineId: 'machine-a', installationId: 'installation-a',
-                    state: 'outcome_unknown', resources: [], reason: 'removal_unproved' },
+                    state: scenario === 'remote-retry' ? 'failed' : 'outcome_unknown', resources: [], reason: 'removal_unproved' },
             ];
         }
         const credentials = { token: 'test-token', encryption: null };
@@ -217,7 +217,7 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
             const caddy = scenario.startsWith('remote-caddy');
             const caddyId = 'c'.repeat(64);
             const docker = scenario === 'local-native' || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent'
-                || scenario === 'remote-native' || scenario === 'remote-retry' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
+                || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-reconcile' || scenario === 'remote-unknown' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
                 nativeCaddy: { Id: caddyId, Name: '/happier-caddy',
                     Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
                         Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' } },
@@ -250,6 +250,7 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                     };
                     return { ...native, nativeIo: { ...native.nativeIo, run } };
                 } };
+            let writes = 0;
             const host: OwnServerDeploymentTargetHostInput = { credentials, serverId: 'home',
                 serverHttpBaseUrl: 'https://teardown-home.test', machineId: 'machine-a', runtime,
                 async readEnvironment() { return structuredClone(environment); },
@@ -259,6 +260,7 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                     if (scenario !== 'never-deployed' && scenario !== 'other-link') yield structuredClone(prior);
                 },
                 async writeTransition(input) {
+                    writes++;
                     receipt.content = DeploymentOwnServerContentV1Schema.parse(input.content);
                     receipt.deployment = { ...receipt.deployment, state: input.state, revision: receipt.deployment.revision + 1 };
                     return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
@@ -291,13 +293,13 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: 'home', environmentId: environment.environment.id });
                 await mkdir(identity.deploymentRoot, { recursive: true });
-                if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent') await docker.seedComposeGeneration(identity.projectName);
+                if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && scenario !== 'remote-reconcile') await docker.seedComposeGeneration(identity.projectName);
                 if (scenario === 'remote-native') {
                     await docker.seedVolume('app_data', identity.projectName);
                     await docker.seedVolume('app_logs', identity.projectName);
                     await docker.seedVolume('foreign_data', 'unrelated-project');
                 }
-                if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent') await docker.seedNetwork('owned-network', identity.projectName,
+                if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && scenario !== 'remote-reconcile') await docker.seedNetwork('owned-network', identity.projectName,
                     caddy ? [caddyId, ...(scenario === 'remote-caddy-other-endpoint' ? ['unrelated-endpoint'] : [])] : []);
                 await docker.seedNetwork('foreign-network', 'unrelated-project', caddy ? [caddyId] : []);
             }
@@ -383,24 +385,24 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                 environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
                 context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
-            if (scenario === 'local-native' || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-caddy') {
+            if (scenario === 'local-native' || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-reconcile' || scenario === 'remote-caddy') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
                 if (scenario === 'remote-fleet-absent') expect(receipt.content.teardown?.proofs.filter(proof => proof.step === 'removeTarget'))
                     .toMatchObject(link.members.map(({ machineId, installationId }) => ({ machineId, installationId, state: 'succeeded',
                         resources: [{ resourceId: environment.environment.id, disposition: 'absent' }] })));
-                if (scenario === 'remote-retry') expect(receipt.content.failure).toBeUndefined();
+                if (scenario === 'remote-retry' || scenario === 'remote-reconcile') expect(receipt.content.failure).toBeUndefined();
                 expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'removeTarget'))
                     .toMatchObject({ state: 'succeeded', resources: [{ resourceId: environment.environment.id, disposition: 'absent' },
                         ...(scenario === 'remote-native' ? [{ resourceId: 'app_data', disposition: 'absent' },
                             { resourceId: 'app_logs', disposition: 'retained' }] : [])] });
             } else {
-                const reason = scenario === 'remote-caddy-other-endpoint' ? 'network_removal_unproved' : scenario === 'missing-tool' || scenario === 'other-link' ? 'plugin_exec_system_tool_unavailable'
+                const reason = scenario === 'remote-unknown' ? 'removal_unproved' : scenario === 'remote-caddy-other-endpoint' ? 'network_removal_failed' : scenario === 'missing-tool' || scenario === 'other-link' ? 'plugin_exec_system_tool_unavailable'
                     : scenario === 'engine-unreachable' ? 'ECONNREFUSED' : scenario.endsWith('observation-denied') ? 'EACCES' : 'ENOSPC';
-                expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: scenario === 'remote-caddy-other-endpoint' ? 'deployment_failed' : 'outcome_unknown',
                     details: { step: 'removeTarget', reason },
-                    ...(scenario === 'remote-caddy-other-endpoint' ? {} : { failureCause: { errorCode: reason } }) });
+                    ...(scenario === 'remote-caddy-other-endpoint' || scenario === 'remote-unknown' ? {} : { failureCause: { errorCode: reason } }) });
                 expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'removeTarget'))
-                    .toMatchObject({ state: 'outcome_unknown', reason });
+                    .toMatchObject({ state: scenario === 'remote-caddy-other-endpoint' ? 'failed' : 'outcome_unknown', reason });
             }
             if (observesRetirement) {
                 expect(mounted.registry.projectManagedServices.listProjectServices().map(handle =>
@@ -412,12 +414,14 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                 expect(observerStops).toBe(0);
             }
             if (docker) {
+                if (scenario === 'remote-unknown') expect(writes).toBe(0);
                 if (scenario === 'remote-native') expect(await docker.readVolumeNames()).toEqual(['app_logs', 'foreign_data']);
-                expect(remoteJobs).toEqual(scenario === 'local-native' ? [] : scenario === 'remote-already-absent'
+                expect(remoteJobs).toEqual(scenario === 'local-native' ? [] : scenario === 'remote-already-absent' || scenario === 'remote-reconcile'
                     ? ['removeTarget:observe', 'verify:observe'] : scenario === 'remote-fleet-absent'
-                        ? ['removeTarget:observe', 'verify:observe', 'removeTarget:observe', 'verify:observe'] : scenario === 'remote-caddy-other-endpoint'
+                        ? ['removeTarget:observe', 'verify:observe', 'removeTarget:observe', 'verify:observe'] : scenario === 'remote-unknown'
+                        ? ['removeTarget:observe'] : scenario === 'remote-caddy-other-endpoint'
                         ? ['removeTarget:observe', 'removeTarget:execute'] : ['removeTarget:observe', 'removeTarget:execute', 'verify:observe']);
-                expect(await docker.readNetworkIds()).toEqual(scenario === 'remote-caddy-other-endpoint'
+                expect(await docker.readNetworkIds()).toEqual(scenario === 'remote-caddy-other-endpoint' || scenario === 'remote-unknown'
                     ? ['owned-network', 'foreign-network'] : ['foreign-network']);
                 if (caddy) {
                     expect(await docker.readNativeCaddyAttachments()).toEqual({ containerId: caddyId, networkIds: ['foreign-network'] });

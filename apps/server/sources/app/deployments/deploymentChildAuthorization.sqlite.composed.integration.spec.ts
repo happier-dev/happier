@@ -7102,6 +7102,31 @@ describe('deployment children retain their controller Action authority', () => {
             ...job, input: { ...job.input, environmentId: f.outsider.id } }))).toBe(false);
     });
 
+    it('reconciles an unknown teardown through observation without admitting another destructive child', async () => {
+        const f = await fixture();
+        const input = { ...f.input, reason: 'manual' as const };
+        const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID(), input };
+        const digest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.teardown', machineId: f.controller.id, target: envelope.target,
+            requestId: envelope.requestId, requestEnvelopeDigest: digest }, { input });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: {
+            operation: 'teardown', state: 'outcome_unknown', acceptedRequestEnvelopeDigest: digest,
+        } });
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'teardown', actionId: 'deployments.teardown',
+            input, machineId: f.member.id, installationId: f.member.installationId,
+            deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId, step: 'removeTarget', mode: 'observe' });
+        const admitted = (change: object = {}) => isCurrentDeploymentChildInTx(db, authorization.binding,
+            projectDeploymentChildRoutingV1(DeploymentChildRpcV1Schema.parse({ ...job, ...change })));
+        expect(await admitted()).toBe(true);
+        expect(await admitted({ mode: 'execute' })).toBe(false);
+        expect(await admitted({ actionOperationId: 'another-operation' })).toBe(false);
+        expect(await admitted({ machineId: f.outsider.id, installationId: f.outsider.installationId })).toBe(false);
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: new Date() } });
+        expect(await admitted()).toBe(false);
+    });
+
     it.each(['teardown', 'prepare'] as const)('limits a remote teardown %s child to native history reads without aggregate writes or new secret custody', async kind => {
         const f = await fixture();
         const routing = projectDeploymentChildRoutingV1(DeploymentChildRpcV1Schema.parse(kind === 'prepare' ? {

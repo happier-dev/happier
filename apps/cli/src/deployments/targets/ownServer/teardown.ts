@@ -199,7 +199,8 @@ export function createOwnServerTeardownForHost(host: Host) {
                         // Revisit shared networks after every retained generation
                         // has been removed. The native owner also handles empty projects.
                         const networkFailure = await removeUnusedNativeComposeNetworks({ projects: [...projects], run });
-                        if (networkFailure) return { kind: 'unknown' as const, reason: networkFailure };
+                        if (networkFailure) return { kind: networkFailure === 'network_removal_failed' ? 'failed' as const : 'unknown' as const,
+                            reason: networkFailure };
                         const volumeFailure = await settleOwnServerTeardownVolumes({ resources: operation.resources, run });
                         if (volumeFailure) return volumeFailure;
                         return boundary.observe(operation);

@@ -26,7 +26,8 @@ export async function removeUnusedNativeComposeNetworks(input: Readonly<{
         const holders = await input.run(['ps', '--all', '--no-trunc', '--filter', `network=${id}`, '--format', '{{.ID}}']);
         if (holders.exitCode !== 0) return 'network_observation_unavailable';
         if (holders.stdout.trim()) continue;
-        if ((await input.run(['network', 'rm', id])).exitCode !== 0) return 'network_removal_unproved';
+        const removal = await input.run(['network', 'rm', id]);
+        if (removal.exitCode !== 0) return removal.exitCode === null ? 'network_removal_unproved' : 'network_removal_failed';
     }
     return null;
 }

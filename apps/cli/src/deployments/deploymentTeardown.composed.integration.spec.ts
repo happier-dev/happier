@@ -341,7 +341,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
             }, 180_000);
 
-        it.skipIf(process.platform === 'win32').each(['removed-environment', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-unknown'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
+        it.skipIf(process.platform === 'win32').each(['removed-environment', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-network-refused'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
             vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '1');
             const root = await mkdtemp(join(tmpdir(), 'happier-teardown-native-'));
             const previousHome = configuration.happyHomeDir;
@@ -359,7 +359,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                     installationId: home.installationId, createdAt: 1,
                     publicKey: encodeBase64(home.keys.publicKey, 'base64url'),
                     privateKey: encodeBase64(home.keys.secretKey, 'base64url') }), { mode: 0o600 });
-                const retainedRetry = caller === 'retained-retry-failed' || caller === 'retained-retry-unknown';
+                const retainedRetry = caller === 'retained-retry-failed' || caller === 'retained-retry-network-refused';
                 const retainedDomain = retainedRetry || caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails';
                 let refuseDomainRemoval = caller === 'reviewed-ingress-domain-retirement-fails' || caller === 'retained-retry-failed';
                 const domainRemovalReceiptStates: string[] = [];
@@ -473,7 +473,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 const ownedNetworks = ['a'.repeat(64), 'b'.repeat(64)];
                 const retainedNetworks = ['c'.repeat(64), 'd'.repeat(64)];
                 await docker.seedNetwork(ownedNetworks[0]!, identity.projectName,
-                    caller === 'network-in-use' || caller === 'retained-retry-unknown' ? ['f'.repeat(64)] : caller === 'partial' ? [] : ['9'.repeat(64)]);
+                    caller === 'network-in-use' || caller === 'retained-retry-network-refused' ? ['f'.repeat(64)] : caller === 'partial' ? [] : ['9'.repeat(64)]);
                 await docker.seedNetwork(ownedNetworks[1]!, candidateProject);
                 await docker.seedNetwork(retainedNetworks[0]!, `${identity.projectName}-other`);
                 await docker.seedNetwork(retainedNetworks[1]!); // external, without project ownership
@@ -606,10 +606,9 @@ describe('deployment teardown through the canonical Action front door', () => {
                                 ] } : {}) }
                         : input, caller === 'healthy' || retainedDomain);
                     if (retainedRetry) {
-                        const firstState = caller === 'retained-retry-failed' ? 'failed' : 'outcome_unknown';
                         expect(tornDown, JSON.stringify(tornDown)).toMatchObject({ ok: false });
                         const first = await db.deployment.findFirstOrThrow({ where: { environmentId: detail.environment.id, operation: 'teardown' } });
-                        expect(first).toMatchObject({ state: firstState, requestKey: input.requestKey,
+                        expect(first).toMatchObject({ state: 'failed', requestKey: input.requestKey,
                             acceptedRequestEnvelopeDigest: expect.any(String), teardownProof: { removeEnvironment: true } });
                         expect(first.actionOperationId).toEqual(expect.any(String));
                         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: detail.environment.id } })).toMatchObject({ deletedAt: null });
@@ -636,6 +635,8 @@ describe('deployment teardown through the canonical Action front door', () => {
                         // original signed carrier; Retry cannot silently review again.
                         const retryInput = { serverId: home.serverId, environmentId: detail.environment.id,
                             targetLinkId: link.id, requestKey: input.requestKey, reason: 'manual' };
+                        const domainMutationsBeforeRetry = domainRemovalReceiptStates.length;
+                        const domainReadsBeforeRetry = caddyRequests.filter(request => request.method === 'GET').length;
                         const resumed = await fixture.invoke('deployments.teardown', retryInput, true);
                         expect(resumed, JSON.stringify({ resumed, homeResponses })).toMatchObject({ ok: true,
                             result: { ok: true, state: 'succeeded', environmentRemoved: true } });
@@ -647,7 +648,13 @@ describe('deployment teardown through the canonical Action front door', () => {
                         expect(teardownAdmissions, 'Retry must consume the admitted receipt without a second Home begin').toBe(1);
                         expect(fixture.teardownReviews(), 'Retry must reuse the original confirmed review').toBe(1);
                         expect(domainRemovalReceiptStates.length).toBeGreaterThan(0);
-                        expect(domainRemovalReceiptStates.every(state => state === 'running')).toBe(true);
+                        // Queued and running both carry the admitted job. A retry
+                        // after Domain retirement must not mutate that settled step.
+                        expect(domainRemovalReceiptStates.every(state => state === 'queued' || state === 'running')).toBe(true);
+                        if (caller === 'retained-retry-network-refused') {
+                            expect(domainRemovalReceiptStates).toHaveLength(domainMutationsBeforeRetry);
+                            expect(caddyRequests.filter(request => request.method === 'GET')).toHaveLength(domainReadsBeforeRetry);
+                        }
                         expect(await db.deploymentDomain.count({ where: { environmentId: detail.environment.id, deletedAt: null } })).toBe(0);
                         expect(await docker.readRunningImageConfig('app')).toBeNull();
                         expect(await docker.readVolumeNames()).toEqual([keptVolume]);
@@ -695,7 +702,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                         return;
                     }
                     if (caller === 'network-in-use') {
-                        expect(tornDown).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+                        expect(tornDown).toMatchObject({ ok: false, errorCode: 'deployment_failed' });
                         const receiptList = await fixture.invoke('deployments.receipts.list', { serverId: home.serverId,
                             environmentId: detail.environment.id });
                         if (!receiptList.ok) throw new Error(receiptList.errorCode);
@@ -706,7 +713,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                                 { prepareRecipients: false, includeSharedAudience: false })));
                         if (!retained.ok) throw new Error(retained.error);
                         expect(retained.content.teardown?.proofs).toContainEqual(expect.objectContaining({
-                            step: 'removeTarget', state: 'outcome_unknown', reason: 'network_removal_unproved',
+                            step: 'removeTarget', state: 'failed', reason: 'network_removal_failed',
                         }));
                         expect(await docker.readNetworkIds()).toContain(ownedNetworks[0]);
                         return;
@@ -982,7 +989,7 @@ describe('deployment teardown through the canonical Action front door', () => {
             expect(await invoke('deployments.cancel', { serverId: home.serverId, environmentId: environment.environmentId,
                 deploymentId: history.items[0].id, expectedReceiptRevision: history.items[0].revision }))
                 .toMatchObject({ ok: true, result: { state: 'outcome_unknown' } });
-            expect(await invoke('deployments.teardown', input)).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+            expect(await invoke('deployments.teardown', input)).toMatchObject({ ok: false, errorCode: 'cancelled' });
             expect(removals).toBe(1);
             expect(completed.has('removeDomain')).toBe(false);
         });

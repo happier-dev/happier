@@ -397,7 +397,9 @@ async function readAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionEx
         targetLinkId: routing.input.targetLinkId, requestKey: routing.input.requestKey,
         cancelRequestedAt: null,
         contentArtifactId: routing.input.contentArtifactId,
-        state: { in: routing.kind !== 'retention' ? ['queued', 'running']
+        // Unknown teardown permits only evidence gathering, never another effect.
+        state: { in: routing.kind === 'teardown' && routing.mode === 'observe' ? ['queued', 'running', 'outcome_unknown']
+            : routing.kind !== 'retention' ? ['queued', 'running']
             : routing.activeDeploymentId === routing.deploymentId ? ['succeeded', 'running_unverified', 'failed'] : ['failed'] },
         ...(routing.kind === 'retention' ? { revision: routing.settledDeploymentRevision } : {}),
         environment, targetLink: link, AND: [custody],
