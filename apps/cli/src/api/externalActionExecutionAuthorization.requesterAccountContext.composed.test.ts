@@ -49,7 +49,9 @@ import { encodeStoredCredentials, updateSettings, readStoredCredentialsForServer
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { handleActionsCommand } from '@/cli/commands/actions';
-import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
+import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
+import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { configuration } from '@/configuration';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -91,6 +93,46 @@ vi.mock('@/terminal/prompts/promptInput', async importOriginal => ({
 const servers: Server[] = [];
 const controlApps: ReturnType<typeof createDaemonControlApp>[] = [];
 const homeIdentityId = 'srv_requester_home';
+it('retains Home preset refusal through the friendly managed acquire command without a Session', async () => {
+  const presetReads: unknown[] = [];
+  // Only Home HTTP is substituted; CLI parsing, requester projection and preset routing stay real.
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    response.setHeader('Content-Type', 'application/json');
+    if (request.url === '/v1/machines/presets/get') {
+      presetReads.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      response.end(JSON.stringify({ kind: 'refused', code: 'preset_not_found' }));
+    } else {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ error: 'not_found' }));
+    }
+  });
+  servers.push(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected an HTTP fixture address');
+  const credentials: StoredCredentials = { token: token(), credentialProvenance: 'stored_session',
+    encryption: { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
+  const command = listCompiledActionCliCommands().find(row => row.actionId === 'machines.managed.acquire');
+  if (!command) throw new Error('Expected the managed acquire CLI command');
+  const selection = { kind: 'preset', homeId: homeIdentityId, id: 'delegated-preset', revision: 1 };
+  const output = captureConsoleJsonOutput();
+  try {
+    await runCompiledActionCliCommand({ command,
+      argv: [...command.path, '--selection-json', JSON.stringify(selection), '--json'],
+      deps: { readCredentialsFn: async () => credentials,
+        getServerProfileFn: async () => { throw new Error('No implicit saved Home in this fixture'); },
+        createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+          serverId: 'home', serverApiUrl: `http://127.0.0.1:${address.port}`, serverIdentityId: homeIdentityId,
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+        }),
+      },
+    });
+    expect(output.json()).toMatchObject({ ok: false, error: { code: 'preset_not_found' } });
+    expect(presetReads).toEqual([{ homeId: homeIdentityId, id: 'delegated-preset' }]);
+  } finally { output.restore(); }
+});
 // Model discovery requires requester custody and exercises transport custody; settings.list
 // is Account-local declaration discovery and does not originate a Machine call.
 const ownMachineInput = AgentsModelsListInputSchema.parse({ agentId: 'codex', machineId: 'alice-machine' });

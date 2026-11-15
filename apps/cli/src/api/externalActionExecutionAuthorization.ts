@@ -90,7 +90,7 @@ import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happie
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ExternalActionRequesterInvocationV1Schema, projectRequesterSessionCredentialDisclosure, sealExternalActionRequesterAccountContextV1, sealManagedCreationActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { projectExternalActionRequesterInvocationContextV1, projectRequesterSessionCredentialDisclosure, sealExternalActionRequesterAccountContextV1, sealManagedCreationActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeStoredCredentials } from '@/persistence';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
@@ -2209,16 +2209,8 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
 
 /** Signed Session/Workflow origins retain their own provenance instead of becoming host callers. */
 export function readExternalActionRequesterInvocation(context: ActionExecutorContext): ExternalActionRequesterInvocationV1 | undefined {
-  // Runtime callers also carry local display/attribution facts. Project only
-  // the private transport contract, deriving its fields from that owner.
-  const caller = z.union(ExternalActionRequesterInvocationV1Schema.shape.caller.def.options.map(option =>
-    z.object(option.shape))).safeParse(context.actionCaller ?? { kind: 'host' });
-  if (!caller.success) return undefined;
-  const parsed = ExternalActionRequesterInvocationV1Schema.safeParse({ caller: caller.data,
-    surface: context.surface, authority: context.authority, callerPermissionMode: context.callerPermissionMode,
-    callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
-    defaultSessionId: context.defaultSessionId });
-  return parsed.success ? parsed.data : undefined;
+  return projectExternalActionRequesterInvocationContextV1({ ...context,
+    actionCaller: context.actionCaller ?? { kind: 'host' } }) ?? undefined;
 }
 
 export async function dispatchManagedMachineSetup(params: Omit<Parameters<typeof dispatchManagedSessionStart>[0], 'input'> & Readonly<{

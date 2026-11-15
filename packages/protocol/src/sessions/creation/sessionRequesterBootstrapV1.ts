@@ -139,12 +139,31 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.e
 })));
 export type ExternalActionRequesterInvocationV1 = z.infer<typeof ExternalActionRequesterInvocationV1Schema>;
 
-/** Project process-local Plugin descriptors onto the incumbent private caller contract. */
+/** Project process-local descriptors onto the incumbent private caller contract. */
 export function projectExternalActionRequesterCallerV1(caller: ActionExecutorContext['actionCaller']): unknown {
-  if (caller?.kind !== 'plugin') return caller;
-  const fields = ExternalActionRequesterInvocationV1Schema.shape.caller._zod.def.options
-    .flatMap(option => Object.keys(option.shape));
-  return Object.fromEntries(Object.entries(caller).filter(([key]) => fields.includes(key)));
+  const projected = z.union(ExternalActionRequesterInvocationV1Schema.shape.caller.def.options.map(option =>
+    z.object(option.shape))).safeParse(caller);
+  return projected.success ? projected.data : caller;
+}
+
+/** Project process-local context without inventing a Session or admitting a review. */
+export function projectExternalActionRequesterInvocationContextV1(
+  context: ActionExecutorContext,
+  retained: Readonly<Pick<ExternalActionRequesterInvocationV1, 'actionRequestAttributionV1' | 'reviewedParent'>
+    & Pick<ActionExecutorContext, 'presentUserConfirmation'>> = {},
+): ExternalActionRequesterInvocationV1 | null {
+  const workspaceWrites = context.workspaceWrites === 'deny' || context.agentStartWorkspaceWrites === 'deny'
+    ? 'deny' : context.workspaceWrites ?? context.agentStartWorkspaceWrites;
+  const parsed = ExternalActionRequesterInvocationV1Schema.safeParse({
+    caller: projectExternalActionRequesterCallerV1(context.actionCaller), surface: context.surface, authority: context.authority,
+    ...(context.callerPermissionMode !== undefined ? { callerPermissionMode: typeof context.callerPermissionMode === 'string'
+      ? parseAgentPermissionIntentV1Alias(context.callerPermissionMode) ?? context.callerPermissionMode : context.callerPermissionMode } : {}),
+    ...(context.callerInputConstraints !== undefined ? { callerInputConstraints: context.callerInputConstraints } : {}),
+    ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
+    ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
+    ...retained,
+  });
+  return parsed.success ? parsed.data : null;
 }
 
 /** Preserve the host's admitted caller and exact review across Account transport. */
@@ -167,26 +186,18 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
       accountId: args.account.accountId, serverId: args.context.serverIdentityId ?? args.account.serverId,
       target: args.target,
     } : undefined;
-  const workspaceWrites = args.context.workspaceWrites === 'deny' || args.context.agentStartWorkspaceWrites === 'deny'
-    ? 'deny' : args.context.workspaceWrites ?? args.context.agentStartWorkspaceWrites;
   const provenance = !args.context.externalActionCredential
-    ? ExternalActionRequesterInvocationV1Schema.safeParse({ caller: projectExternalActionRequesterCallerV1(args.context.actionCaller),
-      surface: args.context.surface, authority: args.context.authority,
+    ? projectExternalActionRequesterInvocationContextV1(args.context, {
       ...(args.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.context.actionRequestAttributionV1 } : {}),
-      ...(args.context.callerPermissionMode !== undefined ? { callerPermissionMode: typeof args.context.callerPermissionMode === 'string'
-        ? parseAgentPermissionIntentV1Alias(args.context.callerPermissionMode) ?? args.context.callerPermissionMode : args.context.callerPermissionMode } : {}),
-      ...(args.context.callerInputConstraints !== undefined ? { callerInputConstraints: args.context.callerInputConstraints } : {}),
-      ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
-      ...(args.context.defaultSessionId != null ? { defaultSessionId: args.context.defaultSessionId } : {}),
       ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
       ...(reviewedParent ? { reviewedParent } : {}),
     }) : null;
-  if (!provenance?.success) return null;
-  const attribution = admitExternalActionRequesterInvocationAttributionV1(provenance.data, {
+  if (!provenance) return null;
+  const attribution = admitExternalActionRequesterInvocationAttributionV1(provenance, {
     accountId: args.account.accountId, serverIdentityId: args.account.serverIdentityId ?? args.account.serverId,
     authentication: args.authentication ?? { kind: 'account' },
   });
-  return attribution.ok ? provenance.data : null;
+  return attribution.ok ? provenance : null;
 }
 
 /** An Account's private host invocation can retain its own cause, never name another person. */
