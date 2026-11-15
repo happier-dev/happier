@@ -200,6 +200,8 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   ) => void;
   disabled?: boolean;
   disabledReason?: string;
+  /** The row's label when the surface names what the choice decides ("Sign in with") rather than the purpose. */
+  title?: string;
   /** The identity mark of what this purpose draws on (a service), in the row's leading column. */
   icon?: React.ReactNode;
   /** What the current choice means here, said when the row has no state of its own to report. */
@@ -442,7 +444,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     <Item
       testID={props.testID}
       icon={props.icon}
-      title={purposeTitle}
+      title={props.title ?? purposeTitle}
       subtitle={subtitle}
       subtitleLines={props.description || subtitleNeedsYou ? 0 : undefined}
       subtitleStyle={subtitleNeedsYou ? { color: theme.colors.state.warning.foreground } : undefined}

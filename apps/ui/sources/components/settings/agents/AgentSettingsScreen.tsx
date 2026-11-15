@@ -316,6 +316,8 @@ const AgentConnectedAccountPurposeRows = React.memo(function AgentConnectedAccou
                         testID={`agent-connected-account-purpose:${declaration.purpose}`}
                         localizedTextPluginId={identity.pluginId}
                         declaration={declaration}
+                        // One sign-in choice is named by what it decides; several keep their purpose names.
+                        {...(declarations.length === 1 ? { title: t('connectedServices.purposeTargets.signInWith') } : {})}
                         value={defaultsByPurposeKey.get(purposeKey)?.target ?? null}
                         teamResourceValue={defaultsByPurposeKey.get(purposeKey)?.teamResource ?? null}
                         teamCredentialCatalog={teamCredentialCatalog}

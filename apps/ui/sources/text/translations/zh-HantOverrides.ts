@@ -2685,6 +2685,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             requiredPrompt: '選擇帳戶或群組',
             notSet: '未設定',
             ownSignIn: ({ agent }: { agent: string }) => `${agent} 自己的登入`,
+            signInWith: '登入方式',
             legacyUnavailable: '此 Home 暫時無法顯示已連線帳戶目標',
             requiredAccountPrompt: '選擇帳戶',
             signInToChoose: '登入此 Home 以選擇帳戶',

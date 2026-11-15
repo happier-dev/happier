@@ -4324,6 +4324,7 @@ export const ru: TranslationStructure = {
       requiredPrompt: 'Выберите учётную запись или группу',
       notSet: 'Не задано',
       ownSignIn: ({ agent }: { agent: string }) => `Собственный вход ${agent}`,
+      signInWith: 'Вход через',
       legacyUnavailable: 'Этот Home пока не может показать цели подключённых учётных записей',
       requiredAccountPrompt: 'Выберите учётную запись',
       signInToChoose: 'Войдите в этот Home, чтобы выбрать учётную запись',

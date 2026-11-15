@@ -549,11 +549,8 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
         testID={testID}
         icon={mark}
         title={title}
-        // What it needs (or why its account can't serve here), then what a restricted family serves.
-        subtitle={[
-          props.facts?.unavailableReason ?? t('settingsProvidersCollection.gateway.slotConnect', { service: title }),
-          restriction?.summary ?? null,
-        ].filter(Boolean).join(' · ')}
+        // Why its account can't serve here, then what a restricted family serves; Connect says the rest.
+        subtitle={[props.facts?.unavailableReason ?? null, restriction?.summary ?? null].filter(Boolean).join(' · ') || undefined}
         subtitleLines={0}
         showChevron={false}
         rightElement={
@@ -581,13 +578,6 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
       declaration={serviceDeclaration}
       value={props.value}
       icon={mark}
-      description={
-        props.value === null
-          ? t('settingsProvidersCollection.gateway.slotUnused', {
-              service: title,
-            })
-          : undefined
-      }
       restriction={restriction}
       disabled={props.disabled}
       disabledReason={props.disabledReason}

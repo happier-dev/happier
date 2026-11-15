@@ -196,6 +196,8 @@ it('shows each machine’s Install, Update, Remove and Sign in and opens that ma
     await screen.pressByTestIdAsync('agent-machines:machine:signin:action:signIn');
     await vi.waitFor(() => expect(screen.findHostByTestId('agent-machines:machine:signin:setup')).toBeTruthy());
     expect(screen.findByTestId('agent-machines:machine:signin:setup.openTerminal')).toBeTruthy();
+    // The open form is the sign-in; the row's own Sign in would only repeat it.
+    expect(screen.findByTestId('agent-machines:machine:signin:action:signIn')).toBeNull();
     expect(selection.controller.selectedTargets).toEqual([{ serverIdentityId: home.id, machineId: 'signin' }]);
     expect(screen.findHostByTestId('agent-machines:machine:install:setup')).toBeNull();
 });

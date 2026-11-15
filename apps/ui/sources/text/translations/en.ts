@@ -4820,6 +4820,7 @@ const enConnectedServices = {
     requiredPrompt: 'Choose an account or group',
     notSet: 'Not set',
     ownSignIn: ({ agent }: { agent: string }) => `${agent}’s own sign-in`,
+    signInWith: 'Sign in with',
     legacyUnavailable: 'This Home cannot show connected-account targets yet',
     requiredAccountPrompt: 'Choose an account',
     signInToChoose: 'Sign in to this Home to choose an account',

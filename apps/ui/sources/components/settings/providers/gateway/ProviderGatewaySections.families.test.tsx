@@ -200,10 +200,11 @@ describe('gateway families (lab muse-accounts C1/C2)', () => {
           node.props?.testID === `provider-gateway-slot:${purpose}` &&
           typeof node.props?.subtitle === 'string',
       )[0]?.props.subtitle;
-    expect(subtitleOf('xai-upstream')).toMatch(/ · chat requests only$/);
+    // Connect already says what an unconnected family needs; line 2 keeps only what it serves.
+    expect(subtitleOf('xai-upstream')).toBe('chat requests only');
     expect(subtitleOf('meta-upstream')).toBe(
       'Shared for Muse Code only · Maya can allow it',
     );
-    expect(subtitleOf('openai-upstream')).not.toContain(' · ');
+    expect(subtitleOf('openai-upstream')).toBeUndefined();
   });
 });

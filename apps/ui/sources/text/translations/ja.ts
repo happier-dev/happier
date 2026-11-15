@@ -4925,6 +4925,7 @@ localTailscale: {
       requiredPrompt: 'アカウントまたはグループを選択',
       notSet: '未設定',
       ownSignIn: ({ agent }: { agent: string }) => `${agent} 自身のサインイン`,
+      signInWith: 'サインイン方法',
       legacyUnavailable: 'この Home ではまだ接続済みアカウントの対象を表示できません',
       requiredAccountPrompt: 'アカウントを選択',
       signInToChoose: 'アカウントを選択するには、この Home にサインインしてください',

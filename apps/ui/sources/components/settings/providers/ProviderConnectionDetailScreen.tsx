@@ -1277,7 +1277,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? gatewayChosenMachine.machine.displayName : null;
     const gatewayRunningMachineName = gatewayRuntime?.status === 'running'
         ? gatewayMachines.find((row) => row.machineId === gatewayHubMachineId)?.displayName ?? null : null;
-    // The page says which subscriptions the gateway draws on (lab GW1), generic until a slot is set.
+    // The header meta says which subscriptions the gateway draws on (lab GW1).
     const gatewayServices = gateway ? [...new Set(gateway.declarations
         .filter((declaration) => gateway.saved.purposeBindingDefaults?.[declaration.purpose])
         .map((declaration) => resolveQualifiedConnectedServiceRegistryDisplayName(
@@ -1290,9 +1290,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 testID="provider-connection-header"
                 alwaysShowTitle
                 title={presentation.title}
-                description={!gateway ? undefined : gatewayServices.length > 0
-                    ? t('settingsProvidersCollection.gateway.descriptionNamed', { services: joinList(gatewayServices) })
-                    : t('settingsProvidersCollection.gateway.description')}
+                // The purpose names the page's whole scope; which families it serves is the header meta's fact.
+                description={gateway ? t('settingsProvidersCollection.gateway.description') : undefined}
                 // A gateway says "Experimental" once, in its Details section's What to know row.
                 titleAccessory={connection.provenance === 'external' && !gateway ? (
                     <StatusPill

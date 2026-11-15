@@ -3280,9 +3280,9 @@ describe('ProviderConnectionDetailScreen', () => {
             for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
         });
         await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
-        // The page names what the gateway draws on once a slot is set (lab GW1).
-        await waitForHomeGovernance(() => expect(String(findComposite(screen, 'provider-connection-header', 'description')
-            ?.props.description)).toMatch(/^settingsProvidersCollection\.gateway\.descriptionNamed\(services=.+\)$/));
+        // The purpose keeps the page's whole scope once a slot is set; it never narrows to one family.
+        expect(String(findComposite(screen, 'provider-connection-header', 'description')
+            ?.props.description)).toBe('settingsProvidersCollection.gateway.description');
         expect(stored.catalog.connections[0]).toMatchObject({ revision: 5,
             deployment: { kind: 'managedLocal' },
             purposeBindingDefaults: {

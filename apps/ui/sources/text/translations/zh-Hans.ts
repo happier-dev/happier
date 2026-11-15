@@ -4357,6 +4357,7 @@ export const zhHans: TranslationStructure = {
       requiredPrompt: '选择帐户或群组',
       notSet: '未设置',
       ownSignIn: ({ agent }: { agent: string }) => `${agent} 自己的登录`,
+      signInWith: '登录方式',
       legacyUnavailable: '此 Home 暂时无法显示已连接帐户目标',
       requiredAccountPrompt: '选择帐户',
       signInToChoose: '登录此 Home 以选择帐户',

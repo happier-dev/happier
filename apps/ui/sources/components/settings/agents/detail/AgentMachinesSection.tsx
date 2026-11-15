@@ -139,8 +139,11 @@ export function AgentMachinesSection(
   }, [failedMachineIds, refreshMachine]);
 
   const truthRows = rows.map((sourceRow): CapabilityMachineTruthRow => {
-    const row = retryTogether
-      ? { ...sourceRow, actions: sourceRow.actions.filter((action) => action.kind !== 'checkAgain') }
+    // An open row's form is its sign-in, so the row's own Sign in would only repeat it.
+    const open = sourceRow.machine.machineId === expandedMachineId;
+    const row = retryTogether || open
+      ? { ...sourceRow, actions: sourceRow.actions.filter((action) =>
+          !(retryTogether && action.kind === 'checkAgain') && !(open && action.kind === 'signIn')) }
       : sourceRow;
     return {
       machineId: row.machine.machineId,

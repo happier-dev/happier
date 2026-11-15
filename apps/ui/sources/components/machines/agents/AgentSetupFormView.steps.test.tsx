@@ -60,6 +60,7 @@ function pi(
     guideUrl?: string;
     executionScope?: 'machine' | 'member';
     installAvailable?: boolean;
+    connectedServices?: Parameters<typeof projectMachineAgent>[0]['connectedServices'];
   }>,
 ) {
   const facts = MachineAgentInventoryItemSchema.parse({
@@ -89,7 +90,7 @@ function pi(
     facts,
     checking: input.checking ?? false,
     stale: false,
-    connectedServices: [],
+    connectedServices: input.connectedServices ?? [],
     job: input.job ?? null,
     installedCheckedAt: 100,
   });
@@ -170,6 +171,19 @@ describe('agent setup steps', () => {
         }
         await screen.unmount();
       }
+    }
+  });
+
+  it('starts sign-in on a connected account when one exists, and on the terminal otherwise', async () => {
+    // Connected to the Account but not yet chosen for this Agent.
+    const chatgpt = { serviceId: 'openai-codex', title: 'ChatGPT', connected: false, healthy: false, profileLabel: null,
+      profiles: [{ profileId: 'work', healthy: true, profileLabel: 'Work' }] };
+    for (const [connectedServices, primary] of [[[chatgpt], 'useService'], [[], 'openTerminal']] as const) {
+      const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={pi({ installed: true, signIn: 'signedOut', connectedServices })}
+        machineName="devbox" layout="full" handlers={HANDLERS} />);
+      try {
+        expect(screen.findByTestId(`setup.${primary}`), screen.getTextContent()).not.toBeNull();
+      } finally { await screen.unmount(); }
     }
   });
 

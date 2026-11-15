@@ -13,6 +13,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
+import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -79,6 +80,13 @@ export function resolveAgentSignInChoices(agent: MachineAgent, handlers: AgentSe
             ? section.options.map(option => ({ kind: 'service' as const, serviceId: service.serviceId, option })) : []);
     });
     return agent.signIn.nativeLogin === 'terminal' ? [...services, { kind: 'native' }] : services;
+}
+
+/** An account already connected to the Account is the way to sign in; otherwise the Agent's own login, then Connect. */
+function resolveDefaultSignInChoice(choices: readonly AgentSignInChoice[]): AgentSignInChoice | undefined {
+    return choices.find((choice) => choice.kind === 'service' && !choice.option.disabled
+            && choice.option.id !== createConnectServiceOptionId(choice.serviceId))
+        ?? choices.find((choice) => choice.kind === 'native');
 }
 
 function choiceKey(choice: AgentSignInChoice): string {
@@ -385,7 +393,7 @@ function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: bool
     const choices = resolveAgentSignInChoices(agent, handlers);
     const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
     const selected = choices.find((choice) => choiceKey(choice) === selectedKey)
-        ?? (selectedKey === null ? choices.find(choice => choice.kind === 'native') : null) ?? null;
+        ?? (selectedKey === null ? resolveDefaultSignInChoice(choices) : null) ?? null;
     if (choices.length === 0) {
         return <Lead text={t('machineAgents.noNativeLogin', { agent: agent.title })} />;
     }
@@ -403,7 +411,7 @@ function SignInChoices(props: AgentSetupFormViewProps & Readonly<{ compact: bool
             id: choiceKey(choice),
             title: choice.option.label,
             subtitle: choice.option.subtitle,
-            icon: 'link' as const,
+            mark: <ConnectedServiceMark legacyServiceId={choice.serviceId} size="inline" />,
             disabled: choice.option.disabled,
             testID: `${testID}.way.${choice.option.id}`,
         };
