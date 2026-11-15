@@ -412,6 +412,31 @@ describe('VoiceGlance', () => {
         expect(voice.onPrimaryAction).toHaveBeenCalledTimes(1);
     });
 
+    it.each(['companion', 'popover', 'sheet'] as const)('keeps a reading that outlives a clean End presented with its own Stop in the %s', async (presentation) => {
+        const idle = resolveVoiceAttemptControl({
+            surfaceState: 'idle', tone: 'neutral', status: 'disconnected', sessionId: null, canStop: false,
+            muted: false, capturing: false, startAdmitted: true, hasRecovery: false,
+        });
+        const voice: VoiceAttemptControlProjection = {
+            ...attempt(), ...idle, statusWord: 'Voice ended', canOpenConversation: true,
+            ended: { sessionId: 'voice-1', adapterId: 'local_direct', startedAt: 1_000, endedAt: 253_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null },
+        };
+        const stop = vi.fn();
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation={presentation}
+            readAloud={{ phase: 'speaking', stop }} />);
+
+        expect(screen.getTextContent()).toContain(t('voicePresence.readAloud.speaking'));
+        expect(screen.getTextContent()).not.toContain('Voice ended');
+        expect(screen.getTextContent()).toContain('4:12');
+        const readingStop = screen.findByTestId('voice-glance-read-aloud-stop')!;
+        expect(readingStop.props.accessibilityLabel).toBe(t('voicePresence.readAloud.stop'));
+        screen.pressByTestId('voice-glance-read-aloud-stop');
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(voice.onPrimaryAction).not.toHaveBeenCalled();
+        screen.pressByTestId('voice-glance-open-conversation');
+        expect(voice.onOpenConversation).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps the ended actions to words the row can hold: starting fresh is one quiet icon', async () => {
         const idle = resolveVoiceAttemptControl({
             surfaceState: 'idle', tone: 'neutral', status: 'disconnected', sessionId: null, canStop: false,

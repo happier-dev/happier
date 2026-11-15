@@ -29,8 +29,8 @@ import { VoiceEndedPendingApproval } from './VoiceEndedPendingApproval';
 import { presentVoiceContinuation } from '@/voice/transcript/voiceTranscriptNotePresentation';
 import { VoiceStatusCell } from './VoiceStatusCell';
 import { VoiceTransport } from './VoiceTransport';
-import { VoiceReadAloudStatus, type VoiceReadAloud } from './VoiceReadAloud';
-import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
+import { VoiceReadAloudStatus, VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
+import { resolveVoicePresenceReadAloud, type VoicePresenceReading } from './resolveVoicePresenceReadAloud';
 import { useVoiceTargetName, VoiceTargetIdentity } from './VoiceTargetIdentity';
 import {
   formatVoiceElapsed,
@@ -172,7 +172,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
   const targetName = useVoiceTargetName(voice.targetSessionAddress);
   if (!voice.live && voice.ended) {
     return (
-      <VoiceGlanceEnded model={model} sheet={sheet} testID={props.testID} />
+      <VoiceGlanceEnded model={model} sheet={sheet} reading={reading} testID={props.testID} />
     );
   }
   const showTurns =
@@ -188,15 +188,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
       <View style={sheet ? styles.heroSheet : styles.hero}>
         <VoiceMark voice={voice} size={sheet ? 64 : 44} />
         <View style={styles.heroText}>
-          {reading ? (
-            <VoiceReadAloudStatus
-              phase={reading.readAloud.phase}
-              size="hero"
-              testID={`${props.testID}-read-aloud-status`}
-            />
-          ) : (
-            <VoiceStatusLine voice={voice} size="hero" />
-          )}
+          <VoiceGlanceStatusWord voice={voice} readAloud={reading?.readAloud ?? null} testID={props.testID} />
           {caption ? (
             <Text
               style={sheet ? styles.captionSheet : styles.caption}
@@ -250,6 +242,25 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
   );
 });
 
+/** The hero's status word: an active reading leads it (its own word), otherwise the call's state. */
+function VoiceGlanceStatusWord(
+  props: Readonly<{
+    voice: VoiceSurfaceViewModel['attemptControl'];
+    readAloud: VoiceReadAloud | null;
+    testID: string;
+  }>,
+): React.ReactElement {
+  return props.readAloud ? (
+    <VoiceReadAloudStatus
+      phase={props.readAloud.phase}
+      size="hero"
+      testID={`${props.testID}-read-aloud-status`}
+    />
+  ) : (
+    <VoiceStatusLine voice={props.voice} size="hero" />
+  );
+}
+
 /**
  * Whose instructions this call speaks from (lab `b-voice A`): the receipt of an attempt whose
  * Instructions were actually prepared, named through the same Session-name owner as the target. A
@@ -288,12 +299,14 @@ const VoiceSpeaksFrom = React.memo(function VoiceSpeaksFrom(
 /**
  * After a clean End (lab ST "ended"): the dots have regathered into the microphone, the call's
  * length, the reassurance that it is saved, and the two next steps — back to the conversation, or
- * talk again.
+ * talk again. A reading that outlives the call takes the status word, with its own Stop beside it
+ * (the island's reading form), so the next steps below keep their row.
  */
 const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
   props: Readonly<{
     model: VoiceSurfaceViewModel;
     sheet: boolean;
+    reading: VoicePresenceReading | null;
     testID: string;
   }>,
 ) {
@@ -301,6 +314,7 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
   const { theme } = useUnistyles();
   const voice = props.model.attemptControl;
   const ended = voice.ended!;
+  const readAloud = props.reading?.readAloud ?? null;
   // Continued on another device (lab C1): the conversation moved; this device only let its own
   // microphone go. Viewer-relative words from the same formatter the transcript note uses.
   const continued =
@@ -323,7 +337,7 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
       <View style={props.sheet ? styles.heroSheet : styles.hero}>
         <VoiceMark voice={voice} size={props.sheet ? 64 : 44} />
         <View style={styles.heroText}>
-          <VoiceStatusLine voice={voice} size="hero" />
+          <VoiceGlanceStatusWord voice={voice} readAloud={readAloud} testID={props.testID} />
           {continued ? (
             <Text
               testID={`${props.testID}-continued`}
@@ -337,6 +351,13 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
             </Text>
           ) : null}
         </View>
+        {readAloud ? (
+          <VoiceReadAloudStop
+            readAloud={readAloud}
+            size="island"
+            testID={`${props.testID}-read-aloud-stop`}
+          />
+        ) : null}
       </View>
       <VoiceEndedPendingApproval
         ended={ended}
