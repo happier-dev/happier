@@ -5,12 +5,13 @@ import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/ac
 import {
     automationRunCustodyTerminalWhere,
     finalizeDeletedAutomationsWithoutRetainedRunsTx,
+    readAutomationLiveCauseRunIdsTx,
 } from '@/app/automations/automationCrudService';
 import { emitAutomationUpsert } from '@/app/automations/automationChangePublisher';
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
 import type { RetentionRule } from '@/app/retention/runtime/retentionRuleRegistry';
 import { db } from '@/storage/db';
-import { afterTx, inTx } from '@/storage/inTx';
+import { afterTx, inTx, type Tx } from '@/storage/inTx';
 
 const ACCOUNT_DEFAULT_AUTOMATION_RUN_RETENTION_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -95,47 +96,40 @@ function isAutomationRunEligibleForDeletion(
 }
 
 async function deleteAutomationRunHistory(
+    tx: Tx,
     run: AutomationRunRetentionCandidate,
     policy: RetentionPolicy,
     now: Date,
 ): Promise<boolean> {
-    return await inTx(async (tx) => {
-        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
-            tx,
-            run.accountId,
-            "content",
-        );
-        if (accountFence.status !== 'ready') return false;
-        const current = await tx.automationRun.findFirst({
-            where: { id: run.id, accountId: run.accountId },
-            select: automationRunRetentionCandidateSelect,
-        });
-        if (!current || !isAutomationRunEligibleForDeletion(current, policy, now)) {
-            return false;
-        }
-        const deleted = await tx.automationRun.deleteMany({
-            where: {
-                id: current.id,
-                accountId: current.accountId,
-                revision: current.revision,
-                ...automationRunCustodyTerminalWhere(),
-            },
-        });
-        if (deleted.count !== 1) return false;
-        const cursor = await markAccountChanged(tx, {
-            accountId: current.accountId,
-            kind: current.automationId === null ? 'account' : 'automation',
-            entityId: current.automationId ?? `workflow-run:${current.id}`,
-        });
-        if (current.automation !== null) {
-            afterTx(tx, () => emitAutomationUpsert({
-                accountId: current.accountId,
-                automation: current.automation!,
-                cursor: cursor.resolveCursor(),
-            }));
-        }
-        return true;
+    const current = await tx.automationRun.findFirst({
+        where: { id: run.id, accountId: run.accountId },
+        select: automationRunRetentionCandidateSelect,
     });
+    if (!current || !isAutomationRunEligibleForDeletion(current, policy, now)) {
+        return false;
+    }
+    const deleted = await tx.automationRun.deleteMany({
+        where: {
+            id: current.id,
+            accountId: current.accountId,
+            revision: current.revision,
+            ...automationRunCustodyTerminalWhere(),
+        },
+    });
+    if (deleted.count !== 1) return false;
+    const cursor = await markAccountChanged(tx, {
+        accountId: current.accountId,
+        kind: current.automationId === null ? 'account' : 'automation',
+        entityId: current.automationId ?? `workflow-run:${current.id}`,
+    });
+    if (current.automation !== null) {
+        afterTx(tx, () => emitAutomationUpsert({
+            accountId: current.accountId,
+            automation: current.automation!,
+            cursor: cursor.resolveCursor(),
+        }));
+    }
+    return true;
 }
 
 async function finalizeDeletedAutomationDefinitions(limit: number): Promise<void> {
@@ -210,15 +204,31 @@ export function createAutomationRunRetentionRule(): RetentionRule {
             if (params.dryRun) dryRunOffset += candidates.length;
 
             let deleted = receiptDeleted;
+            const candidatesByAccount = new Map<string, AutomationRunRetentionCandidate[]>();
             for (const candidate of candidates) {
+                const accountCandidates = candidatesByAccount.get(candidate.accountId) ?? [];
+                accountCandidates.push(candidate);
+                candidatesByAccount.set(candidate.accountId, accountCandidates);
+            }
+            for (const [accountId, accountCandidates] of candidatesByAccount) {
                 if (params.shouldContinue && !params.shouldContinue()) break;
-                if (isAutomationRunEligibleForDeletion(candidate, params.policy, params.now)) {
-                    if (params.dryRun) {
-                        deleted += 1;
-                    } else if (await deleteAutomationRunHistory(candidate, params.policy, params.now)) {
-                        deleted += 1;
+                deleted += await inTx(async tx => {
+                    if (!params.dryRun) {
+                        const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, accountId, 'content');
+                        if (fence.status !== 'ready') return 0;
                     }
-                }
+                    // Clear, exact Delete and retention share the immutable cause
+                    // owner. Read live publishers once per Account batch, not per row.
+                    const retainedRunIds = await readAutomationLiveCauseRunIdsTx(tx, accountId);
+                    let removed = 0;
+                    for (const candidate of accountCandidates) {
+                        if (params.shouldContinue && !params.shouldContinue()) break;
+                        if (retainedRunIds.has(candidate.id)
+                            || !isAutomationRunEligibleForDeletion(candidate, params.policy, params.now)) continue;
+                        if (params.dryRun || await deleteAutomationRunHistory(tx, candidate, params.policy, params.now)) removed++;
+                    }
+                    return removed;
+                }, { readOnly: params.dryRun });
             }
 
             // Deleting the last retained Run is what makes a soft-deleted

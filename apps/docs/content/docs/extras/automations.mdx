@@ -973,9 +973,10 @@ more or less work concurrently.
 Completed Run history is retained for 30 days by default. Turn on **Keep run
 history forever** in the same settings screen to retain it indefinitely, unless
 the self-hosted server operator has configured a shorter Workflow retention
-policy. Removing an Automation also deletes its past Runs when retention cleanup
-runs, including Runs set to keep forever. The removal confirmation warns about
-this before you confirm. This setting controls the server-owned history lifecycle;
+policy. In unreleased 0.3 development source, removing an Automation or trigger
+preserves past Runs under the same retention policy, including **Keep run history
+forever**. History needed by an active Run or Workflow turn remains retained until
+that work settles. This setting controls the server-owned history lifecycle;
 it is not a second client-side cache.
 
 Retained Workflow detail screens also offer **Clear run history** in their
