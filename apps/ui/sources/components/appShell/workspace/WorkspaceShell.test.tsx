@@ -504,6 +504,13 @@ describe('WorkspaceShell tab scale', () => {
             const mountedTabs = Math.min(tabCount, DOCUMENT_BAR_INITIAL_WINDOW_TABS + 1);
             expect(screen.root.findAll(node => typeof node.type === 'function' && node.type.name === 'DocumentBarTabRow')).toHaveLength(mountedTabs);
             expect(activeSubscriptions).toBe(mountedTabs);
+            // Tab chrome names a Session only while its tab is in the bar's window: the list-display content
+            // demand (and the hydration it drives) follows the mounted tabs, not every restored Session tab.
+            const { isSessionListRowVisible } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+            const tabDemandedSessions = Array.from({ length: sessionTabs }, (_, index) => `scale-${index}`)
+                .filter(id => isSessionListRowVisible(id, home) && !isSessionListRowVisible(id, home, 'session')).length;
+            expect.soft(tabDemandedSessions).toBeGreaterThan(0);
+            expect.soft(tabDemandedSessions).toBeLessThanOrEqual(mountedTabs);
             const mount = readCounts();
             const stop = screen.subscribe(commits.commit);
             reset();

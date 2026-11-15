@@ -175,6 +175,11 @@ export type DocumentTabStripProps<T extends DocumentTabItem> = Readonly<{
     dropRingTabKey?: string | null;
     /** `bar` only: the surface under the strip, which its edge fades blend into. */
     barFadeColor?: string;
+    /**
+     * `bar` only: the keys of the tabs the bar has mounted (pinned marks plus the window near its viewport),
+     * reported when that set changes, so an owner can demand per-tab content for those tabs only.
+     */
+    onMountedTabKeysChange?: (keys: readonly string[]) => void;
 }>;
 
 /** The bar variant's measures (workspace lab T: 30 tall in the title strip, 28 in a pane strip). */
@@ -968,6 +973,7 @@ function DocumentBar<T extends DocumentTabItem>(props: Readonly<{
     }, [readViewport, scrollRef]);
     const barChildren: React.ReactNode[] = [];
     const mountedTabIds = pinned.map(tab => strip.tabNativeId(tab.key));
+    const mountedTabKeys = pinned.map(tab => tab.key);
     let leftOut = 0;
     const flushLeftOut = (before: number) => {
         if (leftOut === 0) return;
@@ -981,6 +987,7 @@ function DocumentBar<T extends DocumentTabItem>(props: Readonly<{
             || (openTabAt >= 0 && Math.abs(index - openTabAt) <= 1);
         if (!mounted) { leftOut += 1; return; }
         mountedTabIds.push(strip.tabNativeId(tab.key));
+        mountedTabKeys.push(tab.key);
         flushLeftOut(index);
         barChildren.push(
             <View key={tab.key} testID={`document-tab-frame-${toTestIdSafeValue(tab.key)}`}
@@ -996,6 +1003,11 @@ function DocumentBar<T extends DocumentTabItem>(props: Readonly<{
         );
     });
     flushLeftOut(unpinned.length);
+    const mountedTabKeySignature = mountedTabKeys.join('\u0000');
+    const onMountedTabKeysChange = strip.onMountedTabKeysChange;
+    React.useEffect(() => {
+        onMountedTabKeysChange?.(mountedTabKeySignature ? mountedTabKeySignature.split('\u0000') : []);
+    }, [mountedTabKeySignature, onMountedTabKeysChange]);
     return (
         <View style={styles.bar} accessibilityRole="tablist" role={Platform.OS === 'web' ? 'presentation' : undefined}
             accessibilityLabel={Platform.OS === 'web' ? undefined : strip.accessibilityLabel}

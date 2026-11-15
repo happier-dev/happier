@@ -47,6 +47,8 @@ const EMPTY_TITLE_ENTRIES: readonly DestinationInstanceTitleEntry[] = [];
  * only the height and the surface they sit on differ (workspace lab T/S). Every tab stays in the
  * strip, which scrolls sideways; one trailing menu lists them all with the recently closed ones.
  */
+const EMPTY_MOUNTED_TAB_KEYS: ReadonlySet<string> = new Set();
+
 export function WorkspaceGroupTabs(props: Readonly<{
     workspace: WorkspaceNavigationContextValue;
     group: WorkspaceGroup;
@@ -92,7 +94,13 @@ export function WorkspaceGroupTabs(props: Readonly<{
     const titleResolutionEntries = React.useMemo(() => overflowOpen
         ? [...titleEntries, ...recentlyClosed.map(entry => ({ key: `closed:${entry.tab.id}`, instanceKey: entry.tab.id, ref: entry.tab.target, fallbackTitle: entry.fallbackTitle }))]
         : titleEntries, [overflowOpen, titleEntries, recentlyClosed]);
-    const titleSources = useDestinationInstanceTitleSources(props.catalog, titleResolutionEntries);
+    // Session content is demanded for the tabs the bar has mounted (its window), not every restored tab; the
+    // open All-tabs list names every tab, so it demands them all while it is open.
+    const [mountedTabKeys, setMountedTabKeys] = React.useState<ReadonlySet<string>>(EMPTY_MOUNTED_TAB_KEYS);
+    const reportMountedTabKeys = React.useCallback((keys: readonly string[]) => {
+        setMountedTabKeys(current => current.size === keys.length && keys.every(key => current.has(key)) ? current : new Set(keys));
+    }, []);
+    const titleSources = useDestinationInstanceTitleSources(props.catalog, titleResolutionEntries, overflowOpen ? null : mountedTabKeys);
     const liveTitles = useDestinationInstanceTitles(props.catalog, overflowOpen ? titleResolutionEntries : EMPTY_TITLE_ENTRIES);
     const hasRecentlyClosed = recentlyClosed.length > 0;
     const previousTabs = React.useRef<ReadonlyMap<string, WorkspaceDocumentTab>>(new Map());
@@ -296,6 +304,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
                 tabNativeId={(key) => `workspace-${safeGroup}-tab-${toTestIdSafeValue(key)}`}
                 panelNativeId={(key) => `workspace-${safeGroup}-panel-${toTestIdSafeValue(key)}`}
                 testIds={{ tab: (key) => `workspace-tab-${key}`, tabClose: (key) => `workspace-tab-close-${key}` }}
+                onMountedTabKeysChange={reportMountedTabKeys}
             />
             {/* The spacer, then the pane's tab actions as one group: + New tab, All tabs and (last pane) split. */}
             <View style={styles.grow} />

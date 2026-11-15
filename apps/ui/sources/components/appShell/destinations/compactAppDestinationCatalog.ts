@@ -1498,8 +1498,10 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
 export function useDestinationInstanceTitles(
     catalog: readonly CompactAppDestination[],
     entries: readonly DestinationInstanceTitleEntry[],
+    /** The entries whose Session content is demanded (the tabs a strip has mounted); every entry when omitted. */
+    contentDemandKeys?: ReadonlySet<string> | null,
 ): ReadonlyMap<string, string> {
-    const sources = useDestinationInstanceTitleSources(catalog, entries);
+    const sources = useDestinationInstanceTitleSources(catalog, entries, contentDemandKeys);
     const source = React.useMemo(() => {
         let titles: ReadonlyMap<string, string> = new Map();
         return {
@@ -1533,6 +1535,8 @@ export function useDestinationInstanceTitles(
 export function useDestinationInstanceTitleSources(
     catalog: readonly CompactAppDestination[],
     entries: readonly DestinationInstanceTitleEntry[],
+    /** The entries whose Session content is demanded (the tabs a strip has mounted); every entry when omitted. */
+    contentDemandKeys?: ReadonlySet<string> | null,
 ): ReadonlyMap<string, DocumentTabTitleSource> {
     const destinationTitles = useWorkspaceDestinationTitles();
     const accountLifetime = useActiveServerAccountScopeLifetime();
@@ -1583,7 +1587,8 @@ export function useDestinationInstanceTitleSources(
             return owner.refreshWorkflowRunSummaries(runIds.map(runId => ({ runId })));
         }), { tag: 'Workspace.runTitles' });
     }, [accountLifetime, unreadRunIdsKey]);
-    const sessionEntries = React.useMemo(() => projections.filter(entry => entry.session && entry.entry.ref.params.id).map(entry => entry.entry), [projections]);
+    const sessionEntries = React.useMemo(() => projections.filter(entry => entry.session && entry.entry.ref.params.id
+        && (!contentDemandKeys || contentDemandKeys.has(entry.entry.key))).map(entry => entry.entry), [projections, contentDemandKeys]);
     const addresses = React.useMemo(() => sessionEntries.map((entry) => ({
         sessionId: entry.ref.params.id!, serverId: entry.ref.params.serverId ?? null,
     })), [sessionEntries]);
