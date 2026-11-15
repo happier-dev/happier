@@ -23,7 +23,7 @@ import {
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
-import { machineSetupPresetSource, readMachineSetupPresetChoices, type MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
+import { machineSetupPresetSource, readMachineSetupPresetChoices, type MachineSetupPresetChoice, type SavedMachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
 import { showMachineSavePreset } from '@/components/machines/setup/MachineSavePresetModal';
 import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -306,7 +306,7 @@ function MachineSetupRoot(
                   const openedSource = opened?.source;
                   const latest =
                     openedSource?.kind === 'accountPreset'
-                      ? (presetList.find((entry): entry is OpenedManagedMachinePresetV1 => !('kind' in entry) && entry.id === openedSource.presetId) ?? null)
+                      ? (presetList.find((entry): entry is SavedMachineSetupPresetChoice => !('kind' in entry) && entry.id === openedSource.presetId) ?? null)
                       : null;
                   return (
                     <AttachedPresetRow
@@ -852,10 +852,10 @@ function AttachedPresetRow(
     sourceKey: string;
     source: AttachedSource | null;
     name: string;
-    newer: OpenedManagedMachinePresetV1 | null;
+    newer: SavedMachineSetupPresetChoice | null;
     editable: boolean;
     busy: boolean;
-    onApplyAgain: (preset: OpenedManagedMachinePresetV1) => void;
+    onApplyAgain: (preset: SavedMachineSetupPresetChoice) => void;
     onStopUsing: () => void;
   }>,
 ) {

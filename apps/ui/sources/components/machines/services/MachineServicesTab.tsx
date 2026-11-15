@@ -5,6 +5,7 @@ import {
   Collection,
   useHappierCollection,
   type CollectionAnatomy,
+  type HappierCollectionGroup,
 } from '@happier-dev/plugin-ui';
 import type {
   MachineServiceRowV1,
@@ -177,7 +178,7 @@ function MachineServicesList(
     const title = (source: string) => sourceNames.get(source) ?? t('machineServices.groups.deployed');
     const ordered = [...bands].sort(([left], [right]) => title(left).localeCompare(title(right)) || left.localeCompare(right));
     return {
-      axis: machineServiceListGroupKeys(rows).flatMap((key) => key === 'deployed' ? [
+      axis: machineServiceListGroupKeys(rows).flatMap<HappierCollectionGroup>((key) => key === 'deployed' ? [
         ...ordered.map(([source, band]) => ({ key: `${SOURCE_GROUP_PREFIX}${source}`, title: title(source),
           description: [t('machineServices.groups.environments', { count: band.environments }),
             t('machineServices.environmentRow.services', { count: band.services })].join(' · ') })),

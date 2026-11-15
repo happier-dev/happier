@@ -47,15 +47,16 @@ export function useManagedImagePreviews(
   React.useEffect(() => {
     setSources(EMPTY);
     const machineId = input.controllerMachineId;
+    const occurrenceId = input.occurrenceId;
     const requests = requestsRef.current;
-    if (!machineId || requests.length === 0) return;
+    if (!machineId || !occurrenceId || requests.length === 0) return;
     const abort = new AbortController();
     const client = createPluginContextualResourceReadClient({
       pluginId: input.pluginId,
       resource: {
         machineId,
         serverId: input.serverId,
-        expectedCallerOccurrenceId: input.occurrenceId,
+        expectedCallerOccurrenceId: occurrenceId,
       },
       isCurrent: () => !abort.signal.aborted,
     });

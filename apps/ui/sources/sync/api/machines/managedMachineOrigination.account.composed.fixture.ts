@@ -638,7 +638,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             const { resolveAccountExecutionRuntime } = await import('../../../../../cli/src/plugins/runtime/accountExecutionRuntime');
             const { listRuntimeContributedActionDefinitions } = await import('../../../../../cli/src/plugins/runtime/invocation/actions/createCommittedContributedActionDeps');
             const catalogRuntime = await resolveAccountExecutionRuntime({ accountExecution: {
-                credentials: { ...credentials, encryption: null }, serverUrl, isCurrent: () => lifetime.isCurrent(),
+                credentials: { ...credentials, encryption: null }, serverId, serverUrl, isCurrent: () => lifetime.isCurrent(),
             } });
             onTestFinished(() => catalogRuntime.registry.dispose());
             const executor = (admitted?: Admitted) => {
@@ -711,7 +711,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     daemonEntryPath: resolve(pluginRootPath, daemonEntry), devDaemonEntryPath: null,
                     sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-machine-vercel',
                         trustPolicy: 'local_trusted', installPolicy: 'copy' },
-                    manifest, compiledAccountManifest: manifest }], diagnosticsByPluginId: {} },
+                    manifest }], diagnosticsByPluginId: {} },
                 provenance: 'first_party',
             }), occurrenceIdsByPluginId: { [manifest.id]: createPluginRuntimeOccurrenceId(manifest.id) } });
             receiverProjection = buildDeferredDaemonProjectionSections({ protocolVersion: 1,

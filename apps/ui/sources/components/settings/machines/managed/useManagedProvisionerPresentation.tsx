@@ -43,6 +43,7 @@ import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCop
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
+import type { ManagedConfiguratorProvisioner } from './managedConfiguratorModel';
 
 export type ManagedProvisionerRepairFailure = Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>;
 
@@ -171,7 +172,7 @@ export function useManagedProvisionerRuntimeHost(input: Readonly<{
 /** Catalog declarations own display identity; the selected controller's admitted bundles own translation. */
 export function useManagedProvisionerPresentation(input: Readonly<{
     serverId: string; controller?: ManagedControllerV1; accountScope?: ServerAccountScope | null;
-    provisioner?: MachineProvisionersListResultV1['provisioners'][number];
+    provisioner?: ManagedConfiguratorProvisioner;
     provider?: Provisioner['contribution']; schemaVersion?: number;
     /** Changes when the person asks to read again: the projection is read anew. */
     refreshKey?: number;

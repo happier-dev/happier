@@ -15,7 +15,7 @@ import { t } from '@/text';
 export type ActivityActorView = Readonly<{
   kind: 'person' | 'agent' | 'workflow' | null;
   name: string | null;
-  avatar: Readonly<{ id: string; imageUrl: string | null }> | null;
+  avatar: ReturnType<typeof resolveAccountActorPresentation>['avatar'] | null;
 }>;
 
 /** The captured actor of a deploy receipt or an Action; null when the historical record has none. */

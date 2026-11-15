@@ -7,7 +7,9 @@ import { isOpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, t
 
 export type BundledMachineSetupPresetChoice = Extract<MachineSetupSourceEntryV1, { kind: 'bundledPreset' }>
     & Readonly<{ id: string; name: string; description: string }>;
-export type MachineSetupPresetChoice = OpenedManagedMachinePresetV1 | BundledMachineSetupPresetChoice;
+export type SavedMachineSetupPresetChoice = OpenedManagedMachinePresetV1
+    & Readonly<{ setup: NonNullable<OpenedManagedMachinePresetV1['setup']> }>;
+export type MachineSetupPresetChoice = SavedMachineSetupPresetChoice | BundledMachineSetupPresetChoice;
 export type MachineSetupPresetInput = Pick<OpenedManagedMachinePresetV1,
     'id' | 'revision' | 'contentEncryptionMode' | 'setup'> & Partial<Pick<OpenedManagedMachinePresetV1, 'recipientProjection'>>
     | Extract<MachineSetupSourceEntryV1, { kind: 'bundledPreset' }>;
@@ -19,7 +21,7 @@ export function readMachineSetupPresetChoices(
     localize: PluginLocalizedTextResolver,
 ): MachineSetupPresetChoice[] {
     return [
-        ...saved.filter(isOpenedManagedMachinePresetV1).filter(preset => preset.setup && preset.archivedAt == null),
+        ...saved.filter(isOpenedManagedMachinePresetV1).filter((preset): preset is SavedMachineSetupPresetChoice => !!preset.setup && preset.archivedAt == null),
         ...Object.values(projection?.machineSetupPresetsById ?? {}).map((entry): BundledMachineSetupPresetChoice => ({
             kind: 'bundledPreset', id: entry.id, name: localize(entry.pluginId, entry.definition.title),
             description: entry.definition.description ? localize(entry.pluginId, entry.definition.description) : '',
