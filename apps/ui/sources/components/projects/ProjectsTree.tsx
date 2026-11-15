@@ -1,10 +1,8 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Status } from '@happier-dev/plugin-ui';
 import {
     HAPPIER_COLLECTION_LIST_METRICS,
-    HAPPIER_WORK_STATUS_SEMANTIC_TONE,
     resolveHappierCollectionTreeChildIndentPx,
 } from '@happier-dev/plugin-ui/presentation';
 
@@ -12,6 +10,8 @@ import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import { StatusPill } from '@/components/ui/status/StatusPill';
+import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { CollectionListGroupLabel, CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import {
@@ -379,13 +379,13 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
 }
 
 /**
- * An Environment row's one fact at its end (lab rdProj: "v1.42", "● Deploy failed"): trouble as the shared status word
- * in its tone, the way Services draws it; otherwise the quiet fact. The column and the phone list both draw it.
+ * An Environment row's one fact at its end (lab rdProj: "v1.42", "● Deploy failed"): trouble as the plain status pill
+ * (its dot and word in the work tone); otherwise the quiet fact. The column and the phone list both draw it.
  */
 export function ProjectsTreeRowFact(props: Readonly<{ row: Pick<ProjectsTreeRow, 'fact' | 'needsYouStatus'>; testID?: string }>) {
     const status = props.row.needsYouStatus;
     const testID = props.testID === undefined ? {} : { testID: props.testID };
-    if (status) return <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} label={status.word} presentation="inline" {...testID} />;
+    if (status) return <StatusPill chrome="plain" labelVariant="phrase" variant={WORK_STATUS_PILL_VARIANT[status.tone]} label={status.word} {...testID} />;
     return props.row.fact ? <Text {...testID} numberOfLines={1} style={styles.count}>{props.row.fact}</Text> : null;
 }
 

@@ -177,6 +177,25 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
         expect(padding('projects-tree-hidden-h')).toBe(padding('projects-tree-row-plugins'));
     });
 
+    it('draws an Environment row on one line with its fact at the end: trouble in its tone, else the quiet fact (lab rdProj)', async () => {
+        const { deploymentWorkStatus } = await import('./deployments/deploymentPresentation');
+        const env = (environmentId: string, title: string, fact: string, needsYouStatus: ReturnType<typeof deploymentWorkStatus> | null) => ({
+            serverId: 'home', projectSourceId: 'src', environmentId, title, titleQualifier: null, fact, needsYouStatus,
+            attention: needsYouStatus ? 'needs-you' as const : null });
+        const billing = buildProjectsTreeRows({ projects: [{ key: 'billing', name: 'billing', checkouts: [
+            { refId: 'b1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/billing', attention: null },
+        ], environments: [env('prod', 'Production', 'v1.42', null), env('stg', 'Staging', 'Failed', deploymentWorkStatus('failed'))] }],
+        openRefId: null, expandedKeys: new Set(['billing']) });
+        const screen = await renderScreen(<ProjectsTree rows={billing} onToggle={() => {}} onOpenRef={() => {}} />);
+        // Every string drawn under the fact's node.
+        const text = (testID: string) => screen.findAll(node => node.props?.testID === testID).slice(0, 1)
+            .flatMap(node => [node, ...node.findAll(() => true)]).map(node => node.props?.children).flat(Infinity)
+            .filter((part: unknown) => typeof part === 'string').join('');
+        expect(text('projects-tree-billing/environment/prod-fact')).toContain('v1.42');
+        expect(screen.findAll(node => node.props?.testID === 'projects-tree-billing/environment/stg-fact').length).toBeGreaterThan(0);
+        expect(text('projects-tree-billing/environment/stg-fact')).toContain(deploymentWorkStatus('failed').word);
+    });
+
     it('is one keyboard tree: roving stop, arrows move, Space/Right disclose, Enter opens', async () => {
         const onToggle = vi.fn();
         const onOpenRef = vi.fn();
