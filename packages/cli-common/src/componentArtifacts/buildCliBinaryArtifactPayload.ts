@@ -43,13 +43,12 @@ import {
 } from './targets.js';
 import {
   commandExists,
-  compileBunBinary,
   ensureFileExists,
   execOrThrow,
-  resolveBunCommand,
   resolvePnpmCommand,
   type RunCommand,
 } from './commands.js';
+import { compileNodeSingleExecutable } from './nodeSingleExecutable.js';
 import {
   resolveWorkspaceBundlesFromPackageJson,
   resolveWorkspacePackageDeclaredFileEntries,
@@ -560,8 +559,7 @@ export async function buildCliBinaryArtifactCodePayload({
   target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS }),
   externals = [],
   runCommand = execOrThrow,
-  commandProbe = commandExists,
-  compileBinary = compileBunBinary,
+  compileBinary = compileNodeSingleExecutable,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -569,13 +567,8 @@ export async function buildCliBinaryArtifactCodePayload({
   externals?: string[];
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
-  compileBinary?: typeof compileBunBinary;
+  compileBinary?: typeof compileNodeSingleExecutable;
 }): Promise<CliBinaryArtifactCodePayload> {
-  const bunCommand = resolveBunCommand({ commandProbe });
-  if (!bunCommand)
-    throw new Error(
-      '[component-artifacts] bun is required to build CLI binary artifacts',
-    );
   const cliDir = join(repoRoot, 'apps', 'cli');
   const requireFromProject = createRequire(join(cliDir, 'package.json'));
   const esbuild = requireFromProject('esbuild') as Readonly<{
@@ -829,35 +822,15 @@ export async function buildCliBinaryArtifactCodePayload({
       },
     );
     const executableName = resolveExecutableName({ baseName: 'happier', target });
-    // Bun's embedded module graph and physical plugin entries have separate
-    // module caches. The native engine loads the same executable-relative ESM
-    // graph as plugins and child entries, preserving shared SDK/Zod identities.
-    const nativeEntryDir = await mkdtemp(join(payloadDir, '.native-entry-'));
-    try {
-      const nativeEntry = join(nativeEntryDir, 'index.mjs');
-      await writeFile(
-        nativeEntry,
-        "import { dirname, join } from 'node:path';\n" +
-          "import { pathToFileURL } from 'node:url';\n" +
-          "await import(pathToFileURL(join(dirname(process.execPath), 'package-dist', 'index.mjs')).href);\n",
-      );
-      await compileBinary({
-        repoRoot,
-        entrypoint: nativeEntry,
-        bunTarget: target.bunTarget,
-        outfile: join(payloadDir, executableName),
-        cwd: repoRoot,
-        externals: mergedExternals,
-        bunCommand,
-        autoloadDotenv: false,
-        // The physical graph resolves exports-only native packages beside itself.
-        // Ambient project configuration must not preload code into the CLI.
-        autoloadPackageJson: true,
-        runCommand,
-      });
-    } finally {
-      await rm(nativeEntryDir, { recursive: true, force: true });
-    }
+    // The executable is the pinned Node runtime with a small embedded main that
+    // loads the same executable-relative ESM graph as plugins and child entries,
+    // preserving shared SDK/Zod identities.
+    await compileBinary({
+      repoRoot,
+      target,
+      outfile: join(payloadDir, executableName),
+      runCommand,
+    });
     return {
       executableName,
       entrypoint: executableName,
@@ -1114,7 +1087,7 @@ export async function buildCliBinaryArtifactPayload({
   externals = [],
   runCommand = execOrThrow,
   commandProbe = commandExists,
-  compileBinary = compileBunBinary,
+  compileBinary = compileNodeSingleExecutable,
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
   includeIrohNativeReleaseEvidence = false,
@@ -1125,7 +1098,7 @@ export async function buildCliBinaryArtifactPayload({
   externals?: string[];
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
-  compileBinary?: typeof compileBunBinary;
+  compileBinary?: typeof compileNodeSingleExecutable;
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
   includeIrohNativeReleaseEvidence?: boolean;
@@ -1150,9 +1123,9 @@ export async function buildCliBinaryArtifactPayload({
     commandProbe,
     cliProxyApiManagedRuntimeExecutablePath,
     processCustodyRuntimeExecutablePath,
-    // The release payload preserves legitimate assets emitted alongside the
-    // Bun executable (for example its managed JS runtime). New immutable
-    // daemon support artifacts stage into an empty payload instead.
+    // The release payload keeps everything the code payload already wrote
+    // beside the executable. New immutable daemon support artifacts stage
+    // into an empty payload instead.
     preserveCompilePayloadAssets: true,
     includeIrohNativeReleaseEvidence,
   });

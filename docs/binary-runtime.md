@@ -79,8 +79,10 @@ remain deliberate user selections. The vendor layout is documented by the
 [Cursor installer](https://cursor.com/install).
 
 In current development source, `scripts/pipeline/release/bun-standalone.entitlements.plist`
-owns the macOS hardened-runtime permissions for shipped Bun executables. Standalone
-signing consumes it directly. Desktop sidecar preparation derives
+owns the macOS hardened-runtime permissions for shipped standalone executables: the
+Node single-executable CLI (0.3) and the Bun-compiled server and helper binaries. Its
+only entitlement, `com.apple.security.cs.allow-jit`, serves both JavaScript engines.
+Standalone signing consumes it directly. Desktop sidecar preparation derives
 `apps/ui/src-tauri/Entitlements.plist` from this policy plus the desktop's
 camera and microphone permissions; the committed projection also serves bundle-only
 finalization. Tauri applies that file when signing the app and external binaries,
@@ -118,7 +120,7 @@ or still a text placeholder. Recognition does not choose a different installatio
 or modify the subprocess environment.
 
 In current development source, the PTY provider uses the existing Python relay on
-POSIX Bun. Both native packages use `tty.ReadStream` for a nonblocking PTY master;
+POSIX Bun; shipped 0.3 CLI processes run on Node and select native `node-pty`. Both native packages use `tty.ReadStream` for a nonblocking PTY master;
 Bun 1.4.2 can return a successful spawn without working input/output
 ([upstream issue](https://github.com/oven-sh/bun/issues/25822)). Module-load success
 therefore cannot establish backend usability. Re-enable native POSIX selection
@@ -835,7 +837,8 @@ stop drains the same startup work before releasing runtime resources.
 ## Internal workspace packages
 
 In 0.3 development, `apps/stack/scripts/provision/.bun-version` is the single
-Bun build/provisioning version owner, currently 1.4.4. This includes the
+Bun build/provisioning version owner, currently 1.4.4. The shipped 0.3 CLI does not use
+Bun (see "Bundled Node runtime"); server, relay and helper binaries still do. This includes the
 [GHSA-26q8-h657-pf84 TLS trust-store correction](https://github.com/oven-sh/bun/security/advisories/GHSA-26q8-h657-pf84);
 standalone executables compiled with an affected Bun must be rebuilt.
 CI setup reads that file; managed Lima
@@ -956,9 +959,38 @@ first-party source. Native CLI construction and retained source QA share the ent
 authority in `packages/cli-common/sourceRuntimeEntries.mjs`: CLI exports/imports,
 bundled plugin daemon entries and declared Agent runner leaves join one esbuild
 graph. Native code construction rejects first-party dist/generated runtime inputs.
-Bun compiles a launcher that loads the emitted physical ESM graph from its own
-payload. It does not run pkgroll, the public declaration compiler, or a prior
-CLI dist build.
+The `happier` executable that loads the emitted physical ESM graph from its own
+payload is built as described in "Bundled Node runtime" below. Construction does not
+run pkgroll, the public declaration compiler, or a prior CLI dist build.
+
+### Bundled Node runtime
+
+In 0.3 development, the shipped CLI, daemon and Session host run on Node, not Bun
+(owner ruling 2026-11-14). `packages/cli-common/src/componentArtifacts/nodeSingleExecutable.ts`
+builds `happier` (`happier.exe`) as a Node single-executable application for each CLI
+target; `buildCliBinaryArtifactCodePayload` calls it in place of the former Bun compile:
+
+- The Node version is the repository's `.node-version`, the same runtime CI and
+  development use. The module pins the SHA-256 of each official release asset for that
+  version (`node-vX-{linux,darwin}-{x64,arm64}.tar.gz`, `win-x64/node.exe`); a version
+  without digests fails the build. Verified binaries are cached by digest under the
+  checkout's `node_modules/.cache/happier-node-runtime/`.
+- The build host must match the target (as for the native support payload). The
+  official binary is copied, stripped on Linux, and the embedded main is injected with
+  `postject` (Node 24 has no built-in `--build-sea`). macOS output is ad-hoc signed;
+  release signing re-signs it with hardened runtime and the JIT entitlement above.
+- The embedded main accepts two forms with Node semantics:
+  `happier [--no-warnings] [--no-deprecation] <absolute .js|.cjs|.mjs> ...args` runs that
+  script (CLI children, Claude hook forwarders, relays), and `happier ...args` runs the CLI
+  from `package-dist/` beside the executable. Its `execArgv` already applies the two flags.
+- Runtime selection: `resolveHappierScriptRuntimeCommand` in
+  `packages/cli-common/src/agents/managedJavaScriptRuntime.ts` returns the running Node
+  executable, including the single executable, for Happier-owned scripts; apps/cli reaches
+  it through `resolveJavaScriptRuntimeExecutable`. The managed JavaScript runtime download
+  is therefore no longer needed for Session spawn or Claude hook forwarders. It remains
+  for third-party npm-installed Agent CLIs, which need a binary named `node` on `PATH`
+  (`resolveJavaScriptRuntimeCommand`, `resolveJavaScriptRuntimePathEntries`).
+- Official Linux Node binaries require glibc 2.28 or later.
 
 Checkout Stack entrypoints use the same authored workspace resolver. In current
 0.3 development, successful `localSourceRuntimeBootstrap.mjs` registration owns
@@ -1113,11 +1145,8 @@ Optional foreign-platform native imports stay virtual until selected at runtime;
 guarded libvips resolution hints remain external so unselected platform libraries
 are not embedded in the server executable.
 The thin CLI continues to load its physical source graph and uses its existing
-runtime dependency vendoring and target acquisition owners.
-Only the thin CLI launcher enables package-JSON metadata loading so the physical
-graph can resolve exports-only native packages beside itself. CLI dotenv and
-bunfig autoload remain disabled; working-directory package metadata does not
-replace the physical importing package's resolution authority.
+runtime dependency vendoring and target acquisition owners; its executable is the
+bundled Node runtime, so no Bun compile option applies to it.
 Standalone compiler defaults come from `DEFAULT_BUN_COMPILE_OPTIONS` in the
 existing compiler owner. The ordinary compiler and both Sharp/Prisma build
 adapters disable implicit project `bunfig.toml` loading, preventing local preload

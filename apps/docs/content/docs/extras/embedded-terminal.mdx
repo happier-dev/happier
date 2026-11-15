@@ -157,11 +157,11 @@ The embedded terminal depends on all of the following:
 - the current session resolves to a reachable machine target.
 
 <Callout type="info">
-  In the current development build (unreleased), standalone CLI terminals on
-  macOS and Linux use Python 3 on the connected machine. This avoids a Bun
-  runtime incompatibility that can leave the terminal blank despite a successful
-  shell launch. These terminals use their initial row and column dimensions;
-  later panel resizes do not resize the shell.
+  In the current development build (unreleased), the standalone CLI runs on a
+  bundled Node runtime, so terminals on macOS and Linux use the native terminal
+  module: they no longer need Python 3 on the connected machine, and panel
+  resizes resize the shell. A CLI still running on Bun keeps the Python 3 relay
+  and its fixed initial size.
 </Callout>
 
 This guide describes Session terminals. Machine sharing and Project terminal

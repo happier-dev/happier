@@ -60,6 +60,10 @@ function targetForHost() {
 
 async function createSupportIdentityFixture(root: string, { nativeSupport = true } = {}): Promise<void> {
   await writeFixtureFile(
+    join(root, '.node-version'),
+    await readFile(new URL('../../../../.node-version', import.meta.url), 'utf8'),
+  );
+  await writeFixtureFile(
     join(root, 'apps/stack/scripts/provision/.bun-version'),
     await readFile(new URL('../../../../apps/stack/scripts/provision/.bun-version', import.meta.url), 'utf8'),
   );
@@ -1128,9 +1132,9 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
         repoRoot: root,
         payloadDir,
         target,
-        commandProbe: (command) => command === 'bun' || command === 'pnpm',
-        compileBinary: async ({ outfile, bunTarget }) => {
-          expect(bunTarget).toBe(target.bunTarget);
+        commandProbe: (command) => command === 'pnpm',
+        compileBinary: async ({ outfile, target: compiledTarget }) => {
+          expect(compiledTarget).toEqual(target);
           await writeFixtureFile(outfile, 'compiled daemon binary\n');
         },
       });

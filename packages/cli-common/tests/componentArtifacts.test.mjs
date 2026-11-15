@@ -562,8 +562,8 @@ test('buildCliBinaryArtifactPayload compiles and finalizes a self-contained runt
         mkdirSync(cliDistDir, { recursive: true });
         writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
       },
-      compileBinary: async ({ outfile, externals, autoloadDotenv }) => {
-        compileCalls.push({ outfile, externals, autoloadDotenv });
+      compileBinary: async ({ outfile, target: compiledTarget }) => {
+        compileCalls.push({ outfile, target: compiledTarget });
         writeFileSync(outfile, '#!/bin/sh\necho happier\n', 'utf8');
         if (process.platform !== 'win32') {
           const runtimeAssetsDir = join(payloadDir, 'runtime-assets');
@@ -580,16 +580,7 @@ test('buildCliBinaryArtifactPayload compiles and finalizes a self-contained runt
     assert.equal(result.entrypoint, artifacts.resolveExecutableName({ baseName: 'happier', target }));
     assert.deepEqual(runCalls.map(({ cmd }) => cmd), ['go']);
     assert.equal(compileCalls.length, 1);
-    assert.equal(compileCalls[0].autoloadDotenv, false);
-    assert.deepEqual(compileCalls[0].externals.sort(), [
-      '@homebridge/node-pty-prebuilt-multiarch',
-      'ffmpeg-static',
-      '@huggingface/transformers',
-      'node-pty',
-      'pino',
-      'sherpa-onnx-node',
-      'thread-stream',
-    ].sort());
+    assert.deepEqual(compileCalls[0].target, target);
     assert.equal(readFileSync(join(payloadDir, result.executableName), 'utf8'), '#!/bin/sh\necho happier\n');
     assert.equal(readFileSync(join(payloadDir, 'package-dist', 'index.mjs'), 'utf8'), 'console.log("cli");\n');
     assert.equal(
@@ -1210,15 +1201,7 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
       },
     });
 
-    assert.deepEqual([...compileCalls[0]?.externals].sort(), [
-      '@homebridge/node-pty-prebuilt-multiarch',
-      'ffmpeg-static',
-      '@huggingface/transformers',
-      'node-pty',
-      'pino',
-      'sherpa-onnx-node',
-      'thread-stream',
-    ].sort());
+    assert.equal(compileCalls.length, 1);
     assert.equal(existsSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers')), false);
     assert.equal(existsSync(join(payloadDir, 'node_modules', 'ffmpeg-static')), true);
     assert.equal(existsSync(join(payloadDir, 'node_modules', 'sherpa-onnx-node')), false);
