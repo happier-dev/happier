@@ -9,7 +9,7 @@ import type { InstalledScopeAdmission } from '../catalog/storeAccountAdmission';
 import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from '../catalog/storeKinds';
 import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
-import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { useAutomationDefinitionNextCursor, useAutomations, useIsDataReady } from '@/sync/store/hooks';
 import { isPluginEventAutomationTrigger, type AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
@@ -195,13 +195,13 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
         if (nextCursor) await (await import('@/sync/sync')).sync.loadMoreAutomations(nextCursor);
     }, [nextCursor]);
     const healthResults = useConfiguredHealthResults(scope, listed && automations.some(native => native.triggers.some(trigger =>
-        isPluginEventAutomationTrigger(trigger) && trigger.eventRef.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1)));
+        isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger))));
     const previous = React.useRef(EMPTY_CHECK_ROWS);
     const rows = React.useMemo(() => {
         if (!listed || !scope) return EMPTY_CHECK_ROWS;
         const byKey = new Map(previous.current.map(row => [row.key, row]));
         const next = automations.flatMap(native => native.triggers.flatMap((trigger): ManagedConfiguredCheckRow[] => {
-            if (!isPluginEventAutomationTrigger(trigger) || trigger.eventRef.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1) return [];
+            if (!isPluginEventAutomationTrigger(trigger) || !isHealthCheckEventSourceV1(trigger)) return [];
             const key = serverAccountScopedResourceKey(scope, 'configured-check', native.id, trigger.id);
             const retained = byKey.get(key);
             const lastResults = !healthResults ? CONFIGURED_HEALTH_LOADING : 'kind' in healthResults.value ? healthResults.value

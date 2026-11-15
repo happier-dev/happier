@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { readServiceCheckDefinitions, type ServiceCheckDefinitionFacts } from '@/components/projects/deployments/serviceCheckPresentation';
 import { useDeploymentAccountController } from '@/components/projects/deployments/useDeploymentProject';
 import { useDeploymentDomainPage } from '@/components/projects/deployments/useDeploymentReads';
@@ -37,7 +38,7 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
         return release;
     }, [lifetime, presented]);
     const needsContent = presented && automations.some(definition => definition.triggers.some(trigger =>
-        isPluginEventAutomationTrigger(trigger) && trigger.eventRef.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1));
+        isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger)));
     const [opened, setOpened] = React.useState<Readonly<{
         lifetime: ServerAccountScopeLifetime; access: PluginEventAutomationStoredContentAccess | null;
     }> | null>(null);
@@ -64,7 +65,7 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
     const sources = React.useMemo(() => {
         if (!presented || !lifetime?.isCurrent()) return [];
         return automations.flatMap(definition => definition.triggers.flatMap(trigger => {
-            if (!isPluginEventAutomationTrigger(trigger) || trigger.eventRef.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1) return [];
+            if (!isPluginEventAutomationTrigger(trigger) || !isHealthCheckEventSourceV1(trigger)) return [];
             const privateDetail = opened?.lifetime === lifetime && opened.access
                 ? readPluginEventAutomationPrivateDetail(definition, trigger.id, opened.access) : null;
             return [{ key: configuredCheckDefinitionKey(definition.id, trigger.id),

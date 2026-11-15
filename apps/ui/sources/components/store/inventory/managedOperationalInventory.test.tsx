@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import * as React from 'react';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { act, createMachineFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
@@ -298,12 +299,34 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
     await account.restore({ serverIdentityId: 'srv_inventory_check_facts', machines: [], ...(mode === 'e2ee' ? { e2eeSecret: secret } : {}) });
     const scope = storage.getState().settingsScope!;
     const detail = await healthCheckDetail('a', true, mode === 'e2ee' ? { secret } : undefined);
-    await act(async () => storage.setState({ automations: { a: createAutomationDefinitionFromDetail(detail) }, isDataReady: true }));
+    const { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSourceConfigV1Schema } = await import('@happier-dev/protocol/deployments/deploymentReceiptEventsV1');
+    const { sealAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
+    const eventRefs = [DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed, DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed];
+    const unrelated = await Promise.all(eventRefs.map(async (eventRef, index) => {
+        const row = await healthCheckDetail(['b', 'c', 'd'][index]!, true, mode === 'e2ee' ? { secret } : undefined);
+        const trigger = row.triggers[0]!;
+        if (trigger.kind !== 'pluginEvent') throw new Error('Expected Event fixture');
+        return { ...row, name: 'Workflow triggers', triggers: [{ ...trigger, eventRef,
+            triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                ...(mode === 'e2ee' ? { mode, material: { type: 'legacy' as const, secret }, randomBytes: (length: number) => new Uint8Array(length).fill(4) } : { mode }),
+                binding: { v: 1, automationId: row.id, triggerId: trigger.id, triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef,
+                    sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
+                definition: { v: 1, sourceInstanceId: `deployment:${row.id}`, displayLabel: 'Deployment failed',
+                    sourceConfig: DeploymentReceiptEventSourceConfigV1Schema.parse({ v: 1, serverId: scope.serverId, environmentId: 'shop', observingSince: 1 }),
+                    filter: null, maximumObservationAgeMs: null },
+            })) }] };
+    }));
+    account.home.answer(scope.serverId, 'POST /v3/automations/query', { body: { automations: [detail, ...unrelated], nextCursor: null } });
+    const { detail: _detail, linkedExistingSessionId: _linked, ...summary } = createAutomationDefinitionFromDetail(detail);
+    await act(async () => storage.setState({ automations: { a: createAutomationDefinitionSummary(summary),
+        ...Object.fromEntries(unrelated.map(row => [row.id, createAutomationDefinitionFromDetail(row)])) }, isDataReady: true }));
     let query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] };
     const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
         definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', targetLabel: 'shop.example/ready', periodMs: 300_000 }] },
     }));
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows.map(row => row.automationId)).toEqual(['a']);
+    expect(Object.keys(storage.getState().automations)).toEqual(expect.arrayContaining(unrelated.map(row => row.id)));
     const { plugin } = await import('../../../../../../packages/plugins/machine-services/src/manifest');
     const { PluginAccountAvailabilityIntentReadResponseV1Schema, createPackageAssetArchiveV1 } = await import('@happier-dev/protocol/plugins/availability');
     const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
