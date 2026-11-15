@@ -625,7 +625,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         } finally { context.dispose(); }
     });
 
-    it.each(['stored', 'locked', 'shared', 'external', 'passkey'] as const)('vault export converts the original resource only after successful native store (%s)', async scenario => {
+    it.each(['stored', 'locked', 'native-missing', 'shared', 'external', 'passkey'] as const)('vault export converts the original resource only after successful native store (%s)', async scenario => {
         const account = await openAccount();
         const resourceId = 'exportable-resource';
         const stored = scenario === 'stored';
@@ -649,6 +649,7 @@ describe('Saved Secret operations through their real Account and Action owners',
             expect(raw).toMatchObject({ method: 'vault-machine:daemon.secrets.source.invoke.v1' });
             operands.push(Reflect.get(raw as object, 'params'));
             return { ok: true, result: stored ? { ok: true, account: 'vault-account', reference: 'op://vault/new/password' }
+                : scenario === 'native-missing' ? { ok: false, code: 'native_unavailable', repair: 'install' }
                 : { ok: false, code: 'authentication_required', repair: 'unlock' } };
         };
         configureVaultRpc(vaultSocket);
@@ -673,7 +674,9 @@ describe('Saved Secret operations through their real Account and Action owners',
                 secretRef: `happier:shared-secret:v1:${resourceId}`, status: 'exported', updatedAt: 4 }
                 : { secretId: resourceId, secretRef: `happier:shared-secret:v1:${resourceId}`,
                     status: 'failed', ...(scenario === 'shared' ? { code: 'recipient_mode_unsupported' }
-                        : nonInline ? { code: 'unsupported_source' } : { code: 'authentication_required', repair: 'unlock' }) }]);
+                        : nonInline ? { code: 'unsupported_source' }
+                        : scenario === 'native-missing' ? { code: 'native_unavailable', repair: 'install' }
+                        : { code: 'authentication_required', repair: 'unlock' }) }]);
             expect(operands).toHaveLength(scenario === 'shared' || nonInline ? 0 : 1);
             if (scenario !== 'shared' && !nonInline) expect(operands[0]).toMatchObject({ operation: 'store', value: 'vault-export-private-marker', title: 'Account API token' });
             expect(account.writes).toHaveLength(stored ? 1 : 0);
@@ -713,7 +716,45 @@ describe('Saved Secret operations through their real Account and Action owners',
         } finally { context.dispose(); }
     });
 
-    it('vault picker loads only while open and distinguishes pending, empty, repair and populated metadata', async () => {
+    it('vault fields retain missing-tool recovery through the list Action and Retry reads the same draft', async () => {
+        const account = await openAccount();
+        if (!vaultSocket) throw new Error('Expected socket boundary');
+        let installed = false;
+        vaultRpc = async (event, raw: unknown) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+            expect(raw).toMatchObject({ method: 'vault-machine:daemon.secrets.source.invoke.v1',
+                params: { operation: 'list', source: { account: 'unconfigured.invalid' } } });
+            return { ok: true, result: installed ? { ok: true, vaults: [{ id: 'private', name: 'Private' }], fields: [] }
+                : { ok: false, code: 'native_unavailable', repair: 'install' } };
+        };
+        configureVaultRpc(vaultSocket);
+        const { SavedSecretVaultFields, useSavedSecretVaultChoice } = await import('@/components/secrets/vault/SavedSecretVaultFields');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const { t } = await import('@/text');
+        const source = { key: 'happier.secret-source.onepassword/onepassword', title: '1Password',
+            contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
+            capabilities: { list: true as const }, machineIds: ['vault-machine'] };
+        function VaultFields() {
+            const choice = useSavedSecretVaultChoice({ scope: account.scope, source });
+            return React.createElement(SavedSecretVaultFields, { choice, provider: source.title, testID: 'vault' });
+        }
+        const screen = await renderScreen(React.createElement(VaultFields));
+        await act(async () => screen.changeTextByTestId('vault-account', 'unconfigured.invalid'));
+        await screen.pressByTestIdAsync('vault-show');
+        await vi.waitFor(() => expect(screen.root.findByType(SurfaceStateCard).props).toMatchObject({
+            diagnosticCode: 'native_unavailable', title: t('secretsSettings.vaultInstall', { provider: source.title }),
+        }));
+        installed = true;
+        await act(async () => screen.root.findByType(SurfaceStateCard).props.action.onPress());
+        await vi.waitFor(() => expect(screen.findByTestId('vault-vault-only')).not.toBeNull());
+        expect(screen.findByTestId('vault-account')?.props.value).toBe('unconfigured.invalid');
+        expect(screen.getTextContent()).toContain('Private');
+    });
+
+    it.each([
+        { code: 'authentication_required', repair: 'unlock' },
+        { code: 'native_unavailable', repair: 'install' },
+    ] as const)('vault picker loads only while open and distinguishes pending, empty, $repair repair and populated metadata', async failure => {
         const account = await openAccount();
         if (!vaultSocket) throw new Error('Expected socket boundary');
         let pending = createDeferred<unknown>();
@@ -740,8 +781,8 @@ describe('Saved Secret operations through their real Account and Action owners',
         pending = createDeferred<unknown>();
         await act(async () => { hook.getCurrent().reload(); });
         await vi.waitFor(() => expect(reads).toBe(2));
-        await act(async () => { pending.resolve({ ok: false, code: 'authentication_required', repair: 'unlock' }); });
-        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ status: 'unavailable', code: 'authentication_required', repair: 'unlock' }));
+        await act(async () => { pending.resolve({ ok: false, ...failure }); });
+        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ status: 'unavailable', ...failure }));
         pending = createDeferred<unknown>();
         await act(async () => { hook.getCurrent().reload(); });
         await vi.waitFor(() => expect(reads).toBe(3));

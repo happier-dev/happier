@@ -1,6 +1,7 @@
 import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1, PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
     SavedSecretVaultInvocationV1Schema, createSavedSecretVaultLinkDraftV1, type SavedSecretVaultQueryV1, type SavedSecretVaultTargetV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
-import { PluginSecretSourceListResultV1Schema, PluginSecretSourceStoreResultV1Schema, PluginSecretSourceFailureV1Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { PluginSecretSourceListResultV1Schema, PluginSecretSourceStoreResultV1Schema, PluginSecretSourceFailureV1Schema, type PluginSecretSourceFailureV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { admitSavedSecretExternalSourceAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -16,8 +17,9 @@ type VaultInvocation = ReturnType<typeof SavedSecretVaultInvocationV1Schema.pars
 type ExportInput = ReturnType<typeof PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.export']['parse']>;
 type ExportOutput = ReturnType<typeof PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.export']['parse']>;
 
-function refuseSavedSecretVaultOperation(code: string, repair?: string): never {
-    throw Object.assign(new Error(code), { code, ...(repair ? { details: { repair } } : {}) });
+function refuseSavedSecretVaultOperation(code: string, repair?: PluginSecretSourceFailureV1['repair']): never {
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+        ...(repair ? { details: { repair } } : {}) });
 }
 
 /** The private native boundary shares the invoking Action's Account and lifetime. */

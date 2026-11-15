@@ -30,6 +30,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 
 /**
@@ -243,9 +244,11 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             }));
             return;
         }
-        Modal.alert(t('common.error'), result.reason === 'outcome_unknown'
-            ? t('secrets.catalog.outcomeUnknown')
-            : t('secrets.catalog.operationFailed'));
+        alertActionFailure({ code: result.failure?.code ?? result.reason,
+            context: result.failure?.context,
+            reason: result.reason === 'outcome_unknown'
+                ? t('secrets.catalog.outcomeUnknown')
+                : t('secrets.catalog.operationFailed') });
     }, []);
 
     const removeSharedResource = React.useCallback(async (resourceId: string, expectedRevision: number, confirmation: Readonly<{

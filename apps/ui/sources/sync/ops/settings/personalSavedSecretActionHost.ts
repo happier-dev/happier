@@ -103,7 +103,10 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                 const baseline = await readProfileTransferSourceInContext(account);
                 const result = await deleteSavedSecretResource({ scope, resourceId: args.secretId, expectedRevision: args.expectedUpdatedAt,
                     expectedSettingsVersion: baseline.source.version, executeAdmittedMutation });
-                if (!result.ok) refusal(result.reason, 'references' in result ? { references: result.references } : undefined);
+                if (!result.ok) {
+                    if (result.failure) refusal(result.failure.code, result.failure.context);
+                    refusal(result.reason, 'references' in result ? { references: result.references } : undefined);
+                }
             },
         });
         return execute(actionId, input);

@@ -60,7 +60,10 @@ export type ManagedMachinePresetSavedSecretPromotionCaptureV1 =
 
 export type ManagedMachinePresetSavedSecretReferenceCaptureV1 =
   | Readonly<{ kind: 'ready'; opaquePresetReferences: SavedSecretOpaquePresetReferencesV1 }>
-  | Readonly<{ kind: 'unavailable' }>;
+  | Readonly<{ kind: 'unavailable'; failure?: Readonly<{
+      code: 'recipient_envelope_missing' | 'content_unavailable';
+      context: Readonly<{ presetId: string; managedId?: string }>;
+    }> }>;
 
 function unavailable(): ManagedMachinePresetSavedSecretPromotionCaptureV1 {
   return { kind: 'unavailable' };
@@ -68,6 +71,18 @@ function unavailable(): ManagedMachinePresetSavedSecretPromotionCaptureV1 {
 
 function throwIfAborted(signal?: AbortSignal): void {
   signal?.throwIfAborted();
+}
+
+function unreadableSecretReference(input: Readonly<{
+  presetId: string;
+  managedId?: string;
+  projection: ManagedMachinePresetRecipientProjectionV1 | null;
+}>): ManagedMachinePresetSavedSecretReferenceCaptureV1 {
+  return { kind: 'unavailable', failure: {
+    code: input.projection?.content.t === 'encrypted' && input.projection.recipientEnvelope === null
+      ? 'recipient_envelope_missing' : 'content_unavailable',
+    context: { presetId: input.presetId, ...(input.managedId ? { managedId: input.managedId } : {}) },
+  } };
 }
 
 type SavedSecretPromotionInventoryV1 = Readonly<{
@@ -140,10 +155,10 @@ export async function captureManagedMachinePresetSavedSecretReferencesV1(params:
     Object.values(content.setup?.secretRefs?.bindings ?? {}).some(binding => binding.ref === params.resourceRef);
   for (const preset of inventory.presets) {
     const projection = projectSourcePreset(preset, params.reader.accountId);
-    if (!projection) return unavailable();
+    if (!projection) return unreadableSecretReference({ presetId: preset.id, projection });
     const content = await params.reader.open({ presetId: preset.id, mode: preset.contentEncryptionMode, projection });
     throwIfAborted(params.signal);
-    if (!content) return unavailable();
+    if (!content) return unreadableSecretReference({ presetId: preset.id, projection });
     if (usesSecret(content)) references.presets.push({ presetId: preset.id });
   }
   for (const read of [...inventory.activeRows, ...inventory.archivedRows]) {
@@ -151,7 +166,8 @@ export async function captureManagedMachinePresetSavedSecretReferencesV1(params:
     const content = await params.reader.open({ presetId: read.machine.preset.id,
       mode: read.machine.preset.contentEncryptionMode, projection: read.presetContent });
     throwIfAborted(params.signal);
-    if (!content) return unavailable();
+    if (!content) return unreadableSecretReference({ presetId: read.machine.preset.id,
+      managedId: read.machine.id, projection: read.presetContent });
     if (usesSecret(content)) references.snapshots.push({ managedId: read.machine.id, presetId: read.machine.preset.id });
   }
   return { kind: 'ready', opaquePresetReferences: references };

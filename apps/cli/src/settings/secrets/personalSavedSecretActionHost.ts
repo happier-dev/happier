@@ -337,7 +337,7 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                 const opaque = await captureManagedMachinePresetSavedSecretReferencesForOperation({ credentials: params.credentials,
                     accountId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), resourceRef: formatSharedSavedSecretRefV1(args.secretId),
                     signal: context.signal });
-                if (opaque.kind !== 'ready') refusal('secret_unavailable');
+                if (opaque.kind !== 'ready') refusal(opaque.failure?.code ?? 'secret_unavailable', opaque.failure?.context);
                 SharedSavedSecretDeleteOutputV1Schema.parse(await mutate({ resourceId: args.secretId,
                     expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion,
                     referenceCensus: { ...captured.referenceCensus, opaquePresetReferences: opaque.opaquePresetReferences } }));

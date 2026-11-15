@@ -18,11 +18,14 @@ import { captureManagedMachinePresetSavedSecretReferencesInContext } from '@/syn
 
 /** Deletion names current references rather than leaving their bindings dangling. */
 export type SavedSecretResourceDeleteResult =
-    | SavedSecretResourceOperationResult
-    | Readonly<{ ok: false; reason: 'managed_resources_review_required'; resources: readonly ManagedResourceDependencyV1[] }>
-    | Readonly<{ ok: false; reason: 'in_use'; references: readonly AccountSettingsSavedSecretReference[] }>;
+    | Readonly<{ ok: true }>
+    | SavedSecretResourceDeleteFailure;
 
-type SavedSecretResourceDeleteFailure = Exclude<SavedSecretResourceDeleteResult, Readonly<{ ok: true }>>;
+type SavedSecretResourceDeleteFailure = (
+    | Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>
+    | Readonly<{ ok: false; reason: 'managed_resources_review_required'; resources: readonly ManagedResourceDependencyV1[] }>
+    | Readonly<{ ok: false; reason: 'in_use'; references: readonly AccountSettingsSavedSecretReference[] }>
+) & Readonly<{ failure?: Readonly<{ code: string; context?: Readonly<Record<string, string | number | boolean | null>> }> }>;
 type SavedSecretDeleteOutput = Readonly<{ resourceId: string }>;
 
 function savedSecretDeleteFailure(failure: HomeDomainFailure<string>): SavedSecretResourceDeleteFailure {
@@ -32,7 +35,9 @@ function savedSecretDeleteFailure(failure: HomeDomainFailure<string>): SavedSecr
             return { ok: false, reason: 'managed_resources_review_required', resources: review.data.resources };
         }
     }
-    return { ok: false, reason: operationFailureReason(failure.kind) };
+    return { ok: false, reason: operationFailureReason(failure.kind),
+        ...(failure.code ? { failure: { code: failure.code, context: { kind: failure.kind,
+            ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }) } } } : {}) };
 }
 
 function readConnectedAccountCredentialRecordsForScope(scope: ServerAccountScope) {
@@ -79,7 +84,9 @@ export async function deleteSavedSecretResource(params: Readonly<{
                         resourceRef,
                     })
                     : { kind: 'unavailable' as const };
-                if (opaquePresetReferences.kind === 'unavailable') return { ok: false, reason: 'unavailable' };
+                if (opaquePresetReferences.kind === 'unavailable') return { ok: false, reason: 'unavailable',
+                    ...('failure' in opaquePresetReferences && opaquePresetReferences.failure
+                        ? { failure: opaquePresetReferences.failure } : {}) };
                 const outcome = await (params.executeAdmittedMutation ?? runTeamAction)({ scope: params.scope, actionId: 'secrets.shared.delete',
                     input: { resourceId: params.resourceId, expectedRevision,
                         expectedSettingsVersion: baseline.source.version,

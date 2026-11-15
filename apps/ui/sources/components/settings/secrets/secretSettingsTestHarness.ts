@@ -55,6 +55,9 @@ import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/co
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachinePresetListResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -120,8 +123,10 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         ? { token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }
         : { token };
     const encryption = mode === 'e2ee' ? await createEncryptionFromAuthCredentials(credentials) : null;
+    const serverUrl = `https://secrets-${crypto.randomUUID()}.example.test`;
+    const serverIdentityId = options.serverIdentityId ?? `srv_secret_${crypto.randomUUID()}`;
     const features = options.features ?? createRootLayoutFeaturesResponse({ capabilities: {
-        serverIdentity: { serverIdentityId: options.serverIdentityId ?? null },
+        serverIdentity: { serverIdentityId },
     } });
     if (options.voiceEnabled !== undefined && !tryWriteServerEnabledBitInPlace(features, 'voice', options.voiceEnabled)) {
         throw new Error('Voice feature fixture is not writable');
@@ -188,6 +193,12 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             ? Response.json(AccountProfileSchema.parse({ id: accountId }))
             : Response.json({ error: 'Not authenticated' }, { status: 401 });
         if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
+        if (path === machinePresetActionEndpointPathV1('machines.presets.list')) {
+            return Response.json(ManagedMachinePresetListResultV1Schema.parse({ kind: 'listed', presets: [] }));
+        }
+        if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+            return Response.json(ManagedListOutputV1Schema.parse({ machines: [] }));
+        }
         if (path === '/v2/session-organization') return Response.json(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: {
             schemaVersion: 1, version: 0, pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
         } }));
@@ -337,18 +348,17 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         material: mode === 'e2ee' ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : null,
         settingsRequest: (url, init) => request(url, init),
     }) : null;
-    const serverUrl = `https://secrets-${crypto.randomUUID()}.example.test`;
     // Account restoration publishes its coarse cursor wake after Settings has
     // settled. Finish that real bootstrap before a test admits a catalog read.
     let finishBootstrap!: () => void;
     const bootstrapReady = new Promise<void>(resolve => { finishBootstrap = resolve; });
     const detachBootstrap = subscribeHomeAccountChange(event => {
         if (event.source === undefined && event.entityIds === undefined
-            && areServerProfileIdentifiersEquivalent(event.serverId, options.serverIdentityId ?? new URL(serverUrl).host)) finishBootstrap();
+            && areServerProfileIdentifiersEquivalent(event.serverId, serverIdentityId)) finishBootstrap();
     });
     const connection = await restoreServerAccountForTest({
         serverUrl, accountId, credentials, request,
-        ...(options.serverIdentityId ? { serverIdentityId: options.serverIdentityId } : {}),
+        serverIdentityId,
         credentialScope: 'restored-home',
     }).then(async connection => { await bootstrapReady; return connection; }).finally(detachBootstrap);
     const { sync } = await import('@/sync/sync');

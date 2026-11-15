@@ -136,7 +136,9 @@ describe('personal Saved Secret key rotation', () => {
             } });
         const result = await execute({ actionId: 'secrets.delete', input: { secretId: 'one', expectedUpdatedAt: 1 }, context: { surface: 'cli' } });
         if (target === 'unrelated') expect(result).toEqual({ deleted: true });
-        else expect(result).toMatchObject({ ok: false, errorCode: target === 'unavailable' ? 'secret_unavailable' : 'resource_in_use' });
+        else expect(result).toMatchObject({ ok: false, errorCode: target === 'unavailable'
+            ? mode === 'e2ee' ? 'recipient_envelope_missing' : 'secret_unavailable' : 'resource_in_use',
+            ...(target === 'unavailable' && mode === 'e2ee' ? { details: { presetId: preset.id } } : {}) });
         expect(deleted).toBe(target === 'unrelated');
         const requests = vi.mocked(axios.post).mock.calls.map(([url]) => new URL(String(url)).pathname);
         expect(requests.filter(path => path === machinePresetActionEndpointPathV1('machines.presets.list'))).toHaveLength(1);

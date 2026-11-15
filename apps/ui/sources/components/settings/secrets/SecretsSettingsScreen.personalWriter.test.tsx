@@ -4,9 +4,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { getSavedSecretCatalogSnapshot, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { resetTeamActionClientForTests } from '@/sync/ops/teams/teamActionClient';
@@ -19,6 +21,13 @@ import { createSecretSettingsTestHarness } from './secretSettingsTestHarness';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const alert = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn());
+// Sync bootstrap can reload modules; the screen and shared alert presenter use one modal boundary.
+const modalModule = vi.hoisted(() => {
+    let module: Promise<unknown> | null = null;
+    return () => module ??= import('@/dev/testkit/mocks/modal').then(({ createModalModuleMock }) =>
+        createModalModuleMock({ confirmResult: true, spies: { alert, confirm } }).module);
+});
+vi.mock('@/modal', () => modalModule());
 // One route for the test and the screen: the file's mock and the settings helper's must not each build their own.
 const expoRouterModule = vi.hoisted(() => {
     let module: Promise<unknown> | null = null;
@@ -30,7 +39,7 @@ vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary();
 installSettingsViewCommonModuleMocks({ storage: 'real', router: expoRouterModule,
-    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true, spies: { alert, confirm } }).module,
+    modal: modalModule,
 });
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | null = null;
 
@@ -174,6 +183,45 @@ it('retains a refused replacement and saves the same draft on retry', async () =
     expect(openSavedSecretResourceStoredContentV1({ resourceId: written.resourceId, mode: 'plain', storedContent: written.storedContent }))
         .toMatchObject({ value: 'synthetic-replacement' });
     expect(alert).not.toHaveBeenCalled();
+});
+
+it('reveals the preset recipient cause when deletion stops before confirmation', async () => {
+    const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    let censusRead = false;
+    const seenPaths = new Set<string>();
+    home = await createSecretSettingsTestHarness({ mode: 'e2ee', serverIdentityId: 'srv_secret_delete_cause',
+        settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+            seenPaths.add(path.split('?')[0]!);
+            if (path !== machinePresetActionEndpointPathV1('machines.presets.list')) return null;
+            censusRead = true;
+            return Response.json({ kind: 'listed', presets: [ManagedMachinePresetV1Schema.parse({
+                id: 'unreadable-team-preset', homeId: 'srv_secret_delete_cause', revision: 1,
+                owner: { kind: 'team', teamId: 'team-a' }, contentEncryptionMode: 'e2ee',
+                content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }, recipients: [],
+            })] });
+        } });
+    const { entry } = await home.addOwnerResource('e2ee');
+    const screen = await renderSecretPage(entry.ref);
+    await waitForSecretPage(entry.ref, screen);
+    const { getStorage } = await import('@/sync/domains/state/storageStore');
+    expect(getStorage().getState().settingsScope).toEqual(home.scope);
+    expect(getStorage().getState().settingsVersion).not.toBeNull();
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    expect(lifetime?.isCurrent()).toBe(true);
+    expect(screen.findByTestId(`saved-secret:${entry.ref}:delete`)?.props.accessibilityState?.disabled).not.toBe(true);
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:delete`);
+    await waitForHomeGovernance(() => expect(censusRead).toBe(true));
+    await waitForHomeGovernance(() => expect(alert.mock.calls.length,
+        JSON.stringify({ current: lifetime?.isCurrent(), paths: [...seenPaths] })).toBe(1));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(home.deletes).toHaveLength(0);
+    const details = alert.mock.calls[0]![2]?.find((button: { onPress?: () => void }) => typeof button.onPress === 'function');
+    expect(details, JSON.stringify(alert.mock.calls[0])).toBeDefined();
+    await act(async () => { details.onPress(); });
+    expect(alert.mock.calls.at(-1)![1], JSON.stringify([...seenPaths])).toContain('recipient_envelope_missing');
+    expect(alert.mock.calls.at(-1)![1]).toContain('unreadable-team-preset');
+    expect(home.resources).toHaveLength(1);
 });
 
 it.each([

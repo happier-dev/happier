@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import {
   ManagedMachinePresetContentV1Schema,
+  openManagedMachinePresetRecipientProjectionV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import {
   ManagedOpaquePresetReadV1Schema,
@@ -83,12 +84,20 @@ describe('managed preset Saved Secret promotion capture', () => {
     });
   });
 
-  it('refuses delete capture when a sealed preset cannot be opened', async () => {
+  it.each(['source', 'snapshot'] as const)('names the missing recipient envelope that prevents delete capture: %s', async target => {
+    const source = ManagedMachinePresetV1Schema.parse({ ...sourcePreset(),
+      contentEncryptionMode: 'e2ee', content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }, recipients: [] });
+    const retained = snapshot('managed-retained', source.id);
+    retained.machine.preset.contentEncryptionMode = 'e2ee';
+    retained.presetContent = { content: source.content, recipientEnvelope: null };
     expect(await captureManagedMachinePresetSavedSecretReferencesV1({
       homeId: 'home', resourceRef: 'happier:shared-secret:v1:deleted-secret',
-      reader: { accountId: 'owner', listPresets: async () => ({ presets: [sourcePreset()] }),
-        listManaged: async () => [], open: () => null },
-    })).toEqual({ kind: 'unavailable' });
+      reader: { accountId: 'owner', listPresets: async () => ({ presets: target === 'source' ? [source] : [] }),
+        listManaged: async archived => target === 'snapshot' && !archived ? [retained] : [],
+        open: input => openManagedMachinePresetRecipientProjectionV1({ ...input, mode: 'e2ee',
+          accountId: 'owner', accountKey: new Uint8Array(32) }) },
+    })).toEqual({ kind: 'unavailable', failure: { code: 'recipient_envelope_missing',
+      context: { presetId: source.id, ...(target === 'snapshot' ? { managedId: retained.machine.id } : {}) } } });
   });
 
   it('fresh-seals changed source presets, same-DEK rewrites retained snapshots, and reads one current-Home inventory', async () => {
