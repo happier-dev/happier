@@ -64,6 +64,13 @@ const ELEMENT_DESCRIPTION_RUNTIME = `
   }
 `;
 
+/** Describes the exact DOM node supplied as `this` by CDP Runtime.callFunctionOn. */
+export function buildBrowserElementDescriptionFunction(): string {
+  return `function () { ${ELEMENT_DESCRIPTION_RUNTIME}
+    return describePickedElement(this);
+  }`;
+}
+
 /** Same element description as the interactive picker, without installing an overlay or listeners. */
 export function buildBrowserElementAtPointExpression(point: Readonly<{ x: number; y: number }>): string {
   return `(function () { ${ELEMENT_DESCRIPTION_RUNTIME}

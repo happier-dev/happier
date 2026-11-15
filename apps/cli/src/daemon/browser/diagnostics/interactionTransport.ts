@@ -11,7 +11,7 @@ import type {
 
 import type { BrowserDiagnosticsInteractionTransport } from './actionRoutes';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
-import { buildBrowserElementAtPointExpression } from '@happier-dev/peer-mediation/browser/collector/elements';
+import { buildBrowserElementAtPointExpression, buildBrowserElementDescriptionFunction } from '@happier-dev/peer-mediation/browser/collector/elements';
 import { BrowserDiagnosticsElementPickerResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 /**
@@ -594,6 +594,16 @@ export function createBrowserDiagnosticsInteractionTransport(
     };
   }
 
+  function selectedPickerResult(
+    request: BrowserDiagnosticsElementPickerRequestV1,
+    selected: Record<string, unknown>,
+  ): BrowserDiagnosticsElementPickerResultV1 {
+    const result = BrowserDiagnosticsElementPickerResultV1Schema.safeParse({
+      ...selected, ...pickerResult(request, 'selected'),
+    });
+    return result.success ? result.data : pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+  }
+
   function awaitInspectSelection(
     handle: BrowserSidecarCdpPageHandle,
     view: DiagnosticView,
@@ -654,11 +664,7 @@ export function createBrowserDiagnosticsInteractionTransport(
       if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
       const selected = record(record(response?.result)?.value);
       if (!selected) return pickerResult(request, 'cancelled');
-      const result = BrowserDiagnosticsElementPickerResultV1Schema.safeParse({
-        ...selected, v: 1, pickerRequestId: request.pickerRequestId, viewId: request.viewId,
-        navigationGeneration: request.navigationGeneration, tier: request.tier, audited: true, status: 'selected',
-      });
-      return result.success ? result.data : pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+      return selectedPickerResult(request, selected);
     }
     if (!contextCapture.subscribeCdpEvents) {
       // No event stream ⇒ no way to observe the selection ⇒ honest unavailable (never a fake select).
@@ -680,7 +686,25 @@ export function createBrowserDiagnosticsInteractionTransport(
     await disablePickerOverlay(handle);
     if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
     if (outcome.kind === 'selected') {
-      return pickerResult(request, 'selected', { backendNodeRef: String(outcome.backendNodeId) });
+      let objectId: string | undefined;
+      try {
+        const resolved = record(await pageCommand(handle, 'DOM.resolveNode', { backendNodeId: outcome.backendNodeId }));
+        const remoteObjectId = record(resolved?.object)?.objectId;
+        if (typeof remoteObjectId !== 'string') return pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+        objectId = remoteObjectId;
+        const response = record(await pageCommand(handle, 'Runtime.callFunctionOn', {
+          objectId, functionDeclaration: buildBrowserElementDescriptionFunction(), returnByValue: true,
+        }));
+        if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
+        const selected = record(record(response?.result)?.value);
+        return selected ? selectedPickerResult(request, { ...selected, backendNodeRef: String(outcome.backendNodeId) })
+          : pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+      } catch (error) {
+        if (!control?.isObservationHeld()) reportError(error, handle);
+        return pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+      } finally {
+        if (objectId) await tryPageCommand(handle, 'Runtime.releaseObject', { objectId });
+      }
     }
     return pickerResult(request, 'cancelled');
   }

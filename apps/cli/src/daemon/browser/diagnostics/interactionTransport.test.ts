@@ -154,7 +154,9 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
   });
   it('keeps same-name picker selection and confidentiality drains isolated by Session', async () => {
     const controls = { session_a: createSurfaceInputControl(), session_b: createSurfaceInputControl() };
-    const harness = createHarness({ resolveHandle: view => ({ targetId: view.browserSessionId, sessionId: view.browserSessionId }) });
+    const harness = createHarness({ resolveHandle: view => ({ targetId: view.browserSessionId, sessionId: view.browserSessionId }),
+      responses: { 'DOM.resolveNode': { object: { objectId: 'selected_sibling_node' } },
+        'Runtime.callFunctionOn': { result: { value: { selectorPath: '#sibling' } } } } });
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture,
       resolveInputControl: view => controls[view.browserSessionId as keyof typeof controls] });
     harness.bindView({ browserSessionId: 'session_a' });
@@ -662,15 +664,35 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     } finally { transport.dispose(); }
   });
 
-  it('drives the element picker via Overlay and resolves the selected backend node', async () => {
-    const harness = createHarness({
-      onSetInspectMode: (emit) =>
-        emit({ method: 'Overlay.inspectNodeRequested', params: { backendNodeId: 99 }, sessionId: 'cdp_session_1' }),
-    });
+  it.each([true, false])('describes the exact Overlay-selected node with React metadata available: %s', async (reactAvailable) => {
+    function CheckoutButton() {}
+    const node = { nodeType: 1, tagName: 'BUTTON', previousElementSibling: null, parentElement: null,
+      getAttribute: (name: string) => name === 'aria-label' ? 'Checkout' : null,
+      getBoundingClientRect: () => ({ x: 10, y: 20, width: 80, height: 30 }),
+      ...(reactAvailable ? { '__reactFiber$test': { type: CheckoutButton,
+        _debugSource: { fileName: 'src/Checkout.tsx', lineNumber: 12, columnNumber: 4 } } } : {}) };
+    const harness = createHarness();
+    const dispatch: DispatchPageCommand = async ({ method, params }) => {
+      if (method === 'Overlay.setInspectMode' && params?.mode === 'searchForNode') {
+        harness.emitCdpEvent({ method: 'Overlay.inspectNodeRequested', params: { backendNodeId: 99 }, sessionId: 'cdp_session_1' });
+      }
+      if (method === 'DOM.resolveNode') {
+        expect(params?.backendNodeId).toBe(99);
+        return { object: { objectId: 'selected_node' } };
+      }
+      if (method === 'Runtime.callFunctionOn') {
+        expect(params?.objectId).toBe('selected_node');
+        expect(params?.returnByValue).toBe(true);
+        // CDP and the selected DOM node are the external boundary; execute the shipped descriptor.
+        return { result: { value: new Function(`return (${String(params?.functionDeclaration)}).call(this);`).call(node) } };
+      }
+      return {};
+    };
+    harness.dispatchPageCommand.mockImplementation(dispatch);
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
     harness.bindView();
 
-    const result = (await transport.dispatch('browser.diagnostics.elementPicker.start', {
+    const result = BrowserDiagnosticsElementPickerResultV1Schema.parse(await transport.dispatch('browser.diagnostics.elementPicker.start', {
       v: 1,
       pickerRequestId: 'picker_1',
       viewId: VIEW_ID,
@@ -678,17 +700,53 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       action: 'start',
       diagnosticsInteractionEnabled: true,
-    }, BROWSER_SESSION_ID)) as { status: string; backendNodeRef?: string };
+    }, BROWSER_SESSION_ID));
 
-    expect(() => BrowserDiagnosticsElementPickerResultV1Schema.parse(result)).not.toThrow();
-    expect(result.status).toBe('selected');
-    expect(result.backendNodeRef).toBe('99');
+    expect(result).toMatchObject({ status: 'selected', backendNodeRef: '99',
+      selectorPath: 'button:nth-of-type(1)', accessibleName: 'Checkout',
+      rect: { x: 10, y: 20, width: 80, height: 30 } });
+    if (reactAvailable) {
+      expect(result).toMatchObject({ componentName: 'CheckoutButton', sourceLocation: { file: 'src/Checkout.tsx', line: 12, column: 4 } });
+    } else {
+      expect(result).not.toHaveProperty('componentName');
+      expect(result).not.toHaveProperty('sourceLocation');
+    }
+    expect(harness.dispatchPageCommand).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'Runtime.releaseObject', params: { objectId: 'selected_node' },
+    }));
     const methods = harness.dispatchPageCommand.mock.calls.map(([arg]) => arg.method);
     expect(methods).toContain('Overlay.setInspectMode');
     // Inspect mode is disengaged after selection.
     expect(
       harness.dispatchPageCommand.mock.calls.some(([arg]) => arg.method === 'Overlay.setInspectMode' && arg.params?.mode === 'none'),
     ).toBe(true);
+  });
+
+  it.each(['resolve', 'describe'])('returns a typed picker failure when selected-node %s fails', async (phase) => {
+    const harness = createHarness();
+    const dispatch: DispatchPageCommand = async ({ method, params }) => {
+      if (method === 'Overlay.setInspectMode' && params?.mode === 'searchForNode') {
+        harness.emitCdpEvent({ method: 'Overlay.inspectNodeRequested', params: { backendNodeId: 99 }, sessionId: 'cdp_session_1' });
+      }
+      if (method === 'DOM.resolveNode') {
+        if (phase === 'resolve') throw new Error('Node detached');
+        return { object: { objectId: 'selected_node' } };
+      }
+      if (method === 'Runtime.callFunctionOn') throw new Error('Execution context destroyed');
+      return {};
+    };
+    harness.dispatchPageCommand.mockImplementation(dispatch);
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    try {
+      await expect(transport.dispatch('browser.diagnostics.elementPicker.start', {
+        v: 1, pickerRequestId: 'picker_failed', viewId: VIEW_ID, navigationGeneration: 0,
+        tier: 'cdp', action: 'start', diagnosticsInteractionEnabled: true,
+      }, BROWSER_SESSION_ID)).resolves.toMatchObject({ status: 'failed', errorCode: 'collector_degraded' });
+      if (phase === 'describe') expect(harness.dispatchPageCommand).toHaveBeenCalledWith(expect.objectContaining({
+        method: 'Runtime.releaseObject', params: { objectId: 'selected_node' },
+      }));
+    } finally { await transport.dispose(); }
   });
 
   it('cancels the element picker (and interrupts a standing start)', async () => {
