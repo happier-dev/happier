@@ -6,7 +6,7 @@ import type { PropertyListProps } from '../components/PropertyList.js';
 import { createContext, createElement, useContext, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
-import type { PluginUiActionControl, PluginUiActionControlPresentation, PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControl, PluginUiActionControlPresentation, PluginUiHostApi, PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { NavigationListDestination } from '../components/NavigationList.js';
 import type { ItemProps } from '../components/List.js';
 import type { HappierUiPalette, HappierUiTypography } from '../environment/types.js';
@@ -242,7 +242,7 @@ export type PluginUiPresentationHost = Readonly<{
   /** Same-realm presentation capability; task reads and grants remain with the incumbent ShareSheet. */
   taskShareSheet?: HostTaskShareSheet;
   /** Same-realm hook: the app retains source acquisition, Action lifetime and per-path observation. */
-  useScmFileViewed?(params: ScmFileViewedRequest): ScmFileViewedSource | null;
+  useScmFileViewed?(params: ScmFileViewedRequest, executeAction?: PluginUiHostApi['executeAction']): ScmFileViewedSource | null;
   /** Same-realm hook: the app's collaboration people directory (the share sheet's), read only while demanded. */
   usePeopleDirectory?(request: HostPeopleDirectoryRequest): HostPeopleDirectory | null;
   /** Device-local collection widths, already scoped to this plugin by the host. */

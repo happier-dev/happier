@@ -4,15 +4,16 @@ import {
   type ScmFileViewedRequest, type ScmFileViewedSource, type ScmFileViewedFile, type ScmFileViewedSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
-import { usePluginSurfaceActivity } from './context.js';
+import { usePluginHostApi, usePluginSurfaceActivity } from './context.js';
 
 const noSubscribe = () => () => {};
 
 /** Native/same-realm plugins join the host's existing core Viewed owner without a duplicate read. */
 export function useScmFileViewed(params: ScmFileViewedRequest): ScmFileViewedSource | null {
   const host = useOptionalPluginUiPresentationHost();
+  const api = usePluginHostApi();
   const { active } = usePluginSurfaceActivity();
-  return host?.useScmFileViewed?.({ ...params, active: active && params.active !== false }) ?? null;
+  return host?.useScmFileViewed?.({ ...params, active: active && params.active !== false }, api.executeAction) ?? null;
 }
 
 export function useScmFileViewedFile(source: ScmFileViewedSource | null | undefined, path: string, active = true): ScmFileViewedFile {

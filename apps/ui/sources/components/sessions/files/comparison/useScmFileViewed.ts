@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ScmFileViewedRequest } from '@happier-dev/plugin-sdk/scm';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { IDLE_SCM_FILE_VIEWED, UNKNOWN_SCM_FILE_VIEWED, isScmFileViewedCurrentHead, type ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { acquireScmFileViewedSource } from '@/sync/ops/scmDiffSummary/fileViewedSources';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -16,7 +17,7 @@ const pendingSource: ScmFileViewedSource = {
 };
 
 /** Presented core and native plugin reviews join one source, never one request per row or mount. */
-export function useScmFileViewed(params: ScmFileViewedRequest): ScmFileViewedSource | null {
+export function useScmFileViewed(params: ScmFileViewedRequest, executeAction?: PluginUiHostApi['executeAction']): ScmFileViewedSource | null {
     const execution = useMountedActionExecution(params.serverId, { retainInvocation: true });
     const comparison = params.comparison;
     const actions = params.enabled !== false && comparison?.source.kind === 'pullRequest' && comparison.freshness !== 'stale'
@@ -26,8 +27,8 @@ export function useScmFileViewed(params: ScmFileViewedRequest): ScmFileViewedSou
     actionsRef.current = actions;
     const binding = execution.binding;
     const scopeKey = binding ? JSON.stringify([binding.scope, binding.credentialKey ?? binding.revision]) : null;
-    const latest = React.useRef({ execution, host: params.host, scopeKey, comparison });
-    latest.current = { execution, host: params.host, scopeKey, comparison };
+    const latest = React.useRef({ execution, executeAction, host: params.host, scopeKey, comparison });
+    latest.current = { execution, executeAction, host: params.host, scopeKey, comparison };
     const selection = React.useMemo(() => ({ actions: actionsRef.current, scopeKey }), [actionKey, scopeKey]);
     const [mounted, setMounted] = React.useState<Readonly<{
         selection: typeof selection;
@@ -40,6 +41,9 @@ export function useScmFileViewed(params: ScmFileViewedRequest): ScmFileViewedSou
             ...(capture ? { comparison: { freshness: capture.freshness, endpoints: capture.endpoints } } : {}),
             isCurrent: () => latest.current.scopeKey === selection.scopeKey && latest.current.execution.binding?.isCurrent() === true,
             execute: (invocation, signal) => {
+                // Native plugin reviews retain their mount's admitted origin and
+                // settlement port instead of borrowing AppShell's global origin.
+                if (latest.current.executeAction) return latest.current.executeAction(invocation.action, invocation.input, { signal });
                 const { sessionId, machineId } = latest.current.host ?? {};
                 return latest.current.execution.executeValue('action.invoke', invocation, {
                     signal,

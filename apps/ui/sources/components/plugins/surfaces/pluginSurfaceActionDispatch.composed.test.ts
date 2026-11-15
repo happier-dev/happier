@@ -754,6 +754,67 @@ function resolveDaemonTargetAction(
     };
 }
 
+it('settles Viewed writes through the native mount without an AppShell Action origin', async () => {
+    const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm/comparison');
+    const { PluginHostApiProvider, PluginUiHostPresentationScope } = await import('@happier-dev/plugin-ui/advanced');
+    const { projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
+    const { useScmFileViewed } = await import('@happier-dev/plugin-ui/hostApi');
+    const { createPluginUiPrivatePresentationHost } = await import('./pluginUiPrivatePresentationHost');
+    const lifetime = clientAccountLifetime();
+    let viewed = false;
+    const activation = createClientActionActivation({ localId: 'file-viewed', accountLifetime: lifetime,
+        handler: async input => {
+            if (input !== null && typeof input === 'object' && !Array.isArray(input) && input.kind === 'set') {
+                viewed = input.viewed === true;
+                return { kind: 'ready', path: 'a.ts', state: viewed ? 'viewed' : 'unviewed' };
+            }
+            return { kind: 'ready', headOid: 'head', files: [{ path: 'a.ts', state: viewed ? 'viewed' : 'unviewed' }] };
+        } });
+    const identity = { pluginId: activation.action.pluginId, localId: activation.action.id };
+    const comparison = ScmComparisonSchema.parse({ id: 'mounted-viewed-pr', repository: { rootPath: '/repo' },
+        source: { kind: 'pullRequest', locator: { providerId: identity.pluginId, repository: 'example/repo', number: 17,
+            fileViewedActions: { read: { action: identity, input: { kind: 'read' } }, set: { action: identity, input: { kind: 'set' } } } } },
+        endpoints: { after: 'head' }, freshness: 'current', inventory: { state: 'complete', reasons: [], files: [] } });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+    const host = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
+        callerBinding: mountedCallerBinding({ machineId: 'machine-client-action' }), callerSourceCustody: TARGET_SOURCE_CUSTODY,
+        hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+            serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId,
+            authority: 'present_user', actionCaller: { kind: 'host' },
+        } },
+        pluginUiProjection: activation.projection,
+        resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {}, actionAccountLifetime: lifetime,
+        contributedAction: { machineId: 'machine-client-action', serverId: lifetime.scope.serverId, accountLifetime: lifetime } });
+    const surface = createPluginSurfaceContextFixture({ accountScope: lifetime.scope, target: { kind: 'app' } });
+    const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface: surfaceContext(),
+        installedMethods: host.installedMethods, handleRequest: host.handleRequest, isCurrent: lifetime.isCurrent });
+    let source: import('@happier-dev/plugin-sdk/scm').ScmFileViewedSource | null = null;
+    function Files() {
+        source = useScmFileViewed({ comparison, serverId: lifetime.scope.serverId, host: null });
+        return null;
+    }
+    await activation.composition.reconcile([activation.activation]);
+    await expect(adapter.api.executeAction(identity, { kind: 'read' })).resolves.toMatchObject({ kind: 'ready' });
+    const screen = await renderScreen(React.createElement(PluginHostApiProvider,
+        { hostApi: adapter.api, surfaceActivity: { active: true } },
+        React.createElement(PluginUiHostPresentationScope, { environment: projectHappierUiEnvironment(surface),
+            presentationHost: createPluginUiPrivatePresentationHost(undefined) }, React.createElement(Files))));
+    try {
+        await vi.waitFor(() => expect({ status: source?.getSnapshot(), file: source?.getFile('a.ts') }).toEqual({
+            status: { status: 'ready', headOid: 'head', errorCode: null },
+            file: { state: 'unviewed', pending: false, errorCode: null },
+        }));
+        await act(async () => { expect(await source?.setViewed('a.ts', true)).toBe(true); });
+        expect(viewed).toBe(true);
+        expect(source?.getFile('a.ts')).toEqual({ state: 'viewed', pending: false, errorCode: null });
+        await act(async () => { expect(await source?.setViewed('a.ts', false)).toBe(true); });
+        expect(viewed).toBe(false);
+        expect(source?.getFile('a.ts')).toEqual({ state: 'unviewed', pending: false, errorCode: null });
+    } finally {
+        await screen.unmount(); adapter.dispose(); host.dispose?.(); await activation.composition.unload();
+    }
+});
+
 // Collect the cross-package source graph before timing the mounted gesture.
 await Promise.all([
     import('@/sync/ops/actions/defaultActionExecutor'),
