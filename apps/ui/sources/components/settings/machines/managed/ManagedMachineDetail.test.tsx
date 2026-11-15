@@ -3230,7 +3230,7 @@ describe('managed Machine detail', () => {
             expect(operationRpcBoundary.requests).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
-    it.each(['retained', 'arriving', 'opaque-retained'] as const)('discovers the exact creator installation question and answers without controller inventory or a Machine grant (%s)', async mode => {
+    it.each(['retained', 'arriving', 'opaque-retained', 'manage-retained'] as const)('discovers the exact creator installation question and answers without a running creation continuation (%s)', async mode => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://creator-installation.test', scope: 'tab' });
         const homeId = 'srv_creator_installation';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -3275,6 +3275,13 @@ describe('managed Machine detail', () => {
         const homes = createHomeGovernanceHarness();
         await homes.addHome({ name: 'Requester Home', serverUrl: target.serverUrl, serverIdentityId: homeId,
             accountId: 'requester', currentAccount: true, credentials: { token } });
+        if (mode === 'manage-retained') {
+            await publishMachineInventoryForTest({ serverId, accountId: 'requester' }, [createMachineFixture({
+                id: controller.machineId, installationId: controller.installationId,
+                active: true, activeAt: Date.now(), updatedAt: Date.now(),
+                access: { custodian: { accountId: 'company', displayName: 'Company' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            })]);
+        }
         const installationBoundary = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl: target.serverUrl,
             homeId, token, enrollmentAccountId: 'requester', readMachine: () => read, onAnswer: () => { answered = true; } });
         const answers = installationBoundary.answers;
@@ -3328,8 +3335,12 @@ describe('managed Machine detail', () => {
         };
         const screen = await renderScreen(page(true));
         try {
+            // A fresh detail mount represents reloading during installation, with no configurator continuation.
             // The opaque Home carrier must open before installation matching is evaluated.
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(machine.launch!.name));
+            if (mode === 'manage-retained') {
+                expect(screen.tree.findByType(ManagedMachinePolicySection).props.readOnly).toBe(false);
+            }
             if (mode === 'arriving') {
                 await vi.waitFor(() => expect(observed).toContainEqual(expect.objectContaining({ managed: { homeId, managedId: machine.id },
                     operationId: operation.operationId, waitForTerminal: true, includeManagedPrompt: true })));
@@ -3349,7 +3360,8 @@ describe('managed Machine detail', () => {
                 taskId: 'requester-task', answer: { approved: true } }));
             expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
             expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
-            expect(operationRpcBoundary.requests).toHaveLength(0);
+            expect(operationRpcBoundary.requests.filter(request => request.method === ACTION_OPERATION_RPC_METHODS_V2.list
+                || request.method === ACTION_OPERATION_RPC_METHODS_V2.get)).toHaveLength(0);
         } finally { await screen.unmount(); installationBoundary.dispose(); }
     });
     it.each(['ssh.trustHost', 'ssh.replaceHostKey', 'daemon.replaceRemoteBackgroundServices'] as const)(

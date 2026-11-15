@@ -1,4 +1,4 @@
-import { approveManagedMachineEnrollment } from './managedMachineCreation';
+import { approveManagedMachineEnrollment, isManagedMachineEnrollmentRequester } from './managedMachineCreation';
 import * as React from 'react';
 import { View, type GestureResponderEvent } from 'react-native';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
@@ -296,7 +296,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const supportedIntents = policyParent?.capabilities.supportedIntents ?? machine.reviewedFacts?.retentionCapabilities.supportedIntents ?? [];
     const canManage = props.binding?.accountId === machine.custodianAccountId
         || (requiredController?.access?.role === 'manage' && requiredController.access.accessState === 'ready');
-    const creatorScoped = machine.enrollmentAccountId !== undefined && machine.enrollmentAccountId === props.binding?.accountId && !canManage;
+    const creatorScoped = isManagedMachineEnrollmentRequester(machine, props.binding?.accountId);
     const canMutate = props.current && props.binding?.isCurrent() === true && machine.archivedAt === undefined
         && canManage && pending === null && !moveLoading && !approval.approvalPending;
     const canRecoverCreation = props.current && props.binding?.isCurrent() === true && machine.archivedAt === undefined && machine.creationState === 'active'

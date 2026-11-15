@@ -8,7 +8,7 @@ import {
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineV1, ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -80,6 +80,13 @@ export function buildManagedMachineAcquireInput(
                 presetContentOverride: draft.presetContentOverride } : null;
     const parsed = candidate && ManagedAcquireInputV1Schema.safeParse(candidate);
     return parsed?.success ? parsed.data : null;
+}
+
+export function isManagedMachineEnrollmentRequester(
+    machine: Pick<ManagedMachineReadSnapshotV1, 'enrollmentAccountId' | 'custodianAccountId'>,
+    accountId: string | undefined,
+): boolean {
+    return accountId !== undefined && machine.enrollmentAccountId === accountId && machine.custodianAccountId !== accountId;
 }
 
 /** Admitted Create already includes signing the guest into the requester's Account. */
@@ -254,8 +261,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     controller ??= scopedMachine?.controller;
     let machine: ManagedMachineV1 | null = null;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
-        let requesterMachine = scopedMachine && scopedMachine.enrollmentAccountId === input.scope.accountId
-            && scopedMachine.custodianAccountId !== input.scope.accountId ? scopedMachine : null;
+        let requesterMachine = scopedMachine && isManagedMachineEnrollmentRequester(scopedMachine, input.scope.accountId) ? scopedMachine : null;
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
         while (current()) {
             const result = await execute('action.operations.get', { serverId: input.scope.serverId, machineId: controller.machineId,
