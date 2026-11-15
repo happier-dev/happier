@@ -16,6 +16,7 @@ export const MUSE_NATIVE_HOME = {
 
 export const museAccountDescriptor = {
   title: 'Muse',
+  capabilities: ['usage'],
   usageIdentity: { providerId: 'meta' },
   authentication: {
     account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
@@ -24,8 +25,11 @@ export const museAccountDescriptor = {
       // Meta's device endpoint rejects the browser preflight; native apps keep Account execution.
       { id: 'device', kind: 'oauthDeviceCode', title: 'Sign in with Meta', scopes: [], outcomeReconciliation: 'none', browserReachability: 'unreachable' },
       { id: 'api-key', kind: 'manual', apiKey: true, title: 'API key', outcomeReconciliation: 'none',
+        // Meta documents dashboard keys at dev.meta.ai: shown once, prefixed LLM_ (research/MUSE-AUTH-REFERENCES-1112 §F).
+        setup: { url: 'https://dev.meta.ai/', checklist: ['Sign in at [dev.meta.ai] and create an API key.', 'Copy it now, Meta shows it only once, and paste it here.'] },
         credentialFieldKeys: { apiKey: 'inferenceKey' },
-        fields: [{ id: 'apiKey', title: 'Meta API key', schema: { type: 'string', minLength: 1 }, secret: true }] },
+        fields: [{ id: 'apiKey', title: 'Meta API key', schema: { type: 'string', minLength: 1 }, secret: true,
+          presentation: { placeholder: 'LLM_…' } }] },
       { id: 'native-import', kind: 'manual', title: 'Import native login', credentialOrigin: 'native_import', outcomeReconciliation: 'none',
         fields: [{ id: 'source', title: 'Source', schema: { type: 'string', enum: ['native'] }, secret: false, default: 'native',
           presentation: { control: 'select', options: [{ value: 'native', title: 'Muse login' }] } }] },

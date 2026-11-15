@@ -90,6 +90,7 @@ describe('Muse account runtime', () => {
       availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
     });
     const mode = projection.authentication.modes.find(entry => entry.id === 'device');
+    expect(projection.capabilities).toContain('usage');
     expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)).toBe('browser_unreachable');
     expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, false)).toBeNull();
     const apiKey = projection.authentication.modes.find(entry => entry.id === 'api-key');
