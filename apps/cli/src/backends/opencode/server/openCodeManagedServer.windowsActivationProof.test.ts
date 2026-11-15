@@ -48,7 +48,7 @@ describe('managed OpenCode Windows activation proof', () => {
         throw new Error(`Unexpected command: ${command}`);
       }
       const script = args.at(-1) ?? '';
-      // Process inspection also selects ParentProcessId; match its richer projection first.
+      // Process-info queries may also project ParentProcessId; distinguish their requested fields.
       if (script.includes('CommandLine')) {
         return JSON.stringify({
           ProcessId: listenerPid,
