@@ -11,7 +11,9 @@ export function sanitizeVoiceOutputEventForDisplay(
   if (event.kind !== 'display_status') return event;
   const text = event.text === VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT
     ? t('voiceSurface.earlierTurnsLeftOut')
-    : event.text;
+    : event.text === 'status.retryingExternally' || event.text === 'status.working'
+      ? t(event.text)
+      : event.text;
   return {
     ...event,
     text: redactVoicePathLikeString(redactBugReportSensitiveText(text)),

@@ -3520,6 +3520,49 @@ describe('VoiceAgentManager', () => {
     }
   });
 
+  it('surfaces native retry progress while waiting and preserves the eventual typed failure', async () => {
+    let releaseProvider!: () => void;
+    const providerDone = new Promise<void>(resolve => { releaseProvider = resolve; });
+    const failureCause = { code: 'codex_app_server_turn_failed', phase: 'turn',
+      failureReason: 'unclassified_provider_error', httpStatus: 429 };
+    const runtime = createDeterministicBackend('retrying-native-turn', {
+      async onSend(request, publish) {
+        const turnId = request.delivery.turnId;
+        publish({ kind: 'turn-progress', turnId, retry: { attempt: 1, reason: 'rate_limited' } });
+        publish({ kind: 'turn-progress', turnId, retry: { attempt: 2, reason: 'rate_limited' } });
+        publish({ kind: 'turn-progress', turnId: 'foreign-turn' });
+        await providerDone;
+        publish({ kind: 'turn-progress', turnId });
+        for (let index = 0; index < 20; index++) publish({ kind: 'turn-progress', turnId });
+        publish({ kind: 'turn-failed', turnId, diagnostic: { code: 'provider_error', severity: 'error',
+          details: { failureCause } } });
+      },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+    const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+      idleTtlSeconds: 60, initialContext: 'CTX' });
+    try {
+      const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
+      await vi.waitFor(async () => {
+        const read = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0 });
+        expect(read.done).toBe(false);
+        expect(read.events).toEqual(expect.arrayContaining([
+          expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({ kind: 'display_status', text: 'status.retryingExternally' }) }),
+        ]));
+      });
+      releaseProvider();
+      const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+      expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'display_status')
+        .map(event => event.t === 'voice_output' && event.output.kind === 'display_status' ? event.output.text : null))
+        .toEqual(['status.retryingExternally', 'status.working']);
+      expect(events.at(-1)).toMatchObject({ t: 'error', errorCode: 'provider_error', runtimeIssueV1: { failureCause } });
+    } finally {
+      releaseProvider();
+      await manager.dispose();
+    }
+  });
+
   it('never flushes provisional native narration after a provider failure', async () => {
     const failureCause = {
       code: 'codex_app_server_turn_failed', phase: 'turn',

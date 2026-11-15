@@ -14,6 +14,12 @@ describe('sanitizeVoiceOutputEventForDisplay', () => {
     expect(sanitizeVoiceOutputEventForDisplay(speech)).toBe(speech);
   });
 
+  it.each(['status.retryingExternally', 'status.working'] as const)('localizes native progress %s as display only', text => {
+    const event = { v: 1, kind: 'display_status', turnId: 'turn-1', seq: 0, statusId: 'progress-1', text } as const;
+    expect(sanitizeVoiceOutputEventForDisplay(event)).toMatchObject({ text: t(text) });
+    expect(t(text)).not.toBe(text);
+  });
+
   it('redacts paths and token-shaped values from display status only', () => {
     const status = sanitizeVoiceOutputEventForDisplay({
       v: 1,

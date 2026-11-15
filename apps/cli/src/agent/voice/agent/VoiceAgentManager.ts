@@ -168,9 +168,28 @@ export class VoiceAgentManager {
   }
 
   private subscribeToRuntimeActivity(voiceAgent: VoiceAgentInstance, backend: ExecutionRunHostRuntime): (() => void) | undefined {
+    let providerRetrying = false;
     return backend.subscribeRuntimeEvents?.((event) => {
       if (this.voiceAgents.get(voiceAgent.id) !== voiceAgent) return;
       if (voiceAgent.chatBackend !== backend && voiceAgent.commitBackend !== backend) return;
+      if (event.kind === 'turn-start') providerRetrying = false;
+      const stream = voiceAgent.activeTurnStream;
+      if (event.kind === 'turn-progress' && backend === voiceAgent.chatBackend
+        && stream && !stream.done && !stream.cancelled) {
+        // Native owns retry policy. Project only its transitions; ordinary
+        // progress must not publish a status for every provider delta.
+        const retrying = event.retry !== undefined;
+        if (retrying !== providerRetrying) {
+          providerRetrying = retrying;
+          const output = { v: 1, kind: 'display_status', turnId: stream.id, seq: stream.outputSeq,
+            statusId: `${stream.id}:provider:${stream.outputSeq}`,
+            text: retrying ? 'status.retryingExternally' : 'status.working' } as const;
+          stream.outputBudget = ingestVoiceAgentOutputEventV1(stream.outputBudget, output).state;
+          stream.events.push({ t: 'voice_output', output });
+          stream.outputSeq += 1;
+          stream.onEventsChanged();
+        }
+      }
       if (
         event.kind === 'turn-start' || event.kind === 'turn-complete'
         || event.kind === 'turn-failed' || event.kind === 'turn-cancelled'
