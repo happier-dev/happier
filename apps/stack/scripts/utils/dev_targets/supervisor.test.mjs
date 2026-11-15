@@ -1856,6 +1856,11 @@ test(`remote source preparation carries ${reportsTimes ? 'separate source times'
       const shipped = uploads.find(upload => upload.target.name === component);
       assert.ok(shipped && input.args.at(-1).includes(`--source-revision=${shipped.remotePath}`),
         `${component} host receives the controller's revision description (mirrors have no Git metadata)`);
+      // A Stack's first start on a host has no state directory yet; scp cannot
+      // create one, so the description goes to the host's shared stack-state root.
+      const target = targets.find(candidate => candidate.name === component);
+      assert.equal(dirname(shipped.remotePath),
+        resolveRemoteStackStatePaths(target, { stackName: 'agent-qa', runtimeMode: 'source-snapshot' }).stackStorageDir);
       assert.ok(input.args.at(-1).includes(`--source-after=${new Date(requestStartedAt).toISOString()}`),
         `${component} host must receive the same controller capture boundary`);
       const sourceTimes = component === 'server' ? { server: times.server, ui: times.ui } : { daemon: times.daemon };

@@ -41,6 +41,13 @@ export async function runStackStopCommand({ rootDir, stackName, passthrough, jso
     },
   });
 
+  // Release the source trees the Stack no longer selects (a restart's incumbent;
+  // never the tree the restart just selected), so an unreferenced base is
+  // deleted (no timer; owner 2026-11-14).
+  if (out.finalization?.finalized !== false) {
+    const { releaseStackSourceTrees } = await import('../build/source_revision_tree.mjs');
+    await releaseStackSourceTrees({ stackBaseDir: baseDir, components: preserveDaemon ? ['server'] : ['server', 'daemon'] });
+  }
   if (json) {
     printResult({ json, data: { ok: out.finalization?.finalized !== false, stopped: out } });
   }

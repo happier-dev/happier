@@ -61,6 +61,20 @@ import {
 
 const TARGET_SYNC_READY = Symbol('TARGET_SYNC_READY');
 
+/** Write the revision's archive from this controller's Git objects, upload it to
+ * the path the host's base build named, and delete the local copy. */
+async function uploadSourceRevisionArchive({ target, repoDir, request, transferFile, signal }) {
+  if (!/^[a-f0-9]{40,64}$/.test(request?.revision ?? '') || typeof request.path !== 'string') throw new Error('invalid revision archive request');
+  const { writeSourceRevisionArchive } = await import('../../build/source_revision_tree.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'hstack-source-revision-archive-'));
+  try {
+    const localPath = await writeSourceRevisionArchive({ repoDir, revision: request.revision, outputPath: join(directory, 'revision.tar.gz') });
+    await transferFile({ target, direction: 'upload', localPath, remotePath: request.path, signal });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 /** Prepare on the actual service hosts while their incumbent supervisor is
  * still serving. The existing executor/control pipe owns each preparation
  * worker; only the existing restart owner may subsequently retire services.
@@ -101,7 +115,9 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
       if (sourceRevisionDescriptorPath) {
         // Mirrors carry no Git metadata: ship the controller's revision description.
         // The host's reload worker deletes it once its preparation has consumed it.
-        const remotePath = `${paths.stackBaseDir}/source-revision-${randomUUID()}.json.gz`;
+        // scp cannot create directories: a Stack's first start on a host has no
+        // state directory yet, so use the host's shared stack-state root.
+        const remotePath = `${paths.stackStorageDir}/source-revision-${paths.stackName}-${randomUUID()}.json.gz`;
         await transferFile({ target: plan.target, direction: 'upload', localPath: sourceRevisionDescriptorPath, remotePath,
           signal: cancellation.signal });
         hostArgs.push(`--source-revision=${remotePath}`);
@@ -147,6 +163,16 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
                 if (captures[component]) worker.sourceCaptures[component] = captures[component];
               }
             }
+            return;
+          }
+          const archiveRequest = stream === 'stdout' && line.startsWith('HSTACK_SOURCE_TREE_BASE_ARCHIVE ')
+            ? JSON.parse(line.slice('HSTACK_SOURCE_TREE_BASE_ARCHIVE '.length)) : null;
+          if (archiveRequest) {
+            // The host builds a revision base it lacks from this controller's Git
+            // objects: once per base per host, never from its mirror's moving bytes.
+            void uploadSourceRevisionArchive({ target: plan.target, repoDir, request: archiveRequest, transferFile, signal: cancellation.signal })
+              .then(() => undefined, error => error instanceof Error ? error.message : String(error))
+              .then(error => worker.child?.stdin.write(`base-archive ${JSON.stringify({ path: archiveRequest.path, ...(error ? { error } : {}) })}\n`));
             return;
           }
           const preparation = stream === 'stdout' ? parseSourcePreparationPhaseLine(line) : null;

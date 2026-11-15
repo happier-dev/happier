@@ -136,33 +136,53 @@ export function sourceRevisionKey({ revision, overlayDigest }) {
  * The descriptor is a finite request input: callers delete it after use.
  * @returns {Promise<string>} the descriptor path
  */
-export async function writeSourceRevisionDescriptor({ repoDir, identity, outputDir, components = ['server', 'daemon'] }) {
+export async function writeSourceRevisionDescriptor({ repoDir, identity, outputDir, components = ['server', 'daemon'], fullTree = false,
+  commit = null }) {
   const tree = {};
   for (const entry of nulList(await git(repoDir, ['ls-tree', '-r', '-z', '--full-tree', identity.revision]))) {
     const tab = entry.indexOf('\t');
     const [mode, type, id] = entry.slice(0, tab).split(' ');
     if (type === 'blob') tree[entry.slice(tab + 1)] = [mode, id];
   }
-  const files = new Set();
-  const owners = new Set();
-  for (const component of components) {
-    const inputs = await readSourceComponentBuildInputs({ repoDir, component });
-    for (const file of inputs.files) files.add(file);
-    for (const dir of inputs.workspaceDirs) if (dir) owners.add(`${dir.replaceAll('\\', '/')}/`);
-  }
-  const revisionFiles = new Set([...files].filter(path => Object.hasOwn(tree, path) && !Object.hasOwn(identity.overlay, path)));
-  for (const path of nulList(await git(repoDir, ['diff', '--name-only', '-z', '--no-renames', identity.revision, '--']))) {
-    if (!Object.hasOwn(tree, path) || Object.hasOwn(identity.overlay, path)) continue;
-    if (files.has(path) || ([...owners].some(owner => path.startsWith(owner)) && await readCheckoutBytes(join(repoDir, path)) === null)) {
-      revisionFiles.add(path);
+  // A full-tree description (source revision trees) ships no revision blobs:
+  // every base takes the revision's bytes from Git objects (`git archive` here, or
+  // this controller's archive of the revision on a host without Git objects), so
+  // no working tree, moving or mirrored, contributes a tracked byte to a base.
+  const revisionFiles = new Set();
+  if (!fullTree) {
+    const files = new Set();
+    const owners = new Set();
+    for (const component of components) {
+      const inputs = await readSourceComponentBuildInputs({ repoDir, component });
+      for (const file of inputs.files) files.add(file);
+      for (const dir of inputs.workspaceDirs) if (dir) owners.add(`${dir.replaceAll('\\', '/')}/`);
+    }
+    for (const path of files) if (Object.hasOwn(tree, path) && !Object.hasOwn(identity.overlay, path)) revisionFiles.add(path);
+    for (const path of nulList(await git(repoDir, ['diff', '--name-only', '-z', '--no-renames', identity.revision, '--']))) {
+      if (!Object.hasOwn(tree, path) || Object.hasOwn(identity.overlay, path)) continue;
+      if (files.has(path) || ([...owners].some(owner => path.startsWith(owner)) && await readCheckoutBytes(join(repoDir, path)) === null)) {
+        revisionFiles.add(path);
+      }
     }
   }
-  const blobBytes = await readGitBlobs(repoDir, [...new Set([...revisionFiles].map(path => tree[path][1]))]);
-  const blobs = [...revisionFiles].map(path => [path, blobBytes.get(tree[path][1])]);
+  // A later commit served as base + its diff (source revision trees): ship the
+  // commit's bytes for each changed path, keyed apart from the base's own blobs.
+  const commitTree = {};
+  if (commit) for (const entry of nulList(await git(repoDir, ['ls-tree', '-r', '-z', '--full-tree', commit.revision]))) {
+    const tab = entry.indexOf('\t');
+    const [mode, type, id] = entry.slice(0, tab).split(' ');
+    if (type === 'blob') commitTree[entry.slice(tab + 1)] = [mode, id];
+  }
+  const commitPaths = commit ? Object.fromEntries(commit.paths.map(path => [path, commitTree[path] ?? null])) : null;
+  const blobBytes = await readGitBlobs(repoDir, [...new Set([...[...revisionFiles].map(path => tree[path][1]),
+    ...Object.values(commitPaths ?? {}).filter(Boolean).map(([, id]) => id)])]);
+  const blobs = [...[...revisionFiles].map(path => [path, blobBytes.get(tree[path][1])]),
+    ...Object.entries(commitPaths ?? {}).filter(([, entry]) => entry).map(([path, [, id]]) => [`commit:${path}`, blobBytes.get(id)])];
   const untracked = nulList(await git(repoDir, ['ls-files', '-z', '-o', '--exclude-standard']))
     .filter(path => !Object.hasOwn(identity.overlay, path));
   const descriptor = { version: SOURCE_REVISION_DESCRIPTOR_VERSION, revision: identity.revision,
-    overlayDigest: identity.overlayDigest, key: identity.key, tree, untracked, overlay: identity.overlay,
+    overlayDigest: identity.overlayDigest, key: identity.key, tree, untracked, overlay: identity.overlay, ...(fullTree ? { fullTree: true } : {}),
+    ...(commitPaths ? { commit: { revision: commit.revision, paths: commitPaths } } : {}),
     blobs: blobs.map(([path, bytes]) => [path, bytes.length]) };
   await mkdir(outputDir, { recursive: true });
   const descriptorPath = join(outputDir, `source-revision-${identity.key}-${randomUUID()}.json.gz`);
@@ -173,9 +193,9 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
 }
 
 /** Identity plus descriptor in one call. */
-export async function resolveSourceRevision({ repoDir, rev = 'HEAD', overlay = [], outputDir, components }) {
+export async function resolveSourceRevision({ repoDir, rev = 'HEAD', overlay = [], outputDir, components, fullTree = false }) {
   const identity = await resolveSourceRevisionIdentity({ repoDir, rev, overlay });
-  const descriptorPath = await writeSourceRevisionDescriptor({ repoDir, identity, outputDir, components });
+  const descriptorPath = await writeSourceRevisionDescriptor({ repoDir, identity, outputDir, components, fullTree });
   return { revision: identity.revision, overlayDigest: identity.overlayDigest, key: identity.key, descriptorPath };
 }
 

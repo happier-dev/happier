@@ -219,6 +219,20 @@ becomes the latest built revision. The reload log names the selected revision,
 and PREPARED prints `rev <component>=<sha>[+overlay:<digest>]` next to the
 capture time and input identity.
 
+Source-tree reloads (rollout, owner 2026-11-14): with
+`hstack stack env <stack> set HAPPIER_STACK_SOURCE_TREES=1`, a reload builds no
+bundle. Each host keeps one read-only base tree per revision, built once from the
+revision's Git objects (`git archive` on the controller; a mirror host without Git
+objects asks the controller for that archive), never from a working tree. A reload at
+a later commit reuses the newest compatible base and applies that commit's
+changed files plus the Stack's `--overlay` files to the Stack's own hardlink
+clone; a package manifest or lockfile change builds a new base. Server and daemon
+run that clone from source and take no compiler admission. When the commit or
+overlay touches plugin inputs, only the bundled-plugin derivation reruns for that
+Stack. Each reload prepares a new tree beside the running one; `stack stop`
+(including a restart's stop) releases every tree except the selected one, and a
+base no Stack tree references is deleted (the newest base per host is kept).
+
 An unbuilt revision is built once by the repository producer under its existing
 lock; the consumer never compiles. If a completed capture's consumed bytes equal
 the revision's, it is adopted instead. `--source-after=<ISO timestamp>` remains

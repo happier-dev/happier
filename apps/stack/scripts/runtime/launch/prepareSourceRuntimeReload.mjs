@@ -9,6 +9,7 @@ import { format } from 'node:util';
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
 import { parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
+import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
 import { beginPendingSourceStart, emitSourcePreparationPhase } from '../shared/pending_source_start.mjs';
@@ -58,7 +59,8 @@ async function resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env
 
 /** Called by the existing restart owner before any incumbent retirement. */
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
-  activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId, loadSentinelPasses }) {
+  activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId, loadSentinelPasses,
+  requestBaseArchive }) {
   const request = resolveSourceRuntimeReloadArguments({ args });
   const { flags, kv, sourceCapturedAfter } = request;
   let revisionDir;
@@ -104,7 +106,22 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     // waiting for an edit. This record carries logs and terminal outcomes.
     await writeJsonAtomic(statusPath, { logPath });
     await log('[reload] preparing replacement while incumbent runtime remains loaded');
-    const revision = request.revisionDescriptorPath ? null
+    // Owner 2026-11-14 (P03-INFRA-REDESIGN): QA Stacks run a shared revision base
+    // tree plus their commit diff and declared overlay from source, with no bundle.
+    // Rollout control (Systemic 21:31Z): opt-in per Stack until a real QA Stack
+    // boots on it; the producer's own Stack and checkout captures keep bundles.
+    const hostTreeDescriptor = request.revisionDescriptorPath
+      ? (await readSourceRevisionDescriptor(request.revisionDescriptorPath)).fullTree === true : false;
+    const sourceTree = hostTreeDescriptor || (!request.revisionDescriptorPath && sourceCapturedAfter == null
+      && String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim() === '1' && existsSync(join(repoDir, '.git')));
+    let treeRevision = null;
+    if (sourceTree && !request.revisionDescriptorPath) {
+      treeRevision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir),
+        rev: request.rev ?? 'HEAD', overlay: request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? ''),
+        outputDir: revisionDir = await mkdtemp(join(await mkdir(sourceRoot, { recursive: true }).then(() => sourceRoot), 'revision-')) });
+      await log(`[reload] source tree ${treeRevision.revision} = base ${treeRevision.base} + ${treeRevision.commitPaths} committed path(s); no bundle build`);
+    }
+    const revision = request.revisionDescriptorPath || sourceTree ? null
       : await resolveReloadSourceRevision({ request, repoDir, stackBaseDir, env });
     const sourceRevision = request.revisionDescriptorPath ? { descriptorPath: request.revisionDescriptorPath }
       : revision ? { rev: revision.revision, overlay: Object.keys(revision.overlay) } : undefined;
@@ -133,7 +150,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const remotePreparation = (async () => {
         if (placement?.target || placement?.daemonTarget) {
           // Hosts without Git metadata receive one description of the revision.
-          const sourceRevisionDescriptorPath = revision ? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
+          const sourceRevisionDescriptorPath = treeRevision ? treeRevision.descriptorPath : revision ? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
             outputDir: revisionDir = await mkdtemp(join(sourceRoot, 'revision-')),
             components: ['server', 'daemon', ...(uiMode === 'export' ? ['expo'] : [])] }) : undefined;
           remote = await (await import('../../utils/dev_targets/supervisor.mjs')).prepareStackDevTargetSourceReload({
@@ -147,10 +164,13 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         }
         return remote;
       })();
-      const localPreparation = localComponents.length ? prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
+      const localPreparation = !localComponents.length ? Promise.resolve({})
+        : sourceTree ? prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir, components: localComponents, requestBaseArchive,
+          descriptorPath: treeRevision?.descriptorPath ?? request.revisionDescriptorPath, env: serverEnv, signal: pending.signal, logger })
+        : prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
         components: localComponents, pending, env: serverEnv, signal: pending.signal,
         sourceCapturedAfter, sourceRevision, requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
-        logger, stderrStream }) : Promise.resolve({});
+        logger, stderrStream });
       // Finite producers retain their own joint host/resource admission. The
       // coordinator holds no capacity while the independent preparations run.
       preparations = [localPreparation, remotePreparation];
@@ -161,7 +181,8 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const ui = components.server ? (await prepareSourceQaWebUi({ mode: uiMode, repoDir, baseDir: sourceRoot,
         stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter, sourceRevision,
         requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
-        revision: request.revisionDescriptorPath ? sourceRevisionIdentity(await readSourceRevisionDescriptor(request.revisionDescriptorPath))
+        revision: treeRevision ? { revision: treeRevision.revision, overlayDigest: null, key: treeRevision.key }
+          : request.revisionDescriptorPath ? sourceRevisionIdentity(await readSourceRevisionDescriptor(request.revisionDescriptorPath))
           : revision })).built : null;
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
@@ -228,10 +249,25 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === '-
   const control = createInterface({ input: process.stdin });
   let decide;
   const activation = new Promise(resolve => { decide = resolve; });
-  control.on('line', line => { if (line === 'activate') decide(true); else if (line === 'cancel') decide(false); });
-  control.on('close', () => decide(false));
+  // A mirror without Git objects asks the controller for the revision archive of a
+  // base it lacks; the controller uploads it to `path` and answers on this pipe.
+  const archiveRequests = new Map();
+  const answerArchive = (path, error) => { archiveRequests.get(path)?.(error); archiveRequests.delete(path); };
+  control.on('line', line => {
+    if (line === 'activate') decide(true);
+    else if (line === 'cancel') decide(false);
+    else if (line.startsWith('base-archive ')) { const { path, error } = JSON.parse(line.slice('base-archive '.length)); answerArchive(path, error); }
+  });
+  control.on('close', () => {
+    decide(false);
+    for (const path of [...archiveRequests.keys()]) answerArchive(path, 'control pipe closed before the revision archive arrived');
+  });
+  const requestBaseArchive = ({ revision, path }) => new Promise((resolveArchive, reject) => {
+    archiveRequests.set(path, error => error ? reject(new Error(`[source-tree] revision archive for ${revision} unavailable: ${error}`)) : resolveArchive());
+    process.stdout.write(`HSTACK_SOURCE_TREE_BASE_ARCHIVE ${JSON.stringify({ revision, path })}\n`);
+  });
   try {
-    await prepareSourceRuntimeReload({ ...request, env: process.env, onHost: true, activation,
+    await prepareSourceRuntimeReload({ ...request, env: process.env, onHost: true, activation, requestBaseArchive,
       onPhase: emitSourcePreparationPhase,
       onPrepared: ({ sourceTimes, sourceCaptures }) => {
         emitSourceRuntimeSourceTimes(sourceTimes, sourceCaptures);
