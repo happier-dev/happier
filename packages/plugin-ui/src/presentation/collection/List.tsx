@@ -1383,6 +1383,7 @@ export function HappierListItem({
         <NavigationRowRule
           startPx={resolveHappierCollectionRowTextStartPx({ glyph: icon !== undefined && icon !== null })}
           color={collectionPalette(resolvedTheme, navigationPalette).rowDivider}
+          multiline={described}
           selected={selected === true}
         />
       ) : null}
@@ -1408,10 +1409,10 @@ export function HappierListItem({
 }
 
 /** A navigation row's rule: drawn while its list says another row follows and neither it nor the next row is filled. */
-function NavigationRowRule(props: Readonly<{ startPx: number; color: string; selected: boolean }>) {
+function NavigationRowRule(props: Readonly<{ startPx: number; color: string; multiline: boolean; selected: boolean }>) {
   const followed = useContext(HappierListRowFollowedContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const hovered = useHappierListRowHovered();
-  return resolveHappierListRowRuleShown({ followed, selected: props.selected, precedesSelected, hovered })
+  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: props.selected, precedesSelected, hovered })
     ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }

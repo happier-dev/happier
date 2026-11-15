@@ -13,6 +13,7 @@ const SEPARATOR = Object.freeze({ color: '#d0d0d0' });
 function row(
   input: Readonly<{
     followed: boolean | null;
+    lines?: 1 | 2;
     selected?: boolean;
     hovered?: boolean;
     precedesSelected?: boolean;
@@ -27,7 +28,9 @@ function row(
       hovered={input.hovered === true}
       identity={<span>mark</span>}
       title={<span>Session title</span>}
-    />
+    >
+      {input.lines === 1 ? null : <span>Working · 2m</span>}
+    </HappierCollectionRowContent>
   );
   return (
     <HappierListRowFollowedContext.Provider value={input.followed}>
@@ -87,6 +90,14 @@ describe('the list-row rule on the shared work row (owner 2026-11-15: inset hair
       expect(rule(view)).toBeNull();
       await view.render(row({ followed: true }));
       expect(rule(view)).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+  it('parts one-line rows by spacing alone (owner 2026-11-15 ~20:40Z)', () => {
+    const view = mountThroughReactNativeWeb(row({ followed: true, lines: 1 }));
+    try {
+      expect(rule(view)).toBeNull();
     } finally {
       view.unmount();
     }

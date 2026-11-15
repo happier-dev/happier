@@ -703,13 +703,15 @@ live in the page-presentation owners in code.
   section that indexes entities (all services, all machines, usage accounts) lies flat on the page
   (`ItemGroup surface="none"`) with the same text-inset dividers; it gains no card, finish, lip or
   shadow. Dashboards and heroes do not gain cards either.
-- **One list-row rule, in every list and column, at every width** (owner 2026-11-15). Rows of a list,
-  a sidebar or a column, Sessions included, are parted by a faint hairline in the divider ink that
-  starts at the row's text column and runs to its trailing edge. None stands above a section title
-  or after a section's last row, and none touches a filled row: a selected row draws neither its
-  own line nor the one above it, a hovered row hides its own. The list that knows the order decides
-  where it falls; rows never draw their own copy. On a phone, browse lists lie flat on the page with
-  this rule, never one card per list or per item.
+- **One list-row rule, in every list and column, at every width** (owner 2026-11-15). Rows of two or
+  more lines (a title and its description, facts or preview: Discussions, the Store, Artifacts, Projects
+  with their second line) are parted by a faint hairline in the divider ink that starts at the row's text
+  column and runs to its trailing edge. One-line rows (Sessions at their narrow density, a sidebar's
+  one-line rows, Scheduled, Drafts) part by spacing alone: a line under each only adds weight. None
+  stands above a section title or after a section's last row, and none touches a filled row: a selected
+  row draws neither its own line nor the one above it, a hovered row hides its own. The list that knows
+  the order decides where it falls and the row's anatomy whether it draws; rows never draw their own
+  copy. On a phone, browse lists lie flat on the page, never one card per list or per item.
 - **One row, one decision, one control.**
   - A switch for on/off.
   - A segmented control for two to four short choices, all visible. A short ordinal scale (reasoning

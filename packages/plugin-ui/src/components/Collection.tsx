@@ -1668,6 +1668,8 @@ function ListCells<Item>(props: Readonly<{
             + (leadingControl === null && glyph === null && badge === null ? 0
               : (catalog ? CATALOG_ROW.markBox : page || restingFlat ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : TABLE.glyphWidth - TABLE.gap)
                 + (page || restingFlat ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : TABLE.gap))}
+          // A one-line list (nothing beneath the title) parts its rows by spacing alone.
+          multiline={!singleLine}
         />
       ) : null}
     </View>
@@ -1675,7 +1677,7 @@ function ListCells<Item>(props: Readonly<{
 }
 
 /** A list row's rule, drawn while its list says another row follows and neither it nor the next row is filled. */
-function CollectionListRowRule(props: Readonly<{ startPx: number }>): ReactElement | null {
+function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boolean }>): ReactElement | null {
   // The row divider ink every list and column row uses (the palette's `rowDivider`).
   const theme = useHappierUiTheme();
   const color = (useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme)).rowDivider;
@@ -1684,7 +1686,7 @@ function CollectionListRowRule(props: Readonly<{ startPx: number }>): ReactEleme
   const open = useContext(HappierListRowOpenContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const hovered = useHappierListRowHovered();
-  return resolveHappierListRowRuleShown({ followed, selected: selection?.selected === true || open, precedesSelected, hovered })
+  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: selection?.selected === true || open, precedesSelected, hovered })
     ? <HappierListRowRule startPx={props.startPx} color={color} /> : null;
 }
 

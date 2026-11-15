@@ -1,4 +1,4 @@
-import { useContext, type ReactElement, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, useContext, type ReactElement, type ReactNode } from 'react';
 import {
   Platform,
   View,
@@ -464,6 +464,8 @@ export function HappierCollectionRowContent(
         <CollectionRowContentRule
           startPx={M.padding[props.density] + titleEdge}
           color={props.separator.color}
+          // A line actually drawn under the title; a row that is its title line alone parts by spacing.
+          multiline={drawsLineUnderTitle(props.children)}
           selected={props.selected === true}
           hovered={props.hovered === true}
         />
@@ -472,9 +474,15 @@ export function HappierCollectionRowContent(
   );
 }
 
-function CollectionRowContentRule(props: Readonly<{ startPx: number; color: string; selected: boolean; hovered: boolean }>): ReactElement | null {
+/** Whether the lines slot renders anything: a fragment of nulls (a narrow row's empty lines) draws no second line. */
+function drawsLineUnderTitle(node: ReactNode): boolean {
+  return Children.toArray(node).some((child) => !isValidElement(child) || child.type !== Fragment
+    || drawsLineUnderTitle((child.props as { children?: ReactNode }).children));
+}
+
+function CollectionRowContentRule(props: Readonly<{ startPx: number; color: string; multiline: boolean; selected: boolean; hovered: boolean }>): ReactElement | null {
   const followed = useContext(HappierListRowFollowedContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
-  return resolveHappierListRowRuleShown({ followed, selected: props.selected, precedesSelected, hovered: props.hovered })
+  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: props.selected, precedesSelected, hovered: props.hovered })
     ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }

@@ -441,18 +441,20 @@ export const HappierListRowPrecedesSelectedContext = createContext(false);
 export const HappierListRowFollowedContext = createContext<boolean | null>(null);
 
 /**
- * The one rule between list and column rows, at every width (owner 2026-11-15): an inset hairline under a row that
- * another row of its section follows, so none sits above a section title or after a section's last row. A selected
- * row's fill parts it from its neighbours, so neither the line under it nor the one above it is drawn, and a hovered
- * row hides its own.
+ * The one rule between list and column rows, at every width (owner 2026-11-15): an inset hairline under a row of two or
+ * more lines that another row of its section follows, so none sits above a section title or after a section's last
+ * row. One-line rows part by spacing alone: a line under each one only adds weight (owner ~20:40Z). A selected row's fill
+ * parts it from its neighbours, so neither the line under it nor the one above it is drawn, and a hovered row hides its own.
  */
 export function resolveHappierListRowRuleShown(input: Readonly<{
   followed: boolean | null;
+  /** The row's anatomy draws a second line under its title (a description, facts, a preview). */
+  multiline: boolean;
   selected: boolean;
   precedesSelected: boolean;
   hovered?: boolean;
 }>): boolean {
-  return input.followed === true && !input.selected && !input.precedesSelected && input.hovered !== true;
+  return input.followed === true && input.multiline && !input.selected && !input.precedesSelected && input.hovered !== true;
 }
 
 /** Where a column row's text starts from the row's leading edge: the content inset, a tree indent, the glyph column. */
@@ -465,12 +467,12 @@ export function resolveHappierCollectionRowTextStartPx(input: Readonly<{ indentP
  * The rule itself: an overlay at the row's foot from its text column to its trailing edge, in the row divider ink.
  * It takes no layout, so a row keeps the height its list plans with.
  */
-export function HappierListRowRule(props: Readonly<{ startPx: number; color: string }>): ReactElement {
+export function HappierListRowRule(props: Readonly<{ startPx: number; color: string; endPx?: number }>): ReactElement {
   return (
     <View
       pointerEvents="none"
       testID="happier-list-row-rule"
-      style={{ position: 'absolute', start: props.startPx, end: 0, bottom: 0, height: happierPageRowDividerWidth(), backgroundColor: props.color }}
+      style={{ position: 'absolute', start: props.startPx, end: props.endPx ?? 0, bottom: 0, height: happierPageRowDividerWidth(), backgroundColor: props.color }}
     />
   );
 }
