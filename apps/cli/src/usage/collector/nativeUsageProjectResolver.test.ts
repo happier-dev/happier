@@ -9,7 +9,7 @@ import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecret
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { createNativeUsageProjectResolver } from './nativeUsageProjectResolver';
-import { FeaturesResponseSchema, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
+import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { createUsageObservationPublisher } from '../createUsageObservationPublisher';
@@ -181,13 +181,7 @@ describe('native accounting Account Project resolution', () => {
                 },
                 // OS observer boundary; the real codec, store, collector and publisher remain beneath it.
                 subscribeSource: async () => ({ dispose() {} }),
-                publisher: createUsageObservationPublisher({ token, apiServerUrl: 'https://home.test',
-                    emitLegacyUsageReport: () => false,
-                    fetchServerFeaturesSnapshot: async () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
-                        features: {}, capabilities: { server: { usageAnalytics: { version: 1,
-                            eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-                            legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
-                        } } } }) }),
+                publisher: createUsageObservationPublisher({ emitUsageEvent: () => null, token, apiServerUrl: 'https://home.test',
                     postJson: async request => {
                         attempted.push(request.body);
                         if (!ingestAvailable) throw Object.assign(new Error('Usage transport unavailable'), { response: { status: 503 } });

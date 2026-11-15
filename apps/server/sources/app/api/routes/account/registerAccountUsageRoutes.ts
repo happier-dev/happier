@@ -6,7 +6,8 @@ import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { readDatabaseErrorCode } from "@/storage/transactionErrors";
 import { log } from "@/utils/logging/log";
 import { captureUsageAnalytics, projectUsageAnalyticsAsync } from "@/app/usage/usageQueryService";
-import { recordLegacyUsageReport, recordUsageEvent, deleteNativeUsageHistory } from "@/app/usage/usageWriteService";
+import { recordLegacyUsageReport, deleteNativeUsageHistory } from "@/app/usage/usageWriteService";
+import { ingestUsageEvent } from "@/app/usage/ingestUsageEvent";
 import { LegacyUsageReportRouteBodySchema } from "@/app/usage/legacyUsageReportSchema";
 import { type Fastify } from "../../types";
 import { accountUsageRoutePaths } from "./accountUsageRoutePaths";
@@ -222,21 +223,8 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         },
         preHandler: app.authenticate,
     }, async (request, reply) => {
-        try {
-            const result = await recordUsageEvent(request.userId, request.body);
-            if (!result.ok) {
-                if (result.error === 'invalid-params' || result.error === 'native-link-not-found') return reply.code(400).send({ error: result.error === 'native-link-not-found' ? 'Native Session link not found' : 'Invalid parameters' });
-                return reply.code(404).send({ error: result.error === 'machine-not-found' ? 'Machine not found' : 'Session not found' });
-            }
-            return reply.send({
-                success: true,
-                eventId: result.event.id,
-                createdAt: result.event.createdAt.getTime(),
-            });
-        } catch (error) {
-            log({ module: 'api', level: 'error' }, `Failed to save usage event: ${error}`);
-            return reply.code(500).send({ error: 'Failed to save usage event' });
-        }
+        const outcome = await ingestUsageEvent(request.userId, request.body);
+        return reply.code(outcome.status).send(outcome.body);
     });
 
     app.post(accountUsageRoutePaths.nativeHistoryDelete, {

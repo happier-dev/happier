@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FeaturesResponseSchema, UsageEventIngestRequestSchema, ingestPluginManifestV2 } from '@happier-dev/protocol';
+import { UsageEventIngestRequestSchema, ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { UsageSourceResultV1Schema, UsageSourcesListV1Schema, parseUsageSourceActionResult } from '@happier-dev/protocol/usage/usageSources';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-pi/manifest';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
@@ -63,14 +63,8 @@ describe('native source Machine RPC with real capture custody', () => {
       const published: unknown[] = [];
       const deleted: unknown[] = [];
       const publisher = createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test',
-        emitLegacyUsageReport: () => { throw new Error('Native usage cannot emit a Session report'); },
-        fetchServerFeaturesSnapshot: async () => supported ? { status: 'ready', features: FeaturesResponseSchema.parse({
-          features: {}, capabilities: { server: { usageAnalytics: { version: 1,
-            eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-            legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } } } },
-        }) } : { status: 'unsupported', reason: 'endpoint_missing' },
-        // Authenticated HTTP is the boundary; codec, publication and custody remain real.
-        postJson: async request => { published.push(request.body); return { ok: true }; },
+        emitUsageEvent: () => null, // Authenticated HTTP is the boundary; codec, publication and custody remain real.
+        postJson: async (request: Parameters<NonNullable<Parameters<typeof createUsageObservationPublisher>[0]['postJson']>>[0]) => { if (!(supported)) throw Object.assign(new Error('Not found'), { response: { status: 404 } }); return await (async request => { published.push(request.body); return { ok: true }; })(request); },
       });
       const activeServerDir = join(directory, 'home');
       collector = createNativeUsageCollector({ authority, storage, store, publisher,

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
-import { FeaturesResponseSchema, ingestPluginManifestV2, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
+import { ingestPluginManifestV2, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import { resolveExternalSessionsSourceKeyForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-claude/manifest';
 import { PLUGIN_MANIFEST as PI_MANIFEST } from '@happier-dev/plugins-pi/manifest';
@@ -152,8 +152,7 @@ describe('native source metadata discovery', () => {
                 readAccounting: async (source, signal) => bounded.readAccounting({ source: source.source, cursor: source.cursor, signal }),
                 // OS observer boundary: re-discovery below supplies the real invalidation.
                 subscribeSource: async () => ({ dispose() {} }),
-                publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://home.test',
-                    emitLegacyUsageReport: () => false, fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }) }),
+                publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://home.test', emitUsageEvent: () => null, postJson: async () => { throw Object.assign(new Error('Not found'), { response: { status: 404 } }); }, }),
                 deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
             });
             const [consented] = await collector.discover();
@@ -217,14 +216,7 @@ describe('native source metadata discovery', () => {
                         changeObservation: descriptor.changeObservation, watchFileChanges: descriptor.watchFileChanges,
                         onChange: input => onChange(input.changedNativeSessionIds) });
                 },
-                publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://home.test',
-                    emitLegacyUsageReport: () => false,
-                    fetchServerFeaturesSnapshot: async () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
-                        features: {}, capabilities: { server: { usageAnalytics: { version: 1,
-                            eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-                            legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
-                        } } },
-                    }) }),
+                publisher: createUsageObservationPublisher({ emitUsageEvent: () => null, token: 'token', apiServerUrl: 'https://home.test',
                     postJson: async request => {
                         attempted.push(request.body);
                         if (!ingestAvailable) throw Object.assign(new Error('Usage transport unavailable'), { response: { status: 503 } });

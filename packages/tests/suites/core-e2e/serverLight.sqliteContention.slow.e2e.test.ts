@@ -323,14 +323,14 @@ describe('core e2e: server-light SQLite contention responsiveness', () => {
       while (performance.now() < deadline) {
         const sessionId = sessionIds[iteration % sessionIds.length]!;
         writeResults.push(await timedAction(async () => {
-          const ack = await socket.emitWithAck<any>('usage-report', {
-            key: `mixed-hot-path-${iteration % 4}`,
-            sessionId,
-            tokens: { total: 100, prompt: 40, completion: 60 },
-            cost: { total: 0.02 },
+          const ack = await socket.emitWithAck<any>('usage-event', {
+            sessionId, observedAt: Date.now(), agentId: 'claude', source: 'runtime', scope: 'turn_delta',
+            externalKey: `mixed-hot-path-${iteration % 4}`, isCumulative: false,
+            tokens: { input: 40, output: 60, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 100 },
+            cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD' },
           }, 5_000);
           if (ack?.success !== true) {
-            throw new Error(`Unexpected usage-report ack: ${JSON.stringify(ack)}`);
+            throw new Error(`Unexpected usage-event ack: ${JSON.stringify(ack)}`);
           }
         }, 5_500));
         iteration += 1;

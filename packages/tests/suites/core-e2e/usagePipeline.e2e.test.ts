@@ -74,7 +74,7 @@ type AdaptNativeAgentSessionRuntimeToV1 = (
 type CreateUsageObservationPublisher = (params: Readonly<{
   token: string;
   apiServerUrl: string;
-  emitLegacyUsageReport(report: unknown): void;
+  emitUsageEvent(request: UsageEventIngestRequest): Promise<unknown> | null;
   postJson(input: Readonly<{
     serverUrl: string;
     token: string;
@@ -197,7 +197,7 @@ describe('usage pipeline e2e', () => {
     if (testDir) await rm(testDir, { recursive: true, force: true });
   });
 
-  it('resolves mixed scopes, timezone buckets, context, provider breakdowns, and legacy dedupe', async () => {
+  it('resolves mixed scopes, timezone buckets, context, provider breakdowns, and Session-socket ingest', async () => {
     const startedServer = server;
     if (!startedServer) throw new Error('missing server');
     const auth = await createTestAuth(startedServer.baseUrl);
@@ -226,20 +226,17 @@ describe('usage pipeline e2e', () => {
       event({ sessionId, observedAt: utcBoundary, agentId: 'provider-b', source: 'provider-b-native', scope: 'turn_delta', externalKey: 'b-delta-1', total: 7 }),
       event({ sessionId, observedAt: utcBoundary + 60 * 60 * 1_000, agentId: 'provider-b', source: 'provider-b-native', scope: 'turn_delta', externalKey: 'b-delta-2', total: 8 }),
     ];
-    for (const request of [...providerAEvents, ...providerBEvents]) {
+    const [socketEvent, ...httpEvents] = [...providerBEvents].reverse();
+    for (const request of [...providerAEvents, ...httpEvents.reverse()]) {
       await writeUsageEvent({ baseUrl: startedServer.baseUrl, token: auth.token, request });
     }
 
+    // The same v2 event also travels as one acknowledged socket emit, through the same ingest owner.
     const socket = createUserScopedSocketCollector(startedServer.baseUrl, auth.token);
     try {
       socket.connect();
       await waitFor(() => socket.isConnected(), { timeoutMs: 20_000 });
-      const ack = await socket.emitWithAck<{ success?: boolean }>('usage-report', {
-        key: 'provider-c-legacy',
-        sessionId,
-        tokens: { total: 999 },
-        cost: { total: 9.99 },
-      });
+      const ack = await socket.emitWithAck<{ success?: boolean }>('usage-event', socketEvent);
       expect(ack.success).toBe(true);
     } finally {
       socket.close();
@@ -307,7 +304,8 @@ describe('usage pipeline e2e', () => {
     const createPublisher = () => createUsageObservationPublisher({
       token: auth.token,
       apiServerUrl: startedServer.baseUrl,
-      emitLegacyUsageReport: () => undefined,
+      // No Session socket in this harness: the publisher uses the v2 HTTP ingest route.
+      emitUsageEvent: () => null,
       postJson: async ({ serverUrl, token, path, body }) => {
         const request = body as UsageEventIngestRequest;
         capturedRequests.push(request);

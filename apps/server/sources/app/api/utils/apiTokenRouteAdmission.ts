@@ -271,12 +271,28 @@ function isEphemeralSessionRunnerRequestBound(request: AuthenticatedRouteRequest
         return readRestrictedCredentialRouteField(request, binding.session) === principal.sessionId;
     }
     if (binding.allowSessionRuntime === false) return false;
-    const sessionIds = readRestrictedCredentialRouteSessionIds(request, binding);
-    if (sessionIds === null || sessionIds.some(sessionId => sessionId !== principal.sessionId)) return false;
-    if (binding.machine === undefined) return true;
-    const machineId = readRestrictedCredentialRouteField(request, binding.machine);
-    if (binding.machineOptional === true && (machineId === undefined || machineId === null)) return true;
-    return machineId === principal.machineId;
+    return isEphemeralSessionRunnerBoundToSessionTarget({
+        principal,
+        sessionIds: readRestrictedCredentialRouteSessionIds(request, binding),
+        machine: binding.machine === undefined ? { declared: false }
+            : { declared: true, value: readRestrictedCredentialRouteField(request, binding.machine), optional: binding.machineOptional === true },
+    });
+}
+
+/**
+ * The Runner binding rule for a Session-scoped target, shared by HTTP routes
+ * and Session-socket events: every named Session is the credential's own, and
+ * a declared Machine operand (absent only where optional) is its own Machine.
+ */
+export function isEphemeralSessionRunnerBoundToSessionTarget(params: Readonly<{
+    principal: Pick<VerifiedEphemeralSessionRunnerPrincipal, 'sessionId' | 'machineId'>;
+    sessionIds: readonly string[] | null;
+    machine: Readonly<{ declared: false }> | Readonly<{ declared: true; value: unknown; optional: boolean }>;
+}>): boolean {
+    if (params.sessionIds === null || params.sessionIds.some(sessionId => sessionId !== params.principal.sessionId)) return false;
+    if (!params.machine.declared) return true;
+    if (params.machine.optional && (params.machine.value === undefined || params.machine.value === null)) return true;
+    return params.machine.value === params.principal.machineId;
 }
 
 /** Restricted kinds never gain ordinary Home transport capabilities. */

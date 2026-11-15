@@ -1,4 +1,5 @@
 import type { SessionClientTransport } from './transport/sessionClientTransport';
+import type { UsageEventIngestRequest } from '@happier-dev/protocol';
 import { createUsageObservationPublisher } from '@/usage/createUsageObservationPublisher';
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
@@ -16,7 +17,8 @@ export function createSessionClientUsageObservationPublisher(
     params: Readonly<{
         token: string;
         transport: SessionClientTransport;
-        getSocket: () => { connected: boolean; emit: (event: 'usage-report', report: unknown) => void };
+        /** The admitted Session socket's acknowledged `usage-event` emit; null while it is not connected. */
+        emitUsageEvent: (request: UsageEventIngestRequest, signal?: AbortSignal) => Promise<unknown> | null;
         getSessionMetadata?: () => unknown;
         /** Captured owner authority only; restricted Session runners cannot read Account rows. */
         projectContext?: Readonly<{
@@ -31,15 +33,28 @@ export function createSessionClientUsageObservationPublisher(
         token: params.token,
         apiServerUrl: params.transport.serverUrl,
         ...(params.transport.resolveToken ? { resolveToken: params.transport.resolveToken } : {}),
-        emitLegacyUsageReport: (report) => {
-            const socket = params.getSocket();
-            if (!socket.connected) {
-                return false;
-            }
-            socket.emit('usage-report', report);
-            return true;
-        },
+        emitUsageEvent: params.emitUsageEvent,
     });
+    // One project resolver per Session client (its storage and authority do not change per publish).
+    let projectResolver: Promise<ReturnType<typeof createNativeUsageProjectResolver>> | null = null;
+    const readProjectResolver = (projectContext: NonNullable<typeof params.projectContext>, accountId: string) => {
+        projectResolver ??= readOrCreateDeviceLocalSecretStorage({ path: projectContext.deviceLocalSecretKeyFile })
+            .then(storage => createNativeUsageProjectResolver({
+                authority: { serverId: params.transport.serverId, accountId, machineId: projectContext.machineId },
+                serverHttpBaseUrl: params.transport.serverUrl, storage, readCredentials: projectContext.readCredentials,
+                sessionCustody: {
+                    serverId: params.transport.serverId, accountId, serverHttpBaseUrl: params.transport.serverUrl,
+                    isCurrent: async () => {
+                        const credentials = await projectContext.readCredentials();
+                        return !projectContext.signal.aborted && credentials !== null
+                            && readAccountIdFromToken(credentials.token) === accountId;
+                    },
+                },
+            }));
+        // A failed storage read is not retained: the next publish retries it.
+        projectResolver.catch(() => { projectResolver = null; });
+        return projectResolver;
+    };
     return {
         async publish(input: Parameters<typeof publisher.publish>[0]) {
             const rawMetadata = params.getSessionMetadata?.();
@@ -56,19 +71,7 @@ export function createSessionClientUsageObservationPublisher(
             if (projectKey == null && workspaceId == null && input.projectKey === undefined && input.workspaceId === undefined
                 && projectContext && accountId && rootPath && metadata.machineId === projectContext.machineId) {
                 try {
-                    const storage = await readOrCreateDeviceLocalSecretStorage({ path: projectContext.deviceLocalSecretKeyFile });
-                    const resolveProject = createNativeUsageProjectResolver({
-                        authority: { serverId: params.transport.serverId, accountId, machineId: projectContext.machineId },
-                        serverHttpBaseUrl: params.transport.serverUrl, storage, readCredentials: projectContext.readCredentials,
-                        sessionCustody: {
-                            serverId: params.transport.serverId, accountId, serverHttpBaseUrl: params.transport.serverUrl,
-                            isCurrent: async () => {
-                                const credentials = await projectContext.readCredentials();
-                                return !projectContext.signal.aborted && credentials !== null
-                                    && readAccountIdFromToken(credentials.token) === accountId;
-                            },
-                        },
-                    });
+                    const resolveProject = await readProjectResolver(projectContext, accountId);
                     const root = resolveSessionWorkspaceRootForMachine({ metadata, machineId: projectContext.machineId, candidatePath: rootPath });
                     const project = await resolveProject({ rootPath: root.machinePath }, projectContext.signal);
                     projectKey = project.projectKey;

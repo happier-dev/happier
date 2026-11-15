@@ -87,7 +87,7 @@ export {
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
-import type { SessionStoredMessageContent } from '@happier-dev/protocol';
+import type { SessionStoredMessageContent, UsageEventIngestRequest } from '@happier-dev/protocol';
 export { EphemeralUpdateSchema, MessageAckResponseSchema, SessionEndAckResponseSchema, UpdateMetadataAckResponseSchema, UpdateStateAckResponseSchema } from '@happier-dev/protocol/updates';
 
 import { SessionBroadcastContainerSchema, UpdateBodySchema as ProtocolUpdateBodySchema, UpdateContainerSchema as ProtocolUpdateContainerSchema } from '@happier-dev/protocol/updates';
@@ -311,18 +311,7 @@ export interface ClientToServerEvents extends Record<typeof SESSION_FOLLOW_OBSER
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.CALL]: (data: SocketRpcCallPayload, callback: (response: SocketRpcCallResponse) => void) => void
-  'usage-report': (data: {
-    key: string
-    sessionId: string
-    tokens: {
-      total: number
-      [key: string]: number
-    }
-    cost: {
-      total: number
-      [key: string]: number
-    }
-  }) => void
+  'usage-event': (data: UsageEventIngestRequest, callback: (answer: unknown) => void) => void
 }
 
 /**

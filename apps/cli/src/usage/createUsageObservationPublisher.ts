@@ -1,35 +1,28 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
-import type { UsageNativeAccountingSubject, UsageNativeAccountingEvidence, UsageRequestAttribution } from '@happier-dev/protocol';
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeAccountingEvidence, UsageRequestAttribution } from '@happier-dev/protocol';
 import { normalizeBaseUrl } from '@/diagnostics/httpClient';
 import { isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 
 import type { UsageObservation } from './usageObservation';
-import {
-    buildLegacyUsageReportFromUsageObservation,
-    type UsageReportV1,
-} from './legacy/legacyUsageTransport';
 import { buildUsageEventIngestRequest } from './buildUsageEventIngestRequest';
-
-type UsageObservationPublisherMode = 'unknown' | 'v2' | 'legacy';
 
 type PostJsonResult = Readonly<{ ok: true }>;
 
+/** Home's v2 usage-event ingest route; the Session-socket `usage-event` is its transport twin. */
+const USAGE_EVENT_INGEST_PATH = '/v2/usage-events';
+
 export type UsageObservationPublishResult =
-    | Readonly<{ status: 'sent'; transport: 'v2' | 'legacy' }>
+    | Readonly<{ status: 'sent'; transport: 'socket' | 'http' }>
     | Readonly<{ status: 'skipped' | 'failed' | 'unsupported' }>;
+
+/** The acknowledgement of the Session-socket `usage-event`, as the Home's ingest owner returns it. */
+type UsageEventSocketAck = Readonly<{ success?: unknown; error?: unknown }>;
 
 function isUnsupportedHttpStatus(status: number | null | undefined): boolean {
     return status === 404 || status === 405 || status === 501;
-}
-
-function resolveUsageAnalyticsIngestPath(snapshot: Extract<CliServerFeaturesSnapshot, { status: 'ready' }>): string | null {
-    const path = snapshot.features.capabilities.server?.usageAnalytics?.eventsIngest.path;
-    return typeof path === 'string' && path.trim().length > 0 ? path.trim() : null;
 }
 
 async function defaultPostJson(params: Readonly<{
@@ -55,13 +48,15 @@ async function defaultPostJson(params: Readonly<{
 }
 
 /**
- * Negotiate v2 ingest with scalar fallback for Session observations. Native-subject
- * capture requires v2; unsupported or failed publication stays unacknowledged for replay.
+ * Publishes one v2 usage event per observation: one acknowledged emit on the
+ * admitted Session socket, or the v2 HTTP ingest route while that socket is not
+ * connected (each reconnect opens a new socket, so a disconnected emit is not
+ * buffered across it). A failed or refused publication stays unacknowledged for
+ * its producer's replay.
  */
 export function createUsageObservationPublisher(params: Readonly<{
     token: string;
     apiServerUrl: string;
-    fetchServerFeaturesSnapshot?: typeof fetchServerFeaturesSnapshot;
     resolveToken?: () => Promise<string | null>;
     postJson?: (params: Readonly<{
         serverUrl: string;
@@ -70,10 +65,9 @@ export function createUsageObservationPublisher(params: Readonly<{
         body: unknown;
         signal?: AbortSignal;
     }>) => Promise<PostJsonResult>;
-    emitLegacyUsageReport: (report: UsageReportV1) => void | boolean;
+    /** Emits on the connected Session socket and resolves its acknowledgement; null while it is not connected. */
+    emitUsageEvent: (request: UsageEventIngestRequest, signal?: AbortSignal) => Promise<unknown> | null;
 }>) {
-    let mode: UsageObservationPublisherMode = 'unknown';
-    let ingestPath: string | null = null;
     let currentToken = params.token;
 
     function publishFailure(error: unknown): UsageObservationPublishResult {
@@ -81,66 +75,60 @@ export function createUsageObservationPublisher(params: Readonly<{
         return { status: 'failed' };
     }
 
-    async function resolveModeForPublish(native: boolean, signal?: AbortSignal): Promise<Readonly<{ mode: UsageObservationPublisherMode; path: string | null }>> {
-        if (mode === 'v2' && ingestPath) {
-            return { mode, path: ingestPath };
-        }
-        if (mode === 'legacy' && !native) {
-            return { mode, path: null };
-        }
-
-        const snapshot = await (params.fetchServerFeaturesSnapshot ?? fetchServerFeaturesSnapshot)({
-            serverUrl: params.apiServerUrl,
-            signal,
-        });
-        if (snapshot.status === 'ready') {
-            const supportedPath = resolveUsageAnalyticsIngestPath(snapshot);
-            if (supportedPath) {
-                mode = 'v2';
-                ingestPath = supportedPath;
-                return { mode, path: supportedPath };
-            }
-            mode = 'legacy';
-            ingestPath = null;
-            return { mode, path: null };
-        }
-
-        if (snapshot.status === 'unsupported') {
-            mode = 'legacy';
-            ingestPath = null;
-            return { mode, path: null };
-        }
-
-        return { mode: 'legacy', path: null };
-    }
-
-    /**
-     * Preserve explicit report keys, use event identity for keyless deltas, and
-     * retain cumulative stream keys. The scalar builder omits tokenless partial
-     * observations because legacy upserts replace the full token/cost snapshot.
-     */
-    function emitLegacyReport(params2: Readonly<{
-        sessionId?: string;
-        observation: UsageObservation;
-        externalKey?: string | null;
-    }>): UsageObservationPublishResult {
-        if (!params2.sessionId) return { status: 'unsupported' };
-        const report = buildLegacyUsageReportFromUsageObservation({
-            sessionId: params2.sessionId,
-            // Scalar reports upsert by key too; a delta keeps its existing event identity on fallback.
-            observation: {
-                ...params2.observation,
-                key: params2.observation.key ?? (params2.observation.scope === 'turn_delta' ? params2.externalKey ?? null : null),
-            },
-        });
-        if (!report) return { status: 'skipped' };
+    async function publishOverSocket(
+        ack: Promise<unknown>,
+        native: boolean,
+    ): Promise<UsageObservationPublishResult> {
+        let value: UsageEventSocketAck | null;
         try {
-            if (params.emitLegacyUsageReport(report) === false) {
-                return publishFailure(new Error('Usage report transport is disconnected.'));
-            }
-            return { status: 'sent', transport: 'legacy' };
+            const raw = await ack;
+            value = raw && typeof raw === 'object' ? raw as UsageEventSocketAck : null;
         } catch (error) {
             return publishFailure(error);
+        }
+        if (value?.success === true) return { status: 'sent', transport: 'socket' };
+        if (native && (value?.error === 'Invalid parameters' || value?.error === 'Native Session link not found')) {
+            return { status: 'unsupported' };
+        }
+        return publishFailure(new Error(`Usage event refused: ${typeof value?.error === 'string' ? value.error : 'unknown'}`));
+    }
+
+    async function publishOverHttp(
+        request: UsageEventIngestRequest,
+        native: boolean,
+        signal: AbortSignal | undefined,
+    ): Promise<UsageObservationPublishResult> {
+        const post = () => (params.postJson ?? defaultPostJson)({
+            serverUrl: params.apiServerUrl,
+            token: currentToken,
+            path: USAGE_EVENT_INGEST_PATH,
+            body: request,
+            ...(signal ? { signal } : {}),
+        });
+        const refused = (error: unknown): UsageObservationPublishResult => {
+            const status = readHttpStatus(error);
+            return isUnsupportedHttpStatus(status) || (native && status === 400)
+                ? { status: 'unsupported' } : publishFailure(error);
+        };
+        try {
+            await post();
+            return { status: 'sent', transport: 'http' };
+        } catch (error) {
+            if (!isAuthenticationStatus(readHttpStatus(error))) return refused(error);
+            let refreshedToken: string | null;
+            try {
+                refreshedToken = (await params.resolveToken?.())?.trim() ?? null;
+            } catch (refreshError) {
+                return publishFailure(refreshError);
+            }
+            if (!refreshedToken) return publishFailure(error);
+            currentToken = refreshedToken;
+            try {
+                await post();
+                return { status: 'sent', transport: 'http' };
+            } catch (retryError) {
+                return refused(retryError);
+            }
         }
     }
 
@@ -162,92 +150,30 @@ export function createUsageObservationPublisher(params: Readonly<{
             metadata?: Record<string, unknown>;
         }>): Promise<UsageObservationPublishResult> {
             if (input.signal?.aborted) return { status: 'failed' };
-            let publishMode: Awaited<ReturnType<typeof resolveModeForPublish>>;
+            const request = buildUsageEventIngestRequest({
+                sessionId: input.sessionId,
+                subject: input.subject,
+                accounting: input.accounting,
+                attribution: input.attribution,
+                observedAt: input.observedAt ?? Date.now(),
+                observation: input.observation,
+                backendMode: input.backendMode,
+                projectKey: input.projectKey,
+                workspaceId: input.workspaceId,
+                machineId: input.machineId,
+                turnId: input.turnId,
+                externalKey: input.externalKey,
+                metadata: input.metadata,
+            });
+            if (!request) return { status: 'skipped' };
+            const native = Boolean(input.subject);
+            let ack: Promise<unknown> | null;
             try {
-                publishMode = await resolveModeForPublish(Boolean(input.subject), input.signal);
+                ack = params.emitUsageEvent(request, input.signal);
             } catch (error) {
                 return publishFailure(error);
             }
-            if (publishMode.mode === 'v2' && publishMode.path) {
-                const request = buildUsageEventIngestRequest({
-                    sessionId: input.sessionId,
-                    subject: input.subject,
-                    accounting: input.accounting,
-                    attribution: input.attribution,
-                    observedAt: input.observedAt ?? Date.now(),
-                    observation: input.observation,
-                    backendMode: input.backendMode,
-                    projectKey: input.projectKey,
-                    workspaceId: input.workspaceId,
-                    machineId: input.machineId,
-                    turnId: input.turnId,
-                    externalKey: input.externalKey,
-                    metadata: input.metadata,
-                });
-                if (!request) return { status: 'skipped' };
-
-                try {
-                    await (params.postJson ?? defaultPostJson)({
-                        serverUrl: params.apiServerUrl,
-                        token: currentToken,
-                        path: publishMode.path,
-                        body: request,
-                        ...(input.signal ? { signal: input.signal } : {}),
-                    });
-                    return { status: 'sent', transport: 'v2' };
-                } catch (error) {
-                    const status = readHttpStatus(error);
-                    if (isUnsupportedHttpStatus(status) || (input.subject && status === 400)) {
-                        if (input.subject) return { status: 'unsupported' };
-                        mode = 'legacy';
-                        ingestPath = null;
-                        return emitLegacyReport(input);
-                    }
-
-                    if (isAuthenticationStatus(status)) {
-                        let refreshedToken: string | null;
-                        try {
-                            refreshedToken = (await params.resolveToken?.())?.trim() ?? null;
-                        } catch (refreshError) {
-                            if (input.subject) return publishFailure(refreshError);
-                            publishFailure(refreshError);
-                            return emitLegacyReport(input);
-                        }
-                        if (refreshedToken && refreshedToken.length > 0) {
-                            currentToken = refreshedToken;
-                            try {
-                                await (params.postJson ?? defaultPostJson)({
-                                    serverUrl: params.apiServerUrl,
-                                    token: currentToken,
-                                    path: publishMode.path,
-                                    body: request,
-                                    ...(input.signal ? { signal: input.signal } : {}),
-                                });
-                                return { status: 'sent', transport: 'v2' };
-                            } catch (retryError) {
-                                const retryStatus = readHttpStatus(retryError);
-                                if (isUnsupportedHttpStatus(retryStatus) || (input.subject && retryStatus === 400)) {
-                                    if (input.subject) return { status: 'unsupported' };
-                                    mode = 'legacy';
-                                    ingestPath = null;
-                                    return emitLegacyReport(input);
-                                }
-                                if (input.subject) return publishFailure(retryError);
-                                publishFailure(retryError);
-                                return emitLegacyReport(input);
-                            }
-                        }
-
-                        if (input.subject) return publishFailure(error);
-                        publishFailure(error);
-                        return emitLegacyReport(input);
-                    }
-
-                    return publishFailure(error);
-                }
-            }
-
-            return emitLegacyReport(input);
+            return ack ? await publishOverSocket(ack, native) : await publishOverHttp(request, native, input.signal);
         },
     };
 }

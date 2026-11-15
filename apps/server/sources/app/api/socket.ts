@@ -1140,7 +1140,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
                 userId,
                 socket,
                 connection,
-                ephemeralRunnerAdmission?.kind === "session-runtime",
+                ephemeralRunnerAdmission?.kind === "session-runtime" ? ephemeralRunnerAdmission.principal : null,
             );
         }
         const sessionBinding = connection.connectionType === "session-scoped"

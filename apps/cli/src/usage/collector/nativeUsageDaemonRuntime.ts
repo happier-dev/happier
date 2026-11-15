@@ -88,8 +88,9 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
             activeServerDir: input.activeServerDir, signal, ...(admittedSourceKey ? { admittedSourceKey } : {}) });
         return resolved ? { ...acquired, ...resolved } : null;
     };
+    // Native history capture has no Session socket: it uses the v2 HTTP ingest route.
     const publisher = createUsageObservationPublisher({ token: input.token, apiServerUrl: input.serverHttpBaseUrl,
-        emitLegacyUsageReport: () => false });
+        emitUsageEvent: () => null });
     const custodyKey = input.storage.deriveOpaqueIdentity({ purpose: 'usage_accounting_identity',
         value: JSON.stringify(['capture', input.authority.serverId, input.authority.accountId, input.authority.machineId]) });
     const collector = createNativeUsageCollector({

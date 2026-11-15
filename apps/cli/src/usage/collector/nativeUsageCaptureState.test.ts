@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { createNativeUsageCaptureStore, type NativeUsageCaptureState } from './nativeUsageCaptureState';
 import { readCodexNativeAccounting } from '../../../../../packages/plugins/codex/src/agent/usage/nativeAccounting';
-import { FeaturesResponseSchema, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
+import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import { createUsageObservationPublisher } from '../createUsageObservationPublisher';
 import { createNativeUsageCollector } from './nativeUsageCollector';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
@@ -57,11 +57,7 @@ describe('native accounting capture custody', () => {
                 readAccounting: (captured, signal) => readCodexNativeAccounting({ ...request, cursor: captured.cursor, signal }, source, { CODEX_HOME: directory }),
                 // Only the OS watcher and HTTP boundary are substituted.
                 subscribeSource: async () => ({ dispose() {} }),
-                publisher: createUsageObservationPublisher({ token: 'synthetic-token', apiServerUrl: 'https://capture.test',
-                    emitLegacyUsageReport: () => { throw new Error('Native capture requires v2'); },
-                    fetchServerFeaturesSnapshot: async () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
-                        capabilities: { server: { usageAnalytics: { version: 1, eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' }, legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } } } } }) }),
+                publisher: createUsageObservationPublisher({ emitUsageEvent: () => null, token: 'synthetic-token', apiServerUrl: 'https://capture.test',
                     postJson: async request => {
                         expect((await store.load()).sources[0]!.pending).toHaveLength(1);
                         posted.push(request.body);

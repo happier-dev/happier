@@ -49,7 +49,7 @@ describe('Session usage transport publisher', () => {
                     createSessionSocketTransport: () => { throw new Error('unused'); } },
                 getSessionMetadata: () => ({ machineId: 'machine', path: '/agent/repository',
                     sessionWorkspaceLocationV1: { v: 1, machineId: 'machine', agentPath: '/agent/repository', machinePath: '/private/repository' } }),
-                getSocket: () => ({ connected: false, emit() {} }),
+                emitUsageEvent: () => null,
                 projectContext: { machineId: 'machine', signal: new AbortController().signal,
                     deviceLocalSecretKeyFile: join(directory, 'device.key'), readCredentials: async () => ({ token, encryption: null }) },
             });
@@ -72,7 +72,7 @@ describe('Session usage transport publisher', () => {
         const publisher = createSessionClientUsageObservationPublisher({ token: 'token',
             transport: { serverId: 'home', serverUrl: 'https://usage-request-proof.example.test', createSessionSocketTransport: () => { throw new Error('unused'); } },
             getSessionMetadata: () => ({ machineId: 'machine', connectedAccount: 'current-account' }),
-            getSocket: () => ({ connected: true, emit: vi.fn() }),
+            emitUsageEvent: () => null,
         });
         const attribution = { v: 1 as const, turnId: 'old-turn', source: { kind: 'native' as const,
             connectedAccount: { service: { pluginId: 'acme.accounts', localId: 'native' }, accountId: 'old-account' } } };
@@ -108,7 +108,7 @@ describe('Session usage transport publisher', () => {
             token: 'token',
             transport: { serverId: 'home', serverUrl: 'https://usage-dimensions.example.test', createSessionSocketTransport: () => { throw new Error('unused'); } },
             getSessionMetadata: () => metadata,
-            getSocket: () => ({ connected: true, emit: vi.fn() }),
+            emitUsageEvent: () => null,
         });
         await publisher.publish({ ...input, observation: { ...input.observation, modelId: 'model-1' }, observedAt: 42 });
         expect(posted[0]).toMatchObject({
@@ -139,7 +139,7 @@ describe('Session usage transport publisher', () => {
         expect(posted[4]).toMatchObject({ machineId: 'machine-2', projectKey: null, workspaceId: null });
     });
 
-    it('returns a failure and warns when the advertised HTTP transport fails', async () => {
+    it('returns a failure and warns when the HTTP transport fails', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
             features: {}, capabilities: { server: { usageAnalytics: {
                 version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
@@ -151,25 +151,11 @@ describe('Session usage transport publisher', () => {
         const publisher = createSessionClientUsageObservationPublisher({
             token: 'token',
             transport: { serverId: 'home', serverUrl: 'https://usage-failure.example.test', createSessionSocketTransport: () => { throw new Error('unused'); } },
-            getSocket: () => ({ connected: true, emit: vi.fn() }),
+            emitUsageEvent: () => null,
         });
 
         await expect(publisher.publish(input)).resolves.toEqual({ status: 'failed' });
         expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: 'usage network failed' }));
     });
 
-    it('reports a disconnected legacy socket as a failure without sending the report', async () => {
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
-        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-        const emit = vi.fn();
-        const publisher = createSessionClientUsageObservationPublisher({
-            token: 'token',
-            transport: { serverId: 'home', serverUrl: 'https://usage-offline.example.test', createSessionSocketTransport: () => { throw new Error('unused'); } },
-            getSocket: () => ({ connected: false, emit }),
-        });
-
-        await expect(publisher.publish(input)).resolves.toEqual({ status: 'failed' });
-        expect(warn).toHaveBeenCalled();
-        expect(emit).not.toHaveBeenCalled();
-    });
 });

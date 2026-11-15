@@ -216,29 +216,29 @@ describe("ephemeral Runner legacy socket authority on SQLite", () => {
         await expect(db.sessionMessage.count({ where: { sessionId: fixture.sessionId } })).resolves.toBe(0);
     });
 
-    it("rejects legacy usage reports from a Runner even after its activation loses currentness", async () => {
-        const { fixture, socket, connection } = await createRegisteredRunner();
+    it("admits Runner usage events only for its own Session while its materialized principal is current", async () => {
+        const { fixture, principal, socket, connection } = await createRegisteredRunner();
+        usageHandler(fixture.accountId, socket as never, connection as never, principal);
+        const emitUsage = async (sessionId: string, externalKey: string) => {
+            const callback = vi.fn();
+            await getSocketHandler(socket, "usage-event")({
+                sessionId, machineId: fixture.machineId, observedAt: 1_000, agentId: "codex", source: "runtime",
+                scope: "turn_delta", isCumulative: false, externalKey,
+                tokens: { input: 7, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 7 },
+                cost: { reportedUsd: 0.01, estimatedUsd: 0, currency: "USD" },
+            }, callback);
+            return callback.mock.calls[0]?.[0];
+        };
+
+        await expect(emitUsage(fixture.sessionId, "runner-own")).resolves.toMatchObject({ success: true });
+        await expect(emitUsage(`other-${randomUUID()}`, "runner-other")).resolves.toEqual({ success: false, error: "Forbidden" });
+        await expect(db.usageEvent.count()).resolves.toBe(1);
+
         await db.ephemeralRunnerActivation.update({
             where: { id: fixture.activationId },
             data: { state: "closed", closeReason: "revoked" },
         });
-        usageHandler(
-            fixture.accountId,
-            socket as never,
-            connection as never,
-            true,
-        );
-        const callback = vi.fn();
-
-        await getSocketHandler(socket, "usage-report")({
-            key: "legacy-runner-usage",
-            sessionId: fixture.sessionId,
-            tokens: { total: 7 },
-            cost: { total: 0.01 },
-        }, callback);
-
-        expect(callback).toHaveBeenCalledWith({ success: false, error: "Forbidden" });
-        await expect(db.usageReport.count()).resolves.toBe(0);
-        await expect(db.usageEvent.count()).resolves.toBe(0);
+        await expect(emitUsage(fixture.sessionId, "runner-revoked")).resolves.toEqual({ success: false, error: "Forbidden" });
+        await expect(db.usageEvent.count()).resolves.toBe(1);
     });
 });

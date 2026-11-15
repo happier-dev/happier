@@ -40,7 +40,7 @@ describe('native Codex request scope → host → ingest', () => {
                 transport: { serverId: 'home', serverUrl: 'https://usage-attribution.test',
                     createSessionSocketTransport: () => { throw new Error('unused'); } },
                 getSessionMetadata: () => ({ machineId: 'machine', projectId: 'accepted-project' }),
-                getSocket: () => ({ connected: false, emit() {} }),
+                emitUsageEvent: () => null,
             });
             const bridge = createNativeAgentSessionOperations(session, 'actual-happier-session', undefined, undefined, {
                 provider: 'codex', publish: input => publisher.publish({ sessionId: 'actual-happier-session', ...input }),

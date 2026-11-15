@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
-import { queryUsageAnalytics } from "@/app/usage/usageQueryService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
@@ -46,190 +45,68 @@ describe("usageHandler", () => {
         ]);
     });
 
-    it("preserves legacy websocket writes while mirroring deltas into usage analytics", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "pk-usage-socket-bridge" },
-            select: { id: true },
-        });
-        const session = await db.session.create({
+    async function createSession(accountId: string, tag: string) {
+        return await db.session.create({
             data: {
-                accountId: account.id,
-                tag: "usage-socket-bridge",
-                encryptionMode: "e2ee",
-                metadata: "ciphertext",
-                metadataVersion: 1,
-                agentState: null,
-                agentStateVersion: 0,
-                seq: 0,
-                pendingVersion: 0,
-                pendingCount: 0,
-                active: true,
+                accountId, tag, encryptionMode: "e2ee", metadata: "ciphertext", metadataVersion: 1,
+                agentState: null, agentStateVersion: 0, seq: 0, pendingVersion: 0, pendingCount: 0, active: true,
             },
             select: { id: true },
         });
+    }
 
-        const socket = createFakeSocket();
-        registerUsageHandler(account.id, socket as any, { connectionType: "user-scoped", socket: socket as any, userId: account.id });
-        const handler = getSocketHandler(socket, "usage-report");
+    function usageEvent(sessionId: string, externalKey: string) {
+        return {
+            sessionId, observedAt: 1_000, agentId: "codex", source: "runtime", scope: "turn_delta", isCumulative: false,
+            externalKey, modelId: "gpt-5.4", projectKey: "project-1", workspaceId: "workspace-1",
+            tokens: { input: 6, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 },
+            cost: { reportedUsd: 0.1, estimatedUsd: 0, currency: "USD" },
+        };
+    }
 
-        const firstCallback = vi.fn();
-        await handler({
-            key: "legacy-socket-k1",
-            sessionId: session.id,
-            tokens: { total: 10, input: 6, output: 4 },
-            cost: { total: 0.1 },
-        }, firstCallback);
-
-        const secondCallback = vi.fn();
-        await handler({
-            key: "legacy-socket-k1",
-            sessionId: session.id,
-            tokens: { total: 15, input: 9, output: 6 },
-            cost: { total: 0.15 },
-        }, secondCallback);
-
-        expect(firstCallback).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
-        expect(secondCallback).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
-
-        const storedReport = await db.usageReport.findUnique({
-            where: {
-                accountId_sessionId_key: {
-                    accountId: account.id,
-                    sessionId: session.id,
-                    key: "legacy-socket-k1",
-                },
-            },
-            select: { data: true },
-        });
-        expect(storedReport).toEqual(expect.objectContaining({
-            data: {
-                tokens: { total: 15, input: 9, output: 6 },
-                cost: { total: 0.15 },
-            },
-        }));
-
-        const analytics = await queryUsageAnalytics(account.id, {
-            granularity: "day",
-            timeZoneOffsetMinutes: 0,
-            includeSeries: true,
-            topLimit: 20,
-            filters: { sessionIds: [session.id] },
-            breakdowns: ["source"],
-        });
-        expect(analytics).toMatchObject({
-            v: 1,
-            totals: {
-                eventCount: 2,
-                tokens: { total: 15, input: 9, output: 6 },
-                cost: { reportedUsd: 0.15, estimatedUsd: 0, currency: "USD" },
-            },
-            breakdowns: {
-                source: [
-                    expect.objectContaining({
-                        key: "legacy_usage_report",
-                        eventCount: 2,
-                        tokens: expect.objectContaining({ total: 15 }),
-                    }),
-                ],
-            },
-        });
-
-        expect(buildUsageEphemeral).toHaveBeenNthCalledWith(
-            1,
-            session.id,
-            "legacy-socket-k1",
-            { total: 10, input: 6, output: 4 },
-            { total: 0.1 },
-        );
-        expect(buildUsageEphemeral).toHaveBeenNthCalledWith(
-            2,
-            session.id,
-            "legacy-socket-k1",
-            { total: 15, input: 9, output: 6 },
-            { total: 0.15 },
-        );
-        expect(emitEphemeral).toHaveBeenCalledTimes(2);
-    });
-
-    it("rejects session-scoped usage reports whose target session does not match the socket binding", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "pk-usage-socket-session-guard" },
-            select: { id: true },
-        });
-        const targetSession = await db.session.create({
-            data: {
-                accountId: account.id,
-                tag: "usage-socket-session-guard-target",
-                encryptionMode: "e2ee",
-                metadata: "ciphertext",
-                metadataVersion: 1,
-                agentState: null,
-                agentStateVersion: 0,
-                seq: 0,
-                pendingVersion: 0,
-                pendingCount: 0,
-                active: true,
-            },
-            select: { id: true },
-        });
-
-        const socket = createFakeSocket({
-            data: {
-                clientType: "session-scoped",
-                sessionScopedBinding: {
-                    sessionId: "s-bound",
-                    machineId: null,
-                    proof: "owner-session",
-                },
-            },
-        });
+    it("records one v2 usage event per acknowledged Session-socket emit through the ingest owner", async () => {
+        const account = await db.account.create({ data: { publicKey: "pk-usage-socket-v2" }, select: { id: true } });
+        const session = await createSession(account.id, "usage-socket-v2");
+        const socket = createFakeSocket({ data: { clientType: "session-scoped",
+            sessionScopedBinding: { sessionId: session.id, machineId: null, proof: "owner-session" } } });
         registerUsageHandler(account.id, socket as any, {
-            connectionType: "session-scoped",
-            socket: socket as any,
-            userId: account.id,
-            sessionId: "s-bound",
+            connectionType: "session-scoped", socket: socket as any, userId: account.id, sessionId: session.id,
         });
 
         const callback = vi.fn();
-        await getSocketHandler(socket, "usage-report")({
-            key: "legacy-socket-cross-session",
-            sessionId: targetSession.id,
-            tokens: { total: 10 },
-            cost: { total: 0.1 },
-        }, callback);
+        await getSocketHandler(socket, "usage-event")(usageEvent(session.id, "turn-1"), callback);
+
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: true, eventId: expect.any(String) }));
+        const rows = await db.usageEvent.findMany({ select: { sessionId: true, projectKey: true, workspaceId: true } });
+        expect(rows).toEqual([{ sessionId: session.id, projectKey: "project-1", workspaceId: "workspace-1" }]);
+    });
+
+    it("refuses a Session-socket usage event naming another Session", async () => {
+        const account = await db.account.create({ data: { publicKey: "pk-usage-socket-session-guard" }, select: { id: true } });
+        const targetSession = await createSession(account.id, "usage-socket-session-guard-target");
+        const socket = createFakeSocket({ data: { clientType: "session-scoped",
+            sessionScopedBinding: { sessionId: "s-bound", machineId: null, proof: "owner-session" } } });
+        registerUsageHandler(account.id, socket as any, {
+            connectionType: "session-scoped", socket: socket as any, userId: account.id, sessionId: "s-bound",
+        });
+
+        const callback = vi.fn();
+        await getSocketHandler(socket, "usage-event")(usageEvent(targetSession.id, "cross-session"), callback);
 
         expect(callback).toHaveBeenCalledWith({ success: false, error: "Forbidden" });
-        expect(await db.usageReport.count()).toBe(0);
         expect(await db.usageEvent.count()).toBe(0);
-        expect(emitEphemeral).not.toHaveBeenCalled();
     });
 
-    it("does not throw when old clients omit the callback on invalid usage payloads", async () => {
+    it("rejects malformed usage events before writing, with or without a callback", async () => {
         const socket = createFakeSocket();
         registerUsageHandler("user-1", socket as any, { connectionType: "user-scoped", socket: socket as any, userId: "user-1" });
-        const handler = getSocketHandler(socket, "usage-report");
-
-        await expect(handler({ key: "legacy-k1", tokens: { total: "bad" }, cost: { total: 1 } })).resolves.toBeUndefined();
-
-        expect(await db.usageReport.count()).toBe(0);
-        expect(await db.usageEvent.count()).toBe(0);
-        expect(emitEphemeral).not.toHaveBeenCalled();
-    });
-
-    it("rejects malformed nested legacy usage values before writing", async () => {
-        const socket = createFakeSocket();
-        registerUsageHandler("user-1", socket as any, { connectionType: "user-scoped", socket: socket as any, userId: "user-1" });
+        const handler = getSocketHandler(socket, "usage-event");
         const callback = vi.fn();
 
-        await getSocketHandler(socket, "usage-report")({
-            key: "legacy-k1",
-            sessionId: "session-1",
-            tokens: { total: 1, input: "not-a-number" },
-            cost: { total: 1 },
-        }, callback);
+        await handler({ ...usageEvent("session-1", "bad"), tokens: { total: "bad" } }, callback);
+        await expect(handler({ sessionId: "session-1" })).resolves.toBeUndefined();
 
         expect(callback).toHaveBeenCalledWith({ success: false, error: "Invalid parameters" });
-        expect(await db.usageReport.count()).toBe(0);
         expect(await db.usageEvent.count()).toBe(0);
     });
 });

@@ -98,11 +98,17 @@ function usageObservation(provider: string, total = 9) {
     };
 }
 
-async function createClient(token = 'fake-token') {
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+async function createClient(token = 'fake-token', options: Readonly<{ connected?: boolean; ack?: unknown }> = {}) {
+    sessionSocketStub = createApiSessionSocketStub({ connected: options.connected ?? true,
+        emitWithAck: (event) => event === 'usage-event'
+            ? options.ack ?? { success: true, eventId: 'evt-socket', createdAt: 1 } : { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     const { ApiSessionClient } = await import('./sessionClient');
     return createTestApiSessionClient(ApiSessionClient, token, createPlainSessionFixture({ id: 'session-1' }));
+}
+
+function usageEmits() {
+    return sessionSocketStub?.emitWithAck.mock.calls.filter(([event]) => event === 'usage-event') ?? [];
 }
 
 afterEach(() => {
@@ -112,7 +118,7 @@ afterEach(() => {
 });
 
 describe('ApiSessionClient usage transport', () => {
-    it('publishes an explicit usage observation through v2 analytics ingest when available', async () => {
+    it('publishes one usage observation as one acknowledged Session-socket emit and no HTTP POST', async () => {
         vi.resetModules();
         fetchServerFeaturesSnapshotMock.mockResolvedValue(readyUsageFeatures());
         readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
@@ -120,23 +126,20 @@ describe('ApiSessionClient usage transport', () => {
         const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-1', createdAt: 1 } });
         const client = await createClient();
 
-        await client.publishUsageObservation({ observation: usageObservation('codex') });
+        await expect(client.publishUsageObservation({ observation: usageObservation('codex') }))
+            .resolves.toEqual({ status: 'sent', transport: 'socket' });
 
-        expect(postSpy).toHaveBeenCalledWith(
-            expect.stringContaining('/v2/usage-events'),
-            expect.objectContaining({ sessionId: 'session-1', agentId: 'codex' }),
-            expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer fake-token' }) }),
-        );
+        expect(postSpy).not.toHaveBeenCalled();
+        expect(fetchServerFeaturesSnapshotMock).not.toHaveBeenCalled();
+        expect(usageEmits()).toHaveLength(1);
+        expect(usageEmits()[0]?.[1]).toEqual(expect.objectContaining({ sessionId: 'session-1', agentId: 'codex', scope: 'turn_delta' }));
         expect(sessionSocketStub?.emit.mock.calls.some((call) => call[0] === 'usage-report')).toBe(false);
         await client.close();
     });
 
     it('preserves backend mode and caller-owned stable external keys at the explicit publisher boundary', async () => {
         vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockResolvedValue(readyUsageFeatures());
         readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
-        const axios = (await import('axios')).default as any;
-        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-open', createdAt: 1 } });
         const client = await createClient();
 
         await client.publishUsageObservation({
@@ -145,7 +148,7 @@ describe('ApiSessionClient usage transport', () => {
             externalKey: 'opencode-message:1',
         });
 
-        expect(postSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        expect(usageEmits()[0]?.[1]).toEqual(expect.objectContaining({
             agentId: 'opencode',
             backendMode: 'server',
             externalKey: 'opencode-message:1',
@@ -153,46 +156,57 @@ describe('ApiSessionClient usage transport', () => {
         await client.close();
     });
 
-    it('falls back to the legacy usage-report transport when v2 ingest is unavailable', async () => {
+    it('reports a refused acknowledgement as a typed publish failure without a second transport', async () => {
         vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'endpoint_missing' });
         readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
         const axios = (await import('axios')).default as any;
-        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true } });
-        const client = await createClient();
+        const postSpy = vi.spyOn(axios, 'post');
+        const client = await createClient('fake-token', { ack: { success: false, error: 'Forbidden' } });
 
-        await client.publishUsageObservation({ observation: usageObservation('codex') });
+        await expect(client.publishUsageObservation({ observation: usageObservation('codex') }))
+            .resolves.toEqual({ status: 'failed' });
 
+        expect(usageEmits()).toHaveLength(1);
         expect(postSpy).not.toHaveBeenCalled();
-        expect(sessionSocketStub?.emit.mock.calls.find((call) => call[0] === 'usage-report')?.[1]).toEqual({
-            key: 'codex-usage-key',
-            sessionId: 'session-1',
-            tokens: { total: 9, input: 4, output: 5 },
-            cost: { total: 0 },
-        });
         await client.close();
     });
 
-    it('refreshes stored credentials and retries v2 ingest once after authentication failure', async () => {
+    it('delivers a usage observation exactly once over v2 HTTP ingest while the Session socket is disconnected', async () => {
         vi.resetModules();
-        fetchServerFeaturesSnapshotMock.mockResolvedValue(readyUsageFeatures());
+        readStoredCredentialsMock.mockResolvedValue({ token: 'fake-token' });
+        const axios = (await import('axios')).default as any;
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-http', createdAt: 1 } });
+        const client = await createClient('fake-token', { connected: false });
+
+        await expect(client.publishUsageObservation({ observation: usageObservation('codex') }))
+            .resolves.toEqual({ status: 'sent', transport: 'http' });
+
+        expect(usageEmits()).toHaveLength(0);
+        expect(postSpy.mock.calls.map(([url, body]) => [new URL(String(url)).pathname, (body as { sessionId?: string }).sessionId]))
+            .toEqual([['/v2/usage-events', 'session-1']]);
+        await client.close();
+    });
+
+    it('delivers through v2 HTTP ingest, refreshing credentials once, while the Session socket is disconnected', async () => {
+        vi.resetModules();
         readStoredCredentialsMock.mockResolvedValue({ token: 'fresh-token' });
         const axios = (await import('axios')).default as any;
         const postSpy = vi.spyOn(axios, 'post')
             .mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { response: { status: 401 } }))
             .mockResolvedValueOnce({ data: { success: true, eventId: 'evt-2', createdAt: 2 } });
-        const client = await createClient('stale-token');
+        const client = await createClient('stale-token', { connected: false });
 
-        await client.publishUsageObservation({ observation: usageObservation('opencode', 18) });
+        await expect(client.publishUsageObservation({ observation: usageObservation('opencode', 18) }))
+            .resolves.toEqual({ status: 'sent', transport: 'http' });
 
-        expect(readStoredCredentialsMock).toHaveBeenCalledTimes(1);
+        expect(usageEmits()).toHaveLength(0);
+        expect(postSpy.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v2/usage-events', '/v2/usage-events']);
         expect(postSpy.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
             headers: expect.objectContaining({ Authorization: 'Bearer stale-token' }),
         }));
         expect(postSpy.mock.calls[1]?.[2]).toEqual(expect.objectContaining({
             headers: expect.objectContaining({ Authorization: 'Bearer fresh-token' }),
         }));
-        expect(sessionSocketStub?.emit.mock.calls.some((call) => call[0] === 'usage-report')).toBe(false);
         await client.close();
     });
 });

@@ -138,7 +138,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                     ...(observation.inferenceId ? { inferenceKey: keys.externalKey } : {}) },
                 signal: life.controller.signal,
             });
-            if (result.status === 'sent' && result.transport === 'v2') acknowledged.add(keys.externalKey);
+            if (result.status === 'sent') acknowledged.add(keys.externalKey);
             else { failure = result.status === 'unsupported' ? 'native_ingest_unsupported' : 'native_ingest_unavailable'; break; }
         }
         // A retired scope keeps pending even if its old in-flight request was acknowledged.

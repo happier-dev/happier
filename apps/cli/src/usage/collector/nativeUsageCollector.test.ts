@@ -2,7 +2,7 @@ import { appendFile, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FeaturesResponseSchema, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
+import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
 import { createOpenCodeExternalSessionsContribution } from '../../../../../packages/plugins/opencode/src/agent/surfaces/sessions/external/contribution';
 import { createClaudeExternalSessionsContribution } from '../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/contribution';
@@ -120,11 +120,7 @@ describe('consented native accounting collector', () => {
                 },
                 // Only the OS watcher and HTTP transport boundaries are replaced.
                 subscribeSource: async () => ({ dispose() {} }),
-                publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test',
-                    emitLegacyUsageReport: () => { throw new Error('Native accounting must not use legacy'); },
-                    fetchServerFeaturesSnapshot: async () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
-                        capabilities: { server: { usageAnalytics: { version: 1, eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' }, legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } } } } }) }),
+                publisher: createUsageObservationPublisher({ emitUsageEvent: () => null, token: 'token', apiServerUrl: 'https://server.test',
                     postJson: async request => {
                         published.push(request.body);
                         if (failTransport) throw new Error('HTTP transport unavailable');
@@ -241,12 +237,7 @@ describe('consented native accounting collector', () => {
                     });
                 },
                 publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test',
-                    emitLegacyUsageReport: () => false,
-                    fetchServerFeaturesSnapshot: async () => mode.startsWith('invalidate_') ? { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
-                        capabilities: { server: { usageAnalytics: { version: 1, eventsIngest: { path: '/v2/usage-events' },
-                            query: { path: '/v2/usage/query' }, legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } } } } }) }
-                        : { status: 'unsupported', reason: 'endpoint_missing' },
-                    postJson: async () => ({ ok: true }),
+                    emitUsageEvent: () => null, postJson: async () => { if (!mode.startsWith('invalidate_')) throw Object.assign(new Error('Not found'), { response: { status: 404 } }); return { ok: true }; },
                 }),
                 deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
             });
@@ -342,12 +333,7 @@ describe('consented native accounting collector', () => {
             let supported = false;
             const published: unknown[] = [];
             const publisher = createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test',
-                emitLegacyUsageReport: () => { throw new Error('Native accounting must never use legacy'); },
-                fetchServerFeaturesSnapshot: async () => supported ? { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
-                    version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-                    legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
-                } } } }) } : { status: 'unsupported', reason: 'endpoint_missing' },
-                postJson: async request => { published.push(request.body); return { ok: true }; },
+                emitUsageEvent: () => null, postJson: async (request: Parameters<NonNullable<Parameters<typeof createUsageObservationPublisher>[0]['postJson']>>[0]) => { if (!(supported)) throw Object.assign(new Error('Not found'), { response: { status: 404 } }); return await (async request => { published.push(request.body); return { ok: true }; })(request); },
             });
             let readCount = 0;
             let demandCount = 0;
@@ -497,13 +483,7 @@ describe('consented native accounting collector', () => {
                     return contribution.readAccounting({ source: source.source, cursor: source.cursor, ...createExternalSessionsInvocationFixture(signal) });
                 },
                 subscribeSource: async () => { demands++; return { dispose() { demands--; } }; },
-                publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test',
-                    emitLegacyUsageReport: () => false, fetchServerFeaturesSnapshot: async () => effect === 'unavailable_pending'
-                        ? { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
-                            version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-                            legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
-                        } } } }) } : { status: 'unsupported', reason: 'endpoint_missing' },
-                    postJson: async request => { published.push(request.body); return { ok: true }; },
+                publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test', emitUsageEvent: () => null, postJson: async (request: Parameters<NonNullable<Parameters<typeof createUsageObservationPublisher>[0]['postJson']>>[0]) => { if (!(effect === 'unavailable_pending')) throw Object.assign(new Error('Not found'), { response: { status: 404 } }); return await (async request => { published.push(request.body); return { ok: true }; })(request); },
                 }),
                 deleteHistory: async (_source, range) => {
                     expect(range).toEqual({ startMs: 10, endMs: 10 });

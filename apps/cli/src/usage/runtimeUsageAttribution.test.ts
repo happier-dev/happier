@@ -78,7 +78,7 @@ describe('runtime usage attribution producer → host → ingest', () => {
                 createSessionSocketTransport: () => { throw new Error('unused'); } },
             getSessionMetadata: () => ({ machineId: 'machine', projectId: 'accepted-project',
                 workspaceId: 'accepted-checkout', path: '/private/repository' }),
-            getSocket: () => ({ connected: false, emit() {} }),
+            emitUsageEvent: () => null,
         });
         const bridge = createNativeAgentSessionOperations(session, 'usage-session', undefined, undefined, {
             provider: 'claude', publish: input => publisher.publish({ sessionId: 'usage-session', ...input }),
