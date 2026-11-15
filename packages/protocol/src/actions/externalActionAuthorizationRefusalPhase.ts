@@ -17,5 +17,11 @@ export const ExternalActionAuthorizationRefusalPhaseSchema = lazyZodSchema(() =>
   'deployment_child_peer_read', 'deployment_child_archive_purpose',
   'deployment_registry_current', 'deployment_registry_purpose', 'deployment_restore_purpose',
   'deployment_restart_purpose', 'deployment_native_read_purpose', 'deployment_metadata_environment',
+  'machine_setup_purpose', 'session_agent_readiness_purpose',
+  'managed_enrollment_get_purpose', 'managed_control_purpose', 'managed_acquire_resource', 'managed_recovery_target',
+  'managed_direct_revision', 'managed_machine_purpose',
+  'machine_access_effect', 'machine_access_key_preparation', 'machine_access_transport',
+  'session_section_purpose', 'automation_run_now_request', 'automation_run_now_target', 'automation_run_now_grant',
+  'workflow_run_purpose', 'discussion_candidate_purpose', 'session_subtree_observation_purpose',
 ]));
 export type ExternalActionAuthorizationRefusalPhase = z.infer<typeof ExternalActionAuthorizationRefusalPhaseSchema>;
