@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderSettingsView as renderBaseSettingsView, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderSettingsView as renderBaseSettingsView, standardCleanup } from '@/dev/testkit';
 import 'fake-indexeddb/auto';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
@@ -11,7 +11,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { Modal } from '@/modal';
 import { resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -88,6 +88,8 @@ await import('@/app/(app)/settings/appearance');
 await import('@/app/(app)/settings/appearance/motion');
 await import('@/app/(app)/settings/appearance/widgets');
 
+beforeEach(() => { vi.mocked(Modal.confirm).mockClear(); });
+
 afterEach(async () => {
     standardCleanup();
     await account?.dispose();
@@ -116,20 +118,25 @@ describe('Appearance settings — Visual Effects section', () => {
         await act(async () => { account!.replaceSettings(settingsParse({ ...account!.persistedSettings,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
         })); });
+        // Own UI Ask uses the native review, not an Inbox approval (02102e614e1).
+        const confirmation = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => confirmation.promise);
         await act(async () => { choose('soft'); });
-        await vi.waitFor(() => expect(account!.artifacts.list()).toHaveLength(1));
-        await decideApprovalAsInbox(account!.scope.serverId, account!.artifacts.list()[0]!.id, 'reject');
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
         expect(storage.getState().localSettings.uiSurfaceFinishOverrides).toEqual({ card: 'flat', floating: 'soft' });
+        await act(async () => { confirmation.resolve(false); });
+        expect(storage.getState().localSettings.uiSurfaceFinishOverrides).toEqual({ card: 'flat', floating: 'soft' });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         await act(async () => { choose('soft'); });
-        await vi.waitFor(() => expect(account!.artifacts.list()).toHaveLength(2));
-        await decideApprovalAsInbox(account!.scope.serverId, account!.artifacts.list()[1]!.id, 'approve');
         await vi.waitFor(() => expect(storage.getState().localSettings.uiSurfaceFinishOverrides).toEqual({ card: 'soft', floating: 'soft' }));
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
         await act(async () => { account!.replaceSettings(settingsParse({ ...account!.persistedSettings,
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
         })); });
         await act(async () => { choose('auto'); });
         await vi.waitFor(() => expect(storage.getState().localSettings.uiSurfaceFinishOverrides).toEqual({ floating: 'soft' }));
-        expect(account!.artifacts.list()).toHaveLength(2);
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
+        expect(account!.artifacts.list()).toEqual([]);
     });
     it.each([
         { key: 'visualEffectsLevel', initial: 'full', next: 'minimal', route: 'motion' },
@@ -153,22 +160,26 @@ describe('Appearance settings — Visual Effects section', () => {
         await act(async () => { account!.replaceSettings(settingsParse({ ...account!.persistedSettings,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
         })); });
+        const confirmation = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => confirmation.promise);
         await act(async () => { choose(next); });
-        await vi.waitFor(() => expect(account!.artifacts.list()).toHaveLength(1));
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
         expect(account!.persistedSettings[key]).toBe(initial);
-        await decideApprovalAsInbox(account!.scope.serverId, account!.artifacts.list()[0]!.id, 'reject');
+        expect(account!.settingsWrites).toEqual([]);
+        await act(async () => { confirmation.resolve(false); });
         expect(account!.persistedSettings[key]).toBe(initial);
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         await act(async () => { choose(next); });
-        await vi.waitFor(() => expect(account!.artifacts.list()).toHaveLength(2));
-        await decideApprovalAsInbox(account!.scope.serverId, account!.artifacts.list()[1]!.id, 'approve');
         await vi.waitFor(() => expect(account!.persistedSettings[key]).toBe(next));
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
         await act(async () => { account!.replaceSettings(settingsParse({ ...account!.persistedSettings,
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
         })); });
         await act(async () => { choose(initial); });
         await vi.waitFor(() => expect(account!.persistedSettings[key]).toBe(initial));
         expect(account!.persistedSettings.preferredLanguage).toBe('fr');
-        expect(account!.artifacts.list()).toHaveLength(2);
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
+        expect(account!.artifacts.list()).toEqual([]);
     });
     it('keeps badge controls behind their disclosure and saves the existing preference after opening it', async () => {
         shared.settingsState.tabBarFriendsBadgeEnabled = true;

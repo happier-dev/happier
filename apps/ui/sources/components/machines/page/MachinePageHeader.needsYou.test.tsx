@@ -4,12 +4,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-
-const rpc = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc }));
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 // Modal presentation is the platform boundary.
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
@@ -23,19 +21,24 @@ const calm = { v: 1, vitals: { state: 'reporting' }, host: { logicalCores: 4, me
 const pressure = { level: 'needs_you', reasons: [{ key: 'memory', level: 'needs_you', since: 1, metric: 'memory', nextStep: 'review_processes', kind: 'memory_pressure', pressure: 'critical', swapping: false }] };
 
 it('keeps the action row the same size when a machine comes to need you: the terminal steps into the menu, so the title never wraps', async () => {
+    const serverUrl = 'https://needs-you.test';
+    const serverIdentityId = 'srv_needs_you';
+    const shell = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'owner',
+        machineId: 'pressed', actionId: 'machines.terminal.list', tokenEpoch: 0, requesterInvocation: 'credentials',
+        execute: () => ({ ok: true, terminals: [], machineShell: { ok: true, cwd: '/home/qa' } }) });
     const homes = await serveAccountHomes({
-        homes: [{ key: 'a', serverUrl: 'https://needs-you.test', accountId: 'owner', currentAccount: true }],
-        route: request => request.path === '/v1/machines/read-batch' ? createMachineReadBatchResponseFixture(request.body,
-            id => createPlainMachineRowFixture({ id, accountId: 'owner' })) : undefined,
+        homes: [{ key: 'a', serverUrl, serverIdentityId, accountId: 'owner', currentAccount: true }],
+        route: request => shell.handle(request.url, { method: request.method, headers: request.headers,
+            body: request.body === undefined ? undefined : JSON.stringify(request.body), signal: request.signal })
+            .then(response => response ?? undefined),
     });
     const serverId = homes.homes.a!.id;
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    rpc.mockResolvedValue({ ok: true, terminals: [], machineShell: { ok: true, cwd: '/home/qa' } });
     const store = getStorage();
     const previous = store.getState();
-    const machine = createMachineFixture({ id: 'pressed', active: true, activeAt: Date.now(), isShared: false,
+    const machine = createHydratedPlainMachineFixture({ id: 'pressed', accountId: 'owner', machine: { active: true, activeAt: Date.now(), isShared: false,
         metadata: { ...createMachineFixture({ id: 'pressed' }).metadata!, homeDir: '/home/qa' },
-        daemonState: { resources: { ...calm, attention: pressure } } });
+        daemonState: { resources: { ...calm, attention: pressure } } } });
     store.getState().applyMachines([machine], true);
     const target = { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine, online: true,
         machineName: 'Pressed', machineSentenceName: 'Pressed', isServerSwitching: false, isHydratingMachine: false, switchReady: true };

@@ -14,6 +14,8 @@ import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 // The JS host the app runs in is a platform boundary. The shared runtime-fetch owner is loaded by the global
 // test setup against the node stub, so a test that is a browser says so here; every other test keeps the real answer.
@@ -58,6 +60,33 @@ function renderPicker(element: React.ReactElement) {
   return renderScreen(
     <ListPresentationProvider value="page">{element}</ListPresentationProvider>,
   );
+}
+
+// Keep each scenario's daemon answer behind the shared installed-Machine and Home issuer boundary.
+// The selector receives the real opened envelope, rather than the authorization carrier on the wire.
+async function answerControllerAction(serverId: string, path: string, answer: Readonly<{
+  select(value: unknown): { body: unknown } | Promise<{ body: unknown }>;
+}>) {
+  const { storage } = await import('@/sync/domains/state/storage');
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  const scopeId = resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
+  const controllers = (storage.getState().machineListByServerId[scopeId] ?? [])
+    .map(machine => ({ machineId: machine.id, installationId: machine.installationId ?? undefined }));
+  const [controller, ...additionalMachines] = controllers;
+  if (!controller) throw new Error('Expected a published provisioner controller');
+  const actionId = ActionIdSchema.parse(path.replace('/v1/actions/', ''));
+  await answerExternalActionAccountForHome(harness, serverId, {
+    ...controller, additionalMachines, actionId, tokenEpoch: 0, requesterInvocation: 'optional',
+    execute: async (_input, context) => {
+      const { body } = await answer.select(context.envelope);
+      const { execution } = ExternalActionResponseEnvelopeV1Schema.parse(body);
+      return execution.ok ? execution.result : execution;
+    },
+    failure: result => {
+      const response = ExternalActionResponseEnvelopeV1Schema.safeParse({ v: 1, actionId, execution: result });
+      return response.success && !response.data.execution.ok ? response.data.execution : null;
+    },
+  });
 }
 
 // The bundled machine plugins the Account catalog reads. The Account reader loads the bundled set once per
@@ -193,11 +222,11 @@ describe('provisioner picker demand', () => {
     });
     const reply = (actionId: string, requestId: string | undefined, value: unknown) =>
       ({ body: { v: 1, actionId, requestId, execution: { ok: true, result: value } } });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', {
       select: value => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         return reply('machines.provisioners.list', request.requestId, result); },
     });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.check', {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.check', {
       select: value => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         return reply('machines.provisioners.check', request.requestId, { available: true }); },
     });
@@ -213,7 +242,7 @@ describe('provisioner picker demand', () => {
       const key = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: name });
       await waitForHomeGovernance(() => {
         const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
-        expect(cards.find(card => card.id === key), screen.getTextContent()).toMatchObject({ action: { kind: 'choose' } });
+        expect(cards.find(card => card.id === key)).toMatchObject({ action: { kind: 'choose' } });
       });
       const row = `managed-picker.provisioners.${group}.${key}`;
       await act(async () => screen.pressByTestId(screen.findByTestId(`${row}.action`) ? `${row}.action` : row));
@@ -948,7 +977,7 @@ describe('provisioner picker demand', () => {
             },
         ],
       ] as const) {
-        harness.answer(serverId, `/v1/actions/${actionId}`, {
+        await answerControllerAction(serverId, `/v1/actions/${actionId}`, {
           select: (value) => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return {
@@ -1112,7 +1141,7 @@ describe('provisioner picker demand', () => {
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
     const reply = (actionId: string, requestId: string | undefined, execution: unknown) => ({ body: { v: 1, actionId, requestId, execution } });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', {
       select: async (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         const controller = (request.input as { controller: { machineId: string; installationId: string } }).controller;
@@ -1121,7 +1150,7 @@ describe('provisioner picker demand', () => {
         return reply('machines.provisioners.list', request.requestId, { ok: true, result: { controller, provisioners } });
       },
     });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.check', {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.check', {
       select: async (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         const localId = (request.input as { contribution: { localId: string } }).contribution.localId;
@@ -1148,7 +1177,7 @@ describe('provisioner picker demand', () => {
       scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
       snapshot: { availabilityCursor: 2, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] },
     });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' } }) };
@@ -1379,14 +1408,14 @@ describe('provisioner picker demand', () => {
     const code = 'project_requester_home_unavailable';
     let listUnavailable = true;
     let checkUnavailable = true;
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       const controller = (request.input as { controller: { machineId: string; installationId: string } }).controller;
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: listUnavailable ? { ok: false, errorCode: code, error: code }
           : { ok: true, result: { controller, provisioners } } }) };
     } });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId,
         execution: checkUnavailable ? { ok: false, errorCode: code, error: code }
@@ -1468,7 +1497,7 @@ describe('provisioner picker demand', () => {
     function FixedPicker() {
       return <MachineProvisionerPicker serverId={serverId} onSelectProvisioner={onSelect} />;
     }
-    harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true,
         result: { available: false, code: 'license_required', status: { key: 'alpha.license', fallback: 'License required' } } } }) };
@@ -1477,7 +1506,7 @@ describe('provisioner picker demand', () => {
     const cards = () => screen.tree.findAll(node => Array.isArray(node.props.cards))
       .flatMap(node => node.props.cards as { title: string; status: { label: string }; action: { disabled?: boolean; onPress(): void } }[]);
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.status.label, 'initial check').toBe('License required'); });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: false, errorCode: 'unavailable', error: 'unavailable' } }) };
@@ -1491,7 +1520,7 @@ describe('provisioner picker demand', () => {
     expect(retained?.action.disabled).not.toBe(true);
     await act(async () => retained?.action.onPress());
     expect(onSelect).not.toHaveBeenCalled();
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       const controller = request.input && typeof request.input === 'object' && 'controller' in request.input ? request.input.controller : undefined;
       if (!controller) throw new Error('Expected the requested controller');
@@ -1650,7 +1679,7 @@ describe('provisioner picker demand', () => {
     const nativeAccountEntry = { contribution: { pluginId: e2b.id, localId: e2b.contributes.machineProvisioners![0]!.id },
       occurrenceId: 'controller-e2b', acquireExecutionTarget: 'account', descriptor: e2b.contributes.machineProvisioners![0]! };
     const nativeCatalog = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [...provisioners, nativeAccountEntry] });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: true, result: nativeCatalog } } };
@@ -1674,7 +1703,7 @@ describe('provisioner picker demand', () => {
         return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
           execution: { ok: true, result: { controller, provisioners: [] } } } };
       };
-      harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: replyEmpty });
+      await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: replyEmpty });
       await act(async () => hook.getCurrent().refresh());
       await waitForHomeGovernance(() => {
         expect(hook.getCurrent().loading).toBe(false);
@@ -1720,7 +1749,7 @@ describe('provisioner picker demand', () => {
         kind: 'persistent',
       }),
     ]);
-    harness.answer(first, '/v1/actions/machines.provisioners.list', {
+    await answerControllerAction(first, '/v1/actions/machines.provisioners.list', {
       select: (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         return {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, findAllHostTestInstances, flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { installMachinesSettingsCommonModuleMocks } from './machinesSettingsTestHelpers';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -1283,13 +1284,15 @@ describe('the presets group in the rail', () => {
     poolFeatureState.value = 'enabled';
     await primeFeatures();
     const profileId = homeProfiles.get('srv_a')!;
-    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
-      id: 'build', homeId: 'srv_a', revision: 1, name: 'Build recipe', owner: { kind: 'account', accountId: 'account-a' },
+    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture({
+      id: 'build', homeId: 'srv_a', revision: 1, owner: { kind: 'account', accountId: 'account-a' },
       controller: { machineId: 'machine-a1', installationId: 'machine-a1-installation' },
+      name: 'Build recipe',
       launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
-    }] } });
+    })] } });
     home.answer(profileId, '/v1/machines/pools/list', { body: { pools: [{
-      pool: { id: '00000000-0000-4000-8000-000000000001', name: 'Development', description: null,
+      pool: { id: '00000000-0000-4000-8000-000000000001',
+        name: { kind: 'available', label: { content: { t: 'plain', v: 'Development' }, recipientEnvelope: null } }, description: null,
         revision: 1, createdAt: 1, updatedAt: 1, members: [] },
       availability: { state: 'known', connectedCount: 0, enabledCount: 0 },
     }] } });
@@ -1300,7 +1303,7 @@ describe('the presets group in the rail', () => {
     // Initial hydration still holds the whole first answer.
     expect(read(ids[0]!)).toBeUndefined();
     await act(async () => storage.getState().applyMachines([named], false, { sourceServerId: 'srv_a' }));
-    await waitForHomeGovernance(() => { for (const id of ids) expect(read(id)).toBeDefined(); });
+    await waitForHomeGovernance(() => { for (const id of ids) expect(read(id), id).toBeDefined(); });
     const admitted = ids.map(id => read(id));
     expect(read(ids[0]!)?.props.selected).toBe(true);
 

@@ -14,7 +14,7 @@ import { createMachineFixture, createMachineReadBatchResponseFixture, createPlai
 import { observeMachinePresenceForTest, publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
-import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createMachineProvisionerOptionsFixture, createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { storage } from '@/sync/domains/state/storage';
 import { createDeferred, flushHookEffects, pressTestInstanceAsync, renderHook, renderScreen as renderTestScreen } from '@/dev/testkit';
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
@@ -51,7 +51,7 @@ import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
 import { ManagedMachinePolicySection, ManagedMachineControllerSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
 import { MachineConfigurationReceipt } from './MachineConfigurationReceipt';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -102,6 +102,7 @@ import { MachinesDoorProvider } from '@/components/machines/page/machinesDoor';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { resolveActionTitle } from '@/text/actionTitles';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 const operationRpcBoundary = vi.hoisted(() => ({ answer: null as unknown, registryAnswer: null as unknown, schemaAnswer: null as unknown,
     handler: null as ((request: { method: string; payload: unknown }) => unknown) | null,
@@ -147,6 +148,9 @@ installDisconnectedServerSocketBoundary(socket => {
 });
 vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
+// ReactTestRenderer cannot host the web portal opened by the real retention menu.
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -223,13 +227,16 @@ function readNativeControllerRequest(init?: RequestInit) {
 }
 
 /** Native HTTP boundary for tests whose current provisioner declares static capabilities. */
-function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?: RequestInit): Response | null {
+function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?: RequestInit,
+    supportedIntents: NonNullable<ManagedMachineV1['reviewedFacts']>['retentionCapabilities']['supportedIntents'] = ['start', 'stop', 'delete']): Response | null {
     const machines = managedControllerReadBatch(machine, url, init);
     if (machines) return machines;
+    const authorization = managedControllerAuthorization(machine, url, init);
+    if (authorization) return authorization;
     const actionId = url.pathname === '/v1/actions/machines.provisioners.list' ? 'machines.provisioners.list'
         : url.pathname === '/v1/actions/machines.provisioners.check' ? 'machines.provisioners.check' : null;
     if (!actionId) return null;
-    const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+    const request = readNativeControllerRequest(init);
     const result = actionId === 'machines.provisioners.list' ? MachineProvisionersListResultV1Schema.parse({
         provisioners: [{ contribution: machine.launch.provider, occurrenceId: 'static-native-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: machine.launch.provider.localId, title: 'Static native resource', icon: 'server',
@@ -237,7 +244,7 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
             launchSchema: { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } }, additionalProperties: false },
             resourceSchema: { type: 'object', properties: { resourceId: { type: 'string' } }, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
             billing: machine.reviewedFacts?.billing ?? { location: 'cloud', stoppedBilling: 'billed' },
-            retention: { supportedIntents: ['start', 'stop', 'delete'] },
+            retention: { supportedIntents },
             actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
         } }],
     }) : { available: true };
@@ -855,7 +862,7 @@ describe('managed Machine detail', () => {
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Finite sandbox', choices: {} };
         const machine: ManagedMachineV1 = { id: 'ended-another', homeId: 'srv_managed_ended_another', custodianAccountId: 'owner',
-            preset: { id: 'preset-sandbox', revision: 2 }, launch, controller, allocation: 'confirmed-absent', creationState: 'active',
+            preset: { id: 'preset-sandbox', revision: 2, contentEncryptionMode: 'plain' }, launch, controller, allocation: 'confirmed-absent', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             observation: { observedAt: 5, availability: 'absent' } };
@@ -1327,7 +1334,7 @@ describe('managed Machine detail', () => {
             if (qualification) return qualification;
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 if (actionId === 'machines.managed.bootstrap.retry') retries.push(request.input);
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
                     result: actionId === 'machines.managed.get' ? machine : actionId === 'machines.managed.list' ? { machines: [machine] }
@@ -1443,7 +1450,7 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v1/machines') return Response.json([controllerRow]);
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (url.pathname === '/v1/actions/machines.managed.retention.update') {
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const envelope = readNativeControllerRequest(init);
                 requests.push(envelope.input);
                 if (requests.length === 1) machine = { ...machine, intentRevision: 2,
                     retention: { kind: 'unused', afterMs: 7_200_000, effect: 'stop' } };
@@ -1470,7 +1477,7 @@ describe('managed Machine detail', () => {
             unavailableReason: keep.unavailableReason, policy: keep.policy, defaultPolicy: keep.defaultPolicy,
             text: screen.getTextContent() })).toHaveLength(1);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.control-error')
-            .map(node => node.props.diagnosticCode)).toContain('intent_changed');
+            .map(node => node.props.diagnosticCode)).toContainEqual(expect.stringMatching(/^intent_changed(?: · |$)/u));
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.policy).toMatchObject(authored);
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
@@ -1557,7 +1564,7 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (url.pathname === '/v1/actions/machines.managed.retention.update') {
                 const actionId = 'machines.managed.retention.update';
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const envelope = readNativeControllerRequest(init);
                 if (envelope.target?.kind !== 'machine') throw new Error('Expected the native controller');
                 const authorization = { v: 1 as const, token: 'native-policy-authorization', binding: {
                     accountId: 'owner', authentication, serverIdentityId: machine.homeId, machineId: controller.machineId,
@@ -1807,16 +1814,17 @@ describe('managed Machine detail', () => {
         expect(candidates.find((row: { id: string }) => row.id === destination.machineId)?.reachable).toBe(true);
         expect(candidates.find((row: { id: string }) => row.id === requesterOwned.machineId)?.reachable).toBe(false);
         expect(checked).toContainEqual({ homeId: machine.homeId, controller: destination, contribution: provider, credentials });
-        await act(async () => storage.setState({ machineListByServerId: { [serverId]: rows.map(row => row.id === destination.machineId
-            ? { ...row, access: { ...row.access!, custodian: { accountId: 'manager', displayName: 'Manager' } } } : row) } }));
+        await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'manager' }, rows.map(row => row.id === destination.machineId
+            ? { ...row, access: { ...row.access!, custodian: { accountId: 'manager', displayName: 'Manager' } } } : row)));
         await act(async () => screen.tree.findByType(ManagedControllerMoveList).props.onMove(destination.machineId));
         await flushHookEffects({ cycles: 10 });
         expect(moves).toEqual([]);
-        await act(async () => storage.setState({ machineListByServerId: { [serverId]: rows } }));
+        await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'manager' }, rows));
         await act(async () => screen.tree.findByType(ManagedControllerMoveList).props.onMove(destination.machineId));
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(moves).toEqual([{ homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: 5,
+            expect(moves, JSON.stringify({ errors: screen.tree.findAll(node => node.props?.testID === 'managed-machine.control-error')
+                .map(node => node.props.diagnosticCode), httpFacts })).toEqual([{ homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: 5,
                 controller: destination, reviewedPendingEffects: true }]);
         });
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toEqual(machine);
@@ -1862,6 +1870,13 @@ describe('managed Machine detail', () => {
             const authorization = managedControllerAuthorization(currentMachine, url, init, [controller, destination]);
             if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/entity-rows/connected-metadata/presentation') return Response.json(
+                ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'present', revision: 0, content: { t: 'plain', v: { v: 1,
+                    entries: publicCredentials.map((selected, index) => ({ v: 1, subject: { kind: 'account', account: selected.account },
+                        label: index === 0 ? 'Cloud Work account' : 'Desktop Work account' })),
+                } } }));
+            if (url.pathname === '/v1/account/entity-rows/connected-metadata/acknowledgements') return Response.json(
+                ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [] } } }));
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'owner',
                 connectedAccountsV4: publicCredentials.map((selected, index) => ({ ref: selected.account,
@@ -1911,8 +1926,8 @@ describe('managed Machine detail', () => {
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(submitted).toHaveLength(1);
-            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.control-error'
-                && node.props.diagnosticCode === 'managed_binding_move_incomplete').length).toBeGreaterThan(0);
+            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.control-error')
+                .map(node => node.props.diagnosticCode)).toContainEqual(expect.stringMatching(/^managed_binding_move_incomplete(?: · |$)/u));
             expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toMatchObject({ controller: destination, intentRevision: 6, resource: machine.resource });
         });
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toMatchObject({ controller: destination, intentRevision: 6, resource: machine.resource });
@@ -1949,6 +1964,8 @@ describe('managed Machine detail', () => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(currentMachine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(currentMachine, url, init);
+            if (authorization) return authorization;
             const artifactResponse = artifacts.handle(url.pathname, init);
             if (artifactResponse) return artifactResponse;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
@@ -1956,7 +1973,7 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(currentMachine);
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const envelope = readNativeControllerRequest(init);
                 if (envelope.target?.kind !== 'machine') throw new Error('Expected the captured native controller target');
                 reads.push(actionId);
                 if (actionId === 'machines.provisioners.list') parentCatalogInputs.push(envelope.input);
@@ -2102,6 +2119,8 @@ describe('managed Machine detail', () => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
                 machineRetentionDefaultsV1: { v: 1, 'stopped-billed': { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } },
@@ -2109,7 +2128,7 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 if (actionId === 'machines.provisioners.options') {
                     optionInputs.push(request.input);
                     await initialOptions?.promise;
@@ -2255,12 +2274,14 @@ describe('managed Machine detail', () => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 const result = actionId === 'machines.provisioners.list' ? { provisioners: [provisioner] }
                     : actionId === 'machines.provisioners.options' ? createMachineProvisionerOptionsFixture({ base: { launch: machine.launch.choices } })
                         : { available: true };
@@ -2297,7 +2318,7 @@ describe('managed Machine detail', () => {
         { allocation: 'bound', consoleUrl: undefined },
         { allocation: 'bound', consoleUrl: 'https://console.vendor.test/resources/exact-native-id' },
         { allocation: 'bound', consoleUrl: undefined, providerListed: true },
-    ] as const)('reviews manual responsibility before removing a $allocation resource and retains recovery during Ask ($consoleUrl; provider listed: $providerListed)', async scenario => {
+    ] as const)('reviews manual responsibility before removing a $allocation resource through Home admission while preserving its recovery record ($consoleUrl; provider listed: $providerListed)', async scenario => {
         const { allocation, consoleUrl } = scenario;
         const openConsole = vi.fn();
         vi.stubGlobal('open', openConsole);
@@ -2329,6 +2350,8 @@ describe('managed Machine detail', () => {
             domainRef: { kind: 'managedMachine', id: machine.id, ...(machine.resource ? { controller, resource: machine.resource } : {}) },
             error: { errorCode: 'action_failed', error: 'saved_secret_account_lifetime_changed' } };
         operationRpcBoundary.answer = { items: [failedAcquire], nextCursor: null };
+        const archived = ManagedMachineV1Schema.parse({ ...machine, archivedAt: 10, intentRevision: 8,
+            cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } });
         const retired: unknown[] = [];
         const nativeActions: string[] = [];
         setRuntimeFetch(async (input, init) => {
@@ -2340,12 +2363,17 @@ describe('managed Machine detail', () => {
             if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-            if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(retired.length ? archived : machine);
+            if (url.pathname === '/v1/machines/managed/controller/admit-control') {
+                const request = ManagedControlAdmissionInputV1Schema.parse(JSON.parse(String(init?.body)));
+                expect(request.action).toBe('machines.managed.retire');
+                retired.push(request.input);
+                return Response.json(ManagedAdmissionOutputV1Schema.parse({ machine: archived, replayed: false }));
+            }
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
                 nativeActions.push(actionId);
                 const request = readNativeControllerRequest(init);
-                if (actionId === 'machines.managed.retire') retired.push(request.input);
                 if ('providerListed' in scenario) {
                     const qualification = staticRetentionQualification(machine, url, { ...init, body: JSON.stringify(request) });
                     if (qualification) return qualification;
@@ -2406,15 +2434,17 @@ describe('managed Machine detail', () => {
             expect(retired, JSON.stringify({ diagnosticCodes: screen.tree.findAll(node => node.props?.testID === 'managed-machine.control-error'
                 && typeof node.props.diagnosticCode === 'string').map(node => node.props.diagnosticCode), httpFacts, nativeActions }))
                 .toEqual([{ homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: 7, manualResponsibility: true }]);
-            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.approval').length).toBeGreaterThan(0);
+            expect(screen.findByTestId('managed-machine.control-error')).toBeNull();
+            expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toEqual(archived);
         });
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine.creationState).toBe('canceled');
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.recovery').length > 0).toBe(Boolean(machine.resource || machine.recovery));
-        expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toEqual(machine);
+        expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toEqual(archived);
         if (allocation !== 'confirmed-absent') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost').length).toBeGreaterThan(0);
         expect(nativeActions).not.toContain('machines.managed.delete');
         expect(nativeActions).not.toContain('machines.managed.inspect');
-        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.approval').length).toBeGreaterThan(0);
+        expect(nativeActions).not.toContain('machines.managed.retire');
+        expect(screen.findByTestId('managed-machine.approval')).toBeNull();
     });
     it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager'] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-candidates.test', scope: 'tab' });
@@ -2783,12 +2813,14 @@ describe('managed Machine detail', () => {
             expect(url.origin).toBe('https://managed-reset-parent.test');
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
                 machineRetentionDefaultsV1: { v: 1, 'running-only': { retention: { kind: 'unused', effect: 'stop', afterMs }, wakeOnAcceptedMessage: true } },
             } }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname.startsWith('/v1/actions/')) {
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 const actionId = url.pathname.slice('/v1/actions/'.length);
                 if (actionId === 'machines.managed.retention.update') {
                     nativeRequests.push(request);
@@ -2889,7 +2921,7 @@ describe('managed Machine detail', () => {
                 ? { availability: 'unavailable', observedAt: 1 }
                 : { availability: 'present', power: 'running', observedAt: 1 },
             ...(basis !== 'controller-restart' ? { enrolledMachineId: 'enrolled-guest' } : {
-                preset: { id: 'admitted-preset', revision: 1 },
+                preset: { id: 'admitted-preset', revision: 1, contentEncryptionMode: 'plain' },
                 machineSetup: { setup: { scripts: [{ body: 'echo setup' }] }, state: 'pending' as const },
             }), allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { nativeId: 'same-paid-resource' } },
@@ -2923,13 +2955,15 @@ describe('managed Machine detail', () => {
             expect(url.origin).toBe(target.serverUrl);
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 if (actionId === 'machines.managed.bootstrap.retry') retries.push(request.input);
                 if (actionId === 'machines.managed.inspect') inspections.push(request.input);
                 const readGuestLogs = actionId === 'machines.managed.inspect' && request.input !== null
@@ -3059,6 +3093,8 @@ describe('managed Machine detail', () => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/machines/managed/actions/list' || url.pathname === '/v1/machines/managed/actions/get') {
@@ -3067,7 +3103,7 @@ describe('managed Machine detail', () => {
             }
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 if (actionId === 'machines.managed.inspect') { inspections.push(request.input); gate.rereadFails = gate.failAfterInspect; }
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
                     result: actionId === 'machines.provisioners.list' ? { provisioners: [] } : { machine } } });
@@ -3342,12 +3378,14 @@ describe('managed Machine detail', () => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
                     result: actionId === 'machines.provisioners.list' ? { provisioners: [] }
                         : actionId === 'machines.managed.get' ? machine : { machines: [machine] } } });
@@ -3431,6 +3469,8 @@ describe('managed Machine detail', () => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             actionPaths.push(url.pathname);
@@ -3441,7 +3481,7 @@ describe('managed Machine detail', () => {
             }
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
                     result: actionId === 'machines.provisioners.list' ? { provisioners: [] }
                         : actionId === 'machines.managed.get' ? machine : { machines: [machine] } } });
@@ -3696,6 +3736,60 @@ describe('managed Machine detail', () => {
             handlers: { reinstall: () => retried.push('wrong') } }} /></AccountNoticeInvestigationBoundary>));
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry').length).toBe(0);
     });
+    it.each([
+        { power: 'stopped', online: false, intent: 'start' },
+        { power: 'suspended', online: false, intent: 'resume' },
+        { power: 'stopped', online: true, intent: 'start' },
+    ] as const)('offers $intent only with an available assigned controller ($power, online=$online)', async ({ power, online, intent }) => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-power-availability.test', scope: 'tab' });
+        const homeId = 'srv_managed_power_availability';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
+            { token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const launch = { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Asleep guest', choices: {} };
+        const machine: ManagedMachineV1 = { id: 'asleep-managed', homeId, custodianAccountId: 'owner', launch, controller,
+            allocation: 'bound', creationState: 'active', resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } },
+            desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power, storage: 'retained' },
+            reviewedFacts: { launch, controller, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['start', 'resume', 'stop'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        const controllerMachine = createMachineFixture({ id: controller.machineId, installationId: controller.installationId,
+            active: online, activeAt: Date.now(), updatedAt: Date.now(), presenceProtocolVersion: 1 });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controllerMachine]);
+        const published = storage.getState().machineListByServerId[serverId]!.find(row => row.id === controller.machineId)!;
+        publishMachineActivityForTest([published], { active: online, activeAt: Date.now() });
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => id === controller.machineId
+                ? { ...createPlainMachineRowFixture({ id, accountId: 'owner', machine: controllerMachine }),
+                    installationId: controller.installationId, installationPublicKey: controllerInstallationPublicKey } : null);
+            const qualification = staticRetentionQualification(machine, url, init, ['start', 'resume', 'stop']);
+            if (qualification) return qualification;
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
+            if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id} />);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.tree.findAllByType(ManagedCreationProgress).length).toBeGreaterThan(0);
+        });
+        // Native sleep is still the displayed fact even when immediate power is unavailable.
+        expect(screen.tree.findByType(ManagedCreationProgress).props.machine.observation.power).toBe(power);
+        const actions = screen.tree.findAll(node => node.props?.testID === `managed-machine.${intent}`);
+        if (online) {
+            const progress = screen.tree.findByType(ManagedCreationProgress);
+            expect(actions.some(node => node.props.disabled !== true) || typeof progress.props.handlers.start === 'function').toBe(true);
+        } else {
+            expect(actions.every(node => node.props.disabled === true)).toBe(true);
+            expect(screen.tree.findByType(ManagedCreationProgress).props.handlers.start).toBeUndefined();
+        }
+    });
     it.each(['stop', 'start'] as const)('reviews power on the same stopped resource with desired %s in the saved Home before native dispatch', async desired => {
         const intent = desired === 'start' ? 'stop' : 'start';
         const realExecute = createFrontDoorActionExecute(createDefaultActionExecutor());
@@ -3738,12 +3832,14 @@ describe('managed Machine detail', () => {
             expect(url.origin).toBe('https://managed-start-approval.test');
             const machines = managedControllerReadBatch(machine, url, init);
             if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
             const artifact = artifacts.handle(url.pathname, init);
             if (artifact) return artifact;
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/actions/machines.managed.power.set') {
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 nativeRequests.push(request);
                 return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId,
                     actionId: 'machines.managed.power.set', execution: { ok: true,
@@ -3921,7 +4017,7 @@ describe('managed Machine detail', () => {
             } }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/actions/machines.managed.retention.update') {
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 nativeRequests.push(request);
                 return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId,
                     actionId: 'machines.managed.retention.update', execution: { ok: true,
@@ -4223,29 +4319,29 @@ describe('managed Machine detail', () => {
         const checking = await renderScreen(<ManagedCreationProgress machine={stopped} handlers={{ checkNow: () => {} }} checking />);
         expect(check(checking)?.props.loading).toBe(true);
     });
-    it.each(['approval', 'retired', 'plan-failed', 'effects-changed'] as const)('prepares a retained setup retry from exact current source copies before Apply (%s)', async outcome => {
+    it.each(['approval', 'retired', 'plan-failed', 'effects-changed'] as const)('prepares a retained setup retry from exact preset revision and current source references before Apply (%s)', async outcome => {
         const target = await upsertAndActivateServer({ serverUrl: `https://retained-setup-${outcome}.test`, scope: 'tab' });
         const homeId = `srv_retained_setup_${outcome}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'controller', installationId: 'controller-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: controller.machineId,
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
             installationId: controller.installationId, updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }),
-        createMachineFixture({ id: 'joined-machine', updatedAt: Date.now(),
-            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })] } });
+        createMachineFixture({ id: 'joined-machine', installationId: 'joined-installation', updatedAt: Date.now(),
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })]);
         const machine = ManagedMachineV1Schema.parse({ id: 'setup-retry', homeId, custodianAccountId: 'owner', controller,
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
             enrolledMachineId: 'joined-machine', allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
-            preset: { id: 'admitted-preset', revision: 2 }, machineSetup: { state: 'failed', errorCode: 'setup_failed',
+            preset: { id: 'admitted-preset', revision: 2, contentEncryptionMode: 'plain' }, machineSetup: { state: 'failed', errorCode: 'setup_failed',
                 setup: { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, scripts: [{ body: 'echo retained snapshot', affects: 'none' }] } },
             desired: 'start', desiredWhen: 'now', intentRevision: 3, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 9, exclusions: [], support: [], sources: [
             { kind: 'bundledPreset', ref: { pluginId: 'com.example.recipes', localId: 'base', revision: '1' },
                 setup: { scripts: [{ body: 'echo other retained copy' }] } },
-            { kind: 'accountPreset', presetId: machine.preset!.id, presetRevision: 1, setup: { scripts: [{ body: 'echo old admitted copy' }] } },
+            { kind: 'accountPresetOpaque', presetId: machine.preset!.id, presetRevision: 1, contentEncryptionMode: 'plain' },
             { kind: 'direct', setup: { toolchain: { adapterId: 'mise', config: '[tools]\npython = "3.13"' },
                 scripts: [{ body: 'echo direct', affects: 'none' }] } },
         ], sourceFacts: {
@@ -4254,7 +4350,7 @@ describe('managed Machine detail', () => {
             direct: { firstPresence: { direct: 'present' } },
         } });
         const sources = [
-            current.sources[0], { ...current.sources[1], presetRevision: machine.preset!.revision, setup: machine.machineSetup!.setup },
+            current.sources[0], { ...current.sources[1], presetRevision: machine.preset!.revision },
             current.sources[2],
         ];
         const expected = MachineSetupApplyInputV1Schema.parse({ homeId, machineId: machine.enrolledMachineId,
@@ -4272,25 +4368,28 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
             if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
-            if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                id => createPlainMachineRowFixture({ id, accountId: 'owner' }));
+            const nativeTargets = [controller, { machineId: machine.enrolledMachineId!, installationId: 'joined-installation' }];
+            const machines = managedControllerReadBatch(machine, url, init, nativeTargets);
+            if (machines) return machines;
+            const authorization = managedControllerAuthorization(machine, url, init, nativeTargets);
+            if (authorization) return authorization;
             if (url.pathname.includes('/presets/')) {
                 savedPresetReads.push(url.pathname);
                 // Reset's mounted policy owner reads today's Preset, independently of the retained Setup copy.
                 if (url.pathname === '/v1/machines/presets/get') {
                     expect(JSON.parse(String(init?.body))).toEqual({ homeId, id: machine.preset!.id });
-                    return Response.json(ManagedMachinePresetGetResultV1Schema.parse({ kind: 'found', preset: {
+                    return Response.json(ManagedMachinePresetGetResultV1Schema.parse({ kind: 'found', preset: createPlainManagedMachinePresetFixture({
                         id: machine.preset!.id, homeId, revision: 99, name: 'Current policy parent',
                         owner: { kind: 'account', accountId: 'owner' }, launch: machine.launch, controller,
                         setup: { scripts: [{ body: 'echo live preset must not replace retained setup' }] },
-                    } }));
+                    }) }));
                 }
             }
             const qualification = staticRetentionQualification(machine, url, init);
             if (qualification) return qualification;
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
-                const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const request = readNativeControllerRequest(init);
                 if (actionId === 'machines.setup.plan') {
                     plans.push(request.input);
                     await releasePlan.promise;
@@ -4341,14 +4440,14 @@ describe('managed Machine detail', () => {
                 expect(applies).toEqual([]);
                 if (outcome === 'plan-failed') await waitForHomeGovernance(async () => {
                     await flushHookEffects();
-                    expect(screen.tree.findAllByType(SurfaceStateCard)
-                        .some(node => node.props.testID === 'managed-machine.control-error' && node.props.diagnosticCode === 'unavailable')).toBe(true);
+                    expect(screen.tree.findAllByType(SurfaceStateCard).filter(node => node.props.testID === 'managed-machine.control-error')
+                        .map(node => node.props.diagnosticCode)).toContainEqual(expect.stringMatching(/^unavailable(?: · |$)/u));
                 });
                 if (outcome === 'effects-changed') {
                     await waitForHomeGovernance(async () => {
                         await flushHookEffects();
-                        expect(screen.tree.findAllByType(SurfaceStateCard)
-                            .some(node => node.props.testID === 'managed-machine.control-error' && node.props.diagnosticCode === 'plan_changed')).toBe(true);
+                        expect(screen.tree.findAllByType(SurfaceStateCard).filter(node => node.props.testID === 'managed-machine.control-error')
+                            .map(node => node.props.diagnosticCode)).toContainEqual(expect.stringMatching(/^plan_changed(?: · |$)/u));
                     });
                     expect(plans).toEqual([{ homeId, machineId: machine.enrolledMachineId },
                         { homeId, machineId: machine.enrolledMachineId, sources, mode: 'effects' }]);
@@ -4365,7 +4464,7 @@ describe('managed Machine detail', () => {
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-machine',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native' } },
-            preset: { id: 'preset', revision: 2 }, machineSetup: { setup: { scripts: [{ body: 'npm ci' }] }, state: 'failed', errorCode: 'setup_failed' },
+            preset: { id: 'preset', revision: 2, contentEncryptionMode: 'plain' }, machineSetup: { setup: { scripts: [{ body: 'npm ci' }] }, state: 'failed', errorCode: 'setup_failed' },
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const retry = vi.fn();

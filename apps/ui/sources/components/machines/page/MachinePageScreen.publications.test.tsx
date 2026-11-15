@@ -1,10 +1,13 @@
 import * as React from 'react';
 import 'fake-indexeddb/auto';
-import type { ReactTestInstance } from 'react-test-renderer';
+import type { ReactTestInstance, ReactTestRendererJSON } from 'react-test-renderer';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createServedHomeAccountToken, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const probe = vi.hoisted(() => ({ commits: {} as Record<string, number>, rpc: vi.fn() }));
@@ -91,12 +94,20 @@ it('attributes real page publications, suspends plugin-free hidden bodies, and r
     const { MachineProcessesAnswerV1Schema } = await import('@happier-dev/protocol/machines/processes/machineProcessesV1');
     await prepareSessionDraftPersistenceStorage();
     const serverId = 'srv_page_publications';
-    const connection = await restoreServerAccountForTest({ serverUrl: 'https://page-publications.example.test', serverIdentityId: serverId });
-    onTestFinished(() => connection.dispose());
     const machine = createMachineFixture({ id: 'publication-machine', active: true, activeAt: Date.now(), storageMode: 'plain', isShared: false });
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true, machines: { [machine.id]: machine },
-        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const token = createServedHomeAccountToken('account-a', true);
+    const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine });
+    const connection = await serveAccountHomes({
+        homes: [{ key: 'page', serverUrl: 'https://page-publications.example.test', serverIdentityId: serverId,
+            accountId: 'account-a', credentials: { token }, currentAccount: true }],
+        route: request => request.path === '/v1/machines/read-batch'
+            ? createMachineReadBatchResponseFixture(request.body, id => id === machine.id ? row : null)
+            : request.path === '/v1/machines' ? Response.json([row]) : undefined,
+    });
+    onTestFinished(() => connection.dispose());
     const accountId = captureActiveServerAccountScopeLifetime()!.scope.accountId;
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
+    await publishMachineInventoryForTest({ serverId: connection.homes.page!.id, accountId }, [machine]);
     let at = Date.now();
     let processMemory = 1_000_000;
     let storageBytes = 4_000_000_000;
@@ -139,7 +150,6 @@ it('attributes real page publications, suspends plugin-free hidden bodies, and r
         return actualModel(...args);
     });
     onTestFinished(() => model.mockRestore());
-    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     const screen = await renderScreen(<AuthProvider initialCredentials={{ token }}>
         <React.Profiler id="Machine page" onRender={id => { probe.commits[id] = (probe.commits[id] ?? 0) + 1; }}>
             <MachinePageScreen />
@@ -166,10 +176,16 @@ it('attributes real page publications, suspends plugin-free hidden bodies, and r
             const panel = screen.findHostByTestId(`machine-page-tab-body.${tab}`)!;
             // Selection chrome commits before Suspense's primary tree is revealed by the real scheduler.
             expect(panel.findAll(node => node !== panel && typeof node.type === 'string').length).toBeGreaterThan(0);
+            if (tab === 'processes') expect(screen.findByTestId('machine-processes-search')).not.toBeNull();
+            if (tab === 'storage') expect(screen.findHostByTestId('machine-storage-category-caches')).not.toBeNull();
+            if (tab === 'overview') expect(screen.findByTestId('machine-vitals-sheet')).not.toBeNull();
         });
     };
+    await vi.waitFor(() => expect(screen.root.findAllByType(NewSessionEmbeddedHostProvider)).toHaveLength(1));
     const overviewComposerHost = screen.root.findByType(NewSessionEmbeddedHostProvider).props.host;
     await selectTab('processes');
+    await vi.waitFor(() => expect(screen.findHostByTestId('machine-page-tab-footer')!
+        .findAllByType(NewSessionEmbeddedHostProvider)).toHaveLength(1));
     const footerComposerHost = screen.findHostByTestId('machine-page-tab-footer')!.findByType(NewSessionEmbeddedHostProvider).props.host;
     flushSync(() => screen.changeTextByTestId('machine-processes-search', 'retained-vite'));
     await settle();
@@ -178,6 +194,19 @@ it('attributes real page publications, suspends plugin-free hidden bodies, and r
         if (tab === 'storage') expect(screen.findHostByTestId('machine-storage-category-caches')).not.toBeNull();
     }
     expect(screen.findByTestId('machine-vitals-sheet')).not.toBeNull();
+    // Suspense commits the hidden fallback after the tab chrome changes. Attribute resource
+    // publications only after that transition has actually left the rendered host tree.
+    await vi.waitFor(() => {
+        const visit = (node: ReactTestRendererJSON | ReactTestRendererJSON[] | string | null): void => {
+            if (Array.isArray(node)) { node.forEach(visit); return; }
+            if (!node || typeof node === 'string') return;
+            if (['processes', 'storage', 'guard'].some(id => node.props.testID === `machine-page-tab-body.${id}`)) {
+                expect(node.children, node.props.testID).toBeNull();
+            }
+            node.children?.forEach(visit);
+        };
+        visit(screen.tree.toJSON());
+    });
     const processHost = screen.findHostByTestId('machine-page-tab-body.processes');
     const storageHost = screen.findHostByTestId('machine-page-tab-body.storage');
     const rows: Record<string, Record<string, number>> = {};
@@ -211,14 +240,16 @@ it('attributes real page publications, suspends plugin-free hidden bodies, and r
     expect(screen.findByTestId('machine-processes-search')?.props.value).toBe('retained-vite');
     expect(machineProcessesStore.getState(processKey).answer?.totals.leftBehind.memoryBytes).toBe(processMemory);
     const { formatProcessMemory } = await import('@/components/machines/processes/processesCollectionAnatomy');
-    expect(renderedText(screen.findHostByTestId('machine-page-tab-body.processes')!)).toContain(formatProcessMemory(processMemory));
+    await vi.waitFor(() => expect(renderedText(screen.findHostByTestId('machine-page-tab-body.processes')!))
+        .toContain(formatProcessMemory(processMemory)));
     await selectTab('storage');
     expect(screen.findHostByTestId('machine-page-tab-body.storage')).toBe(storageHost);
     expect(machineStorageStore.getState(storageKey).summary?.categories[0]?.size.allocatedBytes).toBe(storageBytes);
     const { formatMachineBytes } = await import('@/components/machines/vitals/machineVitalsPresentation');
     const cacheRow = screen.findHostByTestId('machine-storage-category-caches');
     expect(cacheRow).not.toBeNull();
-    expect(renderedText(cacheRow!)).toContain(formatMachineBytes(storageBytes, 'storage'));
+    await vi.waitFor(() => expect(renderedText(screen.findHostByTestId('machine-storage-category-caches')!))
+        .toContain(formatMachineBytes(storageBytes, 'storage')));
     expect(screen.findHostByTestId('machine-page-tab-footer')!.findByType(NewSessionEmbeddedHostProvider).props.host).toBe(footerComposerHost);
     // Measure the other Ask placement while hidden too. This is a diagnostic
     // number, not a zero-work contract for plugin-bearing retained roots.
