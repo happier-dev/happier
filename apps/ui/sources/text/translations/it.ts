@@ -18605,6 +18605,8 @@ settingsSession: {
           noChecksBody: "Un controllo ti avvisa quando un’app o un indirizzo smette di rispondere. Aggiungine uno dai Domini di un ambiente o da un servizio osservato.",
           noWatched: "Ancora nulla di osservato",
           noWatchedBody: "I servizi già in esecuzione su una Macchina appaiono qui quando li osservi dalla sua scheda Servizi.",
+          bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
+          countOnPage: "in questa pagina",
           backupChecking: "Verifica…",
           backupUnchecked: "Impossibile verificare",
           columnEvery: "Ogni",

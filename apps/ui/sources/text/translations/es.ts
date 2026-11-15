@@ -18603,6 +18603,8 @@ settingsSession: {
           noChecksBody: "Una comprobación te avisa cuando una app o dirección deja de responder. Añade una desde los Dominios de un entorno o un servicio vigilado.",
           noWatched: "Aún no vigilas nada",
           noWatchedBody: "Los servicios que ya se ejecutan en una Máquina aparecen aquí cuando los vigilas desde su pestaña Servicios.",
+          bandOne: ({ environment, state }: { environment: string; state: string }) => `${environment} · ${state}`,
+          countOnPage: "en esta página",
           backupChecking: "Comprobando…",
           backupUnchecked: "No se pudo comprobar",
           columnEvery: "Cada",

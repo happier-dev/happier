@@ -211,7 +211,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     setViewCountState(next);
     setViewNeedYou((current) => current[next.view] === (next.needYou ?? 0) ? current : { ...current, [next.view]: next.needYou ?? 0 });
   }, []);
-  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items) : null, [items, view]);
+  const pagedRead = read.hasNextPage || read.hasPreviousPage;
+  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items, pagedRead) : null, [items, pagedRead, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   const header = (create: boolean) => (
     <MainScreenHeader
@@ -414,7 +415,7 @@ function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
-function describeAppsCount(items: readonly EnvironmentItem[]): readonly (string | null)[] {
+function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean): readonly (string | null)[] {
   let needYou = 0;
   let deploying = 0;
   for (const item of items) {
@@ -425,6 +426,8 @@ function describeAppsCount(items: readonly EnvironmentItem[]): readonly (string 
   const projects = new Set(items.map((item) => item.environment.projectSourceId)).size;
   return [
     items.length > 0 ? t('projects.deployments.services.countEnvironments', { environments: items.length, projects }) : null,
+    // The read reports no Account-wide total: with more pages, the count says it is this page's.
+    items.length > 0 && paged ? t('projects.deployments.services.countOnPage') : null,
     needYou > 0 ? t('projects.deployments.services.needYou', { count: needYou }) : null,
     deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,
   ];

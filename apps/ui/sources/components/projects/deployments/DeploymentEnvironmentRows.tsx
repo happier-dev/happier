@@ -17,6 +17,7 @@ import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
@@ -64,13 +65,18 @@ export function deploymentEnvironmentBands<T extends BandRow>(rows: readonly T[]
   const axis = [
     ...(single.size > 0 ? [{ key: SINGLE_PROJECTS, title: '', section: SERVICES_ONE_SHEET }] : []),
     ...banded.map((group) => {
-      const needYou = group.rows.filter(deploymentEnvironmentRowNeedsYou).length;
+      const speaking = group.rows.filter(deploymentEnvironmentRowNeedsYou);
+      // The band's line (lab "Staging deploy failed"): the one Environment that needs the person and its state, or how many.
+      const only = speaking.length === 1 ? speaking[0]! : null;
       return {
         key: group.key,
         title: group.title,
         section: SERVICES_ONE_SHEET,
-        ...(needYou > 0
-          ? { description: t('projects.deployments.services.needYou', { count: needYou }), tone: 'danger' as const }
+        ...(speaking.length > 0
+          ? { description: only && only.state
+              ? t('projects.deployments.services.bandOne', { environment: only.title, state: only.state.text })
+              : t('projects.deployments.services.needYou', { count: speaking.length }),
+            tone: 'danger' as const }
           : {}),
       };
     }),
@@ -220,7 +226,8 @@ export function DeploymentEnvironmentRows(
               minWidth: runsOnWidth,
               priority: 3,
               listColumn: true,
-              render: (row: Row) => row.runsOn,
+              // A long Machine name keeps its end, the short id that tells same-named Machines apart.
+              render: (row: Row) => row.runsOn ? <MiddleEllipsisText value={row.runsOn} style={meta} /> : null,
             },
           ]),
       {

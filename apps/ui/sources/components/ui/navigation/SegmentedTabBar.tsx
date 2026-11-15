@@ -670,7 +670,8 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
             available: availableForSegments ?? rowWidth,
             withIcons: segmentWidths(rowTabs.map((tab) => measured[`i:${tab.id}`] ?? 0)),
             labelsOnly: segmentWidths(rowTabs.map((tab) => measured[`l:${tab.id}`] ?? 0)),
-            labelsWithoutCounts: segmentWidths(rowTabs.map((tab) => measured[`b:${tab.id}`] ?? measured[`l:${tab.id}`] ?? 0)),
+            // A needs-you count is part of its name (it is why the person opens that tab); only quiet counts give way.
+            labelsWithoutCounts: segmentWidths(rowTabs.map((tab) => (tab.countTone === 'danger' ? undefined : measured[`b:${tab.id}`]) ?? measured[`l:${tab.id}`] ?? 0)),
             gap: plain ? HAPPIER_SEGMENTED_METRICS.plain.gapPx : 0,
             more: measured.more ?? 0,
             reserveMore,
@@ -939,7 +940,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     />
                                 ) : null}
                                 {plain ? (
-                                    <PlainTabCaption tab={tab} icon={showIcons} count={fit.counts} active={active} label={!glyphOnly} />
+                                    <PlainTabCaption tab={tab} icon={showIcons} count={fit.counts || tab.countTone === 'danger'} active={active} label={!glyphOnly} />
                                 ) : iconOnly ? (
                                     <View style={[styles.tabIcon, iconGlyphStyles?.icon ?? null]}>{tab.icon}</View>
                                 ) : (
@@ -963,7 +964,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                         ]}
                                     >
                                         {tab.label}
-                                        {tab.count && fit.counts ? <TabCount tab={tab} /> : null}
+                                        {tab.count && (fit.counts || tab.countTone === 'danger') ? <TabCount tab={tab} /> : null}
                                     </Text>
                                     {tab.shortcut ? <KeyCombinationHint label={tab.shortcut} /> : null}
                                     {tab.badge ? <StatusPill variant="info" hideDot label={tab.badge} /> : null}

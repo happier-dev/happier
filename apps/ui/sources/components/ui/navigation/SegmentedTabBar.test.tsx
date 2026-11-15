@@ -1547,6 +1547,28 @@ describe('SegmentedTabBar measured overflow', () => {
     expect(onSelectTab).not.toHaveBeenCalled();
   });
 
+  it('keeps a needs-you count with its tab when the names no longer fit with their counts; a quiet count gives way', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const tabs = [
+      { id: 'apps', label: 'Apps', count: '15', countTone: 'danger' as const },
+      { id: 'databases', label: 'Databases', count: '2' },
+      { id: 'domains', label: 'Domains' },
+      { id: 'checks', label: 'Checks' },
+      { id: 'watched', label: 'Watched' },
+    ];
+    const screen = await renderScreen(
+      <SegmentedTabBar presentation="plain" overflow={{ label: 'More' }} tabs={tabs} activeTabId="apps"
+        onSelectTab={() => {}} testIDPrefix="services" />,
+    );
+    layOut(screen, 300);
+    const apps = screen.findHostByTestId('services:apps')!;
+    const text = (node: typeof apps) => node.findAll((child) => String(child.type) === 'Text')
+      .flatMap((child) => child.children.filter((entry): entry is string => typeof entry === 'string')).join('');
+    expect(text(apps)).toContain('15');
+    const databases = screen.findHostByTestId('services:databases');
+    if (databases) expect(text(databases)).not.toContain('2');
+  });
+
   it('paints no row before the first fit, and keeps the last fit while a count arriving is measured', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const withoutCount: typeof PAGE_TABS = PAGE_TABS.map((tab) =>

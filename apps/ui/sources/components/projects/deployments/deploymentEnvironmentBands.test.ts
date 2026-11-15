@@ -91,3 +91,21 @@ describe('deploymentEnvironmentRowLeadState (DESIGN "Phones recompose")', () => 
     expect(deploymentEnvironmentRowLeadState({ state: null }, { columns: false })).toBeNull();
   });
 });
+
+describe('deploymentEnvironmentBands sentences (lab band lines)', () => {
+  it('names the one Environment that needs the person and its state; several read as a count', async () => {
+    const { deploymentEnvironmentBands } = await import('./DeploymentEnvironmentRows');
+    const one = deploymentEnvironmentBands([
+      { projectSourceId: 'shop', projectName: 'billing-api', title: 'Production', state: null },
+      { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
+    ]);
+    const band = one.axis.find((group) => group.key === 'shop') as { description?: string };
+    expect(band.description).toContain('Staging');
+    expect(band.description).toContain('Failed');
+    const several = deploymentEnvironmentBands([
+      { projectSourceId: 'shop', projectName: 'billing-api', title: 'Production', state: { tone: 'warning' as const, text: 'Running, not verified' } },
+      { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
+    ]);
+    expect((several.axis.find((group) => group.key === 'shop') as { description?: string }).description).not.toContain('Staging');
+  });
+});

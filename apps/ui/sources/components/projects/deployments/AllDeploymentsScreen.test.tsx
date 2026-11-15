@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDeploymentReadControllerV1,
   type DeploymentReadControllerV1,
+  type DeploymentAccountDomainReadItemV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -170,6 +171,18 @@ describe('Projects → All deployments', () => {
       .map((node) => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
     expect(text).toContain('fix(invoices): round VAT per line');
     expect(text).not.toContain('Deploy main');
+    controller.retire();
+  });
+
+  it('says its count is this page\'s when more pages continue (the read reports no Account total)', async () => {
+    const { controller } = controllerFor((cursor) => cursor
+      ? page([environment('env-later', 'source-later', 'Later', { projectSourceName: 'later' })])
+      : page([environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' })], { nextCursor: 'env-later' }));
+    const screen = await render(controller, 'all-deployments');
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findHostByTestId('all-deployments.header:count'), (node) => node !== null);
+    });
+    expect(screen.getTextContent()).toContain('on this page');
     controller.retire();
   });
 
@@ -415,8 +428,8 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
   });
   it('bands Domains by Project and names each address\'s Environment (lab svcDom, G5)', async () => {
     const accountDomain = (id: string, hostname: string, environmentId: string, projectSourceId: string,
-      environmentTitle: string, projectSourceName: string | null) => ({
-      domain: { id, environmentId, targetLinkId: 'link', revision: 1, state: 'active', contentArtifactId: `c-${id}`,
+      environmentTitle: string, projectSourceName: string | null): DeploymentAccountDomainReadItemV1 => ({
+      domain: { v: 1, id, environmentId, targetLinkId: 'link', revision: 1, state: 'active', contentArtifactId: `c-${id}`,
         contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1 },
       title: hostname,
       content: { hostname, target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 } },
