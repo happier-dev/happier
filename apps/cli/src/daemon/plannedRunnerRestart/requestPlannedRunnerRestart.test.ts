@@ -31,6 +31,61 @@ function makeTracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
 }
 
 describe('requestPlannedRunnerRestart', () => {
+  it.each([
+    { field: 'activeTurnId', boundary: 'activity' },
+    { field: 'reattachedInterruptedTurnId', boundary: 'process_identity' },
+  ] as const)('keeps refresh custody when $field appears during the awaited $boundary probe', async ({ field, boundary }) => {
+    const tracked = makeTracked();
+    const reservations = new Set<SessionTrackingKey>();
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    let introduceTurn = true;
+    let probes = 0;
+    const request: RequestPlannedRunnerRestartParams = {
+      sessionId: 'sess-1', tracked, deferral: { kind: 'none' },
+      reason: 'daemon_restart_session_runners_command',
+      restartRequestedSessions: reservations,
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      isProcessSafeToSignal: async () => {
+        await Promise.resolve();
+        if (++probes === 2 && introduceTurn && boundary === 'process_identity') tracked[field] = 'late-turn';
+        return true;
+      },
+      canSignal: async () => {
+        await Promise.resolve();
+        if (introduceTurn && boundary === 'activity') tracked[field] = 'late-turn';
+        return true;
+      },
+      requestSignal: input => requestConnectedServiceSessionRestartSignal({ pid: tracked.pid, delayMs: 0,
+        shouldSignal: input.shouldSignal, onSignalFailure: input.onSignalFailure }),
+    };
+    try {
+      await expect(requestPlannedRunnerRestart(request)).resolves.toEqual({ signaled: false, notSignaledReason: 'turn_in_progress' });
+      expect(kill).not.toHaveBeenCalled();
+      expect(reservations.size).toBe(0);
+      delete tracked[field];
+      introduceTurn = false;
+      await expect(requestPlannedRunnerRestart(request)).resolves.toEqual({ signaled: true });
+      expect(kill).toHaveBeenCalledExactlyOnceWith(tracked.pid, 'SIGTERM');
+    } finally { kill.mockRestore(); }
+  });
+
+  it('retains the connected-service signal policy when deferral is disabled with tracked foreground custody', async () => {
+    const tracked = makeTracked({ activeTurnId: 'switching-turn' });
+    const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: true });
+    queue.recordTurnLifecycleEvent({ sessionId: 'sess-1', event: 'prompt_or_steer' });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    try {
+      await expect(requestPlannedRunnerRestart({ sessionId: 'sess-1', tracked,
+        deferral: { kind: 'connected_service_switch', source: 'manual', policy: 'defer_until_turn_boundary',
+          target: { serviceId: 'svc', profileId: 'profile', groupId: 'group', generation: 2 }, turnDeferralQueue: queue },
+        restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+        isProcessSafeToSignal: async () => true, canSignal: async () => true,
+        requestSignal: input => requestConnectedServiceSessionRestartSignal({ pid: tracked.pid, delayMs: 0,
+          shouldSignal: input.shouldSignal, onSignalFailure: input.onSignalFailure }),
+      })).resolves.toEqual({ signaled: true });
+      expect(kill).toHaveBeenCalledExactlyOnceWith(tracked.pid, 'SIGTERM');
+    } finally { kill.mockRestore(); }
+  });
   it.each(['direct', 'stable', 'reused child PID', 'replaced child', 'same PID conflicting birth'] as const)('revalidates executable custody and physical launcher custody at the signal boundary (%s)', async change => {
     const tracked = makeTracked();
     const runner = { pid: change === 'same PID conflicting birth' ? tracked.pid : 4343,

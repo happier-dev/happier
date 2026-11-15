@@ -9,6 +9,7 @@ import type {
 } from './types';
 import type { TrackedSession } from '../types';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
+import { resolveTrackedSessionRunnerActivity } from '../sessionRunnerRuntime/resolveRuntimeState';
 import type { RestartSessionRunnerCompletion } from './restartSessionRunnerOnCurrentRuntime';
 import type { OwnerRemainderCapture } from '../processes/endOwnerRemainder';
 import { SessionRunnerRestartAdmissionUnsupportedError, type SessionRunnerRestartAdmissionRelease } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
@@ -243,6 +244,14 @@ export async function requestPlannedRunnerRestart(
           // Shutdown can begin during either awaited process or activity probe.
           if (params.isShuttingDown?.()) {
             notSignaledReason = 'shutting_down';
+            return false;
+          }
+          // Refresh and source-cutover requests have no connected-service deferral policy.
+          // Read exact custody after every awaited probe; account switches retain their own policy.
+          const foreground = params.deferral.kind === 'none'
+            ? resolveTrackedSessionRunnerActivity(params.tracked) : null;
+          if (foreground) {
+            notSignaledReason = foreground.reasonCode;
             return false;
           }
           params.tracked.plannedRestartReason = params.reason;

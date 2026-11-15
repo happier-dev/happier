@@ -120,6 +120,7 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
     resolveDisabledReason(tracked) ??
     (params.currentIdentity.status !== 'known' ? 'current_entrypoint_unknown' : null) ??
     params.agentRuntimeRestartUnavailableReason ??
+    resolveTrackedSessionRunnerActivity(tracked)?.reasonCode ??
     (sessionId ? params.resolveActivityDisabledReason?.(sessionId) ?? null : null);
   const versionState = params.agentRuntimeVersionState === 'unknown'
     && params.agentRuntimeRestartUnavailableReason === 'unsupported_backend'

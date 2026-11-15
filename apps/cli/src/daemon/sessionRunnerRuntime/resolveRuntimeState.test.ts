@@ -10,6 +10,21 @@ import { resolveSessionRunnerRuntimeStatusV2 } from './resolveRuntimeStatusV2';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('resolveSessionRunnerRuntimeState', () => {
+  it.each(['activeTurnId', 'reattachedInterruptedTurnId'] as const)('projects tracked %s custody without an injected activity reader', field => {
+    const tracked: TrackedSession = {
+      trackingKey: legacyPidSessionTrackingKey(123), happySessionId: 'sess-1', pid: 123, startedBy: 'daemon',
+      processCommand: 'node /work/apps/cli/src/index.ts claude --happy-starting-mode remote --started-by daemon',
+      processCommandHash: 'runner-command-hash', processStartTimeMs: 12_345,
+      spawnOptions: { directory: '/work', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, resume: 'thread-1' },
+      [field]: 'tracked-turn',
+    };
+    const input = { sessionId: 'sess-1', tracked,
+      currentIdentity: { status: 'known', source: 'launch_spec', comparableId: 'path:/work/apps/cli' } as const };
+    expect(resolveSessionRunnerRuntimeState(input).plannedRestart)
+      .toMatchObject({ eligible: false, disabledReason: 'turn_in_progress' });
+    delete tracked[field];
+    expect(resolveSessionRunnerRuntimeState(input).plannedRestart).toMatchObject({ eligible: true, disabledReason: null });
+  });
   it('projects one executable identity for a wrapped runner without borrowing launcher evidence', async () => {
     const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'wrapped',
       processStartTimeMs: 100, processCommandHash: 'launcher-hash', processCommand: 'launcher' };

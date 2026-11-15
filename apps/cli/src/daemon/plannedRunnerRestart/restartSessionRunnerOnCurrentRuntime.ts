@@ -347,7 +347,8 @@ function resolveVersionGate(input: Readonly<{
 
   if (mode === 'force_current_cli') {
     const disabledReason = state.plannedRestart.disabledReason;
-    if (disabledReason) {
+    // Activity belongs to the canonical busy classifier after this version-only gate.
+    if (disabledReason && disabledReason !== 'turn_in_progress') {
       return skipped(disabledReason === 'current_entrypoint_unknown' ? 'version_unknown' : 'ineligible',
         input.request.sessionId, disabledReason);
     }
