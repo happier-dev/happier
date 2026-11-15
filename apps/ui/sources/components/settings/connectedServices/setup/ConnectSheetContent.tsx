@@ -247,17 +247,28 @@ function ConnectAccountSheetLeaf(
   // and handed to the sign-in below. Read only while the chosen method needs a machine (58c).
   const targetSelection = model.targetSelection;
   const showTargetSelector = mode === 'new' && model.machineRequired;
-  const machineChip = React.useMemo(() => showTargetSelector ? (
-    <MachineAdministrationTargetSelector
-      selection={targetSelection}
-      resolveCandidateAvailability={model.machineAvailability}
-      disabled={Boolean(purposeRequest)}
-      presentation="chip"
-      // The account works on every machine; the chip only picks where this sign-in runs.
-      chipLabel={t('connectedServicesSetup.signInOn')}
-      testIDPrefix="connected-service-setup-target"
-    />
-  ) : null, [showTargetSelector, purposeRequest, targetSelection, model.machineAvailability]);
+  // Once a method has shown the chip, the band keeps its height on methods that need no machine:
+  // the chip's place stays, empty, so the content under the band does not jump between tabs.
+  const [chipShown, setChipShown] = React.useState(showTargetSelector);
+  if (showTargetSelector && !chipShown) setChipShown(true);
+  const machineChip = React.useMemo(() => showTargetSelector || chipShown ? (
+    <View
+      style={showTargetSelector ? null : styles.reservedChip}
+      pointerEvents={showTargetSelector ? 'auto' : 'none'}
+      aria-hidden={!showTargetSelector}
+      importantForAccessibility={showTargetSelector ? 'auto' : 'no-hide-descendants'}
+    >
+      <MachineAdministrationTargetSelector
+        selection={targetSelection}
+        resolveCandidateAvailability={model.machineAvailability}
+        disabled={Boolean(purposeRequest) || !showTargetSelector}
+        presentation="chip"
+        // The account works on every machine; the chip only picks where this sign-in runs.
+        chipLabel={t('connectedServicesSetup.signInOn')}
+        testIDPrefix={showTargetSelector ? 'connected-service-setup-target' : 'connected-service-setup-target-reserved'}
+      />
+    </View>
+  ) : null, [showTargetSelector, chipShown, purposeRequest, targetSelection, model.machineAvailability]);
 
   // A repair names its account once, as the band's quiet second line under "Sign in to … again" (owner 11-01):
   // who it is, never a card of its own.
@@ -452,6 +463,9 @@ const styles = StyleSheet.create((theme) => ({
   rows: {
     gap: theme.space.s2,
     marginHorizontal: -theme.space.s8,
+  },
+  reservedChip: {
+    opacity: 0,
   },
   actions: {
     flexDirection: 'row',

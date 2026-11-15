@@ -2355,6 +2355,10 @@ const zhHans: ConnectedServicesSettingsCopy = {
     setupProvidersPointer: 'OpenRouter、Ollama 等模型提供方在“提供方”中设置。',
     setupOpenProviders: '打开提供方',
     setupTrust: '保存在你的账户中，仅供你的机器使用。',
+    setupStartDevice: '你会得到一个代码，在浏览器中输入。在那里登录后，这里会自动完成。',
+    setupStartBrowser: '在新标签页打开登录页面。在那里登录后会回到这里。',
+    setupStartBrowserPaste: '在新标签页打开登录页面。登录后，把显示的代码粘贴到这里。',
+    setupImportLead: ({ service }: { service: string }) => `复制所选机器上已登录的 ${service} 登录信息。`,
     setupConnectedCount: ({ count }) => `已连接 ${count} 个`,
     settleConnectedAs: ({ identity }) => `刚刚以 ${identity} 连接。`,
     settleConnected: '刚刚已连接。',
@@ -13135,6 +13139,7 @@ const shareSheetTranslations = { 'zh-Hans': {
             levels: { canUse: '可以使用' },
             help: { use: '他们的代理通过你的机器运行，看不到它' },
             description: '选择一个团队。接下来选择通过哪台机器使用，以及团队中谁获得它。',
+            footnote: '成员的代理通过你的机器使用它，永远看不到它。',
         },
         documents: {
             title: '共享',

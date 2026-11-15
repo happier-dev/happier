@@ -5,6 +5,7 @@ import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams/grou
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
+import { teamStandingSummary } from '@/components/settings/teams/teamLabels';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { searchSessionAccessAccountPage } from '@/sync/api/session/sessionAccessApi';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -285,7 +286,10 @@ export function useSessionAccessDirectory(input: Readonly<{
         if (outcome.kind !== 'succeeded') throw new Error(outcome.failure.kind);
         return {
             rows: outcome.value.items.map((team) => {
-                const principal = projectSessionAccessPrincipal({ kind: 'team', teamId: team.id, name: team.name });
+                const projected = projectSessionAccessPrincipal({ kind: 'team', teamId: team.id, name: team.name });
+                const summary = teamStandingSummary(team);
+                const principal = summary ? { ...projected, secondaryLabel: summary,
+                    accessibilityLabel: `${projected.displayName}, ${summary}` } : projected;
                 return { principal, addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION };
             }),
             teamContexts: outcome.value.items.map((team) => ({

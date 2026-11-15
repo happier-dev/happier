@@ -2360,6 +2360,10 @@ const ja: ConnectedServicesSettingsCopy = {
     setupProvidersPointer: 'OpenRouter や Ollama などのモデルプロバイダーは「プロバイダー」で設定します。',
     setupOpenProviders: 'プロバイダーを開く',
     setupTrust: 'アカウントに保存され、あなたのマシンだけが使います。',
+    setupStartDevice: 'ブラウザーで入力するコードが表示されます。そこでサインインすると自動で完了します。',
+    setupStartBrowser: '新しいタブでサインインページを開きます。サインインするとここに戻ります。',
+    setupStartBrowserPaste: '新しいタブでサインインページを開きます。サインインして、表示されたコードをここに貼り付けてください。',
+    setupImportLead: ({ service }: { service: string }) => `選択したマシンでサインイン済みの ${service} のログインをコピーします。`,
     setupConnectedCount: ({ count }) => `${count} 件接続済み`,
     settleConnectedAs: ({ identity }) => `${identity} として接続しました。`,
     settleConnected: '接続しました。',
@@ -13140,6 +13144,7 @@ const shareSheetTranslations = { ja: {
             levels: { canUse: '使用可' },
             help: { use: 'エージェントはあなたのマシン経由で実行し、内容は見えません' },
             description: 'チームを選びます。次に、利用を通すマシンとチーム内の対象を選びます。',
+            footnote: 'メンバーのエージェントはあなたのマシンを通して使います。値が見えることはありません。',
         },
         documents: {
             title: '共有',

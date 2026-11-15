@@ -2355,6 +2355,10 @@ const zhHant: ConnectedServicesSettingsCopy = {
     setupProvidersPointer: 'OpenRouter、Ollama 等模型提供者在「提供者」中設定。',
     setupOpenProviders: '開啟提供者',
     setupTrust: '儲存在你的帳號中，僅供你的機器使用。',
+    setupStartDevice: '你會取得一組代碼，在瀏覽器中輸入。在那裡登入後，這裡會自動完成。',
+    setupStartBrowser: '在新分頁開啟登入頁面。在那裡登入後就會回到這裡。',
+    setupStartBrowserPaste: '在新分頁開啟登入頁面。登入後，把顯示的代碼貼到這裡。',
+    setupImportLead: ({ service }: { service: string }) => `複製所選機器上已登入的 ${service} 登入資訊。`,
     setupConnectedCount: ({ count }) => `已連接 ${count} 個`,
     settleConnectedAs: ({ identity }) => `剛剛以 ${identity} 連接。`,
     settleConnected: '剛剛已連接。',
@@ -13134,6 +13138,7 @@ const shareSheetTranslations = { 'zh-Hant': {
             levels: { canUse: '可以使用' },
             help: { use: '他們的代理透過你的機器執行，看不到它' },
             description: '選擇一個團隊。接著選擇透過哪台機器使用，以及團隊中誰取得它。',
+            footnote: '成員的代理透過你的機器使用它，永遠看不到它。',
         },
         documents: {
             title: '共享',

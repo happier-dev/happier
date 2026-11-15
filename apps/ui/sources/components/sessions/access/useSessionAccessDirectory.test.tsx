@@ -64,6 +64,9 @@ function team(id: string) {
         id,
         name: id,
         policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
+        viewerRole: null,
+        capabilities: {},
+        counts: null,
     };
 }
 
@@ -238,6 +241,22 @@ describe('useSessionAccessDirectory', () => {
         const completeSource = latest.sections.find((section) => section.kind === 'team')!;
         await expect(completeSource.resolveCandidates!('', new AbortController().signal))
             .resolves.toHaveLength(2);
+    });
+
+    it("says how many people a Team has and the viewer's standing on its row", async () => {
+        vi.mocked(runTeamAction).mockResolvedValueOnce({ kind: 'succeeded', value: { items: [{
+            ...team('studio'), name: 'Studio', viewerRole: 'member',
+            capabilities: { viewTeam: true, leave: true },
+            counts: { members: 6, suspendedMembers: 0, groups: null, waitingInvitations: null },
+        }], nextCursor: null } } as never);
+        let latest!: SessionAccessDirectory;
+        await renderScreen(<Probe onValue={(value) => { latest = value; }} />);
+        await vi.waitFor(() => expect(latest.teamDirectoryStatus).toBe('ready'));
+        const rows = await latest.sections.find((section) => section.kind === 'team')!
+            .resolveCandidates!('', new AbortController().signal);
+        expect(rows[0]!.principal.displayName).toBe('Studio');
+        expect(rows[0]!.principal.secondaryLabel).toMatch(/6/);
+        expect(rows[0]!.principal.secondaryLabel).toMatch(/member/i);
     });
 
     it('projects exact Team membership and Group identities through the canonical directory', async () => {

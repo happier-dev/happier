@@ -21,6 +21,8 @@ export type HappierShareSheetProps = Readonly<{
   phone?: boolean;
   handoffs?: readonly (HappierShareAction & Readonly<{ leading?: ReactNode }>)[];
   done?: HappierShareAction;
+  /** The footer's one consequence line beside Done ("Their agents use it through your machine"). */
+  note?: string;
   Button?: ComponentType<HappierShareSheetButtonProps>;
   host?: HappierShareHost;
   testID?: string;
@@ -43,12 +45,14 @@ function DefaultButton(props: HappierShareSheetButtonProps) {
 export function HappierShareSheet(props: HappierShareSheetProps) {
   const host = useHappierShareHost(props.host);
   const Button = props.Button ?? DefaultButton;
+  const { Text } = host;
   return <View testID={props.testID} style={props.presentation === 'full' ? styles.full : styles.compact}>
     {props.children}
-    {props.presentation === 'full' && (props.handoffs?.length || props.done) ? <View style={[
+    {props.presentation === 'full' && (props.handoffs?.length || props.done || props.note) ? <View style={[
       styles.footer, { borderTopColor: host.borderColor }, props.phone ? styles.phoneFooter : null,
     ]}>
       <View style={[styles.handoffs, props.phone ? styles.phoneHandoffs : null]}>
+        {props.note ? <View style={styles.footerNote}><Text tone="secondary">{props.note}</Text></View> : null}
         {props.handoffs?.map((action, index) => <Button key={action.testID ?? index} {...action} emphasis="secondary"
           style={props.phone ? styles.phoneAction : styles.action} />)}
       </View>
@@ -90,6 +94,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap', gap: HAPPIER_PAGE_METRICS.groupHeadingGapPx },
   handoffs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', flexShrink: 1, gap: HAPPIER_PAGE_METRICS.groupHeadingGapPx },
   // A wrapping column sizes its line to the widest child, which would stop Done short of the edge.
+  footerNote: { flexShrink: 1, minWidth: 0 },
   action: { flexGrow: 0 }, phoneFooter: { flexDirection: 'column', alignItems: 'stretch', flexWrap: 'nowrap' },
   phoneHandoffs: { alignSelf: 'stretch', justifyContent: 'space-between', flexWrap: 'nowrap' },
   // Hand-offs keep their own width on a phone, so a longer label stays on one line beside a short one.

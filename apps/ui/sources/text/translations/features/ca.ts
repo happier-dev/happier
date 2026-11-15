@@ -2360,6 +2360,10 @@ const ca: ConnectedServicesSettingsCopy = {
     setupProvidersPointer: 'Els proveïdors de models com OpenRouter i Ollama es configuren a Proveïdors.',
     setupOpenProviders: 'Obre Proveïdors',
     setupTrust: 'Es desa al teu compte i només el fan servir les teves màquines.',
+    setupStartDevice: 'Rebràs un codi per introduir al navegador. Inicia la sessió allà i això acaba sol.',
+    setupStartBrowser: 'Obre una pàgina d’inici de sessió en una pestanya nova. Inicia la sessió allà i tornaràs aquí.',
+    setupStartBrowserPaste: 'Obre una pàgina d’inici de sessió en una pestanya nova. Inicia la sessió i enganxa aquí el codi que et mostri.',
+    setupImportLead: ({ service }: { service: string }) => `Copia l’inici de sessió de ${service} que ja està obert a la màquina triada.`,
     setupConnectedCount: ({ count }) => `${count} connectats`,
     settleConnectedAs: ({ identity }) => `Connectat ara mateix com a ${identity}.`,
     settleConnected: 'Connectat ara mateix.',
@@ -13177,6 +13181,7 @@ const shareSheetTranslations = { ca: {
             levels: { canUse: 'Pot fer-lo servir' },
             help: { use: 'els seus agents passen per la teva màquina; mai no el veuen' },
             description: 'Tria un equip. Després tries per quina màquina passa l’ús i qui de l’equip el rep.',
+            footnote: 'Els agents dels membres el fan servir a través de la teva màquina. No el veuen mai.',
         },
         documents: {
             title: 'Compartició',

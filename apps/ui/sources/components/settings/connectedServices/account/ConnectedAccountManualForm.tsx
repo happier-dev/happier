@@ -18,6 +18,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
+import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -41,6 +43,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     billing: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8 },
     accessories: { flexDirection: 'row', alignItems: 'center' },
     note: {  ...Typography.variant('meta'),  color: theme.colors.text.secondary },
+    lead: { ...Typography.variant('body'), color: theme.colors.text.secondary },
     // The content row already spaces the footer from the rows above it.
     panelActions: {},
     actions: {
@@ -63,6 +66,8 @@ function compareFields(left: ManualAuthenticationField, right: ManualAuthenticat
 
 type ConnectedAccountManualFormProps = Readonly<{
     title: string;
+    /** One line saying what this way of connecting does, before anything to fill in (an import's "copies the login on…"). */
+    lead?: string;
     /** Inside the new-account draft, whose row already names the sign-in method. */
     embedded?: boolean;
     localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
@@ -165,6 +170,9 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
     const [selectedSecrets, setSelectedSecrets] = React.useState<Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>>>({});
     const [displayName, setDisplayName] = React.useState('');
     const [revealed, setRevealed] = React.useState(false);
+    // New key | Saved key: offered only when the Account has a saved secret to pick; one of the two at a time.
+    const savedEntries = useSavedSecretCatalogEntries({ scope: props.accountLifetime?.scope ?? null });
+    const [secretMode, setSecretMode] = React.useState<'new' | 'saved'>('new');
 
     const fields = React.useMemo(
         () => [...props.fields]
@@ -205,6 +213,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         setInvalidFieldIds([]);
         setDisplayName('');
         setRevealed(false);
+        setSecretMode('new');
         configuration.discardDraft();
     }, [configuration, initialDraft]);
     const isDirty = configuration.isDirty || displayName.length > 0 || Object.keys(selectedSecrets).length > 0 || props.fields.some((field) => (
@@ -263,9 +272,21 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
     // The primary waits for every field that must be filled; a filled value that misses its shape says so on press.
     const missingRequired = fields.some((field) => !selectedSecrets[field.id] && !(draft[field.id] ?? '')
         && !isValidPluginJsonSchemaValue(validators.get(field.id)!, ''));
+    const offersSaved = Boolean(props.accountLifetime) && savedEntries.length > 0 && fields.some((field) => field.secret === true);
+    const mode = offersSaved ? secretMode : 'new';
+    const chooseSecretMode = (next: 'new' | 'saved') => {
+        setSecretMode(next);
+        const secretIds = new Set(fields.filter((field) => field.secret === true).map((field) => field.id));
+        if (next === 'new') setSelectedSecrets({});
+        else setDraft((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, secretIds.has(id) ? '' : value])));
+        setInvalidFieldIds((current) => current.filter((id) => !secretIds.has(id)));
+    };
     const basicFields = fields.filter((field) => field.presentation?.advanced !== true);
     const advancedFields = fields.filter((field) => field.presentation?.advanced === true);
     const renderFieldRow = (field: ManualAuthenticationField) => {
+        // A choice with one option is no choice: its declared value is submitted without asking.
+        if (field.presentation?.control === 'select' && field.secret !== true
+            && (field.presentation.options ?? []).length === 1 && draft[field.id]) return null;
         if (field.presentation?.control === 'select' && field.secret !== true) {
             return <React.Fragment key={field.id}>{fieldControl(field)}</React.Fragment>;
         }
@@ -274,9 +295,10 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         const multiline = field.presentation?.control === 'textarea';
         const guidedKey = guided && field.secret === true;
         const selection = selectedSecrets[field.id];
+        const savedMode = field.secret === true && mode === 'saved';
         return (
             <React.Fragment key={field.id}>
-                {!selection ? <Item
+                {!savedMode ? <Item
                     title={title}
                     subtitle={description || undefined}
                     subtitleLines={0}
@@ -291,12 +313,12 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                         </View>
                     ) : fieldControl(field)}
                 /> : null}
-                {field.secret === true && props.accountLifetime ? (
+                {savedMode && props.accountLifetime ? (
                     <ConnectedAccountConfigurationSecretField
                         fieldId={field.id}
                         testIDPrefix="connected-account-manual"
-                        title={selection ? title : t('connectedServicesSettings.manualUseSavedSecret')}
-                        description={selection ? description : ''}
+                        title={title}
+                        description={description}
                         secretRef={selection?.ref ?? null}
                         selection={selection}
                         accountLifetime={props.accountLifetime}
@@ -325,7 +347,26 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         >
             {/* A guided key opens with how to create it (lab crGuide A): the declared steps, then its console. Then
                 one card of field rows (lab `s2svc:key`), an optional name and the billing fact; no stepper. */}
-            {guided ? <SectionContentRow showDivider={false}><ConnectedAccountGuide guide={guided} /></SectionContentRow> : null}
+            {props.lead ? <SectionContentRow showDivider={false}><Text style={styles.lead}>{props.lead}</Text></SectionContentRow> : null}
+            {offersSaved ? (
+                <SectionContentRow showDivider={false}>
+                    <SegmentedTabBar
+                        role="radiogroup"
+                        labelSize="field"
+                        segmentSizing="equal"
+                        accessibilityLabel={t('connectedServicesSetup.keyHowToAdd')}
+                        tabs={[
+                            { id: 'new' as const, label: t('connectedServicesSetup.keyNew') },
+                            { id: 'saved' as const, label: t('connectedServicesSetup.keySaved') },
+                        ]}
+                        activeTabId={mode}
+                        disabled={props.submitting}
+                        onSelectTab={chooseSecretMode}
+                        testIDPrefix="connected-account-manual:mode"
+                    />
+                </SectionContentRow>
+            ) : null}
+            {guided && mode === 'new' ? <SectionContentRow showDivider={false}><ConnectedAccountGuide guide={guided} /></SectionContentRow> : null}
             {/* One order on every key sheet: the secret, the settings it needs, the optional name, then what is folded. */}
             {basicFields.map(renderFieldRow)}
             {props.configuration ? configuration.basicContent : null}

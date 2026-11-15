@@ -115,12 +115,15 @@ export type ConnectedServiceSetupFlowAction = Readonly<{
  * then secondary Cancel (local: the panel steps back at once) beside the step's one primary action.
  */
 export function ConnectedServiceSetupFlowActions(props: Readonly<{
+    /** What the primary will do, in one sentence, before it (a browser or code sign-in, D5). */
+    description?: string;
     onCancel?: () => void;
     primary?: ConnectedServiceSetupFlowAction;
 }>) {
     const { theme } = useUnistyles();
     return (
         <View style={flowActionStyles.footer}>
+            {props.description ? <Text style={flowActionStyles.description}>{props.description}</Text> : null}
             <View style={flowActionStyles.trust}>
                 <Icon name="lock" size={14} color={theme.colors.text.secondary} />
                 <Text style={flowActionStyles.trustText}>{t('connectedServicesSettings.setupTrust')}</Text>
@@ -158,6 +161,10 @@ const flowActionStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: theme.space.s6,
+    },
+    description: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
     },
     trustText: {
         flex: 1,

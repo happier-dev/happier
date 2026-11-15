@@ -263,4 +263,44 @@ describe('ConnectedAccountManualForm', () => {
         const { getActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current ?? false).toBe(false);
     });
+    it('submits a choice with only one option without asking for it', async () => {
+        const sourceFields = z.array(PluginSettingFieldV2Schema).parse([
+            { id: 'source', title: 'Source', default: 'native', schema: { type: 'string', enum: ['native'] },
+                presentation: { control: 'select', options: [{ value: 'native', title: 'Muse login' }] } },
+        ]).map(field => ({ ...field, secret: Boolean(field.secret) }));
+        const onSubmit = vi.fn();
+        const screen = await renderScreen(<ConnectedAccountManualForm embedded title="Import" submitting={false}
+            fields={sourceFields} lead="Copies the login already on the chosen machine." onCancel={vi.fn()} onSubmit={onSubmit} />);
+        expect(screen.tree.findAll(node => node.props.testID === 'connected-account-manual:source')).toHaveLength(0);
+        expect(screen.tree.findAll(node => node.props.children === 'Copies the login already on the chosen machine.').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        expect(onSubmit).toHaveBeenCalledWith({ fields: { source: 'native' } });
+    });
+
+    it('offers New key | Saved key only when the Account has a saved secret, never both rows at once', async () => {
+        const { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+        resetSavedSecretCatalogSnapshotsForTests();
+        const scope = { serverId: 'home-a', accountId: 'account-a' } as const;
+        const accountLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const keyFields = [fields[1]];
+        const empty = await renderScreen(<ConnectedAccountManualForm embedded title="API key" submitting={false}
+            fields={keyFields} accountLifetime={accountLifetime} onSubmit={vi.fn()} />);
+        expect(empty.tree.findAll(node => node.props.testID === 'connected-account-manual:mode:saved')).toHaveLength(0);
+        expect(empty.tree.findAll(node => node.props.testID === 'connected-account-manual:token:choose')).toHaveLength(0);
+        await act(async () => empty.tree.unmount());
+
+        await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 1, entries: [{
+            ref: 'happier:shared-secret:v1:resource-a', source: 'shared_resource', relationship: 'recipient', name: 'Team API key',
+            kind: 'apiKey', encryptionMode: null, owner: null, accessSources: [], audience: null, ownerAccountId: 'owner-a', revision: 1,
+            materialStatus: 'ready', capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
+        }] }));
+        const screen = await renderScreen(<ConnectedAccountManualForm embedded title="API key" submitting={false}
+            fields={keyFields} accountLifetime={accountLifetime} onSubmit={vi.fn()} />);
+        const has = (testID: string) => screen.tree.findAll(node => node.props.testID === testID).length > 0;
+        expect(has('connected-account-manual:token')).toBe(true);
+        expect(has('connected-account-manual:token:choose')).toBe(false);
+        await screen.pressByTestIdAsync('connected-account-manual:mode:saved');
+        expect(has('connected-account-manual:token:choose')).toBe(true);
+        expect(screen.tree.findAll(node => node.type === ('TextInput' as never) && node.props.testID === 'connected-account-manual:token')).toHaveLength(0);
+    });
 });

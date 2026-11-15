@@ -33,7 +33,8 @@ const styles = StyleSheet.create((theme) => ({
 export const SHARE_DIRECTORY_KINDS: readonly ShareDirectoryKind[] = ['account', 'group', 'team'];
 
 function principalKindLabel(principal: SharePrincipalPresentation): string {
-    return principal.ref.kind === 'account' ? ''
+    // A Team that says who is in it needs no "Team" word: its section and glyph already say so.
+    return principal.ref.kind === 'account' || (principal.ref.kind === 'team' && principal.secondaryLabel) ? ''
         : principal.ref.kind === 'group' ? t('shareSheet.group') : t('shareSheet.team');
 }
 

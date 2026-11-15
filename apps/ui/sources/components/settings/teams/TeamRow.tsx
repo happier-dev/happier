@@ -4,7 +4,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
 import { t, usePreferredLanguage } from '@/text';
 
-import { teamViewerStandingLabel } from './teamLabels';
+import { teamStandingSummary, teamViewerStandingLabel } from './teamLabels';
 import type { TeamsDirectoryRow } from './teamsDirectoryViewState';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
@@ -35,13 +35,8 @@ export const TeamRow = React.memo(function TeamRow(props: Readonly<{
     const onPress = React.useCallback(() => props.onPress(row.address), [props.onPress, row.address]);
     const rail = props.variant === 'rail';
     const roleLabel = teamViewerStandingLabel(row.team) ?? '';
-    // Active members, when the Home shares the count (a Home administrator gets totals without a
-    // roster). The compact rail stays one fact: the viewer's role.
-    const counts = row.team.counts;
-    const memberCount = !rail && counts
-        ? t('teams.groups.memberCount', { count: counts.members - counts.suspendedMembers })
-        : '';
-    const subtitle = [roleLabel, memberCount, props.showHome ? row.homeName : '']
+    // The compact rail stays one fact: the viewer's role.
+    const subtitle = [teamStandingSummary(row.team, { count: !rail }), props.showHome ? row.homeName : '']
         .filter((part) => part.length > 0)
         .join(' · ');
 

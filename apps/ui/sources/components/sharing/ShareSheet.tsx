@@ -114,6 +114,7 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             ...(adapter.sendCopy ? [{ testID: `${idPrefix}${adapter.namespace}-send-copy`, label: t('shareSheet.sendCopy'),
                 leading: <ShareHandoffIcon name="copy" />, onPress: adapter.sendCopy }] : []),
         ]}
+        note={presentation === 'full' ? adapter.footnote : undefined}
         done={props.primaryAction ?? (onRequestClose ? { testID: `${idPrefix}${adapter.namespace}-done`, label: t('common.done'), onPress: onRequestClose } : undefined)}>
         {adapter.description ? <Text variant="body" style={styles.description}>{adapter.description}</Text> : null}
         <SelectionList rootStep={rootStep} syncActiveStep={activeStep ?? undefined}

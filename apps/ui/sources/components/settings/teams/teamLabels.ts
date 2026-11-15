@@ -42,6 +42,19 @@ export function teamViewerStandingLabel(team: Pick<TeamSummaryV1, 'viewerRole' |
 }
 
 /**
+ * A Team row's line 2 wherever Teams are listed (the Teams directory, a share sheet's Teams): the
+ * viewer's standing, then its active members when the Home shares the count.
+ */
+export function teamStandingSummary(team: Pick<TeamSummaryV1, 'viewerRole' | 'capabilities' | 'counts'>,
+    options?: Readonly<{ count?: boolean }>): string {
+    const counts = team.counts;
+    return [
+        teamViewerStandingLabel(team) ?? '',
+        options?.count !== false && counts ? t('teams.groups.memberCount', { count: counts.members - counts.suspendedMembers }) : '',
+    ].filter((part) => part.length > 0).join(' · ');
+}
+
+/**
  * The one sentence of consequence that accompanies a role wherever it can be
  * chosen or read.
  *

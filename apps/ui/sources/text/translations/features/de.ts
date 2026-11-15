@@ -2354,6 +2354,10 @@ const de: ConnectedServicesSettingsCopy = {
     setupProvidersPointer: 'Modellanbieter wie OpenRouter und Ollama richtest du unter Anbieter ein.',
     setupOpenProviders: 'Anbieter öffnen',
     setupTrust: 'In deinem Konto gespeichert und nur von deinen Rechnern genutzt.',
+    setupStartDevice: 'Du bekommst einen Code, den du im Browser eingibst. Melde dich dort an, der Rest geht von selbst.',
+    setupStartBrowser: 'Öffnet eine Anmeldeseite in einem neuen Tab. Melde dich dort an, danach geht es hier weiter.',
+    setupStartBrowserPaste: 'Öffnet eine Anmeldeseite in einem neuen Tab. Melde dich an und füge dann den angezeigten Code hier ein.',
+    setupImportLead: ({ service }: { service: string }) => `Übernimmt den ${service}-Login, der auf dem gewählten Rechner schon angemeldet ist.`,
     setupConnectedCount: ({ count }) => `${count} verbunden`,
     settleConnectedAs: ({ identity }) => `Gerade verbunden als ${identity}.`,
     settleConnected: 'Gerade verbunden.',
@@ -12964,6 +12968,7 @@ const shareSheetTranslations = { de: {
             levels: { canUse: 'Kann es nutzen' },
             help: { use: 'ihre Agenten laufen über deine Maschine; sie sehen es nie' },
             description: 'Wähle ein Team. Danach wählst du, über welche Maschine die Nutzung läuft und wer im Team es bekommt.',
+            footnote: 'Die Agents der Mitglieder nutzen es über deinen Rechner. Sie sehen es nie.',
         },
         documents: {
             title: 'Teilen',

@@ -1659,6 +1659,7 @@ const ConnectedAccountServiceController = React.memo(
                     embedded={embedded}
                     key={`manual:${activeMode.id}`}
                     title={resolveProjectedLocalizedText(activeMode.title, localizeServiceText) || title}
+                    lead={activeMode.credentialOrigin === 'native_import' ? t('connectedServicesSettings.setupImportLead', { service: title }) : undefined}
                     localize={localizeServiceText}
                     fields={activeMode.fields}
                     accountLifetime={(!accountDirectMode || panelIntent?.kind === 'add') && 'scope' in accountLifetime ? accountLifetime : undefined}
@@ -1860,6 +1861,9 @@ const ConnectedAccountServiceController = React.memo(
             && (startableMode.kind === 'oauthDeviceCode' || startableMode.kind === 'oauthAuthorizationCode') ? (
             <ConnectedServiceSetupFlowActions
                 onCancel={panelCancel}
+                description={t(startableMode.kind === 'oauthDeviceCode' ? 'connectedServicesSettings.setupStartDevice'
+                    : startableMode.allowRawAuthorizationCode === true ? 'connectedServicesSettings.setupStartBrowserPaste'
+                    : 'connectedServicesSettings.setupStartBrowser')}
                 primary={{
                     testID: startableMode.kind === 'oauthDeviceCode' ? 'connected-account-device:start' : 'connected-account-oauth:start',
                     label: resolveConnectedAccountModeTitle(startableMode, localizeServiceText),

@@ -2360,6 +2360,10 @@ const es: ConnectedServicesSettingsCopy = {
     setupProvidersPointer: 'Los proveedores de modelos como OpenRouter y Ollama se configuran en Proveedores.',
     setupOpenProviders: 'Abrir Proveedores',
     setupTrust: 'Se guarda en tu cuenta y solo lo usan tus máquinas.',
+    setupStartDevice: 'Recibirás un código para introducir en tu navegador. Inicia sesión allí y esto termina solo.',
+    setupStartBrowser: 'Abre una página de inicio de sesión en una pestaña nueva. Inicia sesión allí y volverás aquí.',
+    setupStartBrowserPaste: 'Abre una página de inicio de sesión en una pestaña nueva. Inicia sesión y pega aquí el código que te muestre.',
+    setupImportLead: ({ service }: { service: string }) => `Copia el inicio de sesión de ${service} que ya está abierto en la máquina elegida.`,
     setupConnectedCount: ({ count }) => `${count} conectadas`,
     settleConnectedAs: ({ identity }) => `Conectada ahora mismo como ${identity}.`,
     settleConnected: 'Conectada ahora mismo.',
@@ -13204,6 +13208,7 @@ const shareSheetTranslations = { es: {
             levels: { canUse: 'Puede usarlo' },
             help: { use: 'sus agentes pasan por tu máquina; nunca lo ven' },
             description: 'Elige un equipo. Luego eliges por qué máquina pasa el uso y quién del equipo lo recibe.',
+            footnote: 'Los agentes de los miembros lo usan a través de tu máquina. Nunca lo ven.',
         },
         documents: {
             title: 'Compartir',

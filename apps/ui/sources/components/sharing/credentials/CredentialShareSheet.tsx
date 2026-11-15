@@ -43,6 +43,7 @@ function createCredentialShareAdapter(source: TeamCredentialSourceHint): ShareSh
     title: t('shareSheet.credentials.title'),
     description: credentialBrokeredSourceUseMessage(source.kind === 'connected_account' ? source.account.service
       : source.kind === 'connected_pool' ? source.service : undefined) ?? t('shareSheet.credentials.description'),
+    footnote: t('shareSheet.credentials.footnote'),
     levels: {
       view: canUse,
       edit: { label: canUse.label },
