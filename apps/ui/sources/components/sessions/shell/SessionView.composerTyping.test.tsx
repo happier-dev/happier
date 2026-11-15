@@ -20,6 +20,7 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { ManagedOpaquePresetReadV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { PENDING_INPUT_PROTOCOL_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -131,8 +132,9 @@ let draftWritesStarted = 0;
 let syncDraftCase = false;
 let pendingEditCase = false;
 let providerUsageRead: (() => Promise<Response>) | null = null;
+let managedWakeRead: (() => Response) | null = null;
 beforeEach(({ task }) => {
-  draftRecords.clear(); heldDraftWrite = null; heldDraftRead = null; draftWritesStarted = 0; providerUsageRead = null;
+  draftRecords.clear(); heldDraftWrite = null; heldDraftRead = null; draftWritesStarted = 0; providerUsageRead = null; managedWakeRead = null;
   // Only the new cases extend their external Home contracts; preserve existing local-draft fixtures.
   syncDraftCase = task.name.includes('first draft-status') || task.name.includes('before its draft read lands');
   pendingEditCase = task.name.includes('real queued submission');
@@ -176,6 +178,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
   },
   request: async (url, init) => {
     const path = new URL(String(url)).pathname;
+    if (path === '/v1/machines/managed/actions/get' && managedWakeRead) return managedWakeRead();
     if (path === '/v4/connect/qualified/provider-account-usage/record' && providerUsageRead) return providerUsageRead();
     if (/^\/v[12]\/account\/session-drafts\//.test(path)) {
       if (path.endsWith('/list')) { await heldDraftRead?.promise; return Response.json({ items: [...draftRecords.values()] }); }
@@ -325,6 +328,39 @@ describe('SessionView composer typing', () => {
     expect((await sync.ensureSessionVisibleForMessageRoute('s1', {
       serverId: runtime.serverId, forceRefresh: true, hydrateMessages: false,
     })).kind).toBe('available');
+  });
+
+  it('keeps the mounted composer usable when managed wake returns an opaque preset row without a launch', async () => {
+    const homeId = runtime.serverIdentityId;
+    const { default: nacl } = await import('tweetnacl');
+    const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
+    const installationPublicKey = encodeBase64(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(5)).publicKey, 'base64url');
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    const managed = ManagedOpaquePresetReadV1Schema.parse({
+      machine: { id: 'managed-opaque', homeId, custodianAccountId: 'account-a',
+        preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, controller,
+        controllerAccess: { custodian: { accountId: 'account-a' }, installationPublicKey },
+        allocation: 'bound', creationState: 'active', enrolledMachineId: 'm1',
+        desired: 'start', desiredWhen: 'now', intentRevision: 1,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true },
+      presetContent: { content: { t: 'plain', v: { v: 1, name: 'Private preset' } }, recipientEnvelope: null },
+    });
+    managedWakeRead = () => Response.json(managed);
+    const session = storage.getState().sessions.s1;
+    const requestedAt = session.activeAt + 1;
+    storage.getState().applySessions([{ ...session, active: false,
+      pendingActivationAuthorization: { status: 'waiting', requestId: 'wake-request', requestedAt,
+        managedWakeTargetV1: { homeId, managedId: managed.machine.id, enrolledMachineId: 'm1',
+          expectedIntentRevision: 1, controller, reason: 'admitted-work',
+          origin: { kind: 'session-input', session: { homeId, sessionId: 's1' },
+            pendingRequestId: 'wake-request', requestedAt } } } }]);
+    const screen = await renderScreen();
+    try {
+      await vi.waitFor(() => expect(findAgentInput(screen).props.statusBadges)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ testID: 'session.managedWake.deliveryUnknown.badge' })])));
+      await typeCharacters(screen, '', 'Still editable');
+      expect(composerText(findAgentInput(screen))).toBe('Still editable');
+    } finally { await screen.unmount(); }
   });
 
   it('explains a refused /fork from the mounted composer and retains its draft without sending agent input', async () => {

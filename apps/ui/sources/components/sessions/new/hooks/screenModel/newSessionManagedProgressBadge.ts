@@ -15,6 +15,7 @@ import { t } from '@/text';
 import type { NewSessionManagedMachineDraftModel } from '../newSessionScreenModelTypes';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { readManagedMachineSelectionName, readManagedMachineSelectionReceipt } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 /** The Home a created machine joins, by the name the user knows it by. */
 function managedCreationHomeName(homeId: string): string {
@@ -27,8 +28,8 @@ const DEVICE_GLYPH = { phone: 'device-mobile', browser: 'globe', desktop: 'lapto
  * Who does the work (58d U5). A receipt with no controller is created, installed and joined by the app that
  * pressed Create: this device, which the device-local draft names. A controller's creation says nothing here.
  */
-function managedCreationOrigin(selection: NonNullable<NewSessionManagedMachineDraftModel['selection']>) {
-    if (selection.receipt.controller) return null;
+function managedCreationOrigin(receipt: ReturnType<typeof readManagedMachineSelectionReceipt>) {
+    if (!receipt || receipt.controller) return null;
     const device = readMachineAddDevice();
     const label = device === 'phone' ? t('managedMachines.creation.fromThis.phone')
         : device === 'browser' ? t('managedMachines.creation.fromThis.browser') : t('managedMachines.creation.fromThis.desktop');
@@ -53,8 +54,9 @@ export function buildNewSessionManagedProgressBadge(
     if (draft.progress.kind === 'idle') return buildInterruptedBadge(draft, draft.selection);
     if (draft.progress.kind === 'ready') return null;
     const { selection, progress } = draft;
-    const machineName = selection.receipt.launch.name;
-    const origin = managedCreationOrigin(selection);
+    const receipt = readManagedMachineSelectionReceipt(selection);
+    const machineName = readManagedMachineSelectionName(selection) ?? t('common.machine');
+    const origin = managedCreationOrigin(receipt);
     const { setup, operation, observedStatus, failed, label, tone } = describeManagedCreationProgress(machineName, progress);
     const failureDiagnostic = failed ? progress.kind === 'failed' && progress.diagnosticDetail
         ? progress.diagnosticDetail : operation?.error
@@ -80,8 +82,8 @@ export function buildNewSessionManagedProgressBadge(
     return buildManagedProgressStatusBadge({
         // The provider's own mark, as the picker row that started it drew it (lab m-pick Aprogd).
         machineName, mark: React.createElement(ManagedPresetMark, { serverId: selection.selection.homeId,
-            preset: { controller: selection.receipt.controller, launch: selection.receipt.launch }, size: 16 }),
-        launch: selection.receipt.preset?.name ?? '', stages, failed,
+            preset: { controller: receipt?.controller, launch: receipt?.launch }, size: 16 }),
+        launch: receipt?.preset?.name ?? selection.presetOrigin?.name ?? '', stages, failed,
         // Without an operation to report, "waiting to create" is a controller's wait: this device is doing the current step.
         label: !localRecipe ? label : current === 'join' ? t('managedMachines.creation.joining', { name: machineName })
             : current === 'install' ? t('managedMachines.creation.installing', { name: machineName })
@@ -122,14 +124,15 @@ function buildInterruptedBadge(
 ): AgentInputStatusBadge | null {
     const retained = draft.retainedMachine;
     if (!retained || !isManagedCreationInterrupted(retained.machine)) return null;
-    const machineName = selection.receipt.launch.name;
+    const receipt = readManagedMachineSelectionReceipt(selection);
+    const machineName = readManagedMachineSelectionName(selection) ?? t('common.machine');
     const home = managedCreationHomeName(selection.selection.homeId);
-    const origin = managedCreationOrigin(selection);
-    const mayBill = selection.receipt.billing.location !== 'local';
+    const origin = managedCreationOrigin(receipt);
+    const mayBill = receipt?.billing.location !== 'local';
     return buildManagedProgressStatusBadge({
         machineName, mark: React.createElement(ManagedPresetMark, { serverId: selection.selection.homeId,
-            preset: { controller: selection.receipt.controller, launch: selection.receipt.launch }, size: 16 }),
-        launch: selection.receipt.preset?.name ?? '', ...(origin ? { origin: origin.label } : {}),
+            preset: { controller: receipt?.controller, launch: receipt?.launch }, size: 16 }),
+        launch: receipt?.preset?.name ?? selection.presetOrigin?.name ?? '', ...(origin ? { origin: origin.label } : {}),
         stages: rowStages(retained.machine, false, home),
         failed: false, label: t('managedMachines.creation.interruptedTitle'),
         message: mayBill ? t('managedMachines.creation.interruptedMayBill') : t('managedMachines.creation.interruptedWaiting'),

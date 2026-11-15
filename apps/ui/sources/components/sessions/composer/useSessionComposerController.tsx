@@ -1498,10 +1498,10 @@ export function useSessionComposerController({
         : formatAgentLikeIdForDisplay(agentInputAgentType);
     const managedWakeNames = React.useMemo(() => ({
         controllerName: managedWakeController ? getMachineSentenceName(managedWakeController) : t('common.machine'),
-        machineName: managedPendingMachine?.launch.name ?? (sessionMachineRecord ? getMachineSentenceName(sessionMachineRecord) : t('common.machine')),
+        machineName: managedPendingMachine?.launch?.name ?? (sessionMachineRecord ? getMachineSentenceName(sessionMachineRecord) : t('common.machine')),
         homeName: resolveHomeDisplayLabel(getServerProfileById(sessionAccountScope?.serverId ?? ''), sessionAccountScope?.serverId ?? ''),
         agentName: currentAgentLabel,
-    }), [managedWakeController, managedPendingMachine?.launch.name, sessionMachineRecord, sessionAccountScope?.serverId, currentAgentLabel]);
+    }), [managedWakeController, managedPendingMachine?.launch?.name, sessionMachineRecord, sessionAccountScope?.serverId, currentAgentLabel]);
     // `sessions.agentSwitching` is server-represented and fails closed. The
     // canonical decision runtime reads the server bit as
     // `readServerEnabledBit(...) === true` and applies the catalog's dependency

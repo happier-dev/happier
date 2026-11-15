@@ -5,6 +5,7 @@ import { act } from 'react-test-renderer';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { NewSessionManagedMachineDraftModel } from '../newSessionScreenModelTypes';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { t } from '@/text';
@@ -56,6 +57,27 @@ function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: Ne
 }
 
 describe('buildNewSessionScreenVariantModel', () => {
+    it.each([false, true])('presents deferred preset progress before private reviewed facts are available (wizard=%s)', async wizard => {
+        const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain',
+            content: { v: 1, name: 'Deferred guest', launch: selection.receipt.launch } });
+        const deferred = createManagedMachineSelectionDraft({
+            deferredAuthorPreset: true,
+            selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 3 },
+            presetOrigin: { id: 'preset', homeId: 'home', revision: 3, name: 'Deferred guest',
+                controller: { machineId: 'controller', installationId: 'installation' } },
+            presetContentOverride: { content: sealed.content },
+        });
+        const badge = buildVariant(wizard, { selection: deferred, acquisition: null,
+            select: vi.fn(), retryInstallation: vi.fn(), progress: { kind: 'acquiring', managedId: 'paid', operation } })
+            .statusBadges?.find(item => item.key === 'managed-machine-progress');
+        expect(badge?.label).toBe('Waiting for guest SSH');
+        const screen = await renderScreen(React.createElement(React.Fragment, null, badge?.renderPopover?.({
+            open: true, anchorRef: React.createRef(), onRequestClose: () => {},
+        })));
+        expect(screen.getTextContent()).toContain('Deferred guest');
+        await screen.unmount();
+    });
+
     it.each([false, true])('discloses only the Team source selected by creation operands (wizard=%s)', (wizard) => {
         const selectedSource = { teamId: 'team-a', resourceId: 'shared-account', teamName: 'Studio', accountName: 'Build account' };
         const otherSource = { teamId: 'team-b', resourceId: 'other-account', teamName: 'Other team', accountName: 'Unused account' };

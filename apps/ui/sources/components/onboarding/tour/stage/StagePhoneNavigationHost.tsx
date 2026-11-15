@@ -41,17 +41,17 @@ export function StagePhoneNavigationHost(props: Readonly<{
     return <View testID="demo-stage-phone-navigation-host" style={[CONTAINMENT, { backgroundColor }]}>
         <NavigationIndependentTree>
             <NavigationContainer initialState={{ index: 1, routes: [{ name: 'previous' }, { name: 'capture' }] }}>
-                <Stack.Navigator screenOptions={{
+                <Stack.Navigator screenOptions={({ navigation }) => ({
                     ...createAppStackScreenOptions({ theme, headerBackTitle: '', shouldUseCustomHeader: false }),
                     headerShown: Boolean(title), animation: 'none',
                     headerStyle: { backgroundColor }, contentStyle: { backgroundColor },
                     headerTitleAlign: 'center', headerTitleStyle: Typography.variant('heading'),
                     // Native-stack's web fallback uses a desktop arrow. Render the same canonical
                     // glyph that the app's DefaultBackButton selects on iOS for this iPhone specimen.
-                    headerLeft: () => <HappierPressable accessibilityRole="button" accessibilityLabel="Back" testID="demo-stage-phone-back">
+                    headerLeft: () => <HappierPressable accessibilityRole="button" accessibilityLabel="Back" testID="demo-stage-phone-back" onPress={navigation.goBack}>
                         <Icon name="caret-left" size={24} color={theme.colors.chrome.header.foreground} />
                     </HappierPressable>,
-                }}>
+                })}>
                     <Stack.Screen name="previous" component={PreviousRoute} />
                     <Stack.Screen name="capture" options={{ title }}>
                         {() => <SafeAreaView edges={ownsPageHeader ? TOP_BOTTOM_EDGES : BOTTOM_EDGE} style={CONTAINMENT}>
