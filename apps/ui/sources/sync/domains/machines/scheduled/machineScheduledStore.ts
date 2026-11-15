@@ -5,8 +5,9 @@ import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/server
 import { subscribeLocalServiceCredentialRetirement } from '@/sync/domains/local/services/inventory/sharedStore';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
-export type MachineScheduledKey = Omit<MachineScheduledInputV1, 'sinceRevision' | 'refresh'> & Readonly<{ accountId: string; credentialKey: string }>;
+export type MachineScheduledKey = Omit<MachineScheduledInputV1, 'sinceRevision' | 'refresh'> & Pick<ServerCredentialAccountScopeBinding, 'accountId' | 'credentialKey'>;
 type Snapshot = Extract<MachineScheduledResultV1, { kind: 'snapshot' }>;
 export type MachineScheduledState = Readonly<{ status: 'loading' | 'ready' | 'error'; snapshot: Snapshot | null; errorCode?: string }>;
 export type MachineScheduledClient = (actionId: MachineScheduledActionId, input: MachineScheduledKey & Readonly<{ sinceRevision?: number; refresh?: boolean }>, signal?: AbortSignal) => Promise<MachineScheduledResultV1>;
