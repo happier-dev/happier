@@ -162,6 +162,7 @@ export type IrohNodeMachineFailureCode =
   // Host-private status categories. These never change the stream decision byte.
   | 'machine-admission-timeout'
   | 'local-http-head-timeout'
+  | 'local-http-head-rejected'
   | 'local-capability-timeout'
   | 'local-capability-rejected'
   | 'machine-stream-decision-timeout'

@@ -653,6 +653,7 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
           runtime: providerMachineRuntime,
           resolveTrustRoots: () => trustRoots,
           beginSessionApplicationRequest: sessionId => sessionId === binding.sessionId ? brokerEvidence.beginRequest() : undefined,
+          observeSessionCarrierFailure: (sessionId, read) => { if (sessionId === binding.sessionId) brokerEvidence.observeCarrierFailure(read); },
         });
       } catch (error) {
         await disposeBeforeMachineClient().catch(() => undefined);

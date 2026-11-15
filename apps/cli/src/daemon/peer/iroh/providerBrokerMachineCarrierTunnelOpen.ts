@@ -91,6 +91,9 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
   nowMs?: () => number;
   fetchImpl?: typeof fetch;
   beginSessionApplicationRequest?: (sessionId: string) => SessionBrokerApplicationOutcomeRecorder | undefined;
+  /** Hands a Session's evidence its carrier's native failure stage, for a
+   * request refused before stream admission and so before any outcome record. */
+  observeSessionCarrierFailure?: (sessionId: string, read: () => Promise<MachineCarrierFailureDiagnostic | undefined>) => void;
 }>): (request: Readonly<{
   brokerOpen: Extract<BrokerOpenResponse, { ok: true }>;
   refreshBrokerOpen?: (signal?: AbortSignal) => Promise<BrokerOpenResponse>;
@@ -270,6 +273,10 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     } catch (error) {
       await tunnel.close().catch(() => undefined);
       throw error;
+    }
+    const readFailureDiagnostic = tunnel.readFailureDiagnostic;
+    if (readFailureDiagnostic && payload.consumer.kind === 'session') {
+      input.observeSessionCarrierFailure?.(payload.consumer.sessionId, readFailureDiagnostic);
     }
     let releaseSettled = false;
     let retireInFlight: Promise<void> | null = null;

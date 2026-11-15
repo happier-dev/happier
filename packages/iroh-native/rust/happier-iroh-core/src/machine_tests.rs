@@ -1,6 +1,6 @@
 use crate::{
     EndpointConfig, HomeAcceptor, HomeAcceptorConfig, HomeTunnel, HomeTunnelConfig, IrohCapProfile,
-    IrohEndpoint, IrohError, MachineAcceptor, MachineAcceptorConfig, MachineHandshakeProvider,
+    IrohEndpoint, IrohError, MachineAcceptor, MachineAcceptorConfig, MachineFailureCode, MachineHandshakeProvider,
     MachineHttpTunnel, MachineTunnel, MachineTunnelConfig, RelayPolicy,
     IROH_MACHINE_APPLICATION_CAPABILITY_HEADER, IROH_MACHINE_APPLICATION_PORT_HEADER,
     IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER,
@@ -847,6 +847,80 @@ async fn machine_http_tunnel_requires_capability_before_opening_a_machine_stream
     assert_eq!(tunnel.status().streams_opened, 1);
     tunnel.stop();
     acceptor.stop();
+}
+
+/// A Provider client's large request body is still unread when the gated
+/// listener rejects its head, so the kernel answers with RST (ECONNRESET) and
+/// no machine stream or admission is attempted. The tunnel status must name
+/// the content-free local stage instead of leaving the reset unexplained.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn machine_http_tunnel_records_a_rejected_head_that_resets_its_client() {
+    let server = endpoint(IrohCapProfile::MachineBulk).await;
+    let client = endpoint(IrohCapProfile::MachineBulk).await;
+    let app_contacts = Arc::new(AtomicUsize::new(0));
+    let app_port = echo_server(Arc::clone(&app_contacts)).await.port();
+    let admission_contacts = Arc::new(AtomicUsize::new(0));
+    let admission_target = admission_server(
+        client.id().to_string(),
+        Arc::new(Mutex::new(VecDeque::from([vec![app_port.to_string()]]))),
+        Arc::clone(&admission_contacts),
+    )
+    .await;
+    let acceptor = MachineAcceptor::start(&server, MachineAcceptorConfig { admission_target })
+        .expect("machine acceptor");
+    let tunnel = MachineHttpTunnel::start(
+        &client,
+        MachineTunnelConfig {
+            endpoint_id: server.id().to_string(),
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            direct_addresses: vec![direct_addr(&server).await],
+            relay_urls: vec![],
+            handshake_json: r#"{"v":1,"kind":"provider_broker"}"#.to_owned(),
+            cap_profile: IrohCapProfile::MachineBulk,
+        },
+    )
+    .await
+    .expect("machine HTTP tunnel");
+    assert_eq!(tunnel.status().last_failure, None);
+
+    let body = vec![b'x'; 256 * 1024];
+    let send_and_read = |head: String| {
+        let addr = tunnel.local_addr().expect("HTTP loopback addr");
+        let body = body.clone();
+        async move {
+            let mut socket = TcpStream::connect(addr).await.expect("connect HTTP loopback");
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&body).await;
+            let mut response = Vec::new();
+            tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut response))
+                .await
+                .expect("gated listener closes the connection")
+        }
+    };
+
+    // A bearer that is not this tunnel's capability: no capability line.
+    let rejected = send_and_read(format!(
+        "POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        "f".repeat(64), body.len(),
+    )).await;
+    assert_eq!(rejected.expect_err("unread body resets the client").kind(), std::io::ErrorKind::ConnectionReset);
+    assert_eq!(tunnel.status().last_failure, Some(MachineFailureCode::LocalCapabilityRejected));
+
+    // Correct capability but ambiguous framing: a malformed head, not a capability refusal.
+    let malformed = send_and_read(format!(
+        "POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nTransfer-Encoding: chunked\r\n\r\n",
+        tunnel.local_capability(), body.len(),
+    )).await;
+    assert_eq!(malformed.expect_err("unread body resets the client").kind(), std::io::ErrorKind::ConnectionReset);
+    assert_eq!(tunnel.status().last_failure, Some(MachineFailureCode::LocalHttpHeadRejected));
+
+    assert_eq!(admission_contacts.load(Ordering::Relaxed), 0);
+    assert_eq!(app_contacts.load(Ordering::Relaxed), 0);
+    assert_eq!(tunnel.status().streams_opened, 0);
+    tunnel.stop_and_wait().await;
+    acceptor.stop_and_wait().await;
+    client.shutdown().await;
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

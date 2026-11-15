@@ -97,7 +97,8 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
       ? createProviderBrokerMachineCarrierTunnelOpen({ accountId,
           localMachineId: dependencies.machineId, runtime: dependencies.runtime,
           resolveTrustRoots: dependencies.resolveTrustRoots,
-          beginSessionApplicationRequest: sessionId => sessionId === input.sessionId ? input.beginBrokerRequest?.() : undefined })
+          beginSessionApplicationRequest: sessionId => sessionId === input.sessionId ? input.beginBrokerRequest?.() : undefined,
+          observeSessionCarrierFailure: (sessionId, read) => { if (sessionId === input.sessionId) input.observeBrokerCarrierFailure?.(read); } })
       : undefined;
     const lease = await observePhase('runtime_registry', () => acquireAuthoritativePluginRuntimeRegistryLease({
       happyHomeDir: dependencies.happyHomeDir, controller: dependencies.controller,

@@ -1,6 +1,7 @@
 import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionBrokerApplicationOutcomeRecorder } from './providerBrokerApplicationFailure';
 import { logger } from '@/ui/logger';
+import type { MachineCarrierFailureDiagnostic } from '@/daemon/peer/iroh/machineCarrier';
 
 export function recordSessionBrokerApplicationEvidenceRead(input: Readonly<{
   sessionId: string;
@@ -10,12 +11,14 @@ export function recordSessionBrokerApplicationEvidenceRead(input: Readonly<{
 }> & (Readonly<{ outcome: 'hit' }> | Readonly<{
   outcome: 'miss';
   reason: 'no_evidence' | 'turn_mismatch' | 'pid_mismatch';
+  /** Fixed native carrier stage; a diagnostic, never a denial or authority fact. */
+  carrierFailure?: MachineCarrierFailureDiagnostic;
 }>)): void {
   try {
     logger.infoFile('[provider-broker-application]', {
       stage: 'evidence_read', sessionId: input.sessionId, turnId: input.turnId, pid: input.pid,
       ...(input.processStartTimeMs !== undefined ? { processStartTimeMs: input.processStartTimeMs } : {}),
-      outcome: input.outcome, ...(input.outcome === 'miss' ? { reason: input.reason } : {}),
+      outcome: input.outcome, ...(input.outcome === 'miss' ? { reason: input.reason, ...input.carrierFailure } : {}),
     });
   } catch { /* Diagnostics cannot change the refusal read outcome. */ }
 }
@@ -29,7 +32,13 @@ export function createSessionBrokerApplicationEvidence(input: Readonly<{
   isCurrent(): boolean;
 }>) {
   let lastDenial: Readonly<{ turnId: string; denial: SessionRuntimeTeamCredentialDenialDetailsV1 }> | null = null;
+  let readCarrierFailure: (() => Promise<MachineCarrierFailureDiagnostic | undefined>) | undefined;
   return {
+    /** The Session's current carrier. A request the native listener refuses
+     * before stream admission never reaches `beginRequest`. */
+    observeCarrierFailure(read: () => Promise<MachineCarrierFailureDiagnostic | undefined>): void {
+      readCarrierFailure = read;
+    },
     beginRequest(): SessionBrokerApplicationOutcomeRecorder {
       const turnId = input.readActiveTurnId();
       const admitted = !!turnId && input.isCurrent();
@@ -50,14 +59,20 @@ export function createSessionBrokerApplicationEvidence(input: Readonly<{
         else if (lastDenial?.turnId === turnId) lastDenial = null;
       };
     },
-    readDenial(turnId: string): SessionRuntimeTeamCredentialDenialDetailsV1 | null {
+    async readDenial(turnId: string): Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null> {
       const current = input.isCurrent();
       const denial = current && lastDenial?.turnId === turnId ? lastDenial.denial : null;
+      const reason = denial ? undefined : !current ? 'pid_mismatch' : lastDenial ? 'turn_mismatch' : 'no_evidence';
+      let carrierFailure: MachineCarrierFailureDiagnostic | undefined;
+      // Only an unexplained failure reads native status. It names where the
+      // carrier closed and never becomes a refusal.
+      if (reason === 'no_evidence') {
+        try { carrierFailure = await readCarrierFailure?.(); } catch { /* Diagnostic only. */ }
+      }
       recordSessionBrokerApplicationEvidenceRead({
         sessionId: input.sessionId, turnId, pid: input.pid,
         ...(input.processStartTimeMs !== undefined ? { processStartTimeMs: input.processStartTimeMs } : {}),
-        ...(denial ? { outcome: 'hit' } : { outcome: 'miss',
-          reason: !current ? 'pid_mismatch' : lastDenial ? 'turn_mismatch' : 'no_evidence' }),
+        ...(reason ? { outcome: 'miss', reason, ...(carrierFailure ? { carrierFailure } : {}) } : { outcome: 'hit' }),
       });
       return denial;
     },

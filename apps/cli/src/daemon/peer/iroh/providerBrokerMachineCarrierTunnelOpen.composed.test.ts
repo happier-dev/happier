@@ -145,6 +145,50 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     await expect(provider?.()).rejects.toMatchObject({ code: 'broker_consumer_closed' });
   });
 
+  it('names the native carrier stage of an unrefused turn failure without inventing a denial', async () => {
+    const getMachineTunnelStatus = vi.fn(async () => ({ machineTunnelId: 'tunnel-1', endpointHandle: 'endpoint-1',
+      localPort: 41_001, connectionActive: true, streamsOpened: 0, remoteEndpointId: targetEndpoint,
+      observedPath: 'direct', startedAtMs: 1, lastErrorCode: 'local-http-head-rejected' }));
+    const runtime = await createDaemonMachineIrohRuntime({
+      happyHomeDir: '/daemon-home', relayConfig: { relayPolicy: 'disabled', relayUrls: [] },
+      // The native addon is the OS/transport boundary; the carrier and evidence owners remain real.
+      native: {
+        createEndpoint: async () => ({ endpointHandle: 'endpoint-1', endpointId: initiatorEndpoint }),
+        getEndpointStatus: async () => ({ endpointHandle: 'endpoint-1', endpointId: initiatorEndpoint,
+          directAddresses: [], relayUrls: [], capProfile: 'machineBulk', active: true }),
+        startMachineHttpTunnel: async () => ({ machineTunnelId: 'tunnel-1', endpointHandle: 'endpoint-1', localPort: 41_001,
+          localCapability: 'c'.repeat(64), connectionActive: true, remoteEndpointId: targetEndpoint,
+          observedPath: 'direct', startedAtMs: 1, lastErrorCode: null }),
+        getMachineTunnelStatus, stopMachineTunnel: async () => {}, shutdownEndpoint: async () => {},
+      } as never,
+    });
+    if (!runtime.available) throw new Error('Expected native endpoint');
+    const evidence = createSessionBrokerApplicationEvidence({ sessionId: 'session-1', pid: 123,
+      readActiveTurnId: () => 'turn-1', isCurrent: () => true });
+    const open = createProviderBrokerMachineCarrierTunnelOpen({
+      accountId: 'account-worker', localMachineId: 'machine-worker', runtime,
+      resolveTrustRoots: () => [root], nowMs: () => 200,
+      beginSessionApplicationRequest: () => evidence.beginRequest(),
+      observeSessionCarrierFailure: (sessionId, read) => { if (sessionId === 'session-1') evidence.observeCarrierFailure(read); },
+    });
+    const log = vi.spyOn(logger, 'infoFile');
+    onTestFinished(() => log.mockRestore());
+    const tunnel = await open({ brokerOpen: brokerOpen(), refreshBrokerOpen: async () => brokerOpen() });
+    try {
+      expect(getMachineTunnelStatus).not.toHaveBeenCalled();
+      // The Pi request was reset by the gated listener before any stream admission.
+      await expect(evidence.readDenial('turn-1')).resolves.toBeNull();
+      const reads = log.mock.calls.filter(([message, data]) => message === '[provider-broker-application]'
+        && data && typeof data === 'object' && 'stage' in data && data.stage === 'evidence_read').map(([, data]) => data);
+      expect(reads).toEqual([{ stage: 'evidence_read', sessionId: 'session-1', turnId: 'turn-1', pid: 123,
+        outcome: 'miss', reason: 'no_evidence', closingSide: 'initiator', closingStage: 'local_http_head' }]);
+      expect(getMachineTunnelStatus).toHaveBeenCalledExactlyOnceWith('tunnel-1');
+    } finally {
+      await tunnel.close();
+      await runtime.shutdown();
+    }
+  });
+
   it('keeps pending remote retirement in native shutdown custody without redial', async () => {
     let opened = 0;
     let rejectResponse!: (error: Error) => void;
@@ -780,15 +824,20 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
       localPort: 41_004, localCapability: 'f'.repeat(64), remoteEndpointId: targetEndpoint,
       observedPath: 'direct' as const, close: vi.fn(async () => undefined),
     }));
-    const times = stream === 'first' ? [200, 200, 200, 20_000] : [200, 200, 200, 200, 20_000];
-    const refreshBrokerOpen = vi.fn(async () => brokerOpen(authority({ grantId: `fresh-${refreshBrokerOpen.mock.calls.length}` })));
+    let now = 200;
+    const refreshBrokerOpen = vi.fn(async () => {
+      const refreshed = brokerOpen(authority({ grantId: `fresh-${refreshBrokerOpen.mock.calls.length}` }));
+      if (stream === 'later' && refreshBrokerOpen.mock.calls.length === 2) now = 20_000;
+      return refreshed;
+    });
     const open = createProviderBrokerMachineCarrierTunnelOpen({
       accountId: 'account-worker', localMachineId: 'machine-worker',
       runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel } as never,
-      resolveTrustRoots: () => [root], nowMs: () => times.shift() ?? 20_000,
+      resolveTrustRoots: () => [root], nowMs: () => now,
     });
     await open({ brokerOpen: brokerOpen(), refreshBrokerOpen });
     const provider = openHttpTunnel.mock.calls[0]?.[0].handshakeProvider;
+    if (stream === 'first') now = 20_000;
     if (stream === 'later') await expect(provider?.()).resolves.toMatchObject({ kind: 'provider_broker' });
     await expect(provider?.()).rejects.toMatchObject({ code: 'grant_expired' });
     expect(refreshBrokerOpen).toHaveBeenCalledTimes(stream === 'first' ? 1 : 2);
@@ -813,6 +862,8 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
       .rejects.toMatchObject({ code: 'broker_target_endpoint_changed' });
     await expect(open({ brokerOpen: brokerOpen(substituted) }))
       .rejects.toMatchObject({ code: 'grant_bad_signature' });
+    await expect(open({ brokerOpen: brokerOpen(authority({ expiresAt: 200 })) }))
+      .rejects.toMatchObject({ code: 'grant_expired' });
     await expect(open({ brokerOpen: brokerOpen(authority({
       initiator: {
         accountId: 'account-worker',
@@ -849,17 +900,22 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     expect(close).toHaveBeenCalledTimes(phase === 'control' ? 2 : 1);
   });
 
-  it('rechecks signed authority currentness immediately before dialing', async () => {
-    const openHttpTunnel = vi.fn();
-    const times = [200, 20_000];
+  it('verifies one signed authority once during synchronous admission before dialing', async () => {
+    const openHttpTunnel = vi.fn<DaemonMachineIrohRuntime['openHttpTunnel']>(async () => ({
+      localPort: 41_004, localCapability: 'f'.repeat(64), remoteEndpointId: targetEndpoint,
+      observedPath: 'direct', close: async () => undefined,
+    }));
+    let trustRootReads = 0;
     const open = createProviderBrokerMachineCarrierTunnelOpen({
       accountId: 'account-worker', localMachineId: 'machine-worker',
       runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel } as never,
-      resolveTrustRoots: () => [root],
-      nowMs: () => times.shift() ?? 20_000,
+      resolveTrustRoots: () => { trustRootReads += 1; return [root]; },
+      nowMs: () => 200,
     });
-    await expect(open({ brokerOpen: brokerOpen() })).rejects.toMatchObject({ code: 'grant_expired' });
-    expect(openHttpTunnel).not.toHaveBeenCalled();
+    const tunnel = await open({ brokerOpen: brokerOpen() });
+    expect(trustRootReads).toBe(1);
+    expect(openHttpTunnel).toHaveBeenCalledOnce();
+    await tunnel.close();
   });
 
   it('settles promptly on cancellation while native open is pending and closes its late tunnel', async () => {

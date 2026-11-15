@@ -1232,6 +1232,7 @@ export async function startDaemonSessionControlRuntime(
         consumer?: import('@happier-dev/protocol').ProviderBrokerRuntimeConsumerV1;
         providerSettingsOperationContext?: SavedSecretOperationContextV1;
         beginBrokerRequest?: () => import('@/providers/broker/providerBrokerApplicationFailure').SessionBrokerApplicationOutcomeRecorder | undefined;
+        observeBrokerCarrierFailure?: (read: () => Promise<import('@/daemon/peer/iroh/machineCarrier').MachineCarrierFailureDiagnostic | undefined>) => void;
         signal: AbortSignal;
       }>,
     ) => Promise<
@@ -12963,7 +12964,7 @@ export async function startDaemonSessionControlRuntime(
                 reason: 'no_evidence' });
             }
             return { ok: true as const, result: { kind: 'provider_broker.refusal' as const,
-              denial: evidence?.readDenial(turnId) ?? null } };
+              denial: await evidence?.readDenial(turnId) ?? null } };
           }
           if (request.operation.kind === 'provider_broker.binding.open') {
             const tracked = trackedSession;
@@ -13050,15 +13051,18 @@ export async function startDaemonSessionControlRuntime(
                   agentId: consumerAgentId,
                   agentTargetKey: operation.agentTargetKey,
                   modelId: operation.modelId,
-                  beginBrokerRequest: () => {
-                    if (operation.consumer?.kind === 'execution_run') return undefined;
-                    const evidence = tracked.teamCredentialBrokerEvidence ??= createSessionBrokerApplicationEvidence({
+                  ...(operation.consumer?.kind === 'execution_run' ? {} : (() => {
+                    const sessionEvidence = () => tracked.teamCredentialBrokerEvidence ??= createSessionBrokerApplicationEvidence({
                       sessionId, pid: runner.pid, processStartTimeMs: runner.processStartTimeMs,
                       readActiveTurnId: () => tracked.activeTurnId ?? null,
                       isCurrent: () => isCurrentTrackedSession(params.trackedSessionsByKey, tracked),
                     });
-                    return evidence.beginRequest();
-                  },
+                    return {
+                      beginBrokerRequest: () => sessionEvidence().beginRequest(),
+                      observeBrokerCarrierFailure: (read: () => Promise<import('@/daemon/peer/iroh/machineCarrier').MachineCarrierFailureDiagnostic | undefined>) =>
+                        sessionEvidence().observeCarrierFailure(read),
+                    };
+                  })()),
                   ...(operation.consumer
                     ? { consumer: operation.consumer }
                     : {}),

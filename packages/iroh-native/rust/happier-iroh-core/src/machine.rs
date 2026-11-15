@@ -54,6 +54,7 @@ pub enum MachineFailureCode {
     Transport,
     AdmissionTimeout,
     LocalHttpHeadTimeout,
+    LocalHttpHeadRejected,
     LocalCapabilityTimeout,
     LocalCapabilityRejected,
     StreamDecisionTimeout,
@@ -71,6 +72,7 @@ impl MachineFailureCode {
             Self::Transport => "transport-unavailable",
             Self::AdmissionTimeout => "machine-admission-timeout",
             Self::LocalHttpHeadTimeout => "local-http-head-timeout",
+            Self::LocalHttpHeadRejected => "local-http-head-rejected",
             Self::LocalCapabilityTimeout => "local-capability-timeout",
             Self::LocalCapabilityRejected => "local-capability-rejected",
             Self::StreamDecisionTimeout => "machine-stream-decision-timeout",
@@ -678,6 +680,23 @@ fn invalid_http_request() -> Error {
     )
 }
 
+fn rejected_local_capability() -> Error {
+    Error::new(
+        ErrorKind::PermissionDenied,
+        "capability-gated HTTP request lacks this tunnel's local capability",
+    )
+}
+
+/// Content-free status category for a local request the gated listener
+/// refused. Client transport errors (reset, broken pipe) are not refusals.
+fn local_http_request_failure(error: &Error) -> Option<MachineFailureCode> {
+    match error.kind() {
+        ErrorKind::PermissionDenied => Some(MachineFailureCode::LocalCapabilityRejected),
+        ErrorKind::InvalidData | ErrorKind::UnexpectedEof => Some(MachineFailureCode::LocalHttpHeadRejected),
+        _ => None,
+    }
+}
+
 async fn read_capability_gated_http_request_head<R>(
     socket: &mut R,
     buffered: &mut Vec<u8>,
@@ -753,7 +772,7 @@ where
             if name.eq_ignore_ascii_case(IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER.as_bytes())
                 || websocket_capability || broker_bearer || broker_key {
                 if capability_line.is_some() {
-                    return Err(invalid_http_request());
+                    return Err(rejected_local_capability());
                 }
                 let capability = if websocket_capability {
                     &value[MACHINE_WEBSOCKET_CAPABILITY_PROTOCOL_PREFIX.len()..]
@@ -761,7 +780,7 @@ where
                     &value[7..]
                 } else { value };
                 if !capabilities_equal(capability, expected_capability) {
-                    return Err(invalid_http_request());
+                    return Err(rejected_local_capability());
                 }
                 capability_line = Some((line_start, line_end + 2));
             } else if name.eq_ignore_ascii_case(b"upgrade") {
@@ -796,7 +815,7 @@ where
         line_start = line_end + 2;
     }
     let Some((capability_start, capability_end)) = capability_line else {
-        return Err(invalid_http_request());
+        return Err(rejected_local_capability());
     };
     let body_framing = if websocket {
         if !allow_websocket || !connection_upgrade || content_length.is_some() || transfer_encoding.is_some() {
@@ -1122,15 +1141,19 @@ impl MachineHttpTunnel {
                                     allow_websocket,
                                 ),
                             ).await;
+                            let record = |failure: Option<MachineFailureCode>| {
+                                if let (Some(failure), Ok(mut last)) = (failure, state.last_failure.lock()) {
+                                    *last = Some(failure);
+                                }
+                            };
+                            // A refused head closes with the client's body
+                            // unread, which the kernel reports as a reset.
+                            // Record why before that reset reaches the client.
                             let initial_request = match initial {
                                 Ok(Ok(Some(request))) => request,
-                                Err(_) => {
-                                    if let Ok(mut last) = state.last_failure.lock() {
-                                        *last = Some(MachineFailureCode::LocalHttpHeadTimeout);
-                                    }
-                                    return;
-                                }
-                                _ => return,
+                                Ok(Ok(None)) => return,
+                                Ok(Err(error)) => { record(local_http_request_failure(&error)); return; }
+                                Err(_) => { record(Some(MachineFailureCode::LocalHttpHeadTimeout)); return; }
                             };
                             let Ok(mut secured) = TcpStream::connect(private_addr).await else { return };
                             if secured.write_all(&capability).await.is_err() { return; }
@@ -1161,8 +1184,10 @@ impl MachineHttpTunnel {
                                     None
                                 },
                             };
-                            if matches!(request_result, Some(Ok(()))) {
-                                let _ = responses.await;
+                            match request_result {
+                                Some(Ok(())) => { let _ = responses.await; }
+                                Some(Err(error)) => record(local_http_request_failure(&error)),
+                                None => {}
                             }
                         });
                     }

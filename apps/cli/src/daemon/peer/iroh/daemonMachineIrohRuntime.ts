@@ -320,7 +320,8 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
         const status = await native.getMachineTunnelStatus(tunnel.machineTunnelId);
         if (!status) return undefined;
         switch (status.lastErrorCode) {
-          case 'local-http-head-timeout': return { closingSide: 'initiator', closingStage: 'local_http_head' };
+          case 'local-http-head-timeout':
+          case 'local-http-head-rejected': return { closingSide: 'initiator', closingStage: 'local_http_head' };
           case 'local-capability-timeout':
           case 'local-capability-rejected': return { closingSide: 'initiator', closingStage: 'local_capability' };
           case 'machine-stream-decision-timeout': return { closingSide: 'initiator', closingStage: 'stream_decision' };

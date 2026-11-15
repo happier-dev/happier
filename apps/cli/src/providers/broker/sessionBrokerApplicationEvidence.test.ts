@@ -3,7 +3,7 @@ import { createSessionBrokerApplicationEvidence } from './sessionBrokerApplicati
 import { logger } from '@/ui/logger';
 
 describe('Session broker application evidence', () => {
-  it.each([false, true])('keeps delayed request outcomes on their captured turn and retires them with the host (logging failed=%s)', loggingFailed => {
+  it.each([false, true])('keeps delayed request outcomes on their captured turn and retires them with the host (logging failed=%s)', async loggingFailed => {
     let turnId: string | null = null;
     let current = true;
     let turnReads = 0;
@@ -18,20 +18,20 @@ describe('Session broker application evidence', () => {
     turnId = 'first';
     const oldRequest = evidence.beginRequest();
     oldRequest?.(denial);
-    expect(evidence.readDenial('first')).toEqual(denial);
+    await expect(evidence.readDenial('first')).resolves.toEqual(denial);
     turnId = 'second';
     const newRequest = evidence.beginRequest();
     newRequest?.(denial);
     oldRequest?.(null); // Late old success must not erase the second turn's denial.
     oldRequest?.(denial); // Nor attribute an old refusal to its successor.
-    expect(evidence.readDenial('first')).toBeNull();
-    expect(evidence.readDenial('second')).toEqual(denial);
+    await expect(evidence.readDenial('first')).resolves.toBeNull();
+    await expect(evidence.readDenial('second')).resolves.toEqual(denial);
     newRequest?.(null);
-    expect(evidence.readDenial('second')).toBeNull();
+    await expect(evidence.readDenial('second')).resolves.toBeNull();
     newRequest?.(denial);
     current = false;
     evidence.beginRequest()?.(denial);
-    expect(evidence.readDenial('second')).toBeNull();
+    await expect(evidence.readDenial('second')).resolves.toBeNull();
     // Diagnostics reuse admission/outcome snapshots, including on refused reads.
     expect([turnReads, generationReads]).toEqual([10, 14]);
     const records = log.mock.calls.filter(([message, data]) => message === '[provider-broker-application]'
