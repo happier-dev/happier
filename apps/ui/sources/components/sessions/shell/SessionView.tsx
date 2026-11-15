@@ -194,7 +194,10 @@ import { useReconciledStableRows } from '@/hooks/session/reconcileStableRows';
 import { deriveSessionSubagentRecipients } from '@/sync/domains/session/subagents/deriveSessionSubagentRecipients';
 import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
 import { hasSessionSubagentLaunchCards } from '@/agents/registry/sessionSubagentUiBehavior';
-import { useSurfaceAnchorPathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
+import {
+    isOwnedSessionRootPathname,
+    useSessionRouteEntryPresentation,
+} from '@/components/sessions/shell/surface/sessionRouteEntryPresentation';
 import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
 import { nowServerMs } from '@/sync/runtime/time';
 import { readSessionUiTelemetryNowMs } from '@/sync/runtime/performance/sessionUiTelemetry';
@@ -312,7 +315,6 @@ import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useRegisterSessionPaneDriver } from '@/components/sessions/panes/useRegisterSessionPaneDriver';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionScreenTestIdsProvider } from './sessionScreenTestIds';
-import { useSessionScreenIsFocused } from './useSessionScreenIsFocused';
 import { resolveMobileWorkspaceExperienceToggleActionId } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
@@ -612,42 +614,6 @@ const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormat
     subscriptionRenews: ({ date }) => t('connectedServices.subscription.renews', { date }),
     subscriptionRenewsInDays: ({ days }) => t('connectedServices.subscription.renewsInDays', { days }),
 };
-
-function isOwnedSessionRootPathname(pathname: string | null | undefined, sessionId: string): boolean {
-    const normalizedPathname = typeof pathname === 'string' ? pathname.trim() : '';
-    if (!normalizedPathname) {
-        return false;
-    }
-
-    const match = /^\/session\/([^/]+)\/?$/.exec(normalizedPathname);
-    if (!match) {
-        return false;
-    }
-
-    try {
-        return decodeURIComponent(match[1] ?? '') === sessionId;
-    } catch {
-        return false;
-    }
-}
-
-function isOwnedSessionRoutePathname(pathname: string | null | undefined, sessionId: string): boolean {
-    const normalizedPathname = typeof pathname === 'string' ? pathname.trim().split('?')[0] ?? '' : '';
-    if (!normalizedPathname) {
-        return false;
-    }
-
-    const match = /^\/session\/([^/]+)(?:\/.*)?$/.exec(normalizedPathname);
-    if (!match) {
-        return false;
-    }
-
-    try {
-        return decodeURIComponent(match[1] ?? '') === sessionId;
-    } catch {
-        return false;
-    }
-}
 
 function readSessionUsageLimitRecovery(metadata: unknown): SessionUsageLimitRecoveryV1 | null {
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
@@ -1597,20 +1563,12 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     const isTablet = useIsTablet();
     const voiceSnap = useVoiceSessionSnapshot();
     const hasAuthCredentials = Boolean(credentials);
-    const routeFocused = useSessionScreenIsFocused();
-    const surfaceFocused = typeof props.surfaceFocusedOverride === 'boolean'
-        ? props.surfaceFocusedOverride
-        : routeFocused;
-    const anchorPathname = useSurfaceAnchorPathname(pathname);
-    // Web retains every visit for Back/Forward, so a stack can hold several entries of one session.
-    // The pathname anchors a surface under an overlay or under its own sub-route, but on the session
-    // root another entry is focused and owns it: an unfocused entry there is only history, and
-    // rendering it mounted one more hidden surface per earlier visit (issue #864).
-    const isRouteAnchor = typeof props.routeAnchorOverride === 'boolean'
-        ? props.routeAnchorOverride
-        : isOwnedSessionRoutePathname(anchorPathname, sessionId)
-            && (surfaceFocused || !isOwnedSessionRootPathname(pathname, sessionId));
-    const shouldRenderSessionSurface = surfaceFocused || isRouteAnchor;
+    // Web retains every visit for Back/Forward; the route mounts only the presented entry, and the
+    // overrides let embedding hosts (native, cockpit, previews) decide presentation themselves.
+    const { surfaceFocused, presented: shouldRenderSessionSurface } = useSessionRouteEntryPresentation(sessionId, {
+        surfaceFocused: props.surfaceFocusedOverride,
+        routeAnchor: props.routeAnchorOverride,
+    });
     const shouldRetainSessionSurface = Platform.OS === 'web' ? shouldRenderSessionSurface : true;
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId,
