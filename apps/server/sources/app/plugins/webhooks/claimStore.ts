@@ -33,9 +33,8 @@ const PLUGIN_WEBHOOK_DEAD_PAYLOAD_RETENTION_MS_V1 = 30 * DAY_MS;
 const PLUGIN_WEBHOOK_DEAD_METADATA_RETENTION_MS_V1 = 90 * DAY_MS;
 const DEFAULT_RECOVERY_BATCH_SIZE_V1 = 100;
 const MAX_RECOVERY_BATCH_SIZE_V1 = 500;
-// Private server implementation relationship: this wait remains below the
-// daemon's 60s claim transport timeout and the 120s claim lease.
-const PLUGIN_WEBHOOK_CLAIM_LONG_POLL_WAIT_MS_V1 = 30_000;
+// A claim deadline is armed with a platform timer on the daemon.
+const PLUGIN_WEBHOOK_MAX_CLAIM_DEADLINE_MS_V1 = 2_147_483_647;
 
 type ClaimTargetV1 = Extract<PluginWebhookClaimResultV1, { kind: "delivery" }>["target"];
 
@@ -340,6 +339,47 @@ async function readServerSelectedClaimCandidateTx(params: Readonly<{
     };
 }
 
+/**
+ * The installation's own next claim deadline when nothing is due: the earliest
+ * future retry of its queued work or expiry of a lease it holds, under the same
+ * endpoint eligibility as the claim. Null when it owns neither: new work then
+ * reaches the daemon as the post-commit Machine-socket wake (`wake.ts`), so an
+ * idle installation is never re-claimed on a cadence.
+ */
+async function readNextOwnedClaimDeadlineMsTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    machine: ClaimMachineInstallationV1;
+    now: Date;
+}>): Promise<number | null> {
+    const scope = {
+        accountId: params.accountId,
+        targetMachineId: params.machine.machineId,
+        targetMachineInstallationId: params.machine.machineInstallationId,
+        payloadBytes: { gt: 0n },
+        endpoint: {
+            enabled: true,
+            revokedAt: null,
+            releasedAt: null,
+            route: { enabled: true, revokedAt: null },
+        },
+    } as const;
+    const retry = await params.tx.pluginWebhookDelivery.findFirst({
+        where: { ...scope, state: "queued", nextAttemptAt: { gt: params.now }, metadataDeleteAt: { gt: params.now } },
+        orderBy: { nextAttemptAt: "asc" },
+        select: { nextAttemptAt: true },
+    });
+    const lease = await params.tx.pluginWebhookDelivery.findFirst({
+        where: { ...scope, state: "claimed", leaseExpiresAt: { gt: params.now } },
+        orderBy: { leaseExpiresAt: "asc" },
+        select: { leaseExpiresAt: true },
+    });
+    const deadlines = [retry?.nextAttemptAt, lease?.leaseExpiresAt]
+        .flatMap(at => at ? [at.getTime() - params.now.getTime()] : []);
+    return deadlines.length === 0 ? null
+        : Math.min(PLUGIN_WEBHOOK_MAX_CLAIM_DEADLINE_MS_V1, Math.max(1, Math.min(...deadlines)));
+}
+
 export async function claimPluginWebhookDeliveryV1(params: Readonly<{
     accountId: string;
     machine: ClaimMachineInstallationV1;
@@ -347,7 +387,7 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
     randomBytes?: (length: number) => Uint8Array;
 }>): Promise<PluginWebhookClaimResultV1> {
     const now = params.now ?? new Date();
-    const none = (retryAfterMs: number) => PluginWebhookClaimResultV1Schema.parse({
+    const none = (retryAfterMs: number | null) => PluginWebhookClaimResultV1Schema.parse({
         kind: "none",
         retryAfterMs,
     });
@@ -402,8 +442,11 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
                 if (recovered === "raced") return null;
             }
         };
+        const nothingDue = async () => none(await readNextOwnedClaimDeadlineMsTx({
+            tx, accountId: params.accountId, machine: params.machine, now,
+        }));
         const head = await readDueHead();
-        if (head === null) return none(5_000);
+        if (head === null) return await nothingDue();
         const deferUnavailableCandidate = async (candidate: ClaimCandidateRowV1): Promise<boolean> => {
             const offlineSinceAt = candidate.offlineSinceAt ?? now;
             const expired = now.getTime() - offlineSinceAt.getTime()
@@ -435,7 +478,7 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
         if (!eligiblePathKeys.has(candidateClaimPathKeyV1(head.candidate))) {
             if (!(await deferUnavailableCandidate(head.candidate))) return none(250);
             const eligible = await readDueHead(eligiblePaths);
-            if (eligible === null) return none(5_000);
+            if (eligible === null) return await nothingDue();
             selected = eligible;
         }
         const hasCurrentPreEffectAuthority = async (
@@ -548,51 +591,6 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
                 },
             });
     }, { /* Webhook endpoint, credential and contribution authority is read before the Account fence. */ isolationLevel: "Serializable" });
-}
-
-/**
- * One authenticated bounded claim for the Account/machine installation
- * (§6.4). The canonical claim owner runs immediately; when it finds nothing,
- * the request parks for one fixed private window raced with request
- * cancellation, then re-runs the canonical claim owner exactly once. Nothing
- * is read from the database while parked, and there is no wake subscription,
- * queue, scheduler, or cursor: the existing daemon wake path simply cancels
- * the parked request so the final claim happens sooner. Cancellation returns
- * the first answer with no final claim. Every returned result is the
- * canonical owner's own answer, including its bounded retryAfterMs, and the
- * request still names no materialization target.
- */
-export async function claimPluginWebhookDeliveryWithBoundedWaitV1(
-    params: Readonly<{
-        accountId: string;
-        machine: ClaimMachineInstallationV1;
-        now?: Date;
-        randomBytes?: (length: number) => Uint8Array;
-    }>,
-    wait: Readonly<{ signal?: AbortSignal }> = {},
-): Promise<PluginWebhookClaimResultV1> {
-    const first = await claimPluginWebhookDeliveryV1(params);
-    if (first.kind === "delivery") return first;
-    const signal = wait.signal;
-    if (signal?.aborted) return first;
-    const aborted = await new Promise<boolean>((resolve) => {
-        const onAbort = () => {
-            cleanup();
-            resolve(true);
-        };
-        const timer = setTimeout(() => {
-            cleanup();
-            resolve(false);
-        }, PLUGIN_WEBHOOK_CLAIM_LONG_POLL_WAIT_MS_V1);
-        const cleanup = () => {
-            clearTimeout(timer);
-            signal?.removeEventListener("abort", onAbort);
-        };
-        if (signal === undefined) return;
-        signal.addEventListener("abort", onAbort, { once: true });
-    });
-    if (aborted) return first;
-    return await claimPluginWebhookDeliveryV1(params);
 }
 
 export type PluginWebhookInvocationReferenceValidationResultV1 = Readonly<

@@ -444,6 +444,37 @@ describe("plugin webhook claim/lease settlement", () => {
         });
     });
 
+    it("answers an empty claim with the installation's own next deadline, or none, instead of a fixed re-claim cadence", async () => {
+        // [p03redesign.F4] An idle daemon claims once and then waits for the
+        // Machine-socket wake; only work this installation already owns sets a deadline.
+        await seedDelivery();
+        const claimAt = (now: Date) => claimPluginWebhookDeliveryV1({
+            accountId: "account-claim",
+            machine: MACHINE_CLAIM,
+            now,
+            randomBytes: () => new Uint8Array(16).fill(4),
+        });
+        await db.pluginWebhookDelivery.update({
+            where: { id: "delivery-claim" },
+            data: { nextAttemptAt: new Date(NOW.getTime() + 90 * 60_000) },
+        });
+        await expect(claimAt(NOW)).resolves.toEqual({ kind: "none", retryAfterMs: 90 * 60_000 });
+
+        await db.pluginWebhookDelivery.update({
+            where: { id: "delivery-claim" },
+            data: {
+                state: "claimed", nextAttemptAt: NOW, leaseId: "lease-held",
+                claimedByMachineId: TARGET.materialization.machineId,
+                claimedByMachineInstallationId: TARGET.machineInstallationId,
+                leaseExpiresAt: new Date(NOW.getTime() + 45_000),
+            },
+        });
+        await expect(claimAt(NOW)).resolves.toEqual({ kind: "none", retryAfterMs: 45_000 });
+
+        await db.pluginWebhookDelivery.delete({ where: { id: "delivery-claim" } });
+        await expect(claimAt(NOW)).resolves.toEqual({ kind: "none", retryAfterMs: null });
+    });
+
     it("validates exact claimed correspondence while accepting same-lease renewals and rejecting reclaim", async () => {
         await seedDelivery();
         const claimed = await claimPluginWebhookDeliveryV1({

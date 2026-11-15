@@ -167,24 +167,15 @@ export async function executeWebhookHandlerV1(
 }
 
 /**
- * Typed internal reason for the intentional cancellation of one parked claim
- * HTTP request when a wake arrives. The worker suppresses exactly this abort;
- * every other claim failure keeps the existing handling.
- */
-const PLUGIN_WEBHOOK_WAKE_CLAIM_ABORT_REASON_V1 = Object.freeze({
-  kind: 'pluginWebhookClaimWakeAbortV1',
-} as const);
-
-/**
  * One daemon-owned claim loop per Account/machine installation. Each wake
  * issues exactly one authenticated claim; the server selects the one currently
  * eligible exact materialization target, and the daemon dispatches exactly the
- * returned target/endpoint authority. The server may park an empty claim
- * response for its fixed window, so every claim runs on a per-claim abort
- * controller composed with shutdown only while the claim request is in
- * flight: a wake trigger aborts the parked request with the typed wake reason
- * and the single-flight loop coalesces exactly one forced rerun once that
- * iteration settles. Daemon-generation currentness stays with the canonical
+ * returned target/endpoint authority. The server answers at once: an empty
+ * claim names this installation's own next deadline (a retry's due time or a
+ * held lease's expiry), or none, in which case the loop parks until the
+ * Machine-socket wake (`pluginWebhookDaemonWake.ts`); idle costs no request.
+ * A wake during an iteration coalesces exactly one rerun after it settles.
+ * Daemon-generation currentness stays with the canonical
  * Action invocation lifecycle; the server claim response never carries daemon
  * immutable generation. Renew/complete/fail stay exact-target. Eligibility
  * (enabled, trust, release correspondence) is server-owned; this loop keeps
@@ -200,7 +191,6 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
 }>): PluginWebhookDaemonWorkerHandleV1 {
   const transport = createPluginWebhookDaemonHttpTransportV1(params.credentials);
   const shutdownController = new AbortController();
-  let activeClaimAbort: AbortController | null = null;
   let activeTask: Promise<void | { nextAutomaticRunAfterMs: number | null }> | null = null;
   let stopping: Promise<void> | null = null;
   let parkedForCapability = false;
@@ -210,7 +200,6 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
     maxFailureBackoffMs: 60_000,
     unref: true,
     task: async () => {
-      let claimAbort: AbortController | null = null;
       const task = (async () => {
         if (shutdownController.signal.aborted) return;
         // The capability bit changes only when the daemon's features snapshot refreshes,
@@ -221,16 +210,7 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
           machineId: params.machineId(),
           machineInstallationId: params.machineInstallationId,
         } as const;
-        claimAbort = new AbortController();
-        activeClaimAbort = claimAbort;
-        const claim = await transport.claim(
-          machine,
-          // Shutdown composition spans only the parked claim request; the
-          // per-claim controller is cleared the moment the claim settles.
-          AbortSignal.any([shutdownController.signal, claimAbort.signal]),
-        ).finally(() => {
-          if (activeClaimAbort === claimAbort) activeClaimAbort = null;
-        });
+        const claim = await transport.claim(machine, shutdownController.signal);
         if (shutdownController.signal.aborted) return;
         if (claim.kind !== 'delivery') return { nextAutomaticRunAfterMs: claim.retryAfterMs };
         await processClaimedPluginWebhookDeliveryV1({
@@ -252,10 +232,6 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
       })();
       const settledTask = task.catch((error) => {
         if (shutdownController.signal.aborted) return;
-        // Only the exact intentional wake cancellation of the parked claim
-        // request is suppressed: the wake trigger's coalesced forced rerun
-        // supersedes it. Every other failure keeps the existing handling.
-        if (claimAbort?.signal.reason === PLUGIN_WEBHOOK_WAKE_CLAIM_ABORT_REASON_V1) return;
         throw error;
       });
       activeTask = settledTask;
@@ -274,13 +250,6 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
   loop.trigger();
   return Object.freeze({
     ...loop,
-    trigger: () => {
-      // Abort the currently parked claim HTTP request, then coalesce exactly
-      // one forced rerun once the cancelled iteration settles. When no claim
-      // is parked (idle or mid-delivery), this is only the loop trigger.
-      activeClaimAbort?.abort(PLUGIN_WEBHOOK_WAKE_CLAIM_ABORT_REASON_V1);
-      loop.trigger();
-    },
     capabilityChanged: () => {
       if (parkedForCapability) loop.trigger();
     },

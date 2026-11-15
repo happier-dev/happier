@@ -275,48 +275,6 @@ describe('plugin webhook daemon HTTP transport', () => {
     }
   });
 
-  it('a wake trigger aborts the parked claim HTTP request and coalesces exactly one reissued claim', async () => {
-    let parkedSignal: AbortSignal | undefined;
-    let rejectParkedClaim: (reason?: unknown) => void = () => undefined;
-    let markParkedClaimStarted!: () => void;
-    const parkedClaimStarted = new Promise<void>((resolve) => {
-      markParkedClaimStarted = resolve;
-    });
-    mocks.post.mockImplementationOnce((_url: string, _body: unknown, options: unknown) => new Promise((_resolve, reject) => {
-      parkedSignal = (options as Readonly<{ signal?: AbortSignal }>).signal;
-      rejectParkedClaim = reject;
-      markParkedClaimStarted();
-    }));
-    mocks.post.mockResolvedValue({ data: { kind: 'none', retryAfterMs: 5_000 } });
-    const worker = startPluginWebhookDaemonWorkerV1({
-      credentials,
-      machineId: () => 'machine-1',
-      machineInstallationId: 'installation-1',
-      enabled: () => true,
-      logger: { debug: vi.fn() },
-      intervalMs: 60_000,
-    });
-
-    try {
-      await parkedClaimStarted;
-
-      worker.trigger();
-      expect(parkedSignal?.aborted).toBe(true);
-      expect(parkedSignal?.reason).toEqual({ kind: 'pluginWebhookClaimWakeAbortV1' });
-
-      rejectParkedClaim(parkedSignal?.reason);
-
-      await vi.waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(2));
-      expect(String(mocks.post.mock.calls[1]?.[0])).toContain('/v1/daemon/plugins/webhooks/claim');
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 30);
-      });
-      expect(mocks.post).toHaveBeenCalledTimes(2);
-    } finally {
-      await worker.stop();
-    }
-  });
-
   it('a wake trigger while a claimed delivery is processing never overlaps and reruns once after it settles', async () => {
     mocks.post.mockResolvedValueOnce({ data: claimDeliveryFor('materialization-server-selected') });
     mocks.post.mockResolvedValue({ data: { kind: 'none', retryAfterMs: 5_000 } });
@@ -350,45 +308,6 @@ describe('plugin webhook daemon HTTP transport', () => {
       releaseProcessing();
       await vi.waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(2));
       expect(String(mocks.post.mock.calls[1]?.[0])).toContain('/v1/daemon/plugins/webhooks/claim');
-    } finally {
-      await worker.stop();
-    }
-  });
-
-  it('suppresses exactly the intentional wake cancellation without failure logging or backoff', async () => {
-    const debug = vi.fn();
-    let parkedSignal: AbortSignal | undefined;
-    let rejectParkedClaim: (reason?: unknown) => void = () => undefined;
-    let markParkedClaimStarted!: () => void;
-    const parkedClaimStarted = new Promise<void>((resolve) => {
-      markParkedClaimStarted = resolve;
-    });
-    mocks.post.mockImplementationOnce((_url: string, _body: unknown, options: unknown) => new Promise((_resolve, reject) => {
-      parkedSignal = (options as Readonly<{ signal?: AbortSignal }>).signal;
-      rejectParkedClaim = reject;
-      markParkedClaimStarted();
-    }));
-    mocks.post.mockResolvedValue({ data: { kind: 'none', retryAfterMs: 5_000 } });
-    const worker = startPluginWebhookDaemonWorkerV1({
-      credentials,
-      machineId: () => 'machine-1',
-      machineInstallationId: 'installation-1',
-      enabled: () => true,
-      logger: { debug },
-      intervalMs: 60_000,
-    });
-
-    try {
-      await parkedClaimStarted;
-      worker.trigger();
-      rejectParkedClaim(parkedSignal?.reason);
-
-      await vi.waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(2));
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 30);
-      });
-      expect(mocks.post).toHaveBeenCalledTimes(2);
-      expect(debug).not.toHaveBeenCalled();
     } finally {
       await worker.stop();
     }
@@ -494,6 +413,38 @@ describe('plugin webhook daemon HTTP transport', () => {
       }));
     } finally {
       await worker.stop();
+    }
+  });
+
+  it('[p03redesign.F4] an idle Machine claims once in 5 minutes and then only on a wake or its owned deadline', async () => {
+    vi.useFakeTimers();
+    mocks.post.mockResolvedValue({ data: { kind: 'none', retryAfterMs: null } });
+    const worker = startPluginWebhookDaemonWorkerV1({
+      credentials,
+      machineId: () => 'machine-1',
+      machineInstallationId: 'installation-1',
+      enabled: () => true,
+      logger: { debug: vi.fn() },
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect({ claimsPerIdleFiveMinutes: mocks.post.mock.calls.length }).toEqual({ claimsPerIdleFiveMinutes: 1 });
+
+      // The Machine-socket wake claims at once.
+      worker.trigger();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.post).toHaveBeenCalledTimes(2);
+
+      // A retry this installation already owns: exactly one claim at its deadline.
+      mocks.post.mockResolvedValueOnce({ data: { kind: 'none', retryAfterMs: 90 * 60_000 } });
+      worker.trigger();
+      await vi.advanceTimersByTimeAsync(90 * 60_000 - 1);
+      expect(mocks.post).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mocks.post).toHaveBeenCalledTimes(4);
+    } finally {
+      await worker.stop();
+      vi.useRealTimers();
     }
   });
 

@@ -15,7 +15,7 @@ import {
 import { createPluginWebhookEndpointActionsV1 } from "@/app/plugins/webhooks/endpointActions";
 import { PluginWebhookEndpointStoreError } from "@/app/plugins/webhooks/endpointStore";
 import {
-    claimPluginWebhookDeliveryWithBoundedWaitV1,
+    claimPluginWebhookDeliveryV1,
     completePluginWebhookDeliveryV1,
     failPluginWebhookDeliveryV1,
     renewPluginWebhookDeliveryV1,
@@ -56,7 +56,7 @@ type AuthenticatePluginCallerV1 = (params: Readonly<{
 const webhookEndpointActions = createPluginWebhookEndpointActionsV1();
 
 type RouteDependencies = Readonly<{
-    claim: typeof claimPluginWebhookDeliveryWithBoundedWaitV1;
+    claim: typeof claimPluginWebhookDeliveryV1;
     renew: typeof renewPluginWebhookDeliveryV1;
     complete: typeof completePluginWebhookDeliveryV1;
     fail: typeof failPluginWebhookDeliveryV1;
@@ -81,7 +81,7 @@ const authenticateCurrentPluginCallerV1: AuthenticatePluginCallerV1 = (params) =
 );
 
 const DEFAULT_DEPENDENCIES: RouteDependencies = {
-    claim: claimPluginWebhookDeliveryWithBoundedWaitV1,
+    claim: claimPluginWebhookDeliveryV1,
     renew: renewPluginWebhookDeliveryV1,
     complete: completePluginWebhookDeliveryV1,
     fail: failPluginWebhookDeliveryV1,
@@ -93,9 +93,6 @@ const DEFAULT_DEPENDENCIES: RouteDependencies = {
     authenticateCaller: authenticateCurrentPluginCallerV1,
     verifyPublisher: verifyPluginInstallationPublisherHeader,
 };
-
-/** Per-request cancellation for the parked claim long poll. */
-const claimAbortControllers = new WeakMap<object, AbortController>();
 
 function noStore(reply: { header(name: string, value: string): unknown }): void {
     reply.header("Cache-Control", "no-store");
@@ -299,28 +296,6 @@ export function registerPluginWebhookDaemonRoutes(
 
     app.post("/v1/daemon/plugins/webhooks/claim", {
         preHandler: authenticatedWebhookPreHandler,
-        onRequest: async (request, reply) => {
-            const controller = new AbortController();
-            claimAbortControllers.set(request, controller);
-            const cleanup = () => {
-                reply.raw.removeListener("close", onClose);
-                reply.raw.removeListener("finish", cleanup);
-                claimAbortControllers.delete(request);
-            };
-            const onClose = () => {
-                // A fully uploaded long poll disconnects on the response side;
-                // Fastify's request-abort hook only covers an interrupted body.
-                if (!reply.raw.writableFinished) {
-                    controller.abort(new Error("plugin_webhook_claim_client_aborted"));
-                }
-                cleanup();
-            };
-            reply.raw.once("close", onClose);
-            reply.raw.once("finish", cleanup);
-        },
-        onRequestAbort: async (request) => {
-            claimAbortControllers.get(request)?.abort(new Error("plugin_webhook_claim_client_aborted"));
-        },
         schema: {
             body: PluginWebhookClaimRequestV1Schema,
             response: { 200: PluginWebhookClaimResultV1Schema, 401: z.null() },
@@ -338,13 +313,10 @@ export function registerPluginWebhookDaemonRoutes(
             verifyPublisher: dependencies.verifyPublisher,
         });
         if (!publisher) return reply.code(401).send(null);
-        const signal = claimAbortControllers.get(request)?.signal;
-        // The parked window is the claim owner's fixed implementation
-        // constant; the route carries no policy input except the disconnect
-        // abort signal.
+        // Answers at once: nothing is parked. An empty claim names the
+        // installation's own next deadline; new work arrives as the Machine wake.
         return await reply.send(await dependencies.claim(
             { accountId: request.userId, machine: request.body.machine },
-            signal ? { signal } : {},
         ));
     });
 

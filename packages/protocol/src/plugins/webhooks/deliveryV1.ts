@@ -211,7 +211,11 @@ export const PluginWebhookClaimRequestV1Schema = lazyZodSchema(() => z.readonly(
 export const PluginWebhookClaimResultV1Schema = lazyZodSchema(() => z.readonly(z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('none'),
-    retryAfterMs: z.number().check(z.int(), z.minimum(1), z.maximum(60_000)),
+    // The installation's own next deadline (a queued retry's `nextAttemptAt` or
+    // a held lease's expiry), or a short contention retry; null = nothing is
+    // owned, so the daemon claims again only on its Machine-socket wake.
+    // The ceiling is the platform timer bound, not a cadence.
+    retryAfterMs: z.nullable(z.number().check(z.int(), z.minimum(1), z.maximum(2_147_483_647))),
   }),
   z.strictObject({
     kind: z.literal('delivery'),
