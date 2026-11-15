@@ -30,11 +30,13 @@ const nodeBuiltins = new Set(builtinModules.flatMap(name => [name, `node:${name}
 const rnDisabledNamespace = 'happier-react-native-disabled';
 const stdinFile = '<host-provided-protocol-modules>';
 
-/** The same resolution React Native's Metro applies to installed packages. */
+/** The same resolution React Native's Metro applies: installed packages by their
+ * React Native fields, workspace packages by their `happier-source` export (so a
+ * dependency whose dist is not built yet still resolves during export generation). */
 const reactNativeResolution = Object.freeze({
   platform: 'browser',
   mainFields: ['react-native', 'browser', 'module', 'main'],
-  conditions: ['react-native', 'browser', 'module', 'import', 'default'],
+  conditions: ['happier-source', 'react-native', 'browser', 'module', 'import', 'default'],
 });
 
 const specifierOf = key => `@happier-dev/protocol/${key.slice(2)}`;
