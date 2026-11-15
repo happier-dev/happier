@@ -45,7 +45,7 @@ describe('createSessionTurnLifecycle', () => {
         } finally { lifecycle.dispose(); vi.useRealTimers(); }
     });
 
-    it('projects exact-turn retries before touch throttling, clears on real progress and Stop, and suppresses unchanged facts', async () => {
+    it('projects exact-turn retries, clears on real progress and Stop, and suppresses unchanged facts', async () => {
         const progress: unknown[] = [];
         const mutations: SessionTurnMutationV1[] = [];
         const options = {
@@ -84,7 +84,7 @@ describe('createSessionTurnLifecycle', () => {
         ]);
         await lifecycle.drainAcceptedLifecycle();
         expect(mutations.filter(mutation => mutation.action === 'cancel')).toHaveLength(1);
-        expect(mutations.filter(mutation => mutation.action === 'touch_active')).toHaveLength(1);
+        expect(mutations.filter(mutation => mutation.action === 'touch_active')).toHaveLength(0);
     });
 
     it('retains a native carrier close through the failed turn without inventing a Team denial', async () => {
@@ -781,83 +781,23 @@ describe('createSessionTurnLifecycle', () => {
         expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'complete']);
     });
 
-    it('maps active runtime turn progress to a durable touch mutation only while the turn is active', async () => {
+    it('[p03redesign.F1] keeps an active turn live without durable writes: N active minutes add no turn mutation', async () => {
+        // Each durable turn mutation is one server receipt row and one push to every viewer.
         const mutations: SessionTurnMutationV1[] = [];
         const lifecycle = createSessionTurnLifecycle({
             agentId: 'claude',
-            session: {
-                sessionId: 'session-1',
-                enqueueSessionTurnMutation: (mutation) => {
-                    mutations.push(mutation);
-                },
-            },
+            session: { sessionId: 'session-1', enqueueSessionTurnMutation: (mutation) => { mutations.push(mutation); } },
         });
-
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-progress',
-            sessionId: 'session-1',
-            emittedAtMs: 90,
-            turnId: 'turn-1',
-        }));
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-start',
-            sessionId: 'session-1',
-            emittedAtMs: 100,
-            turnId: 'turn-1',
-            agentTurnId: 'provider-turn-1',
-        }));
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-progress',
-            sessionId: 'session-1',
-            emittedAtMs: 250,
-            turnId: 'turn-1',
-            agentTurnId: 'provider-turn-1',
-        }));
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-progress',
-            sessionId: 'session-1',
-            emittedAtMs: 260,
-            turnId: 'turn-1',
-            agentTurnId: 'provider-turn-1',
-        }));
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-progress',
-            sessionId: 'session-1',
-            emittedAtMs: 60_251,
-            turnId: 'turn-1',
-            agentTurnId: 'provider-turn-1',
-        }));
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-complete',
-            sessionId: 'session-1',
-            emittedAtMs: 60_300,
-            turnId: 'turn-1',
-            agentTurnId: 'provider-turn-1',
-        }));
-        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({
-            kind: 'turn-progress',
-            sessionId: 'session-1',
-            emittedAtMs: 60_350,
-            turnId: 'turn-1',
-            agentTurnId: 'provider-turn-1',
-        }));
-
+        const send = (kind: 'turn-start' | 'turn-progress' | 'turn-complete', emittedAtMs: number) => lifecycle.observeRuntimeEvent(
+            canonicalRuntimeEvent({ kind, sessionId: 'session-1', emittedAtMs, turnId: 'turn-1', agentTurnId: 'provider-turn-1' }));
+        send('turn-progress', 90);
+        send('turn-start', 100);
+        const minutes = 10;
+        for (let minute = 0; minute <= minutes; minute += 1) send('turn-progress', 250 + minute * 60_000);
+        send('turn-complete', 250 + (minutes + 1) * 60_000);
         await lifecycle.drainAcceptedLifecycle();
-        expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'touch_active', 'touch_active', 'complete']);
-        expect(mutations[1]).toMatchObject({
-            action: 'touch_active',
-            turnId: 'turn-1',
-            agentId: 'claude',
-            agentTurnId: 'provider-turn-1',
-            observedAt: 250,
-        });
-        expect(mutations[2]).toMatchObject({
-            action: 'touch_active',
-            turnId: 'turn-1',
-            agentId: 'claude',
-            agentTurnId: 'provider-turn-1',
-            observedAt: 60_251,
-        });
+        // Started and ended are the only state changes; liveness stays with presence.
+        expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'complete']);
     });
 
     it('clears terminal turn state when a terminal mutation write throws synchronously', () => {

@@ -10,8 +10,6 @@ import { logger } from '@/ui/logger';
 import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
 import type { RuntimeRollbackBoundaryObservation } from '@/agent/runtime/turns/runtimeTurnOperations';
 
-const DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS = 60_000;
-
 export type SessionTurnLifecycleMutationPort = Readonly<{
     sessionId: string;
     readQuestionWaitTurnId?: () => string | null;
@@ -92,7 +90,6 @@ function buildMutationBase(params: Readonly<{
 
 export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): SessionTurnLifecycle {
     let activeTurnId: string | null = null;
-    let lastActiveTurnTouchAtMs: number | null = null;
     // Unknown until first observation: remove any fact retained from a prior runner.
     let turnProgress: SessionTurnProgressV1 | null | undefined;
     let acceptedLifecycleTail = Promise.resolve();
@@ -340,7 +337,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             if (event.kind === 'turn-start') {
                 if (activeTurnId !== event.turnId) projectTurnProgress(null, event.emittedAtMs);
                 activeTurnId = event.turnId;
-                lastActiveTurnTouchAtMs = null;
                 const facts = params.readTurnFacts?.();
                 const startingInput = params.readStartingInput?.(event.turnId);
                 if (facts) params.onTurnFactsChanged?.({ turnId: event.turnId, facts });
@@ -361,23 +357,11 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
             if (event.kind === 'turn-progress') {
                 if (activeTurnId !== event.turnId) return;
+                // Progress is liveness, not a turn state change: it stays with presence and is never a
+                // durable mutation (one server receipt + one viewer push each).
                 projectTurnProgress(event.retry
                     ? { turnId: event.turnId, phase: 'retrying', ...event.retry }
                     : null, event.emittedAtMs);
-                if (
-                    lastActiveTurnTouchAtMs !== null
-                    && event.emittedAtMs - lastActiveTurnTouchAtMs < DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS
-                ) {
-                    return;
-                }
-                lastActiveTurnTouchAtMs = event.emittedAtMs;
-                publish({
-                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'touch_active', event }),
-                        action: 'touch_active',
-                        turnId: event.turnId,
-                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                    } satisfies RuntimeSessionTurnMutationV1,
-                );
                 return;
             }
 
@@ -416,7 +400,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                 projectTurnProgress(null, event.emittedAtMs);
                 activeTurnId = null;
-                lastActiveTurnTouchAtMs = null;
                 return;
             }
 
@@ -435,7 +418,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     projectTurnProgress(null, event.emittedAtMs);
                     params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                     activeTurnId = null;
-                    lastActiveTurnTouchAtMs = null;
                 }
                 return;
             }
@@ -463,7 +445,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     projectTurnProgress(null, event.emittedAtMs);
                     params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                     activeTurnId = null;
-                    lastActiveTurnTouchAtMs = null;
                 }
                 return;
             }
@@ -484,7 +465,6 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     projectTurnProgress(null, event.emittedAtMs);
                     params.onTurnFactsChanged?.({ turnId: event.turnId, facts: null });
                     activeTurnId = null;
-                    lastActiveTurnTouchAtMs = null;
                 }
                 return;
             }
