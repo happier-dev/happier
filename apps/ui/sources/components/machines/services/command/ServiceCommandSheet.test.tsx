@@ -1,5 +1,5 @@
 import * as React from 'react';
-import sodium, { type KeyPair } from 'libsodium-wrappers';
+import sodium from 'libsodium-wrappers';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -11,6 +11,7 @@ import {
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
+import type { LibsodiumKeyPair } from '@/encryption/libsodium.lib';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
@@ -42,7 +43,7 @@ const target = {
   expectedGeneration: 'gen-7',
 };
 let serverId: string;
-let installationKey: KeyPair;
+let installationKey: LibsodiumKeyPair;
 
 type Received = Readonly<{
   envelope: ExternalActionRequestEnvelopeV1;
