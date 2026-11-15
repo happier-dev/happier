@@ -7,11 +7,14 @@ import { standardCleanup } from '@/dev/testkit';
 import { createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '../files/views/sessionFilesViewTestkit';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
+import type { BrowserDaemonViewV1 } from '@happier-dev/protocol/browser/control/v1';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/browser';
 
-const openResourceUrl = vi.hoisted(() => vi.fn(async (_url: string) => true));
-vi.mock('@/utils/url/openResource', () => ({
-    useOpenResource: () => ({ openResourceUrl }),
-}));
+// Only the OS browser handoff is replaced; resource routing and Action admission stay real.
+const openExternalUrl = vi.hoisted(() => vi.fn(async (_url: string) => true));
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl }));
 
 installSessionFilesViewBoundaries({ platformOS: 'web' });
 await prepareSessionFilesViewTestkit();
@@ -21,8 +24,9 @@ const { useTranscriptFileLinks } = await import('./useTranscriptFileLinks');
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefined;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
-async function mountLinks(workspacePath = '/work/repo', canOpenFiles = true, machineRootPath?: string) {
-    fixture = await createSessionFilesViewFixture({ rootPath: workspacePath, serverIdentityId: 'srv_transcript_file_links' });
+async function mountLinks(workspacePath = '/work/repo', canOpenFiles = true, machineRootPath?: string,
+    fixtureOptions: Parameters<typeof createSessionFilesViewFixture>[0] = {}) {
+    fixture = await createSessionFilesViewFixture({ ...fixtureOptions, rootPath: workspacePath, serverIdentityId: 'srv_transcript_file_links' });
     if (machineRootPath) {
         const metadata = fixture.session.metadata;
         if (!metadata) throw new Error('Expected Session metadata');
@@ -58,11 +62,58 @@ async function mountLinks(workspacePath = '/work/repo', canOpenFiles = true, mac
 describe('transcript file links through workspace navigation', () => {
     it('routes external transcript links through the canonical chat-link opener', async () => {
         const mounted = await mountLinks();
-        openResourceUrl.mockClear();
+        openExternalUrl.mockClear();
         await act(async () => {
             expect(mounted.links.onMarkdownLinkPress('https://example.net/')).toBe(true);
         });
-        expect(openResourceUrl).toHaveBeenCalledWith('https://example.net/');
+        await vi.waitFor(() => expect(openExternalUrl).toHaveBeenCalledWith('https://example.net/'));
+    });
+
+    it('opens the authored loopback URL in the managed Browser without creating a File Details destination', async () => {
+        const url = 'http://127.0.0.1:42031/b';
+        const openedUrls: string[] = [];
+        let views: BrowserDaemonViewV1[] = [];
+        const mounted = await mountLinks('/work/repo', true, undefined, {
+            featureOverrides: { features: { browser: { enabled: true, internal: { enabled: true }, viewTargets: { enabled: true } } } },
+            request: async (input, init) => {
+                if (new URL(String(input)).pathname !== '/v1/actions/browser.view.open') return undefined;
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+                const command = BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS['browser.view.open'].parse(envelope.input);
+                if (command.target.kind !== 'externalUrl') throw new Error('Expected external URL');
+                openedUrls.push(command.target.url);
+                const sourceId = `source:${command.viewId}`;
+                views = [{ browserSessionId: command.browserSessionId, viewId: command.viewId, sourceId,
+                    target: command.target, platform: 'web', adapterKind: 'chromiumSidecar', events: [],
+                    captureSource: { v: 1, sourceId, sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
+                        inputMode: 'shared', sidebands: [], health: { status: 'available' } } }];
+                return Response.json({ v: 1, actionId: 'browser.view.open', requestId: envelope.requestId,
+                    execution: { ok: true, result: { v: 1, commandId: command.commandId,
+                        status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] } } });
+            },
+            rpc: request => request.method === 'daemon.browser.view.list' ? { protocolVersion: 1, views } : undefined,
+        });
+        const { createBrowserWorkspaceOpeningFixture } = await import('@/dev/testkit/fixtures/browserWorkspaceOpening');
+        const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
+        const tabs: DetailsTab[] = [];
+        const browser = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web',
+            scopeId: createSessionPaneScopeId(fixture!.session.id, fixture!.scope.serverId),
+            accountLifetime: { scope: { serverId: fixture!.scope.serverId, accountId: 'alice' },
+                isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            localServiceTargets: [], localServiceAddressScope: { machineId: fixture!.scope.machineId, sessionId: fixture!.session.id },
+            browserFeatureDecision: { featureId: 'browser', state: 'enabled', blockedBy: null, blockerCode: 'none',
+                diagnostics: [], evaluatedAt: 1000, scope: { scopeKind: 'runtime' } },
+            openDetailsTab: tab => { tabs.push(tab); },
+        });
+        fixture!.storage.setState({ localSettings: { ...fixture!.storage.getState().localSettings, chatLinkOpenLocation: 'browser' } });
+        openExternalUrl.mockClear();
+        try {
+            await act(async () => { expect(mounted.links.onMarkdownLinkPress(url)).toBe(true); });
+            await vi.waitFor(() => expect(tabs).toHaveLength(1));
+            expect(tabs[0]?.kind).toBe('browser-view');
+            expect(openedUrls).toEqual([url]);
+            expect(mounted.destinations().some(query => query.has('fileView'))).toBe(false);
+            expect(openExternalUrl).not.toHaveBeenCalled();
+        } finally { browser.dispose(); }
     });
 
     it.each([
@@ -71,7 +122,6 @@ describe('transcript file links through workspace navigation', () => {
         { link: '../report.md', root: null, path: 'report.md', workspace: 'C:/' },
         { link: '../report.md', root: null, path: 'report.md', workspace: '//Server/Share' },
         { link: 'file:///work/artifacts/report.md', root: '/work/artifacts', path: 'report.md', workspace: '/work/repo' },
-        { link: 'http://localhost:18829/work/artifacts/report.md', root: '/work/artifacts', path: 'report.md', workspace: '/work/repo' },
         { link: 'C:\\Artifacts\\Report.md', root: 'c:/artifacts', path: 'Report.md', workspace: 'C:\\Repo' },
         { link: 'file://Server/Share/Artifacts/Report.md', root: '//server/share/artifacts', path: 'Report.md', workspace: '\\\\Server\\Share\\Repo' },
     ])('opens $link with a safe path and its exact file base', async ({ link, root, path, workspace }) => {

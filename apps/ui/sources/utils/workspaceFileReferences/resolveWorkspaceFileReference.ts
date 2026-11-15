@@ -20,8 +20,6 @@ export type ResolvedWorkspaceFileReference = Readonly<{
     column?: number;
 }>;
 
-const LOOPBACK_HTTP_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0:0:0:0:0:0:0:1']);
-
 function normalizeRelativePath(value: string): string {
     return normalizeRelativeLocalPath(value.trim());
 }
@@ -105,18 +103,9 @@ function readUrlPath(rawUrl: string): string | null {
         }
     }
 
-    if (/^https?:\/\//i.test(trimmed)) {
-        try {
-            const parsed = new URL(trimmed);
-            const hostname = parsed.hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
-            if (!LOOPBACK_HTTP_HOSTS.has(hostname)) {
-                return null;
-            }
-            return `${decodeURIComponent(parsed.pathname)}${parsed.hash ? decodeURIComponent(parsed.hash) : ''}`;
-        } catch {
-            return null;
-        }
-    }
+    // Markdown supplies the authored destination. HTTP links retain their URL
+    // identity, including loopback links that open on the Session's Machine.
+    if (/^https?:\/\//i.test(trimmed)) return null;
 
     try {
         return decodeURIComponent(trimmed.replace(/\?[^#]*/, ''));

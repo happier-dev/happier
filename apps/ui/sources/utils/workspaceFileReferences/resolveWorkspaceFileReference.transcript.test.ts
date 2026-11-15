@@ -10,26 +10,18 @@ describe('transcript workspace file references', () => {
         })).toEqual({ filePath: 'src/index.ts' });
     });
 
-    it('accepts browser-expanded local paths when they still point inside the workspace', () => {
+    it('leaves explicit localhost URLs inside the workspace to the resource opener', () => {
         expect(resolveWorkspaceFileReference({
             url: 'http://localhost:18829/Users/leeroy/project/src/index.ts:8',
             workspacePath: '/Users/leeroy/project',
-        })).toEqual({
-            filePath: 'src/index.ts',
-            line: 8,
-            anchor: { kind: 'line', filePath: 'src/index.ts', line: 8 },
-        });
+        })).toBeNull();
     });
 
-    it('accepts loopback https origins when they point inside the workspace', () => {
+    it('leaves explicit loopback HTTPS URLs to the resource opener', () => {
         expect(resolveWorkspaceFileReference({
             url: 'https://127.0.0.1:18829/Users/leeroy/project/src/index.ts:8',
             workspacePath: '/Users/leeroy/project',
-        })).toEqual({
-            filePath: 'src/index.ts',
-            line: 8,
-            anchor: { kind: 'line', filePath: 'src/index.ts', line: 8 },
-        });
+        })).toBeNull();
     });
 
     it('maps relative workspace links and keeps terminal line anchors', () => {
@@ -83,15 +75,11 @@ describe('transcript workspace file references', () => {
         })).toEqual({ filePath: 'src/index.ts' });
     });
 
-    it('accepts browser-expanded Windows drive links with line anchors', () => {
+    it('does not reinterpret a loopback URL containing a Windows path as a file', () => {
         expect(resolveWorkspaceFileReference({
             url: 'http://localhost:18829/C:/Users/Alice/project/src/index.ts:12',
             workspacePath: 'C:\\Users\\Alice\\project',
-        })).toEqual({
-            filePath: 'src/index.ts',
-            line: 12,
-            anchor: { kind: 'line', filePath: 'src/index.ts', line: 12 },
-        });
+        })).toBeNull();
     });
 
     it('accepts file URL Windows drive links with line anchors', () => {
@@ -147,7 +135,6 @@ describe('transcript machine file references opt-in', () => {
         ['/work/repo-task/.scratch/report.md', '/work/repo', '/work/repo-task/.scratch/report.md'],
         ['../artifacts/report.md', '/work/repo', '/work/repo/../artifacts/report.md'],
         ['file:///work/artifacts/report.md', '/work/repo', '/work/artifacts/report.md'],
-        ['http://localhost:18829/work/artifacts/report.md', '/work/repo', '/work/artifacts/report.md'],
         ['C:\\Artifacts\\Report.md', 'C:\\Repo', 'C:/Artifacts/Report.md'],
         ['file:///D:/Artifacts/Report.md', 'C:\\Repo', 'D:/Artifacts/Report.md'],
         ['file://Server/Share/Artifacts/Report.md', '\\\\Server\\Share\\Repo', '//server/Share/Artifacts/Report.md'],
@@ -160,7 +147,7 @@ describe('transcript machine file references opt-in', () => {
         expect(resolveWorkspaceFileReference({ url: filePath + '#L5-L8', workspacePath: '/work/repo', allowOutsideWorkspace: true }))
             .toEqual({ filePath, line: 5, endLine: 8, anchor: { kind: 'range', filePath, startLine: 5, endLine: 8 } });
     });
-    it.each(['https://example.com/report.md', 'javascript:alert(1)', 'data:text/plain,report', 'mailto:user@example.com', '#L5', 'bad%00file.md'])(
+    it.each(['http://127.0.0.1:42031/b', 'http://localhost:18829/work/artifacts/report.md', 'http://[::1]:42031/b?view=1#heading', 'https://example.com/report.md', 'javascript:alert(1)', 'data:text/plain,report', 'mailto:user@example.com', '#L5', 'bad%00file.md'])(
         'does not reinterpret %s as a machine file', url => {
             expect(resolveWorkspaceFileReference({ url, workspacePath: '/work/repo', allowOutsideWorkspace: true })).toBeNull();
         },
