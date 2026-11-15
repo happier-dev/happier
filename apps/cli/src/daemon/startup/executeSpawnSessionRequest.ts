@@ -1452,6 +1452,8 @@ export async function executeSpawnSessionRequest(
                 ...(connectedServices.agentLaunchMaterials ? { agentLaunchMaterials: connectedServices.agentLaunchMaterials } : {}),
                 ...(effectiveOptionsForSpawn.projectSetupOperation ? { projectSetupOperation: effectiveOptionsForSpawn.projectSetupOperation } : {}),
                 ...(requesterRuntime ? { requesterSessionRuntimeContext: requesterRuntime } : {}),
+                // One registry lease per spawn: its post-report reconciliation reads this one.
+                readSpawnPluginRuntimeRegistry: () => pluginRuntimeLease.currentRegistry,
                 onTrackedSessionRegistered: (trackedSession) => {
                     sessionTargetRunner = trackedSession;
                     void observeSessionTargetRunnerExit(trackedSession).then(settleSessionTargetRunnerExit);

@@ -71,6 +71,8 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
     onSpawnResourceCleanupArmed: () => void;
     onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess' | 'hostedSession'>>) => void;
+    /** The registry this spawn holds, read by the Session's post-report authority reconciliation. */
+    readSpawnPluginRuntimeRegistry?: TrackedSession['readSpawnPluginRuntimeRegistry'];
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     projectSetupOperation?: SpawnSessionOptions['projectSetupOperation'];
@@ -189,6 +191,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
             options,
         ) => {
             if (input.requesterSessionRuntimeContext) trackedSession.requesterSessionRuntimeContext = input.requesterSessionRuntimeContext;
+            if (input.readSpawnPluginRuntimeRegistry) trackedSession.readSpawnPluginRuntimeRegistry = input.readSpawnPluginRuntimeRegistry;
             if (!input.deviceLocalSecretStorage) {
                 throw new Error('Device-local secret storage is unavailable for accepted spawn custody');
             }
