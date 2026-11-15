@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -10,7 +10,10 @@ export class BufferedFileAppender {
     private readonly flushIntervalMs: number;
     private readonly maxBufferedBytes: number;
     private readonly onWriteError: ((error: unknown) => void) | null;
+    private readonly tailWindowBytes: number | null;
+    private fileBytes: number | null = null;
     private pendingLines: string[] = [];
+    private pendingReportsWriteErrors = false;
     private pendingBytes = 0;
     private flushTimer: NodeJS.Timeout | null = null;
     private thresholdFlushToken: object | null = null;
@@ -21,15 +24,26 @@ export class BufferedFileAppender {
         flushIntervalMs?: number;
         maxBufferedBytes?: number;
         onWriteError?: (error: unknown) => void;
+        /**
+         * Newest bytes the file must keep readable. Once the file reaches twice this, it is
+         * rewritten to its newest whole lines within the window, so it stays under 2× the window.
+         * The file must have this appender as its only writer.
+         */
+        tailWindowBytes?: number;
     }>) {
         this.filePath = params.filePath;
         this.flushIntervalMs = params.flushIntervalMs ?? DEFAULT_LOG_FLUSH_INTERVAL_MS;
         this.maxBufferedBytes = params.maxBufferedBytes ?? DEFAULT_LOG_MAX_BUFFERED_BYTES;
         this.onWriteError = params.onWriteError ?? null;
+        this.tailWindowBytes = params.tailWindowBytes !== undefined && params.tailWindowBytes > 0
+            ? Math.floor(params.tailWindowBytes)
+            : null;
     }
 
-    append(line: string): void {
+    /** `silent` lines never report a write failure on their own (isolated diagnostic sinks). */
+    append(line: string, options?: Readonly<{ silent?: boolean }>): void {
         this.pendingLines.push(line);
+        if (options?.silent !== true) this.pendingReportsWriteErrors = true;
         this.pendingBytes += line.length;
         if (this.pendingBytes >= this.maxBufferedBytes) {
             this.clearFlushTimer();
@@ -42,14 +56,17 @@ export class BufferedFileAppender {
     flushSync(): void {
         this.clearFlushTimer();
         this.thresholdFlushToken = null;
-        const chunk = this.takePendingChunk();
-        if (chunk === null) return;
+        const pending = this.takePendingChunk();
+        if (pending === null) return;
+        const { chunk, reportsWriteErrors } = pending;
         try {
             appendFileSync(this.filePath, chunk);
         } catch (error) {
-            const retried = this.retrySyncAfterEnoent(error, chunk);
-            if (!retried) this.reportWriteError(error);
+            const retried = this.retrySyncAfterEnoent(error, chunk, reportsWriteErrors);
+            if (!retried && reportsWriteErrors) this.reportWriteError(error);
         }
+        // A synchronous drain may race an in-flight async append; trimming waits for the next async flush.
+        this.noteAppended(chunk);
     }
 
     private scheduleFlush(): void {
@@ -79,12 +96,14 @@ export class BufferedFileAppender {
         });
     }
 
-    private takePendingChunk(): string | null {
+    private takePendingChunk(): Readonly<{ chunk: string; reportsWriteErrors: boolean }> | null {
         if (this.pendingLines.length === 0) return null;
         const chunk = this.pendingLines.join('');
+        const reportsWriteErrors = this.pendingReportsWriteErrors;
         this.pendingLines = [];
         this.pendingBytes = 0;
-        return chunk;
+        this.pendingReportsWriteErrors = false;
+        return { chunk, reportsWriteErrors };
     }
 
     private async flushAsync(): Promise<void> {
@@ -92,17 +111,63 @@ export class BufferedFileAppender {
         this.flushInFlight = true;
         try {
             for (;;) {
-                const chunk = this.takePendingChunk();
-                if (chunk === null) return;
+                const pending = this.takePendingChunk();
+                if (pending === null) return;
+                const { chunk, reportsWriteErrors } = pending;
                 try {
                     await appendFile(this.filePath, chunk);
                 } catch (error) {
-                    const retried = await this.retryAsyncAfterEnoent(error, chunk);
-                    if (!retried) this.reportWriteError(error);
+                    const retried = await this.retryAsyncAfterEnoent(error, chunk, reportsWriteErrors);
+                    if (!retried && reportsWriteErrors) this.reportWriteError(error);
                 }
+                // No other write of this appender is pending here, so a synchronous trim cannot drop one.
+                if (this.noteAppended(chunk)) this.trimToTailWindow();
             }
         } finally {
             this.flushInFlight = false;
+        }
+    }
+
+    /** Returns true when the file may have reached twice the tail window. */
+    private noteAppended(chunk: string): boolean {
+        if (this.tailWindowBytes === null) return false;
+        if (this.fileBytes === null) {
+            try { this.fileBytes = statSync(this.filePath).size; } catch { this.fileBytes = 0; }
+        } else {
+            this.fileBytes += Buffer.byteLength(chunk);
+        }
+        return this.fileBytes >= this.tailWindowBytes * 2;
+    }
+
+    private trimToTailWindow(): void {
+        const windowBytes = this.tailWindowBytes;
+        if (windowBytes === null) return;
+        const tempPath = `${this.filePath}.trim`;
+        try {
+            const size = statSync(this.filePath).size;
+            this.fileBytes = size;
+            if (size < windowBytes * 2) return;
+            // Read one byte before the window so a window that starts on a line boundary keeps that line.
+            const buffer = Buffer.allocUnsafe(windowBytes + 1);
+            const descriptor = openSync(this.filePath, 'r');
+            let bytesRead: number;
+            try {
+                bytesRead = readSync(descriptor, buffer, 0, buffer.length, size - buffer.length);
+            } finally {
+                closeSync(descriptor);
+            }
+            const firstNewline = buffer.subarray(0, bytesRead).indexOf(0x0A);
+            const tail = firstNewline >= 0 && firstNewline < bytesRead - 1
+                ? buffer.subarray(firstNewline + 1, bytesRead)
+                : buffer.subarray(1, bytesRead);
+            writeFileSync(tempPath, tail);
+            renameSync(tempPath, this.filePath);
+            this.fileBytes = tail.length;
+        } catch (error) {
+            try { unlinkSync(tempPath); } catch { /* the temp file may not exist */ }
+            // Retry only after another window of writes, not on every flush.
+            if (this.fileBytes !== null) this.fileBytes -= windowBytes;
+            this.reportWriteError(error);
         }
     }
 
@@ -115,26 +180,26 @@ export class BufferedFileAppender {
         }
     }
 
-    private retrySyncAfterEnoent(error: unknown, chunk: string): boolean {
+    private retrySyncAfterEnoent(error: unknown, chunk: string, reportsWriteErrors: boolean): boolean {
         if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') return false;
         if (!this.ensureParentDir()) return false;
         try {
             appendFileSync(this.filePath, chunk);
             return true;
         } catch (retryError) {
-            this.reportWriteError(retryError);
+            if (reportsWriteErrors) this.reportWriteError(retryError);
             return true;
         }
     }
 
-    private async retryAsyncAfterEnoent(error: unknown, chunk: string): Promise<boolean> {
+    private async retryAsyncAfterEnoent(error: unknown, chunk: string, reportsWriteErrors: boolean): Promise<boolean> {
         if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') return false;
         if (!this.ensureParentDir()) return false;
         try {
             await appendFile(this.filePath, chunk);
             return true;
         } catch (retryError) {
-            this.reportWriteError(retryError);
+            if (reportsWriteErrors) this.reportWriteError(retryError);
             return true;
         }
     }

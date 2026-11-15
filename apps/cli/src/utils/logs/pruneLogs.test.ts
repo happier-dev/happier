@@ -59,4 +59,28 @@ describe('pruneLogs', () => {
       removeTempDirSync(dir);
     }
   });
+
+  it('keeps total log bytes within the budget by removing the oldest logs first, never a kept path', async () => {
+    const dir = createTempDirSync('happier-prune-budget-');
+    try {
+      const files = [
+        { name: 'current-daemon.log', bytes: 50, mtime: 1 },
+        { name: 'oldest.log', bytes: 10, mtime: 2 },
+        { name: 'older.log', bytes: 30, mtime: 3 },
+        { name: 'newer.log', bytes: 30, mtime: 4 },
+        { name: 'newest.log', bytes: 15, mtime: 5 },
+      ];
+      for (const file of files) {
+        await writeFile(join(dir, file.name), 'x'.repeat(file.bytes));
+        await utimes(join(dir, file.name), file.mtime, file.mtime);
+      }
+
+      const result = await pruneLogs({ dir, suffix: '.log', maxTotalBytes: 100, keepPath: join(dir, 'current-daemon.log') });
+
+      expect(result.pruned).toBe(2);
+      expect((await readdir(dir)).sort()).toEqual(['current-daemon.log', 'newer.log', 'newest.log']);
+    } finally {
+      removeTempDirSync(dir);
+    }
+  });
 });

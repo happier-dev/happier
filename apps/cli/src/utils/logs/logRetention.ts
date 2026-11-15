@@ -5,6 +5,24 @@ export const DAEMON_STDERR_LOG_PATH_ENV = 'HAPPIER_DAEMON_STDERR_LOG_PATH';
 
 export const DEFAULT_CRASHED_SESSION_LOG_KEEP_COUNT = 20;
 
+/** Recent log files the diagnostic surfaces name (doctor listing, bug-report machine diagnostics). */
+export const DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT = 5;
+export const DIAGNOSTIC_RECENT_SESSION_LOG_COUNT = 10;
+
+/**
+ * Newest bytes one log file keeps readable. A bug report reads at most this tail of the
+ * daemon and session logs: it is the default per-artifact upload limit, the most a user can share.
+ */
+export const LOG_FILE_TAIL_WINDOW_BYTES = DEFAULT_BUG_REPORTS_CAPABILITIES.maxArtifactBytes;
+
+/**
+ * Total bytes all logs in the logs directory may use: every file a diagnostic surface can name
+ * (recent daemon + session logs, preserved crashed-session logs) with its full shareable tail.
+ * Oldest logs go first; the current, live and crashed logs are never removed for it.
+ */
+export const LOG_TOTAL_BUDGET_BYTES = LOG_FILE_TAIL_WINDOW_BYTES
+  * (DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT + DIAGNOSTIC_RECENT_SESSION_LOG_COUNT + DEFAULT_CRASHED_SESSION_LOG_KEEP_COUNT);
+
 type EnvLike = Readonly<Record<string, string | undefined>>;
 
 function resolveKeepCount(rawValue: string | undefined): number | undefined {
@@ -60,12 +78,12 @@ export function resolveCrashedSessionLogKeepPaths(logsDir: string, env: EnvLike 
   } catch { return []; }
 }
 
-export function resolveLiveSessionLogKeepPaths(logsDir: string, keepCount = 0): string[] {
+/** Logs (session or daemon) whose writing process is still running. */
+export function resolveLiveProcessLogKeepPaths(logsDir: string): string[] {
   try {
     const liveness = new Map<number, boolean>();
-    return readdirSync(logsDir).filter(name => name.endsWith(LOG_FILE_SUFFIX) && !name.endsWith(DAEMON_LOG_SUFFIX))
-      .sort((a, b) => a < b ? 1 : a > b ? -1 : 0).slice(Math.max(0, keepCount)).filter(name => {
-        const match = /-pid-(\d+)\.log$/.exec(name);
+    return readdirSync(logsDir).filter(name => name.endsWith(LOG_FILE_SUFFIX)).filter(name => {
+        const match = /-pid-(\d+)(?:-daemon)?\.log$/.exec(name);
         if (!match) return false;
         const pid = Number(match[1]);
         if (!Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -89,7 +107,7 @@ export function createLogRetentionOwner(input: Readonly<{
       const logsDir = join(input.happyHomeDir, 'logs');
       const policy = resolveLogRetention({ settings: { logRetentionDays: days }, env: input.env });
       const stderrPath = (input.env ?? process.env)[DAEMON_STDERR_LOG_PATH_ENV];
-      const keepPaths = [...await input.currentLogPaths(), ...(stderrPath ? [stderrPath] : []), ...resolveCrashedSessionLogKeepPaths(logsDir, input.env), ...resolveLiveSessionLogKeepPaths(logsDir)];
+      const keepPaths = [...await input.currentLogPaths(), ...(stderrPath ? [stderrPath] : []), ...resolveCrashedSessionLogKeepPaths(logsDir, input.env), ...resolveLiveProcessLogKeepPaths(logsDir)];
       const result = { pruned: 0, freedBytes: 0, nextDueAtMs: null as number | null };
       let stopped = false;
       const ageMs = days === null ? null : days * 86_400_000;
@@ -98,17 +116,19 @@ export function createLogRetentionOwner(input: Readonly<{
         const measured = await measureNativeDisk({ paths: [...paths] });
         return new Map(measured.perPath.map(item => [item.path, item.exclusiveBytes]));
       };
-      async function prune(dir: string, suffix: string, excludeSuffix?: string, keepCount?: number) {
+      async function prune(dir: string, suffix: string, excludeSuffix?: string, keepCount?: number, maxTotalBytes?: number) {
+        // The budget pass spans daemon and session logs after their own age/count passes.
+        const applyAge = maxTotalBytes === undefined;
         if (stopped) return;
         try {
-          const pass = await pruneLogs({ dir, suffix, excludeSuffix, keepCount, keepPaths, beforeEffect: operation.beforeEffect,
-            ...(ageMs === null ? {} : { olderThanMs: nowMs - ageMs }), measure });
+          const pass = await pruneLogs({ dir, suffix, excludeSuffix, keepCount, maxTotalBytes, keepPaths, beforeEffect: operation.beforeEffect,
+            ...(ageMs === null || !applyAge ? {} : { olderThanMs: nowMs - ageMs }), measure });
           result.pruned += pass.pruned; result.freedBytes += pass.freedBytes;
           for (const failure of pass.failures) {
             if (failure.error instanceof Error && failure.error.name === 'AbortError') stopped = true;
             input.onError(failure.error);
           }
-          if (ageMs !== null && pass.oldestRemainingAtMs !== null) result.nextDueAtMs = Math.min(result.nextDueAtMs ?? Infinity, pass.oldestRemainingAtMs + ageMs);
+          if (applyAge && ageMs !== null && pass.oldestRemainingAtMs !== null) result.nextDueAtMs = Math.min(result.nextDueAtMs ?? Infinity, pass.oldestRemainingAtMs + ageMs);
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') stopped = true;
           input.onError(error);
@@ -122,6 +142,7 @@ export function createLogRetentionOwner(input: Readonly<{
         if (dir === logsDir) {
           await prune(dir, DAEMON_LOG_SUFFIX, undefined, policy.daemonKeepCount);
           await prune(dir, LOG_FILE_SUFFIX, DAEMON_LOG_SUFFIX, policy.sessionKeepCount);
+          await prune(dir, LOG_FILE_SUFFIX, undefined, undefined, LOG_TOTAL_BUDGET_BYTES);
         } else await prune(dir, '');
         for (const name of names) {
           if (stopped) break;
@@ -140,4 +161,5 @@ import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { DEFAULT_BUG_REPORTS_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/bugReportsCapabilities';
 import { pruneLogs } from './pruneLogs';

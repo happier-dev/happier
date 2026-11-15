@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import packageJson from '../../package.json'
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
 import { getEnvironmentInfo } from './getEnvironmentInfo'
+import { DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT, DIAGNOSTIC_RECENT_SESSION_LOG_COUNT } from '@/utils/logs/logRetention'
 import { formatRelayAccountIdentity } from '@/auth/formatRelayAccountIdentity'
 import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness'
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload'
@@ -310,26 +311,26 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             // Show regular logs (max 10)
             if (regularLogs.length > 0) {
                 console.log(chalk.blue('\nRecent Logs:'));
-                const logsToShow = regularLogs.slice(0, 10);
+                const logsToShow = regularLogs.slice(0, DIAGNOSTIC_RECENT_SESSION_LOG_COUNT);
                 logsToShow.forEach(({ file, path, modified }) => {
                     console.log(`  ${chalk.green(file)} - ${modified.toLocaleString()}`);
                     console.log(chalk.gray(`    ${path}`));
                 });
-                if (regularLogs.length > 10) {
-                    console.log(chalk.gray(`  ... and ${regularLogs.length - 10} more log files`));
+                if (regularLogs.length > DIAGNOSTIC_RECENT_SESSION_LOG_COUNT) {
+                    console.log(chalk.gray(`  ... and ${regularLogs.length - DIAGNOSTIC_RECENT_SESSION_LOG_COUNT} more log files`));
                 }
             }
 
             // Show daemon logs (max 5)
             if (daemonLogs.length > 0) {
                 console.log(chalk.blue('\nDaemon Logs:'));
-                const daemonLogsToShow = daemonLogs.slice(0, 5);
+                const daemonLogsToShow = daemonLogs.slice(0, DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT);
                 daemonLogsToShow.forEach(({ file, path, modified }) => {
                     console.log(`  ${chalk.green(file)} - ${modified.toLocaleString()}`);
                     console.log(chalk.gray(`    ${path}`));
                 });
-                if (daemonLogs.length > 5) {
-                    console.log(chalk.gray(`  ... and ${daemonLogs.length - 5} more daemon log files`));
+                if (daemonLogs.length > DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT) {
+                    console.log(chalk.gray(`  ... and ${daemonLogs.length - DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT} more daemon log files`));
                 }
             } else {
                 console.log(chalk.yellow('\nNo daemon log files found'));

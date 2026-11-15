@@ -27,7 +27,9 @@ import {
   DAEMON_STDERR_LOG_PATH_ENV,
   LOG_FILE_SUFFIX,
   resolveCrashedSessionLogKeepPaths,
-  resolveLiveSessionLogKeepPaths,
+  resolveLiveProcessLogKeepPaths,
+  LOG_FILE_TAIL_WINDOW_BYTES,
+  LOG_TOTAL_BUDGET_BYTES,
   resolveDaemonLogKeepCount,
   resolveSessionLogKeepCount,
 } from '@/utils/logs/logRetention'
@@ -233,32 +235,26 @@ function getSessionLogPath(): string {
 
 async function pruneCurrentProcessLogsBestEffort(currentLogPath: string): Promise<void> {
   const logsDir = resolveLogsDir()
-  if (configuration.isDaemonProcess) {
-    const keepCount = resolveDaemonLogKeepCount()
-    if (keepCount === undefined) return
-    const stderrLogPath = process.env[DAEMON_STDERR_LOG_PATH_ENV]
-    await pruneLogs({
-      dir: logsDir,
-      suffix: DAEMON_LOG_SUFFIX,
-      keepCount,
-      keepPath: currentLogPath,
-      keepPaths: stderrLogPath ? [stderrLogPath] : [],
-    })
-    return
+  const stderrLogPath = process.env[DAEMON_STDERR_LOG_PATH_ENV]
+  const stderrLogPaths = stderrLogPath ? [stderrLogPath] : []
+  const sessionKeepPaths = [...resolveCrashedSessionLogKeepPaths(logsDir), ...resolveLiveProcessLogKeepPaths(logsDir)]
+  const daemonKeepCount = configuration.isDaemonProcess ? resolveDaemonLogKeepCount() : undefined
+  if (daemonKeepCount !== undefined) {
+    await pruneLogs({ dir: logsDir, suffix: DAEMON_LOG_SUFFIX, keepCount: daemonKeepCount, keepPath: currentLogPath, keepPaths: stderrLogPaths })
   }
-
-  const keepCount = resolveSessionLogKeepCount()
-  if (keepCount === undefined) return
+  const sessionKeepCount = configuration.isDaemonProcess ? undefined : resolveSessionLogKeepCount()
+  if (sessionKeepCount !== undefined) {
+    await pruneLogs({
+      dir: logsDir, suffix: LOG_FILE_SUFFIX, excludeSuffix: DAEMON_LOG_SUFFIX,
+      keepCount: sessionKeepCount, keepPath: currentLogPath, keepPaths: sessionKeepPaths,
+    })
+  }
+  // Install-wide budget across daemon and session logs; every live, crashed or current log stays.
+  // Only the daemon knows its launch-owned stderr capture, so only the daemon spends the budget.
+  if (!configuration.isDaemonProcess) return
   await pruneLogs({
-    dir: logsDir,
-    suffix: LOG_FILE_SUFFIX,
-    excludeSuffix: DAEMON_LOG_SUFFIX,
-    keepCount,
-    keepPath: currentLogPath,
-    keepPaths: [
-      ...resolveCrashedSessionLogKeepPaths(logsDir),
-      ...resolveLiveSessionLogKeepPaths(logsDir, keepCount),
-    ],
+    dir: logsDir, suffix: LOG_FILE_SUFFIX, maxTotalBytes: LOG_TOTAL_BUDGET_BYTES,
+    keepPath: currentLogPath, keepPaths: [...stderrLogPaths, ...sessionKeepPaths],
   })
 }
 
@@ -270,7 +266,6 @@ export class Logger {
   private readonly infoFileEnabled: boolean
   private readonly warnFileEnabled: boolean
   private readonly fileAppender: BufferedFileAppender
-  private readonly pluginInvocationFileAppender: BufferedFileAppender
   private readonly redactFileOutput: boolean
   private readonly pruneLogs: boolean
   private readonly pluginLogOccurrenceId = randomUUID()
@@ -288,12 +283,11 @@ export class Logger {
     this.debugFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'debug')
     this.infoFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'info')
     this.warnFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'warn')
+    // One appender per file: the tail-window trim requires a single writer.
     this.fileAppender = new BufferedFileAppender({
       filePath: this.logFilePath,
+      tailWindowBytes: LOG_FILE_TAIL_WINDOW_BYTES,
       onWriteError: (error) => this.handleFileWriteError(error),
-    })
-    this.pluginInvocationFileAppender = new BufferedFileAppender({
-      filePath: this.logFilePath,
     })
     if (this.pruneLogs) void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
 
@@ -465,16 +459,15 @@ export class Logger {
 
   flushSync(): void {
     this.fileAppender.flushSync()
-    this.pluginInvocationFileAppender.flushSync()
     if (this.pruneLogs) void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
   }
 
   appendPluginInvocationLogRecord(record: Readonly<Record<string, unknown>>): void {
     try {
       const line = `${JSON.stringify(record)}\n`
-      this.pluginInvocationFileAppender.append(this.redactFileOutput
+      this.fileAppender.append(this.redactFileOutput
         ? redactBugReportSensitiveText(line)
-        : line)
+        : line, { silent: true })
       for (const changed of [...this.pluginLogWaiters]) changed()
     } catch {
       // Structured plugin diagnostics must never interfere with plugin work.
@@ -492,7 +485,7 @@ export class Logger {
     const limit = normalizePluginInvocationLogReadLimit(query.limit)
     const requestedCursor = normalizePluginInvocationLogReadCursor(query.cursor)
     try {
-      this.pluginInvocationFileAppender.flushSync()
+      this.fileAppender.flushSync()
       const stats = statSync(this.logFilePath)
       if (!stats.isFile()) return { kind: 'unavailable' }
       const fileSize = Math.max(0, Math.trunc(stats.size))

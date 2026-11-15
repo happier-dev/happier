@@ -20,9 +20,10 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from './bugReportMachineDiagnostics';
+import { DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT } from '@/utils/logs/logRetention';
 
 export const BUG_REPORT_MACHINE_DIAGNOSTICS_RECIPE = {
-  daemonLogLimit: 5, stackLogLimit: 3, stackRuntimeMaxChars: 400_000,
+  daemonLogLimit: DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT, stackLogLimit: 3, stackRuntimeMaxChars: 400_000,
 } as const;
 
 type CollectionScope = Readonly<{

@@ -8,6 +8,8 @@ export type PruneLogsParams = Readonly<{
   excludeSuffix?: string;
   keepCount?: number;
   olderThanMs?: number;
+  /** Total bytes the matching logs, kept paths included, may use; the oldest others go first. */
+  maxTotalBytes?: number;
   keepPath?: string;
   keepPaths?: readonly string[];
   measure?: (paths: readonly string[]) => Promise<ReadonlyMap<string, number>>;
@@ -43,16 +45,32 @@ export async function pruneLogs(params: PruneLogsParams): Promise<PruneLogsResul
       .sort(sortNewestFirst);
 
     const candidates: { path: string; identity: Awaited<ReturnType<typeof readStoragePathIdentity>>; mtimeMs: number }[] = [];
+    const remaining: { path: string; mtimeMs: number; size: number }[] = [];
+    let keptBytes = 0;
     for (const [index, name] of entries.entries()) {
       const path = join(params.dir, name);
-      if (keepPaths.has(resolve(path))) continue;
+      const kept = keepPaths.has(resolve(path));
+      if (kept && params.maxTotalBytes === undefined) continue;
       let stat;
       try { stat = await lstat(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
       if (!stat.isFile() && !stat.isSymbolicLink()) continue;
+      if (kept) { keptBytes += stat.size; continue; }
       const byCount = params.keepCount !== undefined && index >= normalizeKeepCount(params.keepCount);
       const byAge = params.olderThanMs !== undefined && stat.mtimeMs <= params.olderThanMs;
       if (byCount || byAge) candidates.push({ path, identity: await readStoragePathIdentity(path), mtimeMs: stat.mtimeMs });
-      else result.oldestRemainingAtMs = Math.min(result.oldestRemainingAtMs ?? Infinity, stat.mtimeMs);
+      else remaining.push({ path, mtimeMs: stat.mtimeMs, size: stat.size });
+    }
+    // Keep the newest data: once the budget is spent, every older log goes, even a smaller one.
+    let totalBytes = keptBytes;
+    let overBudget = false;
+    for (const entry of remaining.sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+      overBudget ||= params.maxTotalBytes !== undefined && totalBytes + entry.size > params.maxTotalBytes;
+      if (overBudget) {
+        candidates.push({ path: entry.path, identity: await readStoragePathIdentity(entry.path), mtimeMs: entry.mtimeMs });
+        continue;
+      }
+      totalBytes += entry.size;
+      result.oldestRemainingAtMs = Math.min(result.oldestRemainingAtMs ?? Infinity, entry.mtimeMs);
     }
     if (candidates.length) await params.beforeEffect?.();
     const measured = candidates.length && params.measure ? await params.measure(candidates.map(candidate => candidate.path)) : undefined;
