@@ -13383,6 +13383,26 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `projection` (select): Projection
 
+## `plugins.logs.read`
+
+**Read plugin logs** — Read one page of a plugin's structured invocation logs on one Machine, optionally narrowed to one invocation or correlation id. Pass the returned cursor and logId to read the next page.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine
+- `pluginId` (text, required): Plugin id
+- `occurrenceId` (text): Invocation
+- `correlationId` (text): Correlation id
+- `cursor` (number): Cursor
+- `logId` (text): Log id
+- `limit` (number): Limit
+
 ## `plugins.npm_registry_profiles.add`
 
 **Add npm registry profile** — Manage the exact selected Machine’s revisioned npm registry profiles. Sign-in credentials are acquired privately by the answering app.
