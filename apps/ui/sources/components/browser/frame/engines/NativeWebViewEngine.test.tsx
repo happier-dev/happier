@@ -32,6 +32,18 @@ vi.mock('react-native-webview', () => ({
 }));
 
 describe('NativeWebViewEngine', () => {
+    it('keeps a local preview document address when its native load finishes', async () => {
+        const { LocalPreviewTarget } = await import('../../adapters/LocalPreviewTarget.native');
+        const lifecycle = vi.fn();
+        const screen = await renderScreen(<LocalPreviewTarget title="Preview" url="https://preview.example.test/"
+            testID="preview" onLifecycle={lifecycle} />);
+        const navigate = lastWebViewProps?.onNavigationStateChange as (state: unknown) => void;
+        const loadEnd = lastWebViewProps?.onLoadEnd as (event: unknown) => void;
+        await act(async () => navigate({ url: 'https://preview.example.test/a', loading: false, canGoBack: true, canGoForward: false }));
+        await act(async () => loadEnd({ nativeEvent: { url: 'https://preview.example.test/a' } }));
+        expect(lifecycle).toHaveBeenLastCalledWith({ kind: 'loadFinished' });
+        await screen.unmount();
+    });
     it.each(['unmount', 'source replacement', 'navigation'] as const)('does not inject a pending reply after %s', async (retirement) => {
         clearWebViewRefOnUnmount = true;
         const { NativeWebViewEngine } = await import('./NativeWebViewEngine');

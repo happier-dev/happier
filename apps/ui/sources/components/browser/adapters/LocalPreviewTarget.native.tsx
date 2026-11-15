@@ -59,7 +59,8 @@ export function LocalPreviewTarget(props: Readonly<{
                 },
                 onLoadEnd: () => {
                     props.onLoadEnd?.();
-                    onLifecycle?.({ kind: 'loadFinished', url: props.url });
+                    // The WebView navigation callback owns the document's current address.
+                    onLifecycle?.({ kind: 'loadFinished' });
                 },
                 onError: () => {
                     props.onError?.();

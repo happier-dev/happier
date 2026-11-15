@@ -35,8 +35,8 @@ export function LocalPreviewTarget(props: Readonly<{
     automation?: BrowserAutomationEngineBridgeConfig;
     /**
      * B-2 cause-2: the iframe's `onLoad`/`onError` are mapped to page-load lifecycle signals so the
-     * control reducer transitions `loading → ready/failed`. The loaded URL is the iframe `src`
-     * (`props.url`), so `loadFinished` commits it (an in-place navigate's pending URL becomes current).
+     * control reducer transitions `loading → ready/failed`. The document's navigation reporter
+     * owns the address; a cross-origin load notification cannot read its current location.
      */
     onLifecycle?: BrowserViewLifecycleEmitter;
 }>): React.ReactElement {
@@ -83,7 +83,7 @@ export function LocalPreviewTarget(props: Readonly<{
                 navigationCommand: props.navigationCommand,
                 onLoad: () => {
                     props.onLoad?.();
-                    onLifecycle?.({ kind: 'loadFinished', url: props.url });
+                    onLifecycle?.({ kind: 'loadFinished' });
                 },
                 onError: () => {
                     props.onError?.();

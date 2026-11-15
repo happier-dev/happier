@@ -62,7 +62,7 @@ describe('LocalPreviewTarget web', () => {
         transportAvailable = true;
         await act(async () => screen.findByType('iframe').props.onLoad());
         expect(screen.findHostByTestId('local-preview-unavailable')).toBeNull();
-        expect(lifecycle).toHaveBeenLastCalledWith({ kind: 'loadFinished', url: props.url });
+        expect(lifecycle).toHaveBeenLastCalledWith({ kind: 'loadFinished' });
     });
 
     it('feeds the preview documents\' own location, history and loading truth to the control lifecycle', async () => {
@@ -83,6 +83,10 @@ describe('LocalPreviewTarget web', () => {
         await act(async () => { host.dispatchEvent(event); });
         expect(lifecycle).toHaveBeenCalledWith({ kind: 'navigationStateChanged', loading: false, canGoBack: true, canGoForward: false,
             url: 'https://preview.example.test/other', navigationGeneration: 1 });
+        // A native load notification cannot read the cross-origin document's address. Its
+        // opening URL must not overwrite the location the document just reported.
+        await act(async () => screen.findByType('iframe').props.onLoad());
+        expect(lifecycle).toHaveBeenLastCalledWith({ kind: 'loadFinished' });
         const titled = new Event('message') as MessageEvent;
         Object.defineProperties(titled, {
             data: { value: JSON.stringify({ v: 1, kind: 'browser.collector.navigation', ...identity, loading: false, canGoBack: true, canGoForward: false, url: 'https://preview.example.test/c', title: 'Checkout' }) },
