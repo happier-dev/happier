@@ -3688,8 +3688,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             && continuation.success && continuation.data.managedContinuation !== undefined;
         const setupPurpose = method === 'POST' && (managedRoot.data === 'machines.setup.apply'
             && ['/v1/machines/setup/resolve', '/v1/machines/setup/report'].includes(path)
-            || managedRoot.data === 'machines.setup.plan' && verified.binding.managedContinuation
-                && path === '/v1/machines/setup/resolve');
+            || managedRoot.data === 'machines.setup.plan' && path === '/v1/machines/setup/resolve');
         // Combined Setup uses one finite purpose for Run storage and selected
         // receiver installation publications, including plans without apps.
         const setupWorkflowPurpose = isMachineSetupCombinedActionIdV1(managedRoot.data)

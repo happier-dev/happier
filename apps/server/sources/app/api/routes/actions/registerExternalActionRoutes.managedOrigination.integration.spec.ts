@@ -71,7 +71,8 @@ import { deriveAccountEncryptionCurrentnessFromRow } from '@/app/encryption/acco
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { cancelManagedCreation, getManagedMachine } from '@/app/machines/managed/managedRead';
-import { createMachinePreset } from '@/app/machines/managed/machinePresetService';
+import { createMachinePreset, readMachinePresetRecipientCensus } from '@/app/machines/managed/machinePresetService';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -2545,6 +2546,60 @@ describe('ordinary Account managed Action origination', () => {
                 .toMatchObject({ currentStorageState: 'hosted', active: false, archivedAt,
                     metadata: retained.metadata, metadataLayoutVersion: 0 });
         } finally { restoreRead?.(); await instance.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('resolves a saved preset for an independent setup Review (%s)', async mode => {
+        const selected = await fixture(true, mode);
+        const owner = { kind: 'account' as const, accountId: selected.account.id };
+        const presetId = crypto.randomUUID();
+        const census = await readMachinePresetRecipientCensus({ accountId: selected.account.id,
+            input: { homeId, owner } });
+        expect(census.kind).toBe('ready');
+        if (census.kind !== 'ready') throw new Error('Expected ready preset recipients');
+        const sealed = sealManagedMachinePresetContentV1({ presetId, mode,
+            content: { v: 1, name: 'Saved setup', setup: { scripts: [{ body: 'echo private setup', affects: 'none' }] } },
+            recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes });
+        expect(await createMachinePreset({ accountId: selected.account.id, input: {
+            homeId, id: presetId, owner, contentEncryptionMode: mode, ...sealed,
+        } })).toMatchObject({ kind: 'saved' });
+        const sources = [{ kind: 'accountPresetOpaque' as const, presetId, presetRevision: 0, contentEncryptionMode: mode },
+            { kind: 'direct' as const, setup: {} }];
+        const resolveInput = { homeId, machineId: selected.controller.machineId, sources };
+        const actionId = 'machines.setup.plan';
+        const actionInput = { ...resolveInput, mode: 'effects' };
+        const requestId = crypto.randomUUID();
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const envelope = mode === 'plain' ? { v: 1 as const, requestId, target, input: actionInput }
+            : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                    authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId, requestId, target },
+                input: actionInput, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(8) },
+                randomBytes: tweetnacl.randomBytes });
+        const instance = await app(async () => { throw new Error('Review cannot execute native setup'); });
+        try {
+            const issued = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${selected.token}` },
+                payload: { v: 1, machineId: selected.controller.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(authorization.binding.managedContinuation).toBeUndefined();
+            const post = (path: string, body: object) => instance.inject({ method: 'POST', url: path, payload: body, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target: authorization.binding.target, installationId: authorization.binding.installationId,
+                    requestId, method: 'POST', path, body, privateKey: selected.keys.secretKey }),
+            } });
+            const resolved = await post('/v1/machines/setup/resolve', resolveInput);
+            expect(resolved.statusCode, resolved.body).toBe(200);
+            expect(resolved.json()).toMatchObject({ sources: [{ ...sources[0], presetContent: { content: sealed.content } }, sources[1]] });
+            expect(resolved.json().sources[0].presetContent.recipientEnvelope === null).toBe(mode === 'plain');
+            expect((await post('/v1/machines/setup/resolve', { ...resolveInput, homeId: 'srv_other' })).statusCode).not.toBe(200);
+            expect((await post('/v1/machines/setup/resolve', { ...resolveInput, machineId: crypto.randomUUID() })).statusCode).not.toBe(200);
+            expect((await post('/v1/machines/setup/report', { homeId, machineId: selected.controller.machineId, presetId,
+                presetRevision: 0, managedId: 'unrelated-creation', state: 'running', operation: { operationId: 'not-a-Review-effect' } })).statusCode).not.toBe(200);
+        } finally { await instance.close(); }
     });
 
     it.each([false, true])('refuses personal setup references on another custodian while preserving shared-reference authority (reviewed child: %s)', async reviewed => {
