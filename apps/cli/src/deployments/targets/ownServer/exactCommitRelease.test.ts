@@ -549,7 +549,7 @@ describe('exact deployment source through the public port', () => {
         });
     });
 
-    it('adopts the committed identical restoration on a second restore and refuses changed bytes', async () => {
+    it.each([true, false])('adopts the committed identical restoration and refuses changed bytes (receipt published=%s)', async published => {
         await withCommittedSource(async admitted => {
             const admission = { ...admitted, restorationForDeploymentId: admitted.deploymentId };
             const first = await createDeploymentSourceMaterializationPort({ registry: createDeploymentGitRegistry(),
@@ -557,7 +557,7 @@ describe('exact deployment source through the public port', () => {
             await first.commit();
             const retainedRestoration = await captureOwnServerDeploymentSource({ source: first, admission });
             const port = createDeploymentSourceMaterializationPort({ registry: createDeploymentGitRegistry(),
-                async admit() { return { ...admission, retainedRestoration }; } });
+                async admit() { return { ...admission, ...(published ? { retainedRestoration } : {}) }; } });
             const second = await port.materialize(request);
             expect(second.rootPath).toBe(first.rootPath);
             await second.commit();

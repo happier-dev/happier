@@ -8,6 +8,7 @@ import { readResticNativeJsonV1 } from './manifestV1.js';
 import { readBackupNativeFailureEvidenceV1, verifyDeploymentBackupV1 } from './verificationV1.js';
 import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from './resticExecutor.js';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { DeploymentRestoreRecoveryPointV1 } from '@happier-dev/deployment-protocol';
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
  * Staging/recovery names belong to this operation, not a caller-selected live database. */
@@ -86,6 +87,7 @@ export type DeploymentRestoreResultV1 = Readonly<{
     source: DeploymentBackupManifestV1 | DeploymentRestoreUploadSourceV1; destination: DeploymentRestoreDestinationV1;
     safetyBackup?: DeploymentBackupRunResultV1; code?: RestoreFailureCode; nativeFailure?: DeploymentBackupNativeFailureV1;
     failureCause?: ActionFailureCauseV1;
+    recoveryFailureCause?: ActionFailureCauseV1;
     steps?: readonly DeploymentRestoreStepV1[];
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
@@ -103,6 +105,41 @@ function codeOf(error: unknown): RestoreFailureCode {
     return 'outcome_unknown';
 }
 function cancelled(signal: AbortSignal) { if (signal.aborted) refuse('cancelled'); }
+
+/** The public restore owner admitted this scoped recovery point. Reuse the same
+ * volume activation and protected stage; never restore from a guessed latest backup. */
+export async function recoverDeploymentRestoreV1(input: Readonly<{
+    recovery: Omit<DeploymentRestoreRecoveryPointV1, 'destination'> & Readonly<{ destination: DeploymentRestoreVolumeDestinationV1 }>;
+    signal: AbortSignal; execute: NativeExecute; onStep?: RestoreCapture['onStep'];
+    runProtectedStage<T>(effect: () => Promise<T>): Promise<T>;
+}>): Promise<DeploymentRestoreResultV1> {
+    const { recovery } = input;
+    const steps = restoreSteps({ ...(input.onStep ? { onStep: input.onStep } : {}) }, recovery.steps);
+    const { code: previousCode, steps: _steps, safetyBackup, failureCause, nativeFailure, ...requiredEvidence } = recovery;
+    const evidence = { ...requiredEvidence, ...(safetyBackup ? { safetyBackup: {
+        kind: safetyBackup.kind, manifests: safetyBackup.manifests,
+        ...(safetyBackup.restoreCaptures ? { restoreCaptures: safetyBackup.restoreCaptures } : {}),
+    } } : {}),
+        ...(failureCause ? { failureCause } : {}), ...(nativeFailure ? { nativeFailure } : {}) };
+    return input.runProtectedStage(async () => {
+        try {
+            cancelled(input.signal);
+            const health = await steps.run('start', () => input.execute({ kind: 'switchVolume',
+                destination: recovery.destination, physicalName: recovery.destination.currentVolume }));
+            if (health.kind !== 'health' || health.status !== 'healthy') refuse(health.kind === 'health'
+                && health.status === 'unhealthy' ? 'restore_failed' : 'outcome_unknown');
+            steps.record('health', 'completed');
+            return { ...evidence, kind: 'rolledBack', verified: false, nextAction: 'none', steps: steps.snapshot(),
+                ...(previousCode ? { code: codeOf({ code: previousCode }) } : {}) };
+        } catch (error) {
+            steps.failRunning();
+            const cause = projectActionFailureCauseV1(error, 'restore.recover');
+            return { ...evidence, kind: 'recoveryRequired', verified: false, nextAction: 'restorePreviousVolume',
+                code: codeOf(error), steps: steps.snapshot(), failureCause: recovery.failureCause ?? cause,
+                ...(recovery.failureCause ? { recoveryFailureCause: cause } : {}) };
+        }
+    });
+}
 
 function restoreSteps(input: Pick<RestoreCapture, 'onStep'>, previous: readonly DeploymentRestoreStepV1[] = []) {
     let steps = [...previous];

@@ -51,6 +51,7 @@ beforeEach(async () => {
             effects.push(input);
             return DeploymentActionOutputSchemasV1[actionId].parse(input.mode === 'prepare'
                 ? { kind: 'prepared', operationId: 'prepared-restore', evidence: { backup: input.source } }
+                : input.mode === 'recover' ? { kind: 'rolledBack', verified: false, nextAction: 'none', evidence: { backup: input.source } }
                 : { kind: 'restored', verified: true, nextAction: 'none', evidence: { backup: input.source } });
         },
     });
@@ -91,7 +92,7 @@ function prepareInput() {
 }
 
 describe('restore press through the UI Action front door', () => {
-    it('dispatches prepare then confirm with the returned prepareOperationId to the daemon', async () => {
+    it('dispatches prepare, confirm and operation-bound recovery through the same approved daemon Action', async () => {
         const execute = createFrontDoorActionExecute();
         const input = prepareInput();
         const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: 'owner' };
@@ -102,11 +103,14 @@ describe('restore press through the UI Action front door', () => {
         if (preparation.kind !== 'prepared') throw new Error('Expected restore preparation');
         const confirmed = { ...input, mode: 'confirm' as const, prepareOperationId: preparation.operationId };
         expect(await execute.confirmed(actionId, confirmed, context)).toMatchObject({ ok: true, result: { kind: 'restored' } });
+        const recover = { ...input, mode: 'recover' as const, operationId: 'failed-restore' };
+        expect(await execute.confirmed(actionId, recover, context)).toMatchObject({ ok: true, result: { kind: 'rolledBack' } });
         const ingress = homes.requestsFor(`/v1/actions/${actionId}`).map(record =>
             ExternalActionRequestEnvelopeV1Schema.parse(ExternalActionExecutionAuthorizationRequestV1Schema.parse(record.input).envelope));
-        expect(ingress.map(request => request.input)).toEqual([input, confirmed]);
-        expect(ingress.map(request => request.target)).toEqual([{ kind: 'machine', machineId: 'runtime' }, { kind: 'machine', machineId: 'runtime' }]);
-        expect(effects).toEqual([input, confirmed]);
+        const admittedInputs = [input, confirmed, recover].map(value => ({ ...value, serverId: serverIdentityId }));
+        expect(ingress.map(request => request.input)).toEqual(admittedInputs);
+        expect(ingress.map(request => request.target)).toEqual([input, confirmed, recover].map(() => ({ kind: 'machine', machineId: 'runtime' })));
+        expect(effects).toEqual(admittedInputs);
         expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 

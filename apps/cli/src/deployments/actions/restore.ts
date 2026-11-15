@@ -3,7 +3,7 @@ import type { ActionExecutorContext, ActionExecuteFailure, ActionOperationSnapsh
 import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema,
     DeploymentRestoreStepV1Schema, DeploymentBackupRunResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
-    DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, summarizeDeploymentRestoreReviewV1,
+    DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, summarizeDeploymentRestoreReviewV1, buildDeploymentRestoreRecoveryActionV1,
     type DeploymentNativeSnapshotOfferV1, type DeploymentNativeSnapshotUnavailableV1, type DeploymentBackupRestoreInputV1, type DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -16,9 +16,11 @@ import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID
 import { projectDeploymentException } from '../deploymentFailure';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
+import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployment-protocol';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 type Confirm = Extract<DeploymentBackupRestoreInputV1, { mode: 'confirm' }>;
+type Recover = Extract<DeploymentBackupRestoreInputV1, { mode: 'recover' }>;
 
 /** Plan45's owner-approved selector policy; no physical host or enrolled-Machine inference. */
 function restoreHasRemoteEngineSelector(selection: Readonly<{ prefix: readonly string[]; env: Readonly<Record<string, string>> }>): boolean {
@@ -56,6 +58,26 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
     }>;
     restore: OwnServerDeploymentTargetForHost['restore'];
 }>) {
+    const readRecovery = async (input: Recover, context: ActionExecutorContext) => {
+        // The existing operation reader enforces requester and Machine custody.
+        const operation = await host.readPreparation?.(input.operationId, context);
+        const result = DeploymentBackupRestoreResultV1Schema.safeParse(operation?.result);
+        if (operation?.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || operation.state !== 'succeeded'
+            || !result.success || result.data.kind !== 'recoveryRequired'
+            || !buildDeploymentRestoreRecoveryActionV1(input, input.operationId, result.data.nextAction)) {
+            return failure('restore_recovery_required');
+        }
+        const point = DeploymentRestoreRecoveryPointV1Schema.safeParse(result.data.evidence);
+        if (!point.success || point.data.destination.adapter !== 'volume-v1') return failure('restore_recovery_required');
+        const { destination, source } = point.data;
+        if (destination.environmentId !== input.environmentId || destination.revision !== input.expectedRevision
+            || (source.kind === 'upload' ? input.source.kind !== 'upload' || source.transferId !== input.source.transferId
+                : input.source.kind !== 'repository' || source.snapshot.snapshotId !== input.source.snapshotId)
+            || (input.destination && (input.destination.kind !== 'volume' || input.destination.service !== destination.service
+                || input.destination.volume !== destination.volume))
+            || (result.data.recovery && !isDeepStrictEqual(result.data.recovery.input, input))) return failure('stale_input');
+        return { recovery: { ...point.data, destination } };
+    };
     const readRetained = async (input: Confirm, context: ActionExecutorContext) => {
         const operation = await host.readPreparation?.(input.prepareOperationId, context);
         const result = DeploymentBackupRestoreResultV1Schema.safeParse(operation?.result);
@@ -78,6 +100,11 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
     const prepare = async (request: Readonly<{ input: DeploymentBackupRestoreInputV1; context: ActionExecutorContext }>) => {
         const { input, context } = request;
         if (input.mode === 'prepare') return { input, preview: normalizeStrictJsonValue({}) };
+        if (input.mode === 'recover') {
+            const retained = await readRecovery(input, context);
+            if ('errorCode' in retained) return retained;
+            return { input, preview: normalizeStrictJsonValue({ summary: summarizeDeploymentRestoreReviewV1(input) }) };
+        }
         // Presentation reads the retained offer; exact operand/native admission stays at execute.
         const operation = await host.readPreparation?.(input.prepareOperationId, context);
         const result = DeploymentBackupRestoreResultV1Schema.safeParse(operation?.result);
@@ -108,6 +135,19 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                 || readInstallationIdentityIfExistsSync()?.installationId !== input.installationId) return refuse('target_mismatch');
             const acceptance = context.operationAcceptance;
             if (!acceptance || acceptance.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) return refuse('service_operation_unavailable');
+            const projectResult = (result: Exclude<Awaited<ReturnType<typeof host.restore>>, { kind: 'prepared' }>) => {
+                const recovery = result.kind === 'recoveryRequired' ? buildDeploymentRestoreRecoveryActionV1(input,
+                    input.mode === 'recover' ? input.operationId : acceptance.operationId, result.nextAction) : undefined;
+                return DeploymentBackupRestoreResultV1Schema.parse({ kind: result.kind, steps: result.steps,
+                    verified: result.verified, nextAction: result.nextAction, ...(recovery ? { recovery } : {}),
+                    evidence: normalizeStrictJsonValue({ ...result, ...(snapshot ? { snapshot } : {}) }) });
+            };
+            if (input.mode === 'recover') {
+                const retained = await readRecovery(input, context);
+                if ('errorCode' in retained) return refuse(retained.errorCode);
+                const result = await host.restore({ input, context, recovery: retained.recovery });
+                return result.kind === 'prepared' ? refuse('restore_recovery_required') : projectResult(result);
+            }
             if (input.source.kind === 'upload') {
                 upload = await host.acquireUpload?.({ transferId: input.source.transferId, environmentId: input.environmentId }, context) ?? null;
                 if (!upload) return refuse('restore_upload_unavailable');
@@ -169,9 +209,7 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             }
             const confirmed = await host.restore({ input, context, prepared: retained.native, ...(upload ? { upload: upload.source } : {}) });
             if (confirmed.kind === 'prepared') return refuse('restore_prepare_required');
-            return DeploymentBackupRestoreResultV1Schema.parse({ kind: confirmed.kind, steps: confirmed.steps,
-                verified: confirmed.verified, nextAction: confirmed.nextAction,
-                evidence: normalizeStrictJsonValue({ ...confirmed, ...(snapshot ? { snapshot } : {}) }) });
+            return projectResult(confirmed);
         } catch (error) {
             const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
             const steps = isRecord(details) && Array.isArray(details.steps) ? details.steps.flatMap(value => {

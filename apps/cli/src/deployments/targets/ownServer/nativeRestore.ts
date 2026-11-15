@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
 import type { DeploymentImageV1, DeploymentReceiptDetailV1, DeploymentRestoreUploadFormatV1, DeploymentRestoreUploadSourceV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, runDeploymentBackupV1, resolveDeploymentRestoreCaptureV1,
+import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, recoverDeploymentRestoreV1, runDeploymentBackupV1, resolveDeploymentRestoreCaptureV1,
     deploymentRestoreStepProgressV1,
     type DeploymentRestorePrepareInputV1, type DeploymentRestoreConfirmInputV1,
     type DeploymentRestorePrepareReceiptV1, type DeploymentRestoreResultV1,
@@ -56,6 +56,9 @@ export type OwnServerNativeRestoreInput = Readonly<{
 
 export type OwnServerNativeUploadRestoreInput = Omit<OwnServerNativeRestoreInput, 'execEnv' | 'readAccess' | 'runtimeImage'>
     & Readonly<{ upload: AdmittedDeploymentRestoreUpload; runtimeImage?: DeploymentImageV1 }>;
+/** Original-volume recovery needs native control, without backup/upload credentials. */
+export type OwnServerNativeRestoreRecoveryInput = Omit<OwnServerNativeRestoreInput, 'execEnv' | 'readAccess' | 'runtimeImage'>
+    & Readonly<{ runtimeImage?: DeploymentImageV1 }>;
 
 type NativeRestore = Readonly<{
     access?: ResticAccessV1;
@@ -210,7 +213,7 @@ export async function observeOwnServerNativeVolumeRestoreDestination(input: Nati
 
 type NativeBackupTarget = Pick<DeploymentRestoreDatabaseDestinationV1, 'service' | 'database'>
     | Pick<DeploymentRestoreSqliteDestinationV1, 'service' | 'path'> | Pick<DeploymentRestoreVolumeDestinationV1, 'service' | 'volume'>;
-async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServerNativeUploadRestoreInput,
+async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServerNativeUploadRestoreInput | OwnServerNativeRestoreRecoveryInput,
     destination: NativeBackupTarget | undefined, effect: (native: NativeRestore) => Promise<T>,
     operation: 'restore' | 'restoreWithSafety' | 'backup' | 'repository' = 'restore', backupTargets: readonly NativeBackupTarget[] = []): Promise<T> {
     const signal = input.context.operation.signal;
@@ -525,6 +528,11 @@ export function confirmOwnServerNativeRestore(input: OwnServerNativeRestoreInput
         & Readonly<{ prepare: OwnServerNativeRestorePrepareReceipt }>): Promise<DeploymentRestoreResultV1> {
     return withNativeRestore('upload' in input ? input : atRecordedRepository(input, capture.prepare.repository ?? unsupported()), capture.destination,
         native => confirmDeploymentRestoreV1({ ...capture, ...native }));
+}
+
+export function recoverOwnServerNativeRestore(input: OwnServerNativeRestoreRecoveryInput,
+    recovery: Parameters<typeof recoverDeploymentRestoreV1>[0]['recovery']): Promise<DeploymentRestoreResultV1> {
+    return withNativeRestore(input, recovery.destination, native => recoverDeploymentRestoreV1({ recovery, ...native }));
 }
 
 /** One ID admission and one retained P42 group span both native phases. */

@@ -3399,7 +3399,7 @@ the adapter passes the admitted job's forwarded signal and disposes it in `final
 after native settlement. Standalone prepare and confirm calls own independent P42
 preparations; confirmation receives fresh material rather than a disposed port.
 The development-source public `deployments.backups.restore` Action exposes these
-standalone phases as `mode: 'prepare'` and `mode: 'confirm'`. Both are effectful
+standalone phases as `mode: 'prepare'`, `mode: 'confirm'` and `mode: 'recover'`. All are effectful
 Environment-scoped writes with their own default Ask policy; a person confirms
 the irreversible operation, and scoped agent policy can explicitly allow it.
 Preparation selects `source: {kind: 'repository', snapshotId, backupOperationId?,
@@ -3413,6 +3413,22 @@ confirmations for that preparation instead of swapping the database again.
 If the daemon no longer retains the preparation, the caller must prepare again.
 If a confirmation changes the prepared operands, start a new preparation rather
 than reusing the rejected operation.
+When volume activation and its automatic rollback both fail, the typed
+`recoveryRequired` result includes a `recovery` Action reference for
+`nextAction: 'restorePreviousVolume'`. Invoke that same Action with
+`mode: 'recover'`, the failed restore's `operationId`, and its original target and
+source operands. The scoped operation reader selects the exact preserved original
+volume and running services; callers cannot supply native volume names. Recovery
+uses the same Environment owner, Machine admission and default Ask as confirm,
+without taking a fresh snapshot, reading backup credentials or reopening an upload.
+It reuses native activation and health checks, publishes the original volume
+binding on the serving generation, and returns `rolledBack` with the original
+failure evidence, or `recoveryRequired` with both causes if recovery fails.
+Historical receipts without a recorded cause remain readable; recovery cannot
+reconstruct that missing cause. Database/SQLite inspection next actions remain
+operator recovery instructions and do not advertise an automatic Action reference.
+This is a development-source 0.3 contract: reload matching Home, CLI and client
+sources before invoking the new mode; no released 0.2 restore input is migrated.
 When that destination has meaningful data and its selected managed provisioner
 supports a native snapshot, preparation also retains the provisioner's exact
 snapshot offer when the admitted native launch has no remote Engine selector.

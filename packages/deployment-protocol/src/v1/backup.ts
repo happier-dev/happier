@@ -5,11 +5,13 @@ import { DeploymentEnvironmentUpdateInputV1BaseSchema } from '@happier-dev/proto
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocolComposableSchema';
 import { DeploymentRestoreStepV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 export { DeploymentRestoreStepV1Schema, deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1,
     type DeploymentRestoreStepV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { DeploymentBackupManifestV1Schema, DeploymentBackupConfigurationV1Schema,
-    DeploymentPreMigrationBackupV1Schema, DeploymentSqliteBackupV1Schema, DeploymentBackupRestoreCaptureV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+    DeploymentPreMigrationBackupV1Schema, DeploymentSqliteBackupV1Schema, DeploymentBackupRestoreCaptureV1Schema,
+    DeploymentBackupNativeFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 export { DeploymentBackupSourceV1Schema, DeploymentBackupRetentionV1Schema, DeploymentBackupSnapshotV1Schema,
     DeploymentBackupNativeFailureV1Schema, type DeploymentBackupNativeFailureV1,
     readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1,
@@ -70,6 +72,17 @@ export const DeploymentRestorePreparationV1Schema = lazyZodSchema(() => z.union(
     }) }),
 ]));
 export type DeploymentRestorePreparationV1 = z.infer<typeof DeploymentRestorePreparationV1Schema>;
+
+/** Read existing operation evidence, including receipts written before recovery was callable.
+ * Native names come from the scoped host operation, never from public Action input. */
+export const DeploymentRestoreRecoveryPointV1Schema = lazyZodSchema(() => z.object({
+    source: z.union([DeploymentBackupManifestV1Schema, DeploymentRestoreUploadSourceV1Schema]),
+    destination: restoreDestination,
+    steps: restorePreparedFields.steps, safetyBackup: restorePreparedFields.safetyBackup,
+    code: z.optional(z.string()), failureCause: z.optional(ActionFailureCauseV1Schema),
+    nativeFailure: z.optional(DeploymentBackupNativeFailureV1Schema),
+}));
+export type DeploymentRestoreRecoveryPointV1 = z.infer<typeof DeploymentRestoreRecoveryPointV1Schema>;
 
 /** The catalog has admitted the descriptor; its schema alone decides the nonsecret user fields. */
 export function validateDeploymentBackupDestinationConfigurationV1(input: Readonly<{

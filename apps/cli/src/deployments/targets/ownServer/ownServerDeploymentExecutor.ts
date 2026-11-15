@@ -40,7 +40,7 @@ import { admitOwnServerMigration, executeOwnServerMigration, MIGRATION_STEP } fr
 import { isOwnServerPreviewDataEnvironment, readOwnServerPreviewCleanup } from './teardownVolumes';
 import { captureOwnServerDeploymentSource, createOwnServerSourceCustodyReader, replaceOwnServerDeploymentSource } from './sourceProvenance';
 import { executeOwnServerNativeRestore, observeOwnServerNativeRestoreDestination, observeOwnServerNativeVolumeRestoreDestination, prepareOwnServerNativeRestore,
-    confirmOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput, type OwnServerNativeUploadRestoreInput,
+    confirmOwnServerNativeRestore, recoverOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput, type OwnServerNativeUploadRestoreInput,
     type OwnServerReceiptContentTransition } from './nativeRestore';
 import { executeOwnServerBackupForHost } from './backup';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
@@ -578,9 +578,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
     async function restore(request: OwnServerRestoreRequestForHost): Promise<OwnServerRestoreResultForHost> {
         const { input, context } = request;
         const repositorySource = input.source.kind === 'repository' ? input.source : undefined;
-        const copy = repositorySource?.origin;
+        const copy = input.mode === 'recover' ? undefined : repositorySource?.origin;
         const upload = input.source.kind === 'upload' ? request.upload : undefined;
-        if (input.source.kind === 'upload' && (!upload || upload.transferId !== input.source.transferId)) refuse('restore_upload_unavailable');
+        if (input.mode !== 'recover' && input.source.kind === 'upload' && (!upload || upload.transferId !== input.source.transferId)) refuse('restore_upload_unavailable');
         const snapshot = await readEnvironment(request, input.expectedRevision);
         if (input.machineId !== host.machineId || !snapshot.link.members.some(member => member.machineId === input.machineId
             && member.installationId === input.installationId)) refuse('target_mismatch');
@@ -607,6 +607,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             ...(copySourceEnvironment && captureReceipt ? { copySource: { environment: copySourceEnvironment, receipt: captureReceipt } } : {}),
             operationKind: 'deployments.backups.restore' },
         async ({ native, createInput, createUploadInput, runtime, createBackupInput }) => {
+            if (input.mode === 'recover') {
+                if (!request.recovery) refuse('restore_recovery_required');
+                return recoverOwnServerNativeRestore({ ...native, onStopPending() {},
+                    operationProgress: context.operationProgress }, request.recovery);
+            }
             const reviewSnapshot = async (destination: Parameters<NonNullable<OwnServerRestoreRequestForHost['reviewNativeSnapshot']>>[0]['destination']) => {
                 if (!request.reviewNativeSnapshot) return;
                 const launch = native.activation.authorizeServiceObserver();

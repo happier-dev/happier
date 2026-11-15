@@ -2652,7 +2652,7 @@ async function readDeploymentBackupHttpPurpose(verified: VerifiedSignedChildRequ
     const admission = verified.binding.deploymentNativeAdmission;
     if (!admission || !('kind' in admission) || admission.kind !== 'restore' && admission.kind !== 'backup') return false;
     const transition = verified.signedChildPurpose.nativeTransition;
-    if (admission.kind === 'restore' && admission.mode === 'confirm' && transition
+    if (admission.kind === 'restore' && admission.mode !== 'prepare' && transition
         && verified.effectActionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
         // Restore publishes changed volume bindings on the incumbent generation.
         // The receipt owner selects that Link's active generation and retains its lifecycle.

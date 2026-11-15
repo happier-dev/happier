@@ -15880,6 +15880,39 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     volume: string;
                 };
             } | {
+                expectedRevision: number;
+                source: {
+                    kind: "repository";
+                    snapshotId: string;
+                    backupOperationId?: string | undefined;
+                    origin?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                    };
+                } | {
+                    kind: "upload";
+                    transferId: string;
+                };
+                machineId: string;
+                operationId: string;
+                mode: "recover";
+                installationId: string;
+                environmentId: string;
+                deploymentId: string;
+                targetLinkId: string;
+                kind: "restore";
+                actionId: "deployments.backups.restore";
+                inputDigest: string;
+                destination?: undefined | {
+                    kind: "database";
+                    service: string;
+                    database: string;
+                } | {
+                    kind: "volume";
+                    service: string;
+                    volume: string;
+                };
+            } | {
                 kind: "backupConfigure";
                 actionId: "deployments.backups.configure";
                 environmentId: string;
@@ -16691,6 +16724,39 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
                 machineId: string;
                 mode: "prepare";
+                installationId: string;
+                environmentId: string;
+                deploymentId: string;
+                targetLinkId: string;
+                kind: "restore";
+                actionId: "deployments.backups.restore";
+                inputDigest: string;
+                destination?: undefined | {
+                    kind: "database";
+                    service: string;
+                    database: string;
+                } | {
+                    kind: "volume";
+                    service: string;
+                    volume: string;
+                };
+            } | {
+                expectedRevision: number;
+                source: {
+                    kind: "repository";
+                    snapshotId: string;
+                    backupOperationId?: string | undefined;
+                    origin?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                    };
+                } | {
+                    kind: "upload";
+                    transferId: string;
+                };
+                machineId: string;
+                operationId: string;
+                mode: "recover";
                 installationId: string;
                 environmentId: string;
                 deploymentId: string;
@@ -17573,6 +17639,39 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
                 machineId: string;
                 mode: "prepare";
+                installationId: string;
+                environmentId: string;
+                deploymentId: string;
+                targetLinkId: string;
+                kind: "restore";
+                actionId: "deployments.backups.restore";
+                inputDigest: string;
+                destination?: undefined | {
+                    kind: "database";
+                    service: string;
+                    database: string;
+                } | {
+                    kind: "volume";
+                    service: string;
+                    volume: string;
+                };
+            } | {
+                expectedRevision: number;
+                source: {
+                    kind: "repository";
+                    snapshotId: string;
+                    backupOperationId?: string | undefined;
+                    origin?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                    };
+                } | {
+                    kind: "upload";
+                    transferId: string;
+                };
+                machineId: string;
+                operationId: string;
+                mode: "recover";
                 installationId: string;
                 environmentId: string;
                 deploymentId: string;

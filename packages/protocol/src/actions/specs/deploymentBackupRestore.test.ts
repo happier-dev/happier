@@ -39,11 +39,12 @@ describe('deployment backup restore Action', () => {
       machineId: common.machineId, installationId: common.installationId })).toMatchObject({ kind: 'restart' });
   });
 
-  it.each(['prepare', 'confirm'] as const)('admits %s through scoped Ask and the semantic native port', async mode => {
+  it.each(['prepare', 'confirm', 'recover'] as const)('admits %s through scoped Ask and the semantic native port', async mode => {
     const spec = listActionSpecsForSurface('agent').find(candidate => String(candidate.id) === actionId);
     expect(spec, 'Restore must have its own public Action and independent approval policy').toBeDefined();
     if (!spec) return;
-    const input = { ...common, mode, ...(mode === 'confirm' ? { prepareOperationId: 'prepare-operation' } : {}) };
+    const input = { ...common, mode, ...(mode === 'confirm' ? { prepareOperationId: 'prepare-operation' } : {}),
+      ...(mode === 'recover' ? { operationId: 'failed-restore' } : {}) };
     expect(spec).toMatchObject({ safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine',
       approvalScope: 'environment', irreversible: true, approvalPolicy: { uiConfirmation: 'policy' } });
     expect(spec.serverTransport).toBeUndefined();
@@ -95,6 +96,14 @@ describe('deployment backup restore Action', () => {
     expect(projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope })).toEqual(admission);
     expect(() => projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: 'deployments.restart',
       envelope })).toThrow();
+  });
+  it('binds recovery to the retained operation in the same native admission', () => {
+    const spec = listActionSpecsForSurface('agent').find(candidate => String(candidate.id) === actionId)!;
+    const input = spec.inputSchema.parse({ ...common, mode: 'recover', operationId: 'failed-restore' });
+    const admission = projectDeploymentNativeAdmissionV1(actionId, input);
+    expect(admission).toMatchObject({ kind: 'restore', mode: 'recover', operationId: 'failed-restore' });
+    expect(projectDeploymentNativeAdmissionV1(actionId, { ...input, operationId: 'other-restore' })).not.toEqual(admission);
+    expect(spec.inputSchema.safeParse({ ...input, currentVolume: 'caller-chosen' }).success).toBe(false);
   });
   it.each(['prepare', 'confirm'] as const)('reads a %s approval by what it does, with its routing ids under Technical details', mode => {
     const spec = listActionSpecsForSurface('agent').find(candidate => String(candidate.id) === actionId);

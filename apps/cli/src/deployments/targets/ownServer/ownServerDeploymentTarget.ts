@@ -237,6 +237,8 @@ export type OwnServerRestoreRequestForHost = Readonly<{
     context: ActionExecutorContext;
     /** Decoded once from the scoped, succeeded prepare Action operation. */
     prepared?: OwnServerRestorePreparationForHost;
+    /** Exact preserved volume identities from the scoped failed restore operation. */
+    recovery?: Parameters<typeof import('@happier-dev/deployments').recoverDeploymentRestoreV1>[0]['recovery'];
     /** Selected once from the exact scoped, successful backup Action operation. */
     backup?: Readonly<{ manifest: BackupManifestV1;
         capture?: import('@happier-dev/deployment-protocol').DeploymentBackupRestoreCaptureV1 }>;

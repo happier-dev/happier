@@ -3095,12 +3095,20 @@ describe('own-server target at the Action host boundary', () => {
                             // Docker is the boundary: recreate native containers, then lose the successful reply.
                             const statePath = join(root, 'docker', 'docker-state.json');
                             const state = JSON.parse(await readFile(statePath, 'utf8'));
+                            const nativePreparation = isRecord(preparation.evidence) && isRecord(preparation.evidence.native)
+                                ? OwnServerRestorePreparationForHostSchema.parse(preparation.evidence.native) : undefined;
+                            const destination = nativePreparation?.prepared.destination;
+                            if (destination?.adapter !== 'volume-v1') throw new Error('Expected original volume recovery point');
+                            const originalDirectory = join(root, 'docker', `volume-${destination.currentVolume}`);
+                            await mkdir(originalDirectory, { recursive: true });
+                            await writeFile(join(originalDirectory, 'original.txt'), 'MODIFIED1115\n');
                             await writeFile(statePath, JSON.stringify({ ...state, activationCommandFailure: 'afterCreate' }));
                         }
                         const beforeRestoreService = uploadedVolume ? mounted.registry.projectManagedServices.listProjectServices()
                             .find(handle => handle.kind === 'environment' && handle.environmentId === environment.environment.id) : undefined;
-                        const restored = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
+                        const observedRestore = await observeNativeAction(operations, await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
                             { ...context, actionRequestId: 'upload-continue' }), accountId, caller.signal);
+                        const restored = observedRestore.result;
                         if (restoreActivationFailure) expect(restored).toMatchObject({ ok: true, result: { verified: false } });
                         else expect(restored).toMatchObject({ ok: true, result: { kind: 'restored', verified: true } });
                         if (uploadedVolume) {
@@ -3115,6 +3123,41 @@ describe('own-server target at the Action host boundary', () => {
                                     containers: Array<{ Config: { Labels: Record<string, string> } }> };
                                 expect(state.containers.map(container => container.Config.Labels['com.docker.compose.project.working_dir']))
                                     .toContain(restorationRoot);
+                                if (!observedRestore.snapshot || !restored.ok) throw new Error('Expected retained restore failure');
+                                const failed = DeploymentBackupRestoreResultV1Schema.parse(restored.result);
+                                expect(failed).toMatchObject({ kind: 'recoveryRequired', nextAction: 'restorePreviousVolume' });
+                                const recoveryInput = { ...input, mode: 'recover', operationId: observedRestore.snapshot.operationId };
+                                expect(failed).toMatchObject({ recovery: { actionId: 'deployments.backups.restore', input: recoveryInput } });
+                                const statePath = join(root, 'docker', 'docker-state.json');
+                                const beforeInvalidRecovery = await readFile(statePath, 'utf8');
+                                const invalidRecovery = await completedNativeAction(operations, await executor.execute('deployments.backups.restore',
+                                    { ...recoveryInput, operationId: preparation.operationId },
+                                    { ...context, actionRequestId: 'recover-preparation-refused' }), accountId, caller.signal);
+                                expect(invalidRecovery).toMatchObject({ ok: false, errorCode: 'restore_recovery_required' });
+                                expect(await readFile(statePath, 'utf8')).toBe(beforeInvalidRecovery);
+                                const failedRecovery = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
+                                    { ...context, actionRequestId: 'recover-still-unavailable' }), accountId, caller.signal);
+                                expect(failedRecovery).toMatchObject({ ok: true, result: { kind: 'recoveryRequired',
+                                    recovery: failed.recovery, evidence: { failureCause: isRecord(failed.evidence) ? failed.evidence.failureCause : undefined,
+                                        recoveryFailureCause: expect.any(Object) } } });
+                                // Clear only the Docker boundary's injected activation failure.
+                                const failedState = JSON.parse(await readFile(statePath, 'utf8'));
+                                await writeFile(statePath, JSON.stringify({ ...failedState, activationCommandFailure: undefined }));
+                                // Recovery must not need the source upload again.
+                                await uploads.cleanupExpired(Number.MAX_SAFE_INTEGER);
+                                const recovered = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
+                                    { ...context, actionRequestId: 'recover-original-volume' }), accountId, caller.signal);
+                                expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: true, result: {
+                                    kind: 'rolledBack', nextAction: 'none', evidence: { failureCause: expect.any(Object) } } });
+                                const original = isRecord(failed.evidence) && isRecord(failed.evidence.destination)
+                                    ? failed.evidence.destination.currentVolume : undefined;
+                                const recoveredState = JSON.parse(await readFile(statePath, 'utf8')) as {
+                                    containers: Array<{ State: { Status: string }; Mounts: Array<{ Type: string; Name?: string }> }> };
+                                expect(recoveredState.containers.filter(container => container.State.Status === 'running')
+                                    .flatMap(container => container.Mounts).filter(mount => mount.Type === 'volume').map(mount => mount.Name))
+                                    .toContain(original);
+                                expect(execFileSync(process.execPath, [docker.executablePath, 'compose', 'exec', '-T', 'app',
+                                    'cat', '/data/original.txt'], { encoding: 'utf8' })).toBe('MODIFIED1115\n');
                             }
                             if (!restoreActivationFailure) {
                                 // The fixture's Home transition boundary persists into receipt;

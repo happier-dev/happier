@@ -6966,7 +6966,9 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await db.deployment.count({ where: { environmentId: f.environment.id } })).toBe(1);
     });
 
-    it.each(['plain', 'e2ee'] as const)('spends configured backup admission / standalone restore admission: persists only admitted restore content on its serving generation without changing lifecycle (%s)', async contentMode => {
+    it.each([
+        ['plain', 'confirm'], ['e2ee', 'confirm'], ['plain', 'recover'], ['e2ee', 'recover'],
+    ] as const)('spends configured backup admission / standalone restore admission: persists only admitted restore content on its serving generation without changing lifecycle (%s/%s)', async (contentMode, restoreMode) => {
         const f = await fixture('account', 'account', { contentMode });
         const settledAt = new Date('2026-11-12T12:00:00.000Z');
         await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded', settledAt } });
@@ -6984,10 +6986,12 @@ describe('deployment children retain their controller Action authority', () => {
         const foreign = await fixture();
         const actionId = 'deployments.backups.restore' as const;
         const target = { kind: 'machine' as const, machineId: f.member.id };
-        const input: DeploymentBackupRestoreInputV1 = { mode: 'confirm', serverId, environmentId: f.environment.id,
+        const input: DeploymentBackupRestoreInputV1 = { serverId, environmentId: f.environment.id,
             targetLinkId: f.link.id, deploymentId: previous.id, machineId: f.member.id,
             installationId: f.member.installationId, expectedRevision: f.environmentRevision,
-            source: { kind: 'repository', snapshotId: 'volume-snapshot' }, prepareOperationId: crypto.randomUUID() };
+            source: { kind: 'repository', snapshotId: 'volume-snapshot' },
+            ...(restoreMode === 'confirm' ? { mode: restoreMode, prepareOperationId: crypto.randomUUID() }
+                : { mode: restoreMode, operationId: crypto.randomUUID() }) };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
         const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,

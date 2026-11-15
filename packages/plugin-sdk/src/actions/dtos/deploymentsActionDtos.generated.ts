@@ -3607,6 +3607,37 @@ export type DeploymentsActionInputById = {
             service: string;
             volume: string;
         };
+    } | {
+        mode: 'recover';
+        operationId: string;
+        serverId: string;
+        environmentId: string;
+        machineId: string;
+        installationId: string;
+        targetLinkId: string;
+        deploymentId: string;
+        expectedRevision: number;
+        source: {
+            kind: 'repository';
+            snapshotId: string;
+            backupOperationId?: string | undefined;
+            origin?: undefined | {
+                environmentId: string;
+                targetLinkId: string;
+            };
+        } | {
+            kind: 'upload';
+            transferId: string;
+        };
+        destination?: undefined | {
+            kind: 'database';
+            service: string;
+            database: string;
+        } | {
+            kind: 'volume';
+            service: string;
+            volume: string;
+        };
     };
     readonly "deployments.backups.configure": {
         intent: 'initializeAndSave';
@@ -10799,6 +10830,41 @@ export type DeploymentsActionResultById = {
         verified: false;
         nextAction: string;
         evidence: JsonValue;
+        recovery?: undefined | {
+            actionId: 'deployments.backups.restore';
+            input: {
+                mode: 'recover';
+                operationId: string;
+                serverId: string;
+                environmentId: string;
+                machineId: string;
+                installationId: string;
+                targetLinkId: string;
+                deploymentId: string;
+                expectedRevision: number;
+                source: {
+                    kind: 'repository';
+                    snapshotId: string;
+                    backupOperationId?: string | undefined;
+                    origin?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                    };
+                } | {
+                    kind: 'upload';
+                    transferId: string;
+                };
+                destination?: undefined | {
+                    kind: 'database';
+                    service: string;
+                    database: string;
+                } | {
+                    kind: 'volume';
+                    service: string;
+                    volume: string;
+                };
+            };
+        };
         steps?: undefined | {
             id: 'health' | 'restore' | 'safety' | 'start' | 'stop';
             status: 'completed' | 'failed' | 'running' | 'skipped';

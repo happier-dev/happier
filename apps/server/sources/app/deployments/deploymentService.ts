@@ -287,7 +287,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (row.operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== link.id) return deploymentFailure('deployment_conflict');
     const native = executionBinding?.deploymentNativeAdmission;
     if (executionBinding?.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
-        && native && 'kind' in native && native.kind === 'restore' && native.mode === 'confirm') {
+        && native && 'kind' in native && native.kind === 'restore' && native.mode !== 'prepare') {
         // Restore changes the incumbent receipt's volume content, never its settled
         // lifecycle or serving custody. Finish that publication here rather than
         // exempting it from each aggregate transition rule below.

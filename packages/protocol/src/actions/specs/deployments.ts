@@ -77,7 +77,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         { path: 'retention', title: 'Chosen retention policy', widget: 'json' as const, required: true },
       ] : []),
     ] } as const : id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? { fields: [
-      { path: 'mode', title: 'Prepare or confirm restore', widget: 'text', required: true },
+      { path: 'mode', title: 'Prepare, confirm or recover restore', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'machineId', title: 'Runtime Machine', widget: 'text', required: true },
@@ -90,6 +90,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'snapshotReview', title: 'Provider snapshot facts retained by preparation', widget: 'json' },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
       { path: 'prepareOperationId', title: 'Prepared restore operation', widget: 'text' },
+      { path: 'operationId', title: 'Restore operation to recover', widget: 'text' },
     ] } as const : id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? { fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'machineId', title: 'Runtime Machine', widget: 'text', required: true },
@@ -299,7 +300,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         return parsed.success ? summarizeDeploymentRestoreReviewV1(parsed.data) : null;
       },
       technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
-        'source', 'destination', 'snapshot', 'snapshotReview', 'expectedRevision', 'prepareOperationId'] } } : {}),
+        'source', 'destination', 'snapshot', 'snapshotReview', 'expectedRevision', 'prepareOperationId', 'operationId'] } } : {}),
     inputHints,
     ...(isDeploymentTargetLinkActionIdV1(id) || backupConfigure || backup && !isDeploymentBackupReadActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },

@@ -15,7 +15,7 @@ import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestorePrepareInputV1Schema,
-  DeploymentBackupRestoreConfirmInputV1Schema } from './deploymentBackupRestoreV1.js';
+  DeploymentBackupRestoreConfirmInputV1Schema, DeploymentBackupRestoreRecoverInputV1Schema } from './deploymentBackupRestoreV1.js';
 import { DeploymentRestartInputV1Schema } from './deploymentRestartV1.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 
@@ -41,6 +41,7 @@ const restoreAdmission = () => ({ kind: z.literal('restore'), actionId: z.litera
 export const DeploymentRestoreNativeAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   z.extend(z.omit(DeploymentBackupRestorePrepareInputV1Schema, { serverId: true }), restoreAdmission()),
   z.extend(z.omit(DeploymentBackupRestoreConfirmInputV1Schema, { serverId: true, snapshotReview: true }), restoreAdmission()),
+  z.extend(z.omit(DeploymentBackupRestoreRecoverInputV1Schema, { serverId: true }), restoreAdmission()),
 ]));
 export type DeploymentRestoreNativeAdmissionV1 = z.infer<typeof DeploymentRestoreNativeAdmissionV1Schema>;
 const backupAdmission = () => ({ kind: z.literal('backup'), inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) });

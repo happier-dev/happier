@@ -238,14 +238,26 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                     await assertCurrent();
                     const manifestFingerprint = exported.workspaceExportArtifacts.manifest.fingerprint!;
                     const retained = admitted.retainedRestoration;
-                    if (retained && admitted.restorationForDeploymentId && !admitted.maintenanceOperationId) {
+                    const restoration = admitted.restorationForDeploymentId && !admitted.maintenanceOperationId;
+                    const existingRoot = restoration ? await realpath(targetPath).catch((error: unknown) => {
+                        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+                        throw error;
+                    }) : undefined;
+                    if (restoration && (retained || existingRoot)) {
                         const unavailable = () => Object.assign(new Error('Retained restoration source changed'), { code: 'deployment_source_unavailable' });
+                        const physicalTarget = resolveDeploymentSourcePathForHost({ ...admitted,
+                            deploymentRoot: await realpath(admitted.deploymentRoot) });
+                        // Activation retains these immutable bytes before it can
+                        // fail. A failed activation has not published provenance
+                        // yet; reopen only the exact contained, unchanged export.
+                        const rootFingerprint = retained?.rootFingerprint ?? await computeWorkspaceSyncRootFingerprint(existingRoot!);
                         const assertRetained = async () => {
-                            if (retained.role !== 'runtime' || retained.machineId !== admitted.machineId
+                            if (await realpath(targetPath) !== physicalTarget
+                                || retained && (retained.role !== 'runtime' || retained.machineId !== admitted.machineId
                                 || retained.installationId !== admitted.installationId || retained.deploymentId !== admitted.deploymentId
                                 || retained.restorationForDeploymentId !== admitted.restorationForDeploymentId
-                                || retained.manifestFingerprint !== manifestFingerprint
-                                || await computeWorkspaceSyncRootFingerprint(await realpath(targetPath)) !== retained.rootFingerprint) throw unavailable();
+                                || retained.manifestFingerprint !== manifestFingerprint)
+                                || await computeWorkspaceSyncRootFingerprint(await realpath(targetPath)) !== rootFingerprint) throw unavailable();
                         };
                         await assertRetained();
                         if (!await isDeploymentManifestInputUnchanged({ rootPath: targetPath, path: targetPath,

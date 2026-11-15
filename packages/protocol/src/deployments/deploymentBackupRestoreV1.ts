@@ -8,6 +8,7 @@ import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js'
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { MachineProvisionerSnapshotFactsV1Schema, MachineProvisionerSnapshotConsistencyV1Schema, MachineProvisionerSnapshotResultV1Schema } from '../plugins/contributions/machineProvisioners.js';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 
 /** Exact provider facts retained by restore preparation; the full resource stays private. */
 export const DeploymentNativeSnapshotOfferV1Schema = lazyZodSchema(() => {
@@ -56,15 +57,21 @@ export const DeploymentBackupRestoreConfirmInputV1Schema = z.strictObject({
   ...restoreTarget(), mode: z.literal('confirm'), prepareOperationId: id,
   snapshot: z.optional(z.boolean()), snapshotReview: z.optional(DeploymentNativeSnapshotOfferV1Schema),
 });
+/** Recovery selects only the scoped operation's recorded native recovery point. */
+export const DeploymentBackupRestoreRecoverInputV1Schema = z.strictObject({
+  ...restoreTarget(), mode: z.literal('recover'), operationId: id,
+});
 /** The capture receipt and current target are separate operands; native admission resolves their relationship. */
 export const DeploymentBackupRestoreInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   DeploymentBackupRestorePrepareInputV1Schema,
   DeploymentBackupRestoreConfirmInputV1Schema,
+  DeploymentBackupRestoreRecoverInputV1Schema,
 ]));
 export type DeploymentBackupRestoreInputV1 = z.infer<typeof DeploymentBackupRestoreInputV1Schema>;
 /** One domain summary for present-user and agent approval of the exact reviewed restore. */
 export function summarizeDeploymentRestoreReviewV1(input: DeploymentBackupRestoreInputV1, unavailable?: DeploymentNativeSnapshotUnavailableV1 | null): string {
   if (input.mode === 'prepare') return 'Check the backup and take a safety backup first. Nothing is replaced yet.';
+  if (input.mode === 'recover') return 'Reactivate the original volume preserved by this restore and check its services. The running code stays as it is.';
   const offer = input.snapshotReview;
   if (!offer) return ["Replace this Environment's data with the checked backup. The running code stays as it is.",
     ...(unavailable ? ["Machine snapshot is unavailable: this Environment's data runs on another Engine."] : [])].join('\n');
@@ -101,12 +108,23 @@ export const DeploymentRestoreFailureResultV1Schema = lazyZodSchema(() => z.stri
 }));
 export type DeploymentRestoreFailureResultV1 = z.infer<typeof DeploymentRestoreFailureResultV1Schema>;
 const restoreSteps = () => ({ steps: z.optional(z.array(DeploymentRestoreStepV1Schema)) });
+const recoveryAction = z.strictObject({ actionId: z.literal(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1),
+  input: DeploymentBackupRestoreRecoverInputV1Schema });
+const restoreRecovery = () => ({ recovery: z.optional(recoveryAction) });
+/** One mapping from a native next action to the public UI/agent invocation.
+ * Inspection-only next actions do not promise an executable recovery. */
+export function buildDeploymentRestoreRecoveryActionV1(input: DeploymentBackupRestoreInputV1, operationId: string,
+  nextAction: string): z.infer<typeof recoveryAction> | undefined {
+  if (nextAction !== 'restorePreviousVolume') return undefined;
+  return { actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+    input: z.object(DeploymentBackupRestoreRecoverInputV1Schema.shape).parse({ ...input, mode: 'recover', operationId }) };
+}
 /** Evidence is a nonsecret native receipt retained by the existing Action operation owner. */
 export const DeploymentBackupRestoreResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('prepared'), operationId: id, evidence: StrictJsonValueSchema, ...restoreSteps() }),
   z.strictObject({ kind: z.literal('restored'), verified: z.literal(true), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
   z.strictObject({ kind: z.literal('rolledBack'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
   z.strictObject({ kind: z.literal('outcome_unknown'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
-  z.strictObject({ kind: z.literal('recoveryRequired'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
+  z.strictObject({ kind: z.literal('recoveryRequired'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps(), ...restoreRecovery() }),
 ]));
 export type DeploymentBackupRestoreResultV1 = z.infer<typeof DeploymentBackupRestoreResultV1Schema>;
