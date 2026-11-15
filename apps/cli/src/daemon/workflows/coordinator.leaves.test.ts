@@ -17,6 +17,8 @@ import { createDefaultWorkspaceWorkerPreferenceV1, ProjectExecutionChoiceV1Schem
 import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
 import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
 const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
@@ -736,6 +738,30 @@ describe('workflow Action leaves', () => {
       context: expect.objectContaining({ surface: 'cli', authority: 'account_automation', actionRequestId }) }]);
     expect(store.list()[0]).toMatchObject({ blockKind: 'action', lifecycle: 'completed', result: { ok: true },
       execution: { kind: 'action', actionId: 'session.goal.set', actionRequestId: expect.any(String) } });
+  });
+
+  it('substitutes workflow values inside Action text with the encoding its frozen field type declares', async () => {
+    const topic = { kind: MENTION_KIND_V1.workflowInput, ref: 'workflowInput:0', label: 'Topic' };
+    const tokenized = { ...topic, token: formatInlineReferenceTokenV1(topic) };
+    const leaf: WorkflowActionLeafV1 = { ...goal, input: { ...goal.input, status: { kind: 'literal', value: 'active' },
+      objective: { kind: 'text', document: { text: `https://example.test/goals?q=${tokenized.token}`, references: [tokenized] }, input: [{ kind: 'input', name: 'topic' }] } } };
+    const objectives: unknown[] = [];
+    const run = async (runId: string, sidecar: WorkflowMaterializedLeafV1) => {
+      const executor = createTestActionExecutor({ sessionGoalSet: async (value) => { objectives.push((value as { objective?: unknown }).objective); return { ok: true }; } });
+      const coordinator = createWorkflowCoordinator({ store: createInMemoryWorkflowCoordinatorStore(), executeStep: async () => { throw new Error('Agent dispatch'); },
+        resolveWorkspace: async () => ({ ok: true, workspace }),
+        action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }), observeRun: async () => { throw new Error('Immediate Action observation'); } },
+      });
+      return await coordinator.run({ runId, definition: definition([leaf]), materializedLeaves: [sidecar],
+        inputs: { topic: 'goals & more' }, executionTarget, authorization, originSessionId: 'origin' });
+    };
+    expect(await run('text-plain', frozen(leaf))).toMatchObject({ state: 'succeeded' });
+    const plain = frozen(leaf);
+    const schema = plain.actionContract!.inputSchema as { properties: Record<string, object> };
+    const urlContract = { ...plain.actionContract!, inputSchema: { ...schema, properties: { ...schema.properties,
+      objective: { ...schema.properties.objective, format: 'uri' } } } };
+    expect(await run('text-url', { ...plain, actionContract: urlContract })).toMatchObject({ state: 'succeeded' });
+    expect(objectives).toEqual(['https://example.test/goals?q=goals & more', 'https://example.test/goals?q=goals%20%26%20more']);
   });
 
   it('keeps a lost invoke response uncertain and never invokes it on replay', async () => {

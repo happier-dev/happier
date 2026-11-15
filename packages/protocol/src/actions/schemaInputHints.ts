@@ -1,6 +1,6 @@
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputPathSchema, type ActionInputFieldHint, type ActionInputHints } from './actionInputHints.js';
-import { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
+import { isUrlJsonSchemaFormat, zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
 import { readActionSchemaTopLevelFieldNames } from './actionCliProjection.js';
 
 function isSchema(value: unknown): value is JsonSchemaObject {
@@ -33,7 +33,7 @@ function fieldPresentation(schema: JsonSchemaObject): Pick<ActionInputFieldHint,
   if (choices) return { widget: 'select', options: choices.map(value => ({ value, label: value })) };
   if (schema.enum) return { widget: 'json' };
   switch (schema.type) {
-    case 'string': return { widget: schema.format === 'uri' || schema.format === 'url' ? 'url' : 'text' };
+    case 'string': return { widget: isUrlJsonSchemaFormat(schema.format) ? 'url' : 'text' };
     case 'boolean': return { widget: 'boolean' };
     case 'number': return { widget: 'number' };
     case 'integer': return { widget: 'integer' };

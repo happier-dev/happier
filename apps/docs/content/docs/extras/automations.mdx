@@ -640,6 +640,14 @@ Definitions have four leaf kinds:
 - **Wait for you** waits for a human response without starting an Agent. If it
   declares a result contract, the response must satisfy it.
 
+In current 0.3 development source, an Action's text field can also hold workflow
+values inside its words, such as `https://example.com/builds?branch=` followed by
+an input, or a sentence that names an earlier step's result. Values are filled in
+when the step runs: as plain text by default, percent-encoded in a field declared
+as a URL, and written as JSON in a field that takes JSON (an object, list, number
+or yes/no), whose whole text must then read as JSON. Saving checks every value in
+the text against what that step can reach, like a prompt's values.
+
 In current 0.3 development source, **Call a webhook** and **Run a command** are
 presets of the same Action leaf, also available through Action discovery and MCP.
 The webhook posts JSON from typed bindings, sends a run/step/attempt idempotency

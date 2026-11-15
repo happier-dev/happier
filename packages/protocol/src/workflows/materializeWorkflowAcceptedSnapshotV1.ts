@@ -24,6 +24,7 @@ import { WorkflowStepExecutionSelectionSchema, WORKFLOW_AGENT_STEP_ONLY_SELECTIO
   type WorkflowValidationIssue } from './workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetV1 } from './workflowWorkspaceV1.js';
 import { collectWorkflowConditionValueReferences, readWorkflowValuePathV1, type WorkflowValueReference } from './workflowReferenceV1.js';
+import { listWorkflowActionFieldReferencesV1 } from './workflowActionTextV1.js';
 import { collectWorkflowLeavesV1 as leavesOf, deriveWorkflowDestinationsV1, readWorkflowLeafTargetSessionIdsV1 } from './workflowDestinationsV1.js';
 import type { WorkflowTargetUnavailableDetailsV1 } from './workflowProgressV1.js';
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
@@ -115,7 +116,7 @@ function usesWorkflowContext(definition: WorkflowDefinitionV1, origin: 'session'
     if (block.kind === 'step' && block.input.some(isContext)) return true;
     if (block.kind === 'action' || block.kind === 'workflow') {
       for (const binding of Object.values(block.input)) {
-        if ((binding.kind === 'list' ? binding.items : binding.kind === 'object' ? Object.values(binding.fields) : [binding])
+        if (listWorkflowActionFieldReferencesV1(binding)
           .some((reference) => reference.kind !== 'origin_session_id' && isContext(reference))) return true;
       }
     } else if (block.kind === 'parallel') pending.push(...block.branches.flatMap((branch) => branch.blocks));
@@ -363,8 +364,8 @@ export async function readWorkflowAcceptedAgentStartLeavesV1(snapshot: Pick<Work
     for (const item of items) {
       const actionInput = { ...leaf.actionInput };
       for (const [field, binding] of Object.entries(authored.input)) {
-        if (!hasUnresolvedValue(actionInput[field]) || !(binding.kind === 'list' ? binding.items
-          : binding.kind === 'object' ? Object.values(binding.fields) : [binding]).some((reference) => reference.kind === 'item')) continue;
+        if (!hasUnresolvedValue(actionInput[field])
+          || !listWorkflowActionFieldReferencesV1(binding).some((reference) => reference.kind === 'item')) continue;
         actionInput[field] = bindWorkflowActionFieldV1(binding, context, leaf.blockId, 'run', item);
       }
       result.push(...projectActionStart(snapshot, { ...leaf, actionInput }).leaves);
@@ -392,9 +393,13 @@ function boundValue(reference: WorkflowActionValueReferenceV1, context: Workflow
   return { kind: 'unresolved' };
 }
 
-/** Execution and read projections bind authored Action operands through the same value owner. */
+/**
+ * Execution and read projections bind authored Action operands through the same value owner.
+ * Text with values inside resolves at run time, where the frozen contract decides its encoding.
+ */
 function bindWorkflowActionFieldV1(binding: WorkflowActionFieldBindingV1,
   context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
+  if (binding.kind === 'text') return { kind: 'unresolved' } satisfies Unresolved;
   if (binding.kind === 'object') return Object.fromEntries(Object.entries(binding.fields)
     .map(([field, reference]) => [field, boundValue(reference, context, blockId, purpose, item)]));
   return binding.kind === 'list' ? binding.items.map(reference => boundValue(reference, context, blockId, purpose, item))
@@ -950,8 +955,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         sidecar.actionId = leaf.actionId;
         sidecar.actionContract = structuredClone(contract);
         const bindingContext = sourceKey === '$root' ? input.context : { ...input.context, inputs: {} };
-        const hasDeferredBinding = Object.values(leaf.input).some((binding) =>
-          (binding.kind === 'list' ? binding.items : binding.kind === 'object' ? Object.values(binding.fields) : [binding]).some((reference) =>
+        const hasDeferredBinding = Object.values(leaf.input).some((binding) => binding.kind === 'text'
+          || listWorkflowActionFieldReferencesV1(binding).some((reference) =>
             reference.kind === 'origin_session_id'
               ? purpose === 'definition' && !bindingContext.origin?.originSessionId
               : reference.kind !== 'literal'

@@ -8,6 +8,7 @@ import { useLocalSetting } from '@/sync/store/hooks';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowAuthoredResultReference, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowActionFieldBindingV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
+import type { WorkflowActionTextBindingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectWorkflowResultFields } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 
@@ -25,6 +26,7 @@ import { t } from '@/text';
 
 import { listWorkflowDeclaredResultFields } from '@/components/workflows/flow/workflowFlowProjection';
 import { workflowEditorStyles } from './workflowEditorStyles';
+import { listWorkflowActionFieldTextParts } from './workflowActionTextField';
 import { WorkflowReferenceRawPathInput, WorkflowValuePicker } from './WorkflowValuePicker';
 
 function literalText(value: JsonValue): string {
@@ -117,6 +119,19 @@ export function WorkflowReferenceSentence(props: Readonly<{ draft: WorkflowEdito
     return <>{parts}</>;
 }
 
+/** An Action field's text with workflow values inside: its words, each value as the same token chip a sentence uses. */
+export function WorkflowActionFieldTextValue(props: Readonly<{ draft: WorkflowEditorDraft; binding: WorkflowActionTextBindingV1; testID?: string }>): React.ReactElement {
+    const parts = React.useMemo(() => listWorkflowActionFieldTextParts(props.binding), [props.binding]);
+    return (
+        <Text testID={props.testID} style={workflowEditorStyles.actionFieldText} selectable>
+            {parts.map((part, index) => part.kind === 'text' ? part.text
+                : part.reference.kind === 'origin_session_id'
+                    ? <Text key={index} selectable>{t('workflows.page.inspector.originSession')}</Text>
+                    : <WorkflowValueReferenceToken key={index} draft={props.draft} reference={part.reference} label={part.label} />)}
+        </Text>
+    );
+}
+
 /**
  * One label/value row of a typed step's card (lab `.uwe-kr`): an Action field or a child workflow's
  * input. The label column says what it is (and "Required" while it is unset); the value reads as the
@@ -199,7 +214,7 @@ export function WorkflowBindingRow(props: Readonly<{
         }
         value = (
             <View testID={`${props.testID}-value`} style={workflowEditorStyles.metaRow}>
-                {(binding.kind === 'object' ? Object.entries(binding.fields)
+                {binding.kind === 'text' ? <WorkflowActionFieldTextValue draft={props.draft} binding={binding} /> : (binding.kind === 'object' ? Object.entries(binding.fields)
                     : (binding.kind === 'list' ? binding.items : [binding]).map(reference => [null, reference] as const)).map(([field, reference], index) => (
                     <React.Fragment key={field ?? index}>
                         {field === null ? null : <Text style={workflowEditorStyles.actionFieldLabel}>{field}</Text>}

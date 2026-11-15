@@ -16,6 +16,11 @@ export class ActionJsonSchemaProjectionError extends Error {
   }
 }
 
+/** The string formats a field declares to say it holds a URL: presented as a URL field, encoded as one. */
+export function isUrlJsonSchemaFormat(format: unknown): boolean {
+  return format === 'uri' || format === 'url';
+}
+
 function isJsonSchemaObject(value: unknown): value is JsonSchemaObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

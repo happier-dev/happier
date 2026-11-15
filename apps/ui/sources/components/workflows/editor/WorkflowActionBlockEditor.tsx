@@ -33,7 +33,7 @@ import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowKindCard } from './WorkflowKindCard';
 import { formatWorkflowExecutionLiteral, formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
-import { WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { WorkflowActionFieldTextValue, WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 const NO_ROWS: readonly ActionFieldRow[] = Object.freeze([]);
 
@@ -282,7 +282,10 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                     testIDPrefix={`${fieldId}-field-${key}`}
                                 />
                             </View>
-                        )) : (
+                        )) : binding.kind === 'text' ? (
+                            // The field editor with Insert consumes `workflowActionTextField`; until it lands the text reads as authored.
+                            <WorkflowActionFieldTextValue draft={props.draft} binding={binding} testID={`${fieldId}-text`} />
+                        ) : (
                             <WorkflowValueReferenceEditor
                                 reference={binding as WorkflowValueReference}
                                 index={0}

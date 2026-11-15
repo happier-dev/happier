@@ -10,6 +10,7 @@ import {
   WorkflowInputDefinitionSchema,
   WorkflowStepSelectionV1Schema,
   WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS,
+  type WorkflowActionFieldBindingV1,
   type WorkflowBlock,
   type WorkflowInputDefinition,
   type WorkflowDefinitionV1,
@@ -770,6 +771,10 @@ function validateNonAgentLeaf(
   if (leaf.kind === 'wait') return;
   validateLeafInputContract(state, leaf, path);
   for (const [field, binding] of Object.entries(leaf.input)) {
+    if (binding.kind === 'text') {
+      validateActionTextBinding(state, binding, joinPath(path, 'input', field), leaf.id);
+      continue;
+    }
     const references = binding.kind === 'object' ? Object.entries(binding.fields)
       : binding.kind === 'list' ? binding.items.map((reference, index) => [index, reference] as const) : [[null, binding] as const];
     references.forEach(([key, reference]) => {
@@ -780,6 +785,37 @@ function validateNonAgentLeaf(
       }
     });
   }
+}
+
+/** Values inside Action text use the prompt's token contract: each record binds an existing, valid value. */
+function validateActionTextBinding(
+  state: WalkState,
+  binding: Extract<WorkflowActionFieldBindingV1, { kind: 'text' }>,
+  path: string,
+  blockId: string,
+): void {
+  const invalidBindings = new Map<number, WorkflowValidationIssue>();
+  binding.input.forEach((reference, index) => {
+    if (reference.kind === 'origin_session_id') return;
+    const issueCount = state.issues.length;
+    validateValueReference(state, reference, joinPath(path, 'input', index), blockId, { allowSessionContext: true });
+    const bindingIssue = state.issues[issueCount];
+    if (bindingIssue) invalidBindings.set(index, bindingIssue);
+  });
+  binding.document.references.forEach((mention, index) => {
+    const tokenPath = joinPath(path, 'document', 'references', index, 'ref');
+    if (mention.kind !== MENTION_KIND_V1.workflowInput) {
+      state.issues.push(issue('invalid_input', tokenPath, 'Only workflow values can be inserted in an Action field.', blockId));
+      return;
+    }
+    const bindingIndex = readWorkflowStepInputIndexV1(mention.ref);
+    if (bindingIndex === null || bindingIndex >= binding.input.length) {
+      state.issues.push(issue('invalid_input', tokenPath, 'This token has no Workflow input binding.', blockId));
+      return;
+    }
+    const bindingIssue = invalidBindings.get(bindingIndex);
+    if (bindingIssue) state.issues.push({ ...bindingIssue, path: tokenPath });
+  });
 }
 
 function matchesWorkflowInputValue(input: WorkflowInputDefinition, value: unknown): boolean {

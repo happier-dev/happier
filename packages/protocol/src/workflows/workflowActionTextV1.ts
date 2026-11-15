@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { isUrlJsonSchemaFormat } from '../actions/actionInputJsonSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import {
   StrictJsonValueSchema,
@@ -102,7 +103,7 @@ export function readWorkflowActionFieldTextEncodingV1(inputSchema: unknown, fiel
   const node = properties && Object.hasOwn(properties, field)
     ? readLocalSchemaNode(inputSchema as Readonly<Record<string, unknown>>, properties[field]) : null;
   if (!node) return 'plain';
-  if (node.type === 'string') return node.format === 'uri' || node.format === 'url' ? 'url' : 'plain';
+  if (node.type === 'string') return isUrlJsonSchemaFormat(node.format) ? 'url' : 'plain';
   return typeof node.type === 'string' && JSON_SOURCE_TYPES.has(node.type) ? 'json' : 'plain';
 }
 

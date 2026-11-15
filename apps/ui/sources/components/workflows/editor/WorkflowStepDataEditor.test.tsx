@@ -303,6 +303,19 @@ describe('WorkflowBindingRow help (DESIGN-13)', () => {
         expect(screen.getTextContent()).toContain('preview branch');
     });
 
+    it('reads an Action field with workflow values inside as its words with each value as a chip', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'text-field' });
+        const token = '[Topic](happier-ref:workflowInput:0)';
+        const screen = await renderScreen(<WorkflowBindingRow label="Objective" binding={{ kind: 'text', input: [{ kind: 'input', name: 'topic' }],
+            document: { text: `Ship ${token} today`, references: [{ kind: 'happier.workflowInput', ref: 'workflowInput:0', label: 'Topic', token }] } }}
+            draft={draft} editable={false} testID="text-row" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('Ship ');
+        expect(text).toContain('Topic'.replace(/ /g, '\u00A0'));
+        expect(text).toContain(' today');
+        expect(text).not.toContain('happier-ref:');
+    });
+
     it('keeps a field\'s binding note out of a resting card and shows it while the step is edited', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'note' });
         const row = (editing: boolean) => (

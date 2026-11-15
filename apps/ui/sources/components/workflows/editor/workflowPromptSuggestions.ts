@@ -1,6 +1,7 @@
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
-import { buildMentionRefForKindV1, MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { buildMentionRefForKindV1, MENTION_KIND_V1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import type { WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowStep, WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
@@ -17,10 +18,23 @@ export function resolveWorkflowPromptReferenceStates(
     step: WorkflowStep,
     issues: readonly WorkflowValidationIssue[],
 ): ReadonlyMap<string, NonNullable<ComposerEditorReference['state']>> | undefined {
+    // An Action field's text has the same token paths under `/input/<field>/`; those are not this prompt's.
+    return resolveWorkflowTokenReferenceStates(step.document.references, issues, (path) => {
+        const match = /\/document\/references\/(\d+)\/ref$/.exec(path);
+        return match && !/\/input\/[^/]+$/.test(path.slice(0, match.index)) ? Number(match[1]) : null;
+    });
+}
+
+/** Projects the issues that address a document's token records onto those tokens' chip states. */
+export function resolveWorkflowTokenReferenceStates(
+    references: readonly MentionRefV1[],
+    issues: readonly WorkflowValidationIssue[],
+    readReferenceIndex: (path: string) => number | null,
+): ReadonlyMap<string, NonNullable<ComposerEditorReference['state']>> | undefined {
     let states: Map<string, NonNullable<ComposerEditorReference['state']>> | undefined;
     for (const issue of issues) {
-        const match = /\/document\/references\/(\d+)\/ref$/.exec(issue.path);
-        const reference = match ? step.document.references[Number(match[1])] : undefined;
+        const index = readReferenceIndex(issue.path);
+        const reference = index === null ? undefined : references[index];
         if (reference?.kind !== MENTION_KIND_V1.workflowInput) continue;
         states ??= new Map();
         states.set(reference.ref, issue.code === 'missing_reference' || issue.code === 'invalid_input' ? 'removed' : 'unavailable');
@@ -29,11 +43,12 @@ export function resolveWorkflowPromptReferenceStates(
 }
 
 /** Workflow-local values join the real composer catalog; selecting one binds its existing input token. */
-export function createWorkflowPromptSuggestions(params: Readonly<{
+export function createWorkflowPromptSuggestions<Reference extends WorkflowActionValueReferenceV1>(params: Readonly<{
     draft: WorkflowEditorDraft;
-    step: WorkflowStep;
+    /** The block whose scope applies and the value list its tokens address: a prompt step, or one Action text field. */
+    step: Readonly<{ id: string; input: readonly Reference[] }>;
     query: string;
-    onChangeInput: (input: WorkflowValueReference[]) => void;
+    onChangeInput: (input: (Reference | WorkflowValueReference)[]) => void;
 }>): AutocompleteSuggestion[] {
     const query = parseComposerSuggestionQuery(params.query);
     if (query?.trigger !== '@') return [];

@@ -22,6 +22,7 @@ import type {
   WorkflowStep,
   WorkflowStepExecutionSelection,
 } from './workflowV1.js';
+import { mapWorkflowActionFieldReferencesV1 } from './workflowActionTextV1.js';
 
 export { WorkflowInsertBlockV1Schema, type WorkflowInsertBlockV1 } from './workflowV1.js';
 export { walkWorkflowBlocks } from './workflowV1.js';
@@ -360,10 +361,7 @@ export function rewriteWorkflowBlockReferences(block: WorkflowBlock, rewrite: Wo
     case 'action': return {
       ...block, ...guarded,
       input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key,
-        value.kind === 'object' ? { ...value, fields: Object.fromEntries(Object.entries(value.fields).map(([field, item]) => [field,
-          item.kind === 'origin_session_id' ? item : reference(item)])) }
-          : value.kind === 'list' ? { ...value, items: value.items.map((item) => item.kind === 'origin_session_id' ? item : reference(item)) }
-          : value.kind === 'origin_session_id' ? value : reference(value)])),
+        mapWorkflowActionFieldReferencesV1(value, (item) => item.kind === 'origin_session_id' ? item : reference(item))])),
     };
     case 'workflow': return { ...block, ...guarded, input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key, reference(value)])) };
     case 'wait': return { ...block, ...guarded };
