@@ -237,52 +237,6 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(JSON.stringify(witnesses)).not.toContain('private-');
     });
 
-    it.each([
-        ['database_connection_unavailable', new TransactionAcquisitionUnavailableError(new Error('private-guard-db'))],
-        ['database_transaction_conflict_exhausted', new TransactionConflictExhaustedError(new Error('private-guard-db'))],
-    ] as const)('preserves %s from the exact-target currentness guard', async (code, error) => {
-        const records = capturePhaseRecords();
-        let resolution = 0;
-        const exactTarget = {
-            id: 'machine-socket',
-            data: {
-                clientType: 'machine-scoped',
-                machineId: 'machine-1',
-                verifiedMachineInstallationId: 'installation-1',
-            },
-            timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
-        };
-        const forwardRpc: ExternalActionForwardRpcCall = async (params) => {
-            const candidates = await params.targetGuard?.filterTargets([exactTarget] as never) ?? [];
-            return candidates.length === 0
-                ? { ok: false, error: 'private-guard-transport' }
-                : { ok: true, result: {} };
-        };
-        const dispatch = createExternalActionDaemonDispatcher({
-            io: {} as never,
-            resolveMachine: async () => {
-                resolution += 1;
-                if (resolution === 1) return 'available';
-                throw error;
-            },
-            forwardRpc,
-        });
-
-        await expect(dispatch({
-            actionId: 'session.spawn_new',
-            principal,
-            envelope: { v: 1, requestId: `request-guard-${code}`,
-                target: { kind: 'machine', machineId: 'machine-1' }, input: {} },
-        })).resolves.toEqual({ kind: 'placement_error', code });
-        const witnesses = records.filter((record) => record.msg === '[external-action-phase]');
-        expect(witnesses).toMatchObject([{
-            phase: 'target_currentness',
-            requestId: `request-guard-${code}`,
-            refusalBranch: 'phase_exception',
-        }]);
-        expect(JSON.stringify(witnesses)).not.toContain('private-');
-    });
-
     it('preserves a correlated target admission refusal phase from the daemon', async () => {
         const refusal = { kind: 'invalid_request' as const, errorCode: 'target_not_local' as const,
             requestId: 'request-target-admission', phase: 'target_installation' as const };
@@ -851,36 +805,6 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(forwardRpc).not.toHaveBeenCalled();
     });
 
-    it("filters an unproved claimed machine daemon before an external Action envelope can be submitted", async () => {
-        const envelope: ExternalActionRequestEnvelopeV1 = {
-            v: 1,
-            target: { kind: "machine", machineId: "machine-1" },
-            input: { opaque: "must-not-reach-an-unproved-socket" },
-        };
-        const unprovedTarget = {
-            id: "claimed-machine-socket",
-            data: { clientType: "machine-scoped", machineId: "machine-1" },
-            timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
-        };
-        const forwardRpc: ExternalActionForwardRpcCall = async (params) => {
-            const candidates = await params.targetGuard?.filterTargets([unprovedTarget] as never) ?? [];
-            return candidates.length === 0
-                ? { ok: false, error: "RPC method unavailable" }
-                : { ok: true, result: relayResponse("session.message.send", envelope) };
-        };
-        const dispatch = createExternalActionDaemonDispatcher({
-            io: {} as never,
-            forwardRpc,
-            resolveMachine: async () => "available",
-        });
-
-        await expect(dispatch({
-            actionId: "session.message.send",
-            envelope,
-            principal,
-        })).resolves.toEqual({ kind: "placement_error", code: "target_unavailable" });
-    });
-
     it("uses the canonical Session-owner resolver to relay action.invoke without opening nested plugin input", async () => {
         const envelope: ExternalActionRequestEnvelopeV1 = {
             v: 1,
@@ -1033,59 +957,6 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(rooms).toEqual(["session:session-1:account-1"]);
         expect(forwardRpc).toHaveBeenCalledWith(expect.objectContaining({
             method: `runner-machine:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
-        }));
-    });
-
-    it("retains an acknowledged Action response when target currentness changes after submission", async () => {
-        const envelope: ExternalActionRequestEnvelopeV1 = {
-            v: 1,
-            target: { kind: "machine", machineId: "machine-1" },
-            input: {},
-        };
-        let targetCurrent = true;
-        const target = {
-            id: "machine-socket",
-            data: {
-                userId: "account-1",
-                clientType: "machine-scoped",
-                machineId: "machine-1",
-                verifiedMachineInstallationId: "installation-1",
-            },
-            timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
-        };
-        const forwardRpc: ExternalActionForwardRpcCall = async (params) => {
-            const targetGuard = params.targetGuard;
-            if (!targetGuard) throw new Error("Expected exact-target guard");
-            const guarded = await targetGuard.runOperation({
-                target,
-                readLatestTarget: async () => target,
-                operation: async () => {
-                    targetCurrent = false;
-                    return relayResponse("session.spawn_new", envelope);
-                },
-            });
-            return guarded.status === "current"
-                ? { ok: true, result: guarded.value }
-                : { ok: false, error: "target unavailable" };
-        };
-        const resolveMachine = vi.fn(async () => (
-            targetCurrent ? "available" as const : "unavailable" as const
-        ));
-        const dispatch = createExternalActionDaemonDispatcher({
-            io: {} as never,
-            forwardRpc,
-            resolveMachine,
-        });
-
-        await expect(dispatch({
-            actionId: "session.spawn_new",
-            envelope,
-            principal,
-        })).resolves.toEqual(dispatchedResponse(response("session.spawn_new", envelope)));
-        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
-            callerAuthority: principal.authority,
-            expectedCustodianAccountId: principal.accountId,
-            expectedInstallationId: 'installation-1',
         }));
     });
 

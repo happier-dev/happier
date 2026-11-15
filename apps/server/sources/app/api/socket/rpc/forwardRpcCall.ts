@@ -164,6 +164,8 @@ async function executeRpcForwardCall(params: Readonly<{
     /** Home-owned current Machine routing facts; never copied from inbound fields. */
     machineAdmission?: SocketRpcMachineAdmissionContextV1;
     receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
+    /** Exact admitted receiver when placement owns routing independently of a source context. */
+    admittedMachineTarget?: Pick<SocketRpcMachineAdmissionContextV1, 'machineId' | 'custodianAccountId' | 'installationId'>;
     /** Home producer runs under the selected target guard; null leaves existing Machine routing unchanged. */
     createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
     transportResponseEnvelopeVersion?: 1;
@@ -320,13 +322,16 @@ async function executeRpcForwardCall(params: Readonly<{
         typeof targetData.machineId === "string"
             ? targetData.machineId.trim()
             : "";
+    const admission = params.receivingMachineAdmission ?? params.machineAdmission;
+    const admittedTarget = admission?.machineId === targetMachineId
+        && admission.custodianAccountId === params.targetUserId ? admission : null;
+    const exactTarget = params.admittedMachineTarget ?? admittedTarget;
+    if (exactTarget && (targetClientType !== 'machine-scoped'
+        || targetMachineId !== exactTarget.machineId || params.targetUserId !== exactTarget.custodianAccountId
+        || readVerifiedMachineSocketInstallationIdFromSocketData(targetData) !== exactTarget.installationId)) {
+        return recordMethodUnavailable({ method: params.method, callStartedAt });
+    }
     if (targetClientType === "machine-scoped" && targetMachineId) {
-        const admission = params.receivingMachineAdmission ?? params.machineAdmission;
-        const admittedTarget = admission?.machineId === targetMachineId
-            && admission.custodianAccountId === params.targetUserId ? admission : null;
-        if (admittedTarget && readVerifiedMachineSocketInstallationIdFromSocketData(targetData) !== admittedTarget.installationId) {
-            return recordMethodUnavailable({ method: params.method, callStartedAt });
-        }
         // The request admission already decided lifecycle and content mode.
         // Legacy callers and physically different receivers retain their own read.
         const machine = admittedTarget ? null : await db.machine.findFirst({

@@ -65,18 +65,32 @@ describe('requester handoff placement and exact signed ingress', () => {
             timeout: () => ({ emitWithAck: effect }) };
         const discovery: { duringLatest?: () => Promise<unknown> } = {};
         const read = async (room: string) => {
-            if (room === daemon.id && discovery.duringLatest) { const mutate = discovery.duringLatest; discovery.duringLatest = undefined; await mutate(); }
-            return room === daemon.id || room.startsWith(`rpc:${alice.id}:${source.id}:`) ? [daemon] : [];
+            const matchesDaemon = room === daemon.id || room.startsWith(`rpc:${alice.id}:${source.id}:`);
+            if (matchesDaemon && discovery.duringLatest) { const mutate = discovery.duringLatest; discovery.duringLatest = undefined; await mutate(); }
+            return matchesDaemon ? [daemon] : [];
         };
         const io = createSocketRoomDiscoveryHarness(read);
         const dispatch = createExternalActionDaemonDispatcher({ io });
         const relay = (alreadyAdmitted = true) => dispatch({ actionId: 'session.handoff', envelope, principal,
             ...(alreadyAdmitted ? { executionAuthorization: authorization } : {}) });
-        return { alice, bob, keys, source, target, grant, session, envelope, authorization, compatibility, effect, discovery, io, dispatch, relay };
+        const listOperations = async () => {
+            const operationEnvelope = { v: 1 as const, requestId: randomUUID(), target: envelope.target,
+                input: { serverId: authorization.binding.serverIdentityId, machineId: source.id } };
+            const operationPrincipal = { accountId: alice.id, authority: 'present_user' as const,
+                authentication: { kind: 'account' as const, tokenEpoch: alice.tokenEpoch } };
+            const operationAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: alice.id,
+                authentication: operationPrincipal.authentication, serverIdentityId: authorization.binding.serverIdentityId,
+                machineId: source.id, actionId: 'action.operations.list', requestId: operationEnvelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(operationEnvelope), target: operationEnvelope.target },
+            { input: operationEnvelope.input });
+            return await dispatch({ actionId: 'action.operations.list', envelope: operationEnvelope,
+                principal: operationPrincipal, executionAuthorization: operationAuthorization });
+        };
+        return { alice, bob, keys, source, target, grant, session, envelope, authorization, compatibility, effect, discovery, daemon, io, relay, listOperations };
     }
 
-    it('admits an own Session on a shared source, rechecks both installations and refuses unsigned or stale effects', async () => {
-        const { alice, bob, keys, source, target, grant, session, envelope, authorization, compatibility, effect, discovery, io, relay } = await fixture();
+    it('finishes admitted handoffs on the exact selected installation and refuses stale fresh admissions', async () => {
+        const { alice, bob, keys, source, target, grant, session, envelope, authorization, compatibility, effect, discovery, daemon, io, relay } = await fixture();
         expect(await relay()).toMatchObject({ kind: 'response', prepared: { response: { execution: { ok: true } } } });
         expect(await relay(false)).toMatchObject({ kind: 'response', prepared: { response: { execution: { ok: true } } } });
         const method = `${source.id}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3}`;
@@ -94,38 +108,77 @@ describe('requester handoff placement and exact signed ingress', () => {
                 ...(signed ? { externalActionExecution: execution } : {}) }, callback);
             return callback;
         };
+        // A retry of the same signed root is retained work. A new request
+        // must mint its own admission against the originally selected pair.
+        const freshCall = async () => {
+            const nextEnvelope = { ...envelope, requestId: randomUUID() };
+            const nextAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: bob.id,
+                authentication: { kind: 'account', tokenEpoch: bob.tokenEpoch }, serverIdentityId: authorization.binding.serverIdentityId,
+                machineId: source.id, actionId: 'session.handoff', requestId: nextEnvelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(nextEnvelope), target: nextEnvelope.target,
+                handoffAdmission: authorization.binding.handoffAdmission! }, { input: nextEnvelope.input });
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params, requestId: nextEnvelope.requestId,
+                externalActionExecution: { ...execution, authorization: nextAuthorization,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: nextAuthorization.token,
+                        effectActionId: 'session.handoff', target: nextEnvelope.target, installationId: source.installationId!,
+                        event: SOCKET_RPC_EVENTS.CALL, method, requestId: nextEnvelope.requestId, params, privateKey: keys.secretKey }) } }, callback);
+            return callback;
+        };
         expect(await call()).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
+        expect(await freshCall()).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
         effect.mockClear();
         expect(await call(false)).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
         for (const machine of [source, target]) {
+            const side = machine.id === source.id ? 'source' : 'target';
             discovery.duringLatest = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
-            expect(await relay()).toMatchObject({ kind: 'placement_error' });
+            expect(await relay()).toMatchObject({ kind: 'response', prepared: { response: { execution: { ok: true } } } });
+            expect(await db.machine.findUnique({ where: { id: machine.id }, select: { installationId: true } }), `${side} installation changed during discovery`)
+                .not.toEqual({ installationId: machine.installationId });
+            expect(effect).toHaveBeenCalled();
+            effect.mockClear();
+            await expect(freshCall(), `fresh admission after ${side} installation changed`).rejects.toMatchObject({ code: 'credential_scope_denied' });
             expect(effect).not.toHaveBeenCalled();
             await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
             discovery.duringLatest = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
-            expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(await call()).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
+            expect(effect).toHaveBeenCalled();
+            effect.mockClear();
+            await expect(freshCall()).rejects.toMatchObject({ code: 'credential_scope_denied' });
             expect(effect).not.toHaveBeenCalled();
             await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
         }
-        await db.session.update({ where: { id: session.id }, data: { accountId: alice.id } });
+        daemon.data.verifiedMachineInstallationId = randomUUID();
         expect(await relay()).toMatchObject({ kind: 'placement_error' });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+        expect(effect).not.toHaveBeenCalled();
+        daemon.data.verifiedMachineInstallationId = source.installationId;
+        await db.session.update({ where: { id: session.id }, data: { accountId: alice.id } });
+        expect(await relay(false)).toMatchObject({ kind: 'placement_error' });
+        await expect(freshCall()).rejects.toMatchObject({ code: 'credential_scope_denied' });
         expect(effect).not.toHaveBeenCalled();
         await db.session.update({ where: { id: session.id }, data: { accountId: bob.id } });
         discovery.duringLatest = () => db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: source.id, accountId: bob.id } } });
-        expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+        expect(await relay()).toMatchObject({ kind: 'response', prepared: { response: { execution: { ok: true } } } });
+        expect(effect).toHaveBeenCalled();
+        effect.mockClear();
+        await expect(freshCall()).rejects.toMatchObject({ code: 'credential_scope_denied' });
         expect(effect).not.toHaveBeenCalled();
-        expect(await relay()).toMatchObject({ kind: 'placement_error' });
+        expect(await relay(false)).toMatchObject({ kind: 'placement_error' });
         await db.machineGrant.create({ data: { ...grant, principalKind: 'account' } });
-        await db.machine.update({ where: { id: source.id }, data: { active: false } });
-        expect(await relay()).toMatchObject({ kind: 'placement_error' });
-        expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+        discovery.duringLatest = () => db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: source.id, accountId: bob.id } } });
+        expect(await call()).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
+        expect(effect).toHaveBeenCalled();
+        effect.mockClear();
+        await expect(freshCall()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        expect(await relay(false)).toMatchObject({ kind: 'placement_error' });
         expect(effect).not.toHaveBeenCalled();
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' } });
     });
 
     it('refuses offline signed handoff delivery while preserving live retained operation reads', async () => {
-        const { source, alice, authorization, envelope, dispatch, effect, relay } = await fixture();
+        const { source, effect, relay, listOperations } = await fixture();
         expect(await relay()).toMatchObject({ kind: 'response', prepared: { response: { execution: { ok: true } } } });
         effect.mockClear();
         await db.machine.update({ where: { id: source.id }, data: { active: false } });
@@ -134,17 +187,17 @@ describe('requester handoff placement and exact signed ingress', () => {
         expect(effect).not.toHaveBeenCalled();
         // Retained operation controls use the actual selected socket, even when
         // persistent daemon presence lags; they do not begin new native work.
-        const operationEnvelope = { v: 1 as const, requestId: randomUUID(), target: envelope.target,
-            input: { serverId: authorization.binding.serverIdentityId, machineId: source.id } };
-        const operationPrincipal = { accountId: alice.id, authority: 'present_user' as const,
-            authentication: { kind: 'account' as const, tokenEpoch: alice.tokenEpoch } };
-        const operationAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: alice.id,
-            authentication: operationPrincipal.authentication, serverIdentityId: authorization.binding.serverIdentityId,
-            machineId: source.id, actionId: 'action.operations.list', requestId: operationEnvelope.requestId,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(operationEnvelope), target: operationEnvelope.target },
-        { input: operationEnvelope.input });
-        expect(await dispatch({ actionId: 'action.operations.list', envelope: operationEnvelope,
-            principal: operationPrincipal, executionAuthorization: operationAuthorization })).toMatchObject({ kind: 'response',
+        expect(await listOperations()).toMatchObject({ kind: 'response',
             prepared: { response: { execution: { ok: true, result: { items: [], nextCursor: null } } } } });
+    });
+
+    it('keeps the installed socket binding for an incumbent ephemeral runner without persistent Machine grants', async () => {
+        const { source, daemon, effect, listOperations } = await fixture();
+        await db.machine.update({ where: { id: source.id }, data: { kind: 'ephemeral_session_runner' } });
+        expect(await listOperations()).toMatchObject({ kind: 'response', prepared: { response: { execution: { ok: true } } } });
+        effect.mockClear();
+        daemon.data.verifiedMachineInstallationId = randomUUID();
+        expect(await listOperations()).toMatchObject({ kind: 'placement_error' });
+        expect(effect).not.toHaveBeenCalled();
     });
 });

@@ -61,6 +61,7 @@ import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAc
 import { currentAccountStoredContentCompatibilityHeaders, qualifyCurrentAccountStoredContentSocket } from '@/app/api/testkit/accountStoredContentCompatibility';
 import { createAuthenticatedFakeSocket, createFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
+import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import * as externalActionDispatcher from '@/app/api/socket/externalActionDispatcher';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
@@ -242,54 +243,46 @@ describe('ordinary Account managed Action origination', () => {
     it('keeps creator recovery custody in the signed root and out of public Machine admission', async () => {
         const selected = await fixture(true);
         const requester = await fixture(false);
-        const team = await db.team.create({ data: { name: 'Creator recovery carrier Team' } });
-        await db.teamMembership.createMany({ data: [
-            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
-            { teamId: team.id, accountId: requester.account.id, role: 'member' },
-        ] });
-        const presetId = crypto.randomUUID();
-        expect(await createMachinePreset({ accountId: selected.account.id,
-            authentication: { authenticationAuthority: 'present_user' }, input: {
-                id: presetId, homeId, name: 'Creator guest', owner: { kind: 'team', teamId: team.id },
-                launch: selected.input.selection.launch, controller: selected.controller, teamAcquireDelegated: true,
-                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            } })).toMatchObject({ kind: 'saved' });
-        const acquireInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
-            selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: selected.account.id,
+            machineId: selected.controller.machineId, principal: { kind: 'account', accountId: requester.account.id }, level: 'admin' }));
         const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
-            requesterAccountId: requester.account.id, requestEnvelopeDigest: 'a'.repeat(43), input: { input: acquireInput,
+            requesterAccountId: requester.account.id, requestEnvelopeDigest: 'a'.repeat(43), input: { input: selected.input,
                 requestId: selected.requestId, continuationPresent: false } });
-        const actionId = 'machines.managed.cancel';
-        const input = { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0 };
+        await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: selected.account.id,
+            machineId: selected.controller.machineId, principal: { kind: 'account', accountId: requester.account.id } }));
+        const actionId = 'machines.managed.delete';
+        const input = { homeId, managedId: admitted.machine.id, when: 'now', expectedRevision: 0,
+            intent: 'delete', reviewedDependencies: true };
         const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
         const requestId = crypto.randomUUID();
         let deliveries = 0;
         let deliveryFailure: unknown;
-        const instance = await app(async params => {
-            try {
-            const receiver = createFakeSocket({ id: 'creator-controller', data: { clientType: 'machine-scoped', userId: selected.account.id,
-                machineId: selected.controller.machineId, verifiedMachineInstallationId: selected.controller.installationId },
-                timeout: () => ({ emitWithAck: async () => undefined }) });
-            qualifyCurrentAccountStoredContentSocket(receiver);
-            expect(await params.targetGuard?.filterTargets([receiver])).toHaveLength(1);
-            const machineAdmission = await params.createMachineAdmission?.({ target: receiver });
-            expect(machineAdmission).not.toHaveProperty('managedCreationRecovery');
-            expect(SocketRpcMachineAdmissionContextV1Schema.safeParse(machineAdmission).success).toBe(true);
-            const dispatched = ExternalActionDaemonDispatchRequestSchema.parse(params.callParams);
-            expect(dispatched.executionAuthorization?.binding.managedAdmission).toMatchObject({ actionId, authority: 'creator_recovery' });
-            deliveries++;
-            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
-                v: 1, actionId, requestId, execution: { ok: true, result: { kind: 'accepted' } },
-            })) };
-            } catch (error) { deliveryFailure = error; throw error; }
-        });
+        const receiver = createFakeSocket({ id: 'creator-controller', data: { clientType: 'machine-scoped', userId: selected.account.id,
+            machineId: selected.controller.machineId, verifiedMachineInstallationId: selected.controller.installationId },
+            timeout: () => ({ emitWithAck: async (_event: string, packet: unknown) => {
+                try {
+                    if (typeof packet !== 'object' || packet === null) throw new Error('Missing Socket RPC request');
+                    const machineAdmission = Reflect.get(packet, 'machineAdmission');
+                    expect(machineAdmission).not.toHaveProperty('managedCreationRecovery');
+                    expect(SocketRpcMachineAdmissionContextV1Schema.safeParse(machineAdmission).success).toBe(true);
+                    const dispatched = ExternalActionDaemonDispatchRequestSchema.parse(Reflect.get(packet, 'params'));
+                    expect(dispatched.executionAuthorization?.binding.managedAdmission).toMatchObject({ actionId, authority: 'creator_recovery' });
+                    deliveries++;
+                    return createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                        v: 1, actionId, requestId, execution: { ok: true, result: { kind: 'accepted' } },
+                    }));
+                } catch (error) { deliveryFailure = error; throw error; }
+            } }) });
+        qualifyCurrentAccountStoredContentSocket(receiver);
+        const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
+            || room === `rpc:${selected.account.id}:${selected.controller.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}` ? [receiver] : []);
+        const instance = await app(params => forwardRpcCall({ ...params, io }));
         try {
             const executed = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
                 headers: { authorization: `Bearer ${requester.token}` },
                 payload: { v: 1, requestId, target, input } });
-            expect(executed.statusCode, executed.body).toBe(200);
             if (deliveryFailure) throw deliveryFailure;
+            expect(executed.statusCode, executed.body).toBe(200);
             expect(deliveries, executed.body).toBe(1);
         } finally { await instance.close(); }
     });

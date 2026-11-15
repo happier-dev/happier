@@ -31,7 +31,6 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     readCurrentExternalActionHandoffBindingInTx,
     resolveExternalActionExecutionMachineAdmissionInTx, readAdmittedFiniteOperationPrincipal,
     type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
-import { readMachineScopedSocketIdentity } from "@/app/machines/machineDaemonPresence";
 import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import {
     readSessionPublisherAuthorityProjection,
@@ -56,8 +55,7 @@ import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { ExternalActionSubmittedUnknownCauseV1Schema, type ExternalActionSubmittedUnknownCauseV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { forwardRpcCall, type RpcForwardResult } from "./rpc/forwardRpcCall";
-import { readVerifiedMachineSocketInstallationIdFromSocketData } from "./machineSocketInstallationProof";
-import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./rpc/_types";
+import type { RpcAckResponseEmitter } from "./rpc/_types";
 import { readSocketRoomSnapshot } from './socketRoomDiscovery';
 
 /**
@@ -131,8 +129,6 @@ type ResolveMachine = (params: Readonly<{
     managedCreationAdmission?: import('@/app/auth/externalActionManagedAdmission').ManagedCreationChildAdmission;
     capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
     envelope?: ExternalActionRequestEnvelope;
-    expectedCustodianAccountId?: string;
-    expectedInstallationId?: string;
     requiredExternalActionExecutionAuthorization?: true;
     requiredSessionInputAdmissionProtocolVersion?: 2;
     requireOnline?: boolean;
@@ -440,8 +436,6 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
         const { kind: _kind, ...context } = admission;
         machineAdmission = context;
     }
-    if ((params.expectedCustodianAccountId !== undefined && machine.accountId !== params.expectedCustodianAccountId)
-        || (params.expectedInstallationId !== undefined && machine.installationId !== params.expectedInstallationId)) return 'unavailable';
     if (classifyMachineAvailabilityState(machine) !== "available") return "unavailable";
     const hasCurrentExternalActionAuthorization = typeof machine.operationProtocolCapabilitiesRevision === "number"
         && machine.operationProtocolCapabilitiesRevision >= 1
@@ -538,114 +532,6 @@ export async function resolveCurrentSessionMachineFromServer(params: Readonly<{
     sessionId: string;
 }>): Promise<string | null> {
     return (await resolveCurrentSessionPublisherFromServer(params))?.machineId ?? null;
-}
-
-function isExactMachineDaemonTarget(
-    target: Pick<RpcAckResponseEmitter, "data">,
-    machineId: string,
-    installationId: string,
-): boolean {
-    const identity = readMachineScopedSocketIdentity(target.data);
-    return identity?.machineId === machineId
-        && readVerifiedMachineSocketInstallationIdFromSocketData(target.data) === installationId;
-}
-
-function createExactMachineDaemonGuard(params: Readonly<{
-    accountId: string;
-    machineId: string;
-    installationId: string;
-    actionId: ExternalActionActionIdV1;
-    custodianAccountId: string;
-    handoffAdmission?: ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
-    executionBinding?: ExternalActionExecutionAuthorizationBindingV1;
-    workflowAdmission?: WorkflowExternalActionAdmission;
-    capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
-    sessionId?: string;
-    requiredExternalActionExecutionAuthorization?: true;
-    requiredSessionInputAdmissionProtocolVersion?: 2;
-    resolveMachine: ResolveMachine;
-    resolveSessionMachine: ResolveSessionMachine;
-    isOriginCurrent?: () => Promise<boolean>;
-} & Partial<MachineOperationRequesterContext>>): Readonly<{
-    targetGuard: RpcForwardTargetGuard;
-    readPhaseFailure: () => DispatchPhaseFailure | null;
-    readMachineAdmission: () => SocketRpcMachineAdmissionContextV1 | null;
-    readMachineAvailabilityDiagnostic: () => MachineAvailabilityDiagnosticV1 | undefined;
-}> {
-    let phaseFailure: DispatchPhaseFailure | null = null;
-    let machineAdmission: SocketRpcMachineAdmissionContextV1 | null = null;
-    let machineAvailabilityDiagnostic: MachineAvailabilityDiagnosticV1 | undefined;
-    const current = async (): Promise<boolean> => {
-        machineAdmission = null;
-        machineAvailabilityDiagnostic = undefined;
-        const result = await runDispatchPhase('target_currentness', params.machineId, async () => {
-            if (params.isOriginCurrent && !await params.isOriginCurrent()) return false;
-            const availability = await params.resolveMachine({
-                accountId: params.accountId,
-                machineId: params.machineId,
-                admittedDelivery: true,
-                // Delivery already consumed online availability; this guard binds the live socket installation.
-                requireOnline: false,
-                onAdmission: admission => { machineAdmission = admission; },
-                actionId: params.actionId,
-                callerAuthority: params.callerAuthority,
-                sessionActionOrigin: params.sessionActionOrigin,
-                ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
-                ...(params.executionBinding ? { executionBinding: params.executionBinding } : {}),
-                ...(params.workflowAdmission ? { workflowAdmission: params.workflowAdmission } : {}),
-                ...(params.capturedMachineAdmission ? { capturedMachineAdmission: params.capturedMachineAdmission } : {}),
-                expectedCustodianAccountId: params.custodianAccountId,
-                expectedInstallationId: params.installationId,
-                ...(params.requiredExternalActionExecutionAuthorization === true
-                    ? { requiredExternalActionExecutionAuthorization: true as const }
-                    : {}),
-                ...(params.requiredSessionInputAdmissionProtocolVersion === undefined
-                    ? {}
-                    : { requiredSessionInputAdmissionProtocolVersion: params.requiredSessionInputAdmissionProtocolVersion }),
-            });
-            if (availability !== "available") {
-                if (typeof availability !== 'string') machineAvailabilityDiagnostic = availability.diagnostic;
-                return false;
-            }
-            if (params.sessionId === undefined) return true;
-            return await params.resolveSessionMachine({
-                accountId: params.accountId,
-                sessionId: params.sessionId,
-            }) === params.machineId;
-        });
-        if (result.kind === 'failed') {
-            machineAdmission = null;
-            phaseFailure = result;
-            return false;
-        }
-        phaseFailure = null;
-        if (!result.value) machineAdmission = null;
-        return result.value;
-    };
-    const exact = (target: Pick<RpcAckResponseEmitter, "data">): boolean => (
-        isExactMachineDaemonTarget(target, params.machineId, params.installationId)
-    );
-
-    return {
-        readPhaseFailure: () => phaseFailure,
-        readMachineAdmission: () => machineAdmission,
-        readMachineAvailabilityDiagnostic: () => machineAvailabilityDiagnostic,
-        targetGuard: {
-            filterTargets: async (targets) => {
-                if (!await current()) return [];
-                return targets.filter(exact);
-            },
-            runOperation: async ({ target, operation, readLatestTarget }) => {
-                if (!exact(target) || !await current()) return { status: "unavailable" };
-                const latestTarget = await readLatestTarget();
-                if (!latestTarget || !exact(latestTarget) || !await current()) {
-                    return { status: "unavailable" };
-                }
-                const value = await operation();
-                return { status: "current", value };
-            },
-        },
-    };
 }
 
 /**
@@ -1056,31 +942,16 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 refusalBranch: 'session_source_stale', requestId: request.envelope.requestId, machineId });
         }
 
+        let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
+        if (capturedMachineAdmission) {
+            const { managedCreationRecovery: _recovery, managedAcquireDelegation: _delegation,
+                ...publicAdmission } = capturedMachineAdmission;
+            machineAdmission = publicAdmission;
+        }
         const placement: ExternalActionDaemonPlacementV1 = {
             machineId,
             target: { kind: "machine", machineId },
         };
-        const exactDaemonTarget = createExactMachineDaemonGuard({
-            accountId: request.principal.accountId,
-            machineId,
-            actionId: request.actionId,
-            ...requesterContext,
-            custodianAccountId: currentAuthorization.binding.custodianAccountId,
-            executionBinding: currentAuthorization.binding,
-            ...(capturedMachineAdmission ? { capturedMachineAdmission } : {}),
-            ...(request.workflowAdmission ? { workflowAdmission: request.workflowAdmission } : {}),
-            installationId: currentAuthorization.binding.installationId,
-            ...(currentAuthorization.binding.handoffAdmission ? { handoffAdmission: currentAuthorization.binding.handoffAdmission } : {}),
-            requiredExternalActionExecutionAuthorization: true,
-            ...(sessionId === undefined ? {} : { sessionId }),
-            ...(requiredSessionInputAdmissionProtocolVersion === undefined
-                ? {}
-                : { requiredSessionInputAdmissionProtocolVersion }),
-            resolveMachine,
-            resolveSessionMachine: resolveTargetSessionMachine,
-            ...(finiteWake && (finiteWake.kind === 'ready' || finiteWake.kind === 'not-needed')
-                ? { isOriginCurrent: finiteWake.isCurrent } : {}),
-        });
         const requestId = options.signal ? randomUUID() : null;
         let targetSocketId: string | null = null;
         const cancellation = requestId && options.signal
@@ -1125,8 +996,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 } satisfies ExternalActionDaemonDispatchRequest,
                 authorization: ACTION_API_SERVER_ORIGIN,
                 ...requesterContext,
-                createMachineAdmission: async () => exactDaemonTarget.readMachineAdmission(),
-                targetGuard: exactDaemonTarget.targetGuard,
+                ...(machineAdmission ? { machineAdmission } : {}),
+                admittedMachineTarget: capturedMachineAdmission ?? currentAuthorization.binding,
                 onSubmittedUnknown: () => {
                     submittedUnknown = true;
                 },
@@ -1137,27 +1008,21 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             options.signal?.removeEventListener("abort", cancelTarget);
         }
         if (forwarded.kind === 'failed' || !forwarded.value.ok) {
-            const guardFailure = exactDaemonTarget.readPhaseFailure();
             // Read only plaintext transport diagnostics, never an encrypted Action result or RPC prose.
-            const refusal = forwarded.kind === 'ready' && !guardFailure && 'errorCode' in forwarded.value
+            const refusal = forwarded.kind === 'ready' && 'errorCode' in forwarded.value
                 ? ClientActionRpcFailureCodeV1Schema.safeParse(forwarded.value.errorCode) : null;
-            const cause = forwarded.kind === 'ready' && !guardFailure && 'failureCause' in forwarded.value
+            const cause = forwarded.kind === 'ready' && 'failureCause' in forwarded.value
                 ? ActionFailureCauseV1Schema.safeParse(forwarded.value.failureCause) : null;
             return submittedUnknown
                 ? { kind: "submitted_unknown", cause: { reason: 'daemon_acknowledgement_lost' } }
                 : createPlacementError({
                     code: forwarded.kind === 'failed' ? projectDispatchPhaseFailureCode(forwarded)
-                        : guardFailure ? projectDispatchPhaseFailureCode(guardFailure)
-                            : refusal?.success ? refusal.data : 'target_unavailable',
-                    refusalBranch: forwarded.kind === 'failed' || guardFailure ? 'phase_exception'
+                        : refusal?.success ? refusal.data : 'target_unavailable',
+                    refusalBranch: forwarded.kind === 'failed' ? 'phase_exception'
                         : options.signal?.aborted ? 'aborted' : 'daemon_forward_not_ok',
                     requestId: request.envelope.requestId, machineId,
                     ...(cause?.success ? { failureCause: cause.data } : {}),
-                    ...(forwarded.kind === 'ready' && !guardFailure && !refusal?.success
-                        ? { machineAvailabilityDiagnostic: exactDaemonTarget.readMachineAvailabilityDiagnostic() } : {}),
-                    ...(forwarded.kind === 'failed'
-                        ? { phaseFailure: forwarded }
-                        : guardFailure ? { phaseFailure: guardFailure } : {}),
+                    ...(forwarded.kind === 'failed' ? { phaseFailure: forwarded } : {}),
                 });
         }
 
