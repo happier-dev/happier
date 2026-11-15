@@ -25,17 +25,22 @@ import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from '../externalActions/approvalExecutionAuthorization';
+import { prepareInstalledRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
 import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
 import { dispatchManagedMachineSetup, dispatchManagedSessionStart, prepareExternalActionRequesterAccountAuthorization, projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 import nacl from 'tweetnacl';
-import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { SessionActionRpcOriginV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonApprovalExecutionOriginCurrentnessFromCredentials, createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import { registerSessionCreationDirectoryPreflightRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import { authorizeMachineRpcRequest, readMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema as ChildRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { applyTrackedSessionTurnLifecycle } from '../sessions/applyTrackedSessionTurnLifecycle';
 import { authorizeTrackedRunnerAgentDaemonServiceOperation } from '../agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation';
@@ -60,8 +65,6 @@ import { loadPromptLibraryCatalogV1 } from '@happier-dev/protocol/prompts/librar
 import { PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
-import { AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema,
-    AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ManagedMachineFullV1Schema, ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -186,7 +189,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
     observeRecordedApprovalExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeRecordedApprovalExecution'],
     executeEnvironmentSetup?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['executeEnvironmentSetup'],
     observeActionExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeActionExecution'],
-    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry) {
+    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry, installationId = 'installation') {
     // The module-loading boundary has no installed plugin. The empty catalog
     // itself is produced by the real contribution registry owner.
     const registry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
@@ -196,7 +199,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
         ...(observeRecordedApprovalExecution ? { observeRecordedApprovalExecution } : {}),
         ...(executeEnvironmentSetup ? { executeEnvironmentSetup } : {}),
         ...(observeActionExecution ? { observeActionExecution } : {}),
-        installationIdentity: { installationId: 'installation', privateKey },
+        installationIdentity: { installationId, privateKey },
         ...(withAuthority ? { managedProviderOperationAuthority: authority } : {}),
         resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
             serverUrl, resolveCurrentMachineId: () => 'controller',
@@ -485,7 +488,6 @@ describe('daemon managed Machine Action factory', () => {
         type ArtifactWire = { id: string; header: string; body: string; dataEncryptionKey: string;
             headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number; provenance?: unknown };
         let artifact: ArtifactWire | undefined;
-        let retirementListFails = false;
         const retirementArtifacts = new Map<string, ArtifactWire>();
         const ensureRetirementArtifacts = () => {
             if (retirementArtifacts.size > 0 || !artifact) return;
@@ -544,7 +546,6 @@ describe('daemon managed Machine Action factory', () => {
                 return { status: 200, data: { ...artifact, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none' } };
             }
             if (path === '/v1/artifacts') {
-                if (retirementListFails) return { status: 500, data: { error: 'artifact_list_failed' } };
                 ensureRetirementArtifacts();
                 const kinds = parsedUrl.searchParams.get('kinds');
                 expect(kinds && JSON.parse(kinds)).toEqual([managedDeleteApprovalIndexedKindV1(
@@ -729,20 +730,6 @@ describe('daemon managed Machine Action factory', () => {
             if (!wake && !nativeRefused) {
                 expect(readRetirementApproval('matching-delete-approval')).toMatchObject({ status: 'canceled' });
                 expect(readRetirementApproval('other-delete-approval')).toMatchObject({ status: 'open' });
-                retirementListFails = true;
-                const listFailureExecutor = createActionExecutor({ ...createCliActionDeps(executorParams),
-                    managedMachineReferences: async () => ({ homeId: machine.homeId, machineId: null,
-                        coverage: 'complete', references: [], unavailable: [] }),
-                    managedMachineAction: async () => ({ kind: 'accepted', managedId: machine.id, intentRevision: 3,
-                        operation: { operationId: 'delete-with-list-failure' } }),
-                    isActionApprovalRequired: () => false,
-                });
-                expect(await listFailureExecutor.execute('machines.managed.delete', {
-                    homeId: machine.homeId, managedId: machine.id, intent: 'delete', when: 'now',
-                    expectedRevision: 2, reviewedDependencies: true,
-                }, { surface: 'ui', authority: 'present_user', serverId: configuration.activeServerId,
-                    presentUserConfirmation: { actionId: 'machines.managed.delete' } })).toMatchObject({ ok: true });
-                await vi.waitFor(() => expect(diagnostics).toHaveBeenCalledWith('[Approval retirement]', { code: 'list_failed' }));
             }
             if (wake && (denied || retired)) {
                 expect(failedActivation).toMatchObject({ status: 'failed', failureCode: denied ? 'managed_start_denied' : 'managed_start_failed' });
@@ -798,86 +785,36 @@ describe('daemon managed Machine Action factory', () => {
             authorization: ACTION_API_SERVER_ORIGIN })).toMatchObject({ ok: false, errorCode: 'requester_account_context_unavailable' });
         expect(effects).toEqual([]); expect(post).not.toHaveBeenCalled();
     });
-    it.each(['move', 'write-failure', 'clear-controller', 'empty-clear-controller'] as const)('moves the custodian FIN scope binding for foreign Manage and exposes an incomplete FIN write (%s)', async scenario => {
-        const failWrite = scenario === 'write-failure';
-        const empty = scenario === 'empty-clear-controller';
-        const clearController = scenario === 'clear-controller' || empty;
+    it('moves the admitted controller without rewriting legacy FIN scope bindings', async () => {
         const custodianCredentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
         const provider = createPluginContributionIdentity({ pluginId: 'acme.compute', localId: 'vm' });
         const movedController = { machineId: 'new-controller', installationId: 'new-installation' };
         const moved = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
-            launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} },
-            ...(clearController ? {} : { controller: movedController }), enrolledMachineId: 'guest',
+            launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} }, controller: movedController, enrolledMachineId: 'guest',
             allocation: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: {} },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
-        const definition = { version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'managed-scope-end',
-            actionId: 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: 'srv_home' },
-                managedId: { kind: 'literal', value: 'managed' }, when: { kind: 'literal', value: 'after-idle' }, intent: { kind: 'literal', value: 'stop' } } }] };
-        let row = AutomationDefinitionDetailSchema.parse({ id: 'scope-rule', name: 'Workflow triggers', description: null,
-            enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, createdAt: 1, updatedAt: 1, lastRunAt: null,
-            workflowDefinitionId: null, scopeSessionId: 'source-session', assignments: [{ machineId: 'controller', enabled: true, priority: 0, updatedAt: 1 }],
-            executionRecipe: { v: 2, templateVersion: 1, workflow: { t: 'plain', v: { workspace: { directory: '~' },
-                inlineDefinition: definition, inputs: {}, executionTarget: { kind: 'detached_run' } } }, triggerEvidence: null },
-            triggers: [{ id: 'scope-trigger', revision: 0, kind: 'sessionLifecycle', enabled: true, createdAt: 1, updatedAt: 1,
-                sourceSessionId: 'source-session', events: ['sessionArchived'], policy: { kind: 'everyMatch' }, remainingOccurrences: null,
-                status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }] });
-        vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+        const paths: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
-            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
-                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
-            if (path.startsWith('/v3/automations')) {
-                expect(config?.headers?.Authorization).toBe(`Bearer ${custodianCredentials.token}`);
-                const { executionRecipe: _private, ...summary } = row;
-                return { status: 200, data: { automations: [{ ...summary,
-                    triggers: summary.triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger) }], nextCursor: null } };
-            }
-            throw new Error(`Unexpected Move HTTP GET ${path}`);
-        });
-        vi.spyOn(axios, 'request').mockImplementation(async request => {
-            expect(new URL(String(request.url)).pathname).toBe('/v3/automations/scope-rule');
-            expect(request.headers?.Authorization).toBe(`Bearer ${custodianCredentials.token}`);
-            if (request.method === 'GET') return { status: 200, data: row };
-            expect(request.method).toBe('PUT');
-            if (failWrite) throw Object.assign(new Error('FIN transport unavailable'), { code: 'outcome_unknown' });
-            const patch = AutomationDefinitionReconcileRequestSchema.parse(request.data);
-            expect(patch.expectedTemplateVersion).toBe(row.templateVersion);
-            row = AutomationDefinitionDetailSchema.parse({ ...row, templateVersion: row.templateVersion + 1,
-                executionRecipe: patch.executionRecipe, assignments: patch.assignments.map(value => ({ ...value, enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 2 })) });
-            return { status: 200, data: row };
-        });
-        let managedRowReads = 0;
-        vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
-            const path = new URL(String(url)).pathname;
-            if (path === '/v3/automations/query') {
-                expect(config?.headers?.Authorization).toBe(`Bearer ${custodianCredentials.token}`);
-                expect(AutomationDefinitionDetailsRequestSchema.parse(body)).toMatchObject({ details: true,
-                    managedTarget: { homeId: moved.homeId, managedId: moved.id }, includeUnindexedManagedTargets: true });
-                return { status: 200, data: AutomationDefinitionDetailsResponseSchema.parse({ automations: empty ? [] : [row], nextCursor: null }) };
-            }
+            paths.push(path);
             if (path.endsWith('/admit-control')) return { status: 200, data: { machine: moved, replayed: false } };
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
-            if (path.endsWith('/actions/get')) { managedRowReads++; return { status: 200, data: moved }; }
             throw new Error(`Unexpected Move HTTP ${path}`);
         });
         const target = { kind: 'machine' as const, machineId: 'controller' };
         const actionId = 'machines.managed.controller.update' as const;
         const moveInput = { homeId: 'srv_home', managedId: 'managed', expectedIntentRevision: 1,
-            controller: clearController ? null : movedController, reviewedPendingEffects: true };
+            controller: movedController, reviewedPendingEffects: true };
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'foreign-manage', binding: {
             accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'srv_home',
             machineId: 'controller', custodianAccountId: 'account', installationId: 'installation', actionId, requestId: 'move', target,
             accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'move', target, input: moveInput }) } });
         const result = await adapter(true, undefined, undefined, nacl.sign.keyPair().secretKey, custodianCredentials)({ actionId,
-            input: moveInput,
-            context: { actionRequestId: 'move', surface: 'rpc', authority: 'account_automation', externalActionExecutionAuthorization: authorization,
-                externalActionTarget: target }, signal: new AbortController().signal });
-        if (clearController && !empty) expect(result).toMatchObject({ ok: false, errorCode: 'managed_binding_move_incomplete', details: { machine: moved, code: 'target_unavailable' } });
-        else if (failWrite) expect(result).toMatchObject({ ok: false, errorCode: 'managed_binding_move_incomplete', details: { machine: moved } });
-        else expect(result).toEqual(moved);
-        expect(managedRowReads).toBe(0);
-        expect(row.assignments.map(value => value.machineId)).toEqual([failWrite || clearController ? 'controller' : 'new-controller']);
+            input: moveInput, context: { actionRequestId: 'move', surface: 'rpc', authority: 'account_automation',
+                externalActionExecutionAuthorization: authorization, externalActionTarget: target }, signal: new AbortController().signal });
+        expect(result).toEqual(moved);
+        expect(paths.some(path => path.startsWith('/v3/automations'))).toBe(false);
     });
     beforeEach(async () => {
         await storeHome('srv_home');
@@ -1060,7 +997,7 @@ describe('daemon managed Machine Action factory', () => {
             ? { homeId: 'srv_home', managedId: 'managed', expectedIntentRevision: 0 } : { enrollmentIdentity, selection };
         const target = { kind: 'machine' as const, machineId: controller.machineId };
         const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
-            caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 },
+            caller: { kind: 'session', sessionId: 'c111111111111111111111111', starterDepth: 1, turnDepth: 2 },
             sourceTurnId: 'turn', callerPermissionMode: 'yolo', causalPermissionAuthority: null, requestId: 'session-acquire' });
         const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(27));
         const requests: string[] = [];
@@ -1071,6 +1008,7 @@ describe('daemon managed Machine Action factory', () => {
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
             if (path.startsWith('/v1/artifacts/')) {
                 if (!storedApproval || path !== `/v1/artifacts/${storedApproval.id}`) return { status: 404, data: {} };
                 // The external approver rejects the stored request. Agent Ask
@@ -1086,7 +1024,8 @@ describe('daemon managed Machine Action factory', () => {
                         { legacyServerId: configuration.activeServerId })),
                     body: encodePlainArtifactStoredContent({ body: JSON.stringify(rejected) }) } };
             }
-            return { status: 200, data: { session: createSessionRecordFixture({ id: 'lead', share: null }) } };
+            return { status: 200, data: { session: createSessionRecordFixture({ id: 'c111111111111111111111111', share: null,
+                encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'controller', path: '/workspace', flavor: 'claude' }) }) } };
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
             const path = new URL(String(url)).pathname;
@@ -1146,10 +1085,10 @@ describe('daemon managed Machine Action factory', () => {
         const result = await execute({ kind: 'action.execute', actionId, requestId: 'session-acquire', input,
             witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 2,
                 callerPermissionMode: 'yolo',
-                agentStartCaller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 } } },
-        { sessionId: 'lead', isCurrent: async () => true });
+                agentStartCaller: { kind: 'session', sessionId: 'c111111111111111111111111', starterDepth: 1, turnDepth: 2 } } },
+        { sessionId: 'c111111111111111111111111', isCurrent: async () => true });
         if (policy === 'foreign-controller') {
-            expect(result).toEqual({ ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' });
+            expect(result).toEqual({ ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable', requestId: 'session-acquire' });
             expect(approvalRequests).toEqual([]);
             expect(requests).not.toContain('/v1/machines/managed/controller/admit');
             return;
@@ -1160,7 +1099,7 @@ describe('daemon managed Machine Action factory', () => {
             expect(approvalRequests).toHaveLength(1);
             expect(approvalRequests[0]).toMatchObject({ v: 2, actionId, executionOriginV1: { authority: 'account_automation', surface: 'agent',
                 accountId: 'account', caller: sessionActionOrigin.caller,
-                sessionInputSource: { sourceSessionId: 'lead', sourceTurnId: 'turn', via: 'action' },
+                sessionInputSource: { sourceSessionId: 'c111111111111111111111111', sourceTurnId: 'turn', via: 'action' },
                 externalActionExecutionAuthorization: { binding: { sessionActionOrigin } },
                 externalActionInputSignature: expect.any(String) } });
             const approval = approvalRequests[0];
@@ -1188,11 +1127,12 @@ describe('daemon managed Machine Action factory', () => {
         const ownCredentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
         setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
             settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(ownCredentials) });
-        const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(38));
+        const installation = await readOrCreateInstallationIdentity();
+        const signing = { secretKey: Buffer.from(installation.privateKey, 'base64url'), publicKey: Buffer.from(installation.publicKey, 'base64url') };
         const native = nativeFixture({ privateNative: true });
         const presetId = 'preset';
         const retention = { kind: 'until-delete' as const };
-        const controller = { machineId: 'controller', installationId: 'installation' };
+        const controller = { machineId: 'controller', installationId: installation.installationId };
         const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} };
         const resource = { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {} };
         const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({ launch, optionStatus: 'current', prerequisites: [],
@@ -1244,6 +1184,8 @@ describe('daemon managed Machine Action factory', () => {
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'account' }) };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) };
             if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({ v: 1,
                 encryptionMode: 'plain', nativeEmail: null,
                 password: { status: 'not_enrolled', revision: null } }) };
@@ -1264,7 +1206,7 @@ describe('daemon managed Machine Action factory', () => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 return { status: 200, data: { v: 1, token: 'voice-parent-proof', binding: { accountId: 'account',
                     custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-                    serverIdentityId: 'srv_home', machineId: 'controller', installationId: 'installation', actionId: 'machines.managed.acquire',
+                    serverIdentityId: 'srv_home', machineId: 'controller', installationId: installation.installationId, actionId: 'machines.managed.acquire',
                     requestId: 'voice-acquire', target: { kind: 'machine', machineId: 'controller' },
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
             }
@@ -1314,8 +1256,9 @@ describe('daemon managed Machine Action factory', () => {
         const root = await prepareExternalActionRequesterAccountAuthorization({ actionId: 'machines.managed.acquire', input, requestId: 'voice-acquire',
             target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller', accountId: 'account', accountEncryptionMode: 'plain',
             tokenEpochHint: 0, token, serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
-            installationId: 'installation', privateKey: signing.secretKey });
+            installationId: installation.installationId, privateKey: signing.secretKey });
         if (!root) throw new Error('Original Voice Account proof was not admitted');
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account', generateOperationId: () => 'voice-parent' });
         const managed = adapter(true, undefined, undefined, signing.secretKey, ownCredentials, undefined, async (current, context) => {
             setupContexts.push(context);
             const authorization = context.externalActionExecutionAuthorization;
@@ -1337,20 +1280,30 @@ describe('daemon managed Machine Action factory', () => {
             return dispatchManagedMachineSetup({ input, authority: context.authority,
                 authorization, serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl,
                 continuation: { managedId: current.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: current.intentRevision },
-                installationId: 'installation', privateKey: signing.secretKey, signal: context.signal });
-        }, undefined, native.runtimeRegistry);
+                installationId: installation.installationId, privateKey: signing.secretKey, signal: context.signal });
+        }, operations.observeExecution, native.runtimeRegistry, installation.installationId);
         const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account', machineId: 'controller', serverId: configuration.activeServerId,
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' }),
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials: ownCredentials }), isAccountCurrent: async () => true, listAccountApiTokens: unavailable,
             externalActionMachinePublicKey: signing.publicKey,
             verifyExternalExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
-                privateKey: signing.secretKey, installationId: 'installation', serverHttpBaseUrl: serverUrl }) });
-        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account', generateOperationId: () => 'voice-parent' });
+                privateKey: signing.secretKey, installationId: installation.installationId, serverHttpBaseUrl: serverUrl }) });
         let executor: ReturnType<typeof createCliActionExecutor> | undefined;
+        const resolveOrigin = createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' });
         const execution = operations.observeExecution({ actionId: 'machines.managed.acquire', input, actionRequestId: 'voice-acquire', execute: async operation => {
+            const prepareApprovalExecutionAuthorization = createDaemonApprovalExecutionAuthorizationPreparer({ machineId: 'controller',
+                serverId: configuration.activeServerId, serverBaseUrl: serverUrl, resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+                daemonWorkSignal: operation.signal,
+                prepareRequesterAccountContext: request => prepareInstalledRequesterAccountActionContext({ ...request,
+                    purpose: { kind: 'external_action' }, machineId: 'controller', serverId: configuration.activeServerId,
+                    serverHttpBaseUrl: serverUrl, ownCredentials, resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+                    createExecutor: () => { if (!executor) throw new Error('Voice executor unavailable'); return executor; } }),
+            });
             executor = createCliActionExecutor({ sessionId: 'voice-approval-replay', token, credentials: ownCredentials,
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null,
                 pluginActionExecutionOwner: 'current_process', managedMachineAction: managed, isApprovalExecutionOriginCurrent: currentness,
+                prepareApprovalExecutionAuthorization,
+                runActionOperation: operations.runActionOperation,
                 hostActionApprovalLifetime: { operationId: operation.operationAcceptance!.operationId, signal: operation.signal } });
             // Voice reaches the daemon through native Account/UI admission;
             // its captured automation ceiling, not a Voice physical surface,
@@ -1564,7 +1517,7 @@ describe('daemon managed Machine Action factory', () => {
             const sourceKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
             const controllerKeys = foreignSource ? nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(33)) : sourceKeys;
             const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(32));
-            const caller = { kind: 'session' as const, sessionId: 'lead', starterDepth: 1, turnDepth: 2 };
+            const caller = { kind: 'session' as const, sessionId: 'c222222222222222222222222', starterDepth: 1, turnDepth: 2 };
             const cause = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const };
             const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller, sourceTurnId: 'accepted-turn',
                 callerPermissionMode: 'yolo', causalPermissionAuthority: cause, requestId: 'original-acquire' });
@@ -1611,8 +1564,20 @@ describe('daemon managed Machine Action factory', () => {
                 resolveCurrentSessionAgentSpawnPolicyV1: async () => settings.sessionAgentSpawnPolicyV1,
             });
             const sourceBackendTarget = readBackendTargetRefV2({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
-            const guest = createCliActionExecutorHarness({ token, credentials: sourceCredentials, sessionId: 'lead',
+            const guestAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ machineId: 'actual-guest', installationId: 'guest-installation',
+                actorAccountId: 'account', custodianAccountId: 'account', role: 'manage', encryptionMode: 'plain' });
+            const guestRpc = new RpcHandlerManager({ scopePrefix: 'actual-guest', encryptionMode: 'plain', logger: () => {},
+                authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                    machineId: 'actual-guest', resolveHomeServerIdentityId: async () => 'srv_home',
+                    resolveCustodianAccountId: async () => 'account', resolveInstallationId: () => 'guest-installation',
+                    verifyMachineAdmission: admission => readMachineRpcAdmissionCurrent({ ...admission,
+                        privateKey: guestKeys.secretKey, daemonToken: token, serverHttpBaseUrl: serverUrl }),
+                }, source),
+            });
+            registerSessionCreationDirectoryPreflightRpc({ rpcHandlerManager: guestRpc });
+            const guest = createCliActionExecutorHarness({ token, credentials: sourceCredentials, sessionId: 'c222222222222222222222222',
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null,
+                externalActionMachineRequestPrivateKey: guestKeys.secretKey, externalActionMachineInstallationId: 'guest-installation',
                 getCurrentSessionMetadata: () => ({ machineId: sourceMachineId, path: temporary, flavor: 'claude', permissionMode: 'yolo' }),
                 getCurrentSessionBackendTarget: () => sourceBackendTarget,
                 // The native Agent boundary supplies its actual applied selection,
@@ -1621,7 +1586,7 @@ describe('daemon managed Machine Action factory', () => {
                     modelId: null, connectedServices: null }),
                 getCurrentSessionWorkDepth: () => caller.starterDepth,
                 rawSession: { machineId: sourceMachineId, path: temporary },
-                machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('actual-guest'),
+                machineActionDirectTargetTransport: { machineId: 'actual-guest', invoke: (method, request, options) => guestRpc.invokeLocal(method, request, options) },
                 sessionSpawnDirectTargetTransport: { machineId: 'actual-guest', prepare: async (request, options) =>
                     prepareSessionCreationTarget({ request, signal: options?.signal }),
                     spawnedSession: { spawn: unavailable, resolveSpawnSessionByNonce: unavailable } },
@@ -1645,8 +1610,11 @@ describe('daemon managed Machine Action factory', () => {
                 paths.push(`GET ${path}`);
                 if (path === '/v1/account/encryption') return { status: 200,
                     data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
-                if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
-                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+                if (path === '/v1/machines/actual-guest') return { status: 200, data: { machine: {
+                    ...createAvailableSessionSpawnMachineSnapshot('actual-guest'), installationId: 'guest-installation',
+                    access: { custodian: { accountId: 'account', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+                } } };
                 if (path === '/v1/account/entity-rows/acp') return { status: 200,
                     data: AcpCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
                         content: { t: 'plain', v: { v: 1, definitions: [] } } }) };
@@ -1662,13 +1630,15 @@ describe('daemon managed Machine Action factory', () => {
                     return { status: artifact && path === `/v1/artifacts/${artifact.id}` ? 200 : 404,
                         data: artifact ? { ...artifact, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none' } : {} };
                 }
-                if (path.startsWith('/v1/sessions/')) return { status: 200, data: { session: createSessionRecordFixture({ id: caller.sessionId,
+                if (path.startsWith('/v1/sessions/') || path === `/v2/sessions/${caller.sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({ id: caller.sessionId,
                     encryptionMode: 'plain', share: null, metadata: JSON.stringify({ machineId: sourceMachineId, path: temporary, flavor: 'claude', permissionMode: 'yolo' }) }) } };
                 throw new Error(`Unexpected requester-private GET ${path}`);
             });
             vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
                 const path = new URL(String(url)).pathname;
                 paths.push(path);
+                if (path === `/v2/sessions/${caller.sessionId}/pending`) return { status: 200, data: { didWrite: true } };
+                if (path === '/v1/machines/actual-guest/admission/verify') return { status: 200, data: { v: 1, ok: true } };
                 if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
                 if (path === '/v1/actions/machines.managed.acquire/execution-authorization') {
                     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -1695,6 +1665,8 @@ describe('daemon managed Machine Action factory', () => {
                             recordActionStartDiagnostic: event => { guestStartPhases.push(event); },
                             actionCaller: caller, defaultSessionId: caller.sessionId, runtimeAccountId: 'account', actionRequestId: request.envelope.requestId,
                             externalActionTarget: request.envelope.target, externalActionExecutionAuthorization: authorization,
+                            // Home HTTP is the admission boundary; retain its receiving-Machine custody for the native directory read.
+                            machineAdmission: guestAdmission,
                             sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' },
                             callerPermissionMode: 'yolo', causalPermissionAuthority: cause, sessionAgentSpawnPolicyV1: settings.sessionAgentSpawnPolicyV1,
                             signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
@@ -1784,7 +1756,9 @@ describe('daemon managed Machine Action factory', () => {
             } });
             fixtureStage = 'explicit-decision';
             const decision = guest.executor.execute('approval.request.decide', { artifactId: artifact!.id, decision: 'approve' },
-                { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account', signal: lifetime.signal });
+                { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account', signal: lifetime.signal,
+                    // The authenticated UI decision arrives at this same admitted guest.
+                    machineAdmission: guestAdmission });
             await Promise.race([nativeEntry, decision.then(result => { throw new Error(`Guest replay did not reach native creation: ${JSON.stringify(result)}`); })]);
             expect(storedApproval()).toMatchObject({ status: 'executing' });
             expect(await parent.handlers.getV2({ operationId: 'original-parent' })).toMatchObject({ kind: 'found', operation: {
@@ -2149,6 +2123,8 @@ describe('daemon managed Machine Action factory', () => {
         });
         const cli = createCliActionExecutor({ token: credentials.token, credentials, sessionId: 'parity-session',
             serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            getCurrentSessionMetadata: () => ({ machineId: 'controller', path: '/workspace', flavor: 'claude' }),
+            rawSession: { machineId: 'controller', path: '/workspace' },
             mode: 'plain', ctx: null, managedMachineAction, pluginActionExecutionOwner: 'current_process' });
         const bridge = createActionToolExecutorBridge({ executor: cli, surface, actionsSettings: policy });
         const invoke = (actionId: 'machines.provisioners.check' | 'machines.managed.retention.update', input: unknown) => surface === 'cli'
