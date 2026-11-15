@@ -5,6 +5,8 @@ export type WorkspaceNavigationEntry = Readonly<{
     tabId: string;
     groupId: string;
     target: DestinationRef;
+    /** The selected app section can differ from an ordinary item's destination. */
+    sectionPathname?: string | null;
 }>;
 
 export type WorkspaceNavigationHistory = Readonly<{
@@ -24,6 +26,7 @@ export function recordWorkspaceNavigation(
     if (current
         && current.tabId === entry.tabId
         && current.groupId === entry.groupId
+        && current.sectionPathname === entry.sectionPathname
         && sameDestinationRef(current.target, entry.target)) {
         return history;
     }

@@ -113,6 +113,19 @@ function sectionColumn(h: ReturnType<typeof harness>) {
 }
 
 describe('workspace navigation adapter', () => {
+  it('restores the selected section through Back and Forward, including ordinary cross-section items', () => {
+    const h = harness();
+    h.adapter.openHref('/settings/roles', { section: true });
+    h.adapter.openHref('/workflows/definition-1', { mode: 'newTab' });
+    const settingsEntry = h.adapter.history.entries[1];
+    h.adapter.openHref('/session/A1', { section: true });
+    h.adapter.acceptUrl('/workflows/definition-1', settingsEntry, 1);
+    expect(sectionColumn(h)).toBe('settings');
+    h.adapter.step(1);
+    expect(sectionColumn(h)).not.toBe('settings');
+    h.adapter.step(-1);
+    expect(sectionColumn(h)).toBe('settings');
+  });
   it('keeps an ordinary Workflow item in Settings while explicit Workflow navigation changes section', () => {
     const h = harness();
     h.adapter.openHref('/settings/roles', { section: true });

@@ -169,15 +169,16 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         const state = input.getState();
         const group = state.groups[state.focusedGroupId];
         const tab = state.tabs[group.activeTabId];
-        return { tabId: tab.id, groupId: group.id, target: tab.target };
+        return { tabId: tab.id, groupId: group.id, target: tab.target, sectionPathname };
     };
     const visit = (replace = false, projectUrl = true, forceProjection = false, selectSection = false) => {
-        const entry = focusedEntry();
+        const target = focusedEntry().target;
         const catalog = input.getCatalog();
-        const pathname = hrefForDestinationRef(catalog, entry.target)?.split(/[?#]/, 1)[0] ?? null;
+        const pathname = hrefForDestinationRef(catalog, target)?.split(/[?#]/, 1)[0] ?? null;
         const nextSection = selectSection || sectionPathname === null ? pathname : sectionPathname;
         const sectionChanged = nextSection !== sectionPathname;
         sectionPathname = nextSection;
+        const entry = focusedEntry();
         const next = replace && history.index >= 0
             ? { entries: history.entries.map((item, index) => index === history.index ? entry : item), index: history.index }
             : recordWorkspaceNavigation(history, entry);
@@ -200,6 +201,9 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         ] : null;
     };
     const restore = (entry: WorkspaceNavigationEntry) => {
+        sectionPathname = entry.sectionPathname === undefined
+            ? hrefForDestinationRef(input.getCatalog(), entry.target)?.split(/[?#]/, 1)[0] ?? null
+            : entry.sectionPathname;
         const state = input.getState();
         for (const action of singletonActions(state, entry.target) ?? workspaceNavigationRestorationActions(state, entry)) input.dispatch(action);
         return focusedEntry();
