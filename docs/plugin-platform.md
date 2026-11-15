@@ -6961,6 +6961,11 @@ Action declaration. Its canonical strict input schema also supplies the MCP
 advertisement and validation; `includeFileContents: true` returns supporting
 files with their content kind and executable modes. A name read still requires
 a current delivered Session identity before content is disclosed.
+Supply exactly one identity field: `skillId` carries the complete listed id,
+including its namespace; `name` accepts the delivered short name or that complete
+id. Protocol's `resolveSessionSkillByNameV1` owns this matching for both the read
+Action and native usage attribution. Unknown keys and two-identity requests
+remain invalid.
 
 The 0.3 Export retirement removes executable prompt-asset adapters and their
 registration/generator conventions. Static `promptAssets` system-prompt

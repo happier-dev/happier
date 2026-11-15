@@ -3,6 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { throwIfAborted } from '../../abortSignal.js';
 import type { SkillReadInputV1, SkillReadResultV1, SessionSkillReadItemV1 } from './skills/skillReadV1.js';
+import { resolveSessionSkillByNameV1 } from './skills/skillReadV1.js';
 import type { SkillUsageRowV1 } from './skills/skillUsageV1.js';
 import { readSkillLockV1, isSkillModifiedV1, encodeSkillRevisionV1, isPluginSkillIdV1, type SkillLockV1 } from './skills/skillLibraryItemV1.js';
 import { deriveSkillTrustV1 } from './skills/skillTrustV1.js';
@@ -121,8 +122,9 @@ export async function readSkillInLibrary(params: Readonly<{
   const notFound = { ok: false as const, errorCode: 'not_found' as const, error: 'not_found' as const };
   throwIfAborted(params.signal);
   const request = params.request;
-  const sessionItem = request.sessionId ? params.sessionItems?.find(item =>
-    'skillId' in request ? item.skillId === request.skillId : item.name === request.name) : undefined;
+  const sessionItem = request.sessionId ? ('skillId' in request
+    ? params.sessionItems?.find(item => item.skillId === request.skillId)
+    : resolveSessionSkillByNameV1(request.name, params.sessionItems ?? [])) : undefined;
   if (request.sessionId && !sessionItem) return notFound;
   const skillId = 'skillId' in request ? request.skillId : sessionItem?.skillId;
   if (!skillId) return notFound;

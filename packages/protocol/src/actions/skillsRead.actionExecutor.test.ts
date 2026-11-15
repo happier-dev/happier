@@ -4,6 +4,7 @@ import * as library from '../prompts/library/promptLibraryActionOperations.js';
 import { encodeBase64 } from '../crypto/base64.js';
 import { computePromptBundleDigestV1 } from '../prompts/library/promptLibraryDigests.js';
 import { SkillReadResultV1Schema } from '../prompts/library/skills/skillReadV1.js';
+import { readReadOnlySkillContentV1 } from '../prompts/library/promptBundleSchemas.js';
 
 const skillMd = '---\nname: review\ndescription: Review the current change\n---\nPrivate full skill instructions';
 const entries = [
@@ -13,6 +14,17 @@ const entries = [
 const body = { v: 1 as const, entries, createdAtMs: 1, updatedAtMs: 1 };
 
 describe('skills.read Action', () => {
+  it('resolves a delivered qualified skill identity supplied as a native name', async () => {
+    const content = readReadOnlySkillContentV1('happier:happier')!;
+    const executor = createActionExecutor({ skillsRead: request => library.readSkillInLibrary({ request,
+      sessionItems: [{ skillId: 'happier:happier', name: 'happier', digest: content.digest }],
+      store: { read: async () => { throw new Error('Bundled read must not fetch an Artifact'); } },
+    }) });
+    expect(await executor.execute('skills.read', { name: 'happier:happier', sessionId: 'session' }, { surface: 'mcp' }))
+      .toMatchObject({ ok: true, result: { skillId: 'happier:happier', skillMd: content.skillMd } });
+    expect(await executor.execute('skills.read', { name: 'happier:outside', sessionId: 'session' }, { surface: 'mcp' }))
+      .toMatchObject({ ok: false, errorCode: 'not_found' });
+  });
   it('records only admitted session reads and returns usage through the strict read consumer', async () => {
     const recorded: string[] = [];
     const executor = createActionExecutor({ skillsRead: request => library.readSkillInLibrary({

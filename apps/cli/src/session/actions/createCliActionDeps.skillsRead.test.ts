@@ -30,6 +30,8 @@ import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { resolveHappierSkillIdentity } from '@/prompts/skills/runtime/resolveHappierSkillIdentity';
+import { readSkillInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 const boundary = await vi.hoisted(async () => {
   const { createTempDir } = await import('@/testkit/fs/tempDir');
@@ -40,6 +42,28 @@ const boundary = await vi.hoisted(async () => {
 vi.mock('axios', () => ({ default: { defaults: {}, get: boundary.get, post: boundary.post } }));
 
 describe('CLI skills.read real dependencies', () => {
+  it('reads the listed qualified native identity through the advertised input contract', async () => {
+    const content = readReadOnlySkillContentV1('happier:happier')!;
+    const items = [{ skillId: 'happier:happier', name: 'happier', digest: content.digest }];
+    const inventory = prepareHappierMcpToolInventory({ sessionId: 'active-session', inventory:
+      createHappierToolInventory({ surface: 'agent', isActionEnabled: () => true, actionsSettings: null }) });
+    const tool = inventory.registrations.find(entry => entry.tool.name === 'skills_read');
+    if (!tool) throw new Error('skills_read was not advertised');
+    const executor = createActionExecutor({ skillsRead: request => readSkillInLibrary({ request, sessionItems: items,
+      store: { read: async () => { throw new Error('Bundled skill must not fetch an Artifact'); } } }) });
+    for (const identity of [{ name: 'happier:happier' }, { skillId: 'happier:happier' }, { name: 'happier' }]) {
+      expect(tool.meta.inputSchema.safeParse(identity).success).toBe(true);
+      const request = bindContextualActionToolInput({ actionId: 'skills.read', input: identity,
+        context: { defaultSessionId: 'active-session' } });
+      expect(SkillReadInputV1Schema.safeParse(request).success).toBe(true);
+      expect(resolveHappierSkillIdentity({ name: Object.values(identity)[0] }, { items })).toBe('happier:happier');
+      expect(await executor.execute('skills.read', request, { surface: 'mcp' }))
+        .toMatchObject({ ok: true, result: { skillId: 'happier:happier', skillMd: content.skillMd } });
+    }
+    expect(SkillReadInputV1Schema.safeParse({ skillId: 'happier', name: 'happier', sessionId: 'active-session',
+      file: 'SKILL.md', includeFileContents: true }).success).toBe(false);
+    expect(SkillReadInputV1Schema.safeParse({ skillId: 'happier:happier', unexpected: true }).success).toBe(false);
+  });
   beforeEach(() => { resetActiveAccountSettingsSnapshotForTests(); boundary.get.mockReset(); boundary.post.mockReset(); });
   afterAll(async () => { const { createSkillStore } = await import('@/prompts/skills/store/skillStore');
     const store = createSkillStore({ happyHomeDir: boundary.taskHome });

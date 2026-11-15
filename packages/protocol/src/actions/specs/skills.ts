@@ -185,7 +185,7 @@ function createSkillActionSpecsV1() {
     inputSchema: z.strictObject({ query: z.optional(z.string()), state: z.optional(z.enum(['in-use', 'off', 'updates', 'attention'])) }),
     bindInput: (raw: unknown) => { const input = readRecord(raw); return { ...input, ...(input.state ? { state: input.state === 'in-use' ? 'in_use' : input.state === 'attention' ? 'needs_attention' : input.state } : {}) }; },
     commands: [{ path: ['skills', 'list'], visibility: 'canonical' as const }] } },
-  { id: 'skills.read', title: 'Read a skill', description: 'Read a library skill and its supporting files. By name, read only a skill delivered to the selected session.',
+  { id: 'skills.read', title: 'Read a skill', description: 'Read a library skill and its supporting files. Supply exactly one of skillId (the complete listed id, including its namespace) or name (the delivered short name or complete id); never both. A name read requires a delivered skill in the selected session. Session-bound tools default sessionId to the current session. Optional file selects a supporting path; includeFileContents: true returns all supporting bytes.',
     contextualDefaults: { sessionId: 'current_session' },
     approval: { result: 'none' }, approvalPolicy: {}, safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'account', executionPlacements: ['account', 'session'],
     executionPlacementForInput: (raw: unknown) => SkillReadInputV1Schema.parse(raw).sessionId ? 'session' : 'account', placements: [],

@@ -36,3 +36,8 @@ export const SkillReadResultV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type SkillReadResultV1 = z.infer<typeof SkillReadResultV1Schema>;
 export type SessionSkillReadItemV1 = Readonly<{ skillId: string; name: string; digest: string }>;
+
+/** Native skill names may be the qualified identity advertised by their source. */
+export function resolveSessionSkillByNameV1(name: string | undefined, items: readonly SessionSkillReadItemV1[]): SessionSkillReadItemV1 | undefined {
+  return items.find(item => item.skillId === name) ?? items.find(item => item.name === name);
+}

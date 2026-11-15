@@ -1,5 +1,6 @@
 import type { AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { resolveSessionSkillByNameV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 
 type DeliveredSkillItem = AgentSessionSkillDelivery['items'][number];
 // Name reads need only the admitted identity; native-path reads also need the item directory.
@@ -23,5 +24,5 @@ export function resolveHappierSkillIdentity(
     // A reported native path is decisive even if its name matches a delivered item.
     return null;
   }
-  return delivery.items.find(item => input.name === item.name || input.name === `happier:${item.name}`)?.skillId ?? null;
+  return resolveSessionSkillByNameV1(input.name, delivery.items)?.skillId ?? null;
 }
