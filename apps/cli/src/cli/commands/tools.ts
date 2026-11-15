@@ -3,90 +3,17 @@ import { TOOLS_USAGE } from './toolsHelp';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
-import type { StoredCredentials } from '@/persistence';
-import { readStoredCredentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { loadFreshMcpAccountSettingsContext } from './mcp/loadFreshMcpAccountSettingsContext';
-import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
-import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { initialMachineMetadata } from '@/daemon/machine/metadata';
-import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import {
-  listBuiltInHappierTools,
-  type BuiltInHappierToolsSurface,
-} from '@/agent/tools/happierTools/listBuiltInHappierTools';
-import { callBuiltInHappierTool } from '@/agent/tools/happierTools/callBuiltInHappierTool';
-import { resolveCustomHappierToolsContext } from '@/agent/tools/happierTools/customMcp/resolveCustomHappierToolsContext';
-import {
-  listResolvedCustomHappierTools,
-  type ResolvedCustomHappierToolWarning,
-} from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
-import { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/customMcp/callResolvedCustomHappierTool';
-import { readDaemonPluginCatalog } from '@/daemon/controlClient';
-import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import type { ActionId, ActionsSettingsV1, FeatureId } from '@happier-dev/protocol';
-import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import type { ToolsCommandDeps, AccountToolCallResult, listAccountTools } from './toolsAccount';
 import { fail } from '@happier-dev/cli-common/output';
 import { resolveShellBridgeActionSurfaceV1 as resolveToolsCommandSurface } from '@/cli/actions/shellBridgeActionSurface';
 import { callSessionMcpTool, listSessionMcpTools } from './toolsSessionMcp';
-import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
-import { configuration } from '@/configuration';
-import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalContext';
+export type { ToolsCommandDeps } from './toolsAccount';
 
-type BuiltInToolEntry = Awaited<ReturnType<typeof listBuiltInHappierTools>>[number];
-type CustomToolEntry = Awaited<ReturnType<typeof listResolvedCustomHappierTools>>['tools'][number];
-type ToolCallResult = Awaited<ReturnType<typeof callBuiltInHappierTool>>
-  | Awaited<ReturnType<typeof callResolvedCustomHappierTool>>
-  | Awaited<ReturnType<typeof callSessionMcpTool>>;
-
-export type ToolsCommandDeps = Readonly<{
-  readCredentials: () => Promise<StoredCredentials | null>;
-  initializeBackendApiContext: typeof initializeBackendApiContext;
-  bootstrapAccountSettingsContext: typeof bootstrapAccountSettingsContext;
-  listBuiltInHappierTools: (
-    params: Readonly<{
-      surface: BuiltInHappierToolsSurface;
-      isActionEnabled: (id: ActionId) => boolean;
-      isServerFeatureEnabled?: (id: FeatureId) => boolean;
-      actionsSettings: ActionsSettingsV1;
-    }>,
-  ) => Promise<ReadonlyArray<BuiltInToolEntry>> | ReadonlyArray<BuiltInToolEntry>;
-  callBuiltInHappierTool: typeof callBuiltInHappierTool;
-  resolveCustomHappierToolsContext: typeof resolveCustomHappierToolsContext;
-  listResolvedCustomHappierTools: typeof listResolvedCustomHappierTools;
-  callResolvedCustomHappierTool: typeof callResolvedCustomHappierTool;
-}>;
-
-function resolveToolsCommandDeps(overrides?: Partial<ToolsCommandDeps>): ToolsCommandDeps {
-  return {
-    readCredentials: readStoredCredentials,
-    initializeBackendApiContext,
-    bootstrapAccountSettingsContext,
-    listBuiltInHappierTools: async ({ surface, isActionEnabled, isServerFeatureEnabled, actionsSettings }) => {
-      const catalog = await readDaemonPluginCatalog({ selection: 'tools' }).catch(() => ({
-        kind: 'unavailable' as const,
-        code: 'daemon_unavailable',
-      }));
-      return listBuiltInHappierTools({
-        surface,
-        isActionEnabled,
-        ...(isServerFeatureEnabled ? { isServerFeatureEnabled } : {}),
-        actionsSettings,
-        pluginToolCatalog: catalog.kind === 'available' ? catalog.tools : Object.freeze([]),
-      });
-    },
-    callBuiltInHappierTool,
-    resolveCustomHappierToolsContext,
-    listResolvedCustomHappierTools,
-    callResolvedCustomHappierTool,
-    ...overrides,
-  };
-}
+type AccountToolsListing = Awaited<ReturnType<typeof listAccountTools>>;
+type CustomToolEntry = AccountToolsListing['customTools'][number];
+type ToolCallResult = AccountToolCallResult | Awaited<ReturnType<typeof callSessionMcpTool>>;
 
 function getFlagValue(args: readonly string[], flag: string): string | null {
   const index = args.indexOf(flag);
@@ -107,7 +34,6 @@ function requireFlagValue(args: readonly string[], flag: string): string {
  * origins separate — reading stored credentials proves the process can reach the
  * account, not that a person asked for the call.
  */
-
 function resolveCommandKind(args: readonly string[]): string {
   const subcommand = String(args[0] ?? '').trim();
   if (subcommand === 'list') return 'tools_list';
@@ -115,140 +41,10 @@ function resolveCommandKind(args: readonly string[]): string {
   return subcommand ? `tools_${subcommand}` : 'tools_unknown';
 }
 
-async function resolveToolsBaseContext(args: readonly string[], deps: ToolsCommandDeps): Promise<{
-  credentials: StoredCredentials;
-  sessionId: string | null;
-  directory: string;
-}>;
-
-async function resolveToolsBaseContext(
-  args: readonly string[],
-  deps: ToolsCommandDeps,
-  options: Readonly<{ requireSessionId: true }>,
-): Promise<{
-  credentials: StoredCredentials;
-  sessionId: string;
-  directory: string;
-}>;
-
-async function resolveToolsBaseContext(
-  args: readonly string[],
-  deps: ToolsCommandDeps,
-  options?: Readonly<{ requireSessionId?: boolean }>,
-): Promise<{
-  credentials: StoredCredentials;
-  sessionId: string | null;
-  directory: string;
-}> {
-  const credentials = await deps.readCredentials();
-  if (!credentials) throw new Error('Not authenticated. Run "happier auth login" first.');
-
-  const sessionId = options?.requireSessionId === true
-    ? requireFlagValue(args, '--session-id')
-    : getFlagValue(args, '--session-id');
-  const directory = getFlagValue(args, '--directory') ?? process.cwd();
-
-  return { credentials, sessionId, directory };
-}
-
-async function resolveCustomToolsRuntimeContext(args: readonly string[], deps: ToolsCommandDeps): Promise<{
-  credentials: StoredCredentials;
-  sessionId: string | null;
-  directory: string;
-  mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
-  accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
-  operationContext: SavedSecretOperationContextV1;
-  cleanup: () => void;
-  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
-}>;
-
-async function resolveCustomToolsRuntimeContext(
-  args: readonly string[],
-  deps: ToolsCommandDeps,
-  options: Readonly<{ requireSessionId: true }>,
-): Promise<{
-  credentials: StoredCredentials;
-  sessionId: string;
-  directory: string;
-  mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
-  accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
-  operationContext: SavedSecretOperationContextV1;
-  cleanup: () => void;
-  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
-}>;
-
-async function resolveCustomToolsRuntimeContext(
-  args: readonly string[],
-  deps: ToolsCommandDeps,
-  options?: Readonly<{ requireSessionId?: boolean }>,
-): Promise<{
-  credentials: StoredCredentials;
-  sessionId: string | null;
-  directory: string;
-  mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
-  accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
-  operationContext: SavedSecretOperationContextV1;
-  cleanup: () => void;
-  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
-}> {
-  const baseContext = options?.requireSessionId === true
-    ? await resolveToolsBaseContext(args, deps, { requireSessionId: true })
-    : await resolveToolsBaseContext(args, deps);
-  const { credentials, sessionId, directory } = baseContext;
-  const localWorkflow = resolveToolsCommandSurface(args) === 'cli';
-  const accountAutomation = localWorkflow && credentials.credentialProvenance === 'api_token'
-    && !('requesterSessionCredentialScope' in credentials);
-  const serverHttpBaseUrl = resolveServerHttpBaseUrl();
-  const serverId = configuration.activeServerId;
-  const isHomeCurrent = () => configuration.activeServerId === serverId;
-  const withHeldHome = <T>(read: () => T): T => accountAutomation
-    ? runWithServerHttpBaseUrl(serverHttpBaseUrl, read) : read();
-  if (!accountAutomation) await readMcpExecutionSource({ credentials, localWorkflow });
-  const { api, machineId } = await withHeldHome(() => deps.initializeBackendApiContext({
-    credentials,
-    machineMetadata: initialMachineMetadata,
-    ...(wantsJson(args) ? { suppressMachineRegistrationRecoveryLogs: true } : {}),
-  }));
-  const apiSource = accountAutomation ? await withHeldHome(async () => readMcpExecutionSource({
-    credentials, catalogCredentials: credentials, machineId, serverHttpBaseUrl, localWorkflow,
-    accountAutomation: { homeServerIdentityId: readServerIdentityIdFromFeaturesSnapshot(
-      await api.getServerFeaturesSnapshot({ refresh: true })), isCurrent: isHomeCurrent },
-  })) : null;
-  const accountSettingsContext = await withHeldHome(() => loadFreshMcpAccountSettingsContext(credentials, deps));
-  const customContext = await withHeldHome(() => deps.resolveCustomHappierToolsContext({
-    credentials,
-    accountSettingsSnapshot: accountSettingsContext,
-    operationContext: accountSettingsContext.operationContext,
-    machineId,
-    directory,
-    localWorkflow,
-    ...(apiSource ? { readExecutionSource: async (signal?: AbortSignal) => {
-      signal?.throwIfAborted();
-      if (!isHomeCurrent() || !await accountSettingsContext.operationContext.isCurrent()) {
-        return refuseMcpExecutionSource('requester_authority_unavailable');
-      }
-      return apiSource;
-    } } : {}),
-  }));
-  const serverFeaturesSnapshot = resolveToolsCommandSurface(args) === 'agent' && sessionId
-    ? await api.getServerFeaturesSnapshot({ refresh: true }).catch(() => undefined)
-    : undefined;
-  return {
-    credentials,
-    sessionId,
-    directory,
-    mcpServers: customContext.mcpServers,
-    accountSettings: accountSettingsContext.settings,
-    operationContext: accountSettingsContext.operationContext,
-    cleanup: customContext.cleanup,
-    ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
-  };
-}
-
 function printHumanToolList(params: Readonly<{
   builtInTools: ReadonlyArray<Readonly<{ name: string; description?: string }>>;
   customTools: ReadonlyArray<CustomToolEntry>;
-  warnings: ReadonlyArray<ResolvedCustomHappierToolWarning>;
+  warnings: ReadonlyArray<Readonly<{ source: string; error: string }>>;
 }>): void {
   console.log('happier');
   for (const tool of params.builtInTools) {
@@ -272,7 +68,6 @@ function printHumanToolList(params: Readonly<{
 }
 
 export async function handleToolsCommand(args: string[], overrides?: Partial<ToolsCommandDeps>, signal?: AbortSignal): Promise<void> {
-  const deps = resolveToolsCommandDeps(overrides);
   const json = wantsJson(args);
   const kind = resolveCommandKind(args);
   const subcommand = String(args[0] ?? '').trim();
@@ -294,63 +89,51 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           warnings: listed.warnings });
         return;
       }
-      if (surface === 'agent') refuseMcpExecutionSource('session_requester_unavailable');
-      const context = await resolveCustomToolsRuntimeContext(args, deps);
-      try {
-        const actionsSettingsProvider = createActionSettingsProvider({
-          accountSettings: context.accountSettings,
-          scopeKey: resolveAccountSettingsScopeKeyForToken(context.credentials.token),
-        });
-        const actionsSettings = actionsSettingsProvider.getActionsSettings();
-        const builtInTools = await deps.listBuiltInHappierTools({
-          surface,
-          actionsSettings,
-          isActionEnabled: (id) => isActionEnabledByActionsSettings(id, actionsSettings, { surface }),
-        });
-        const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers });
-        if (!await context.operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
 
-        if (json) {
-          await printJsonEnvelope({
-            ok: true,
-            kind,
-            data: {
-              sources: {
-                happier: builtInTools.map((tool) => ({
-                  name: tool.name,
-                  title: tool.title,
-                  description: tool.description,
-                  inputSchema: tool.inputSchema,
-                })),
-                ...Object.fromEntries(
-                  Array.from(
-                    customTools.reduce((map, tool) => {
-                      const list = map.get(tool.source) ?? [];
-                      list.push(tool);
-                      map.set(tool.source, list);
-                      return map;
-                    }, new Map<string, CustomToolEntry[]>()),
-                  ).map(([source, tools]) => [
-                    source,
-                    tools.map((tool) => ({
-                      name: tool.name,
-                      description: tool.description ?? null,
-                      inputSchema: tool.inputSchema ?? null,
-                    })),
-                  ]),
-                ),
-              },
-              warnings,
+      const { listAccountTools } = await import('./toolsAccount');
+      const { builtInTools, customTools, warnings } = await listAccountTools({
+        sessionId: getFlagValue(args, '--session-id'),
+        directory: getFlagValue(args, '--directory') ?? process.cwd(),
+        surface,
+        json,
+      }, overrides);
+      if (json) {
+        await printJsonEnvelope({
+          ok: true,
+          kind,
+          data: {
+            sources: {
+              happier: builtInTools.map((tool) => ({
+                name: tool.name,
+                title: tool.title,
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+              })),
+              ...Object.fromEntries(
+                Array.from(
+                  customTools.reduce((map, tool) => {
+                    const list = map.get(tool.source) ?? [];
+                    list.push(tool);
+                    map.set(tool.source, list);
+                    return map;
+                  }, new Map<string, CustomToolEntry[]>()),
+                ).map(([source, tools]) => [
+                  source,
+                  tools.map((tool) => ({
+                    name: tool.name,
+                    description: tool.description ?? null,
+                    inputSchema: tool.inputSchema ?? null,
+                  })),
+                ]),
+              ),
             },
-          });
-          return;
-        }
-
-        printHumanToolList({ builtInTools, customTools, warnings });
+            warnings,
+          },
+        });
         return;
-      } finally {
-        context.cleanup();
       }
+      printHumanToolList({ builtInTools, customTools, warnings });
+      return;
     }
 
     if (subcommand === 'call') {
@@ -366,33 +149,19 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           ...(toolCallId ? { toolCallId } : {}),
           ...(signal ? { signal } : {}),
         });
-      } else if (source === 'happier') {
-        const context = await resolveToolsBaseContext(args, deps, { requireSessionId: true });
-        const toolCallId = surface === 'agent' ? getFlagValue(args, '--tool-call-id') : null;
-        result = await deps.callBuiltInHappierTool({
-          credentials: context.credentials,
-          sessionId: context.sessionId,
+      } else {
+        const { callAccountTool } = await import('./toolsAccount');
+        result = await callAccountTool({
+          sessionId: getFlagValue(args, '--session-id'),
+          directory: getFlagValue(args, '--directory') ?? process.cwd(),
+          surface,
+          json,
+          source,
           toolName,
           args: parsedArgs,
-          surface,
-          ...(toolCallId ? { toolCallId } : {}),
-          readCredentials: deps.readCredentials,
+          toolCallId: getFlagValue(args, '--tool-call-id'),
           ...(signal ? { signal } : {}),
-        });
-      } else {
-        if (surface === 'agent') refuseMcpExecutionSource('session_requester_unavailable');
-        const context = await resolveCustomToolsRuntimeContext(args, deps, { requireSessionId: true });
-        try {
-          result = await deps.callResolvedCustomHappierTool({
-            source,
-            toolName,
-            args: parsedArgs,
-            mcpServers: context.mcpServers,
-            operationContext: context.operationContext,
-          });
-        } finally {
-          context.cleanup();
-        }
+        }, overrides);
       }
 
       if (json) {

@@ -5,15 +5,10 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createSessionNativeDirectory, grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
 import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
-import { agentVisibleSessionMcpContext, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
+import { agentVisibleSessionMcpContext, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport,
     type SessionMcpLocalContext } from './sessionMcpLocalContext';
-export { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
+export { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport,
     type SessionMcpLocalContext } from './sessionMcpLocalContext';
-
-/** Unix-socket transport (and Agent isolation). Elsewhere (Windows) the bearer-gated loopback transport below applies. */
-export function supportsSessionMcpLocalTransport(): boolean {
-    return process.platform !== 'win32';
-}
 
 export type SessionMcpLocalTransportOptions = Readonly<{ agentUid: number; runtimeRoot?: string }>;
 export type SessionMcpLocalTransport = Readonly<{

@@ -5,6 +5,17 @@ export const SESSION_MCP_CONTEXT_FILE_ENV = 'HAPPIER_SESSION_MCP_CONTEXT_FILE';
 /** Windows loopback only: the relay's bearer, carried in its MCP client config env, never the Agent env. */
 export const SESSION_MCP_BEARER_ENV = 'HAPPIER_SESSION_MCP_BEARER';
 
+/** Session tool metadata shared by the client and its owning host endpoint. */
+export const SESSION_MCP_TOOL_SOURCES_META_KEY = 'happier/tool-sources';
+export const SESSION_MCP_TOOL_SOURCE_META_KEY = 'happier/tool-source';
+export const SESSION_MCP_TOOL_WARNINGS_META_KEY = 'happier/tool-warnings';
+export const SESSION_MCP_ACTION_REQUEST_ID_META_KEY = 'happier/action-request-id';
+
+/** Unix-socket transport (and Agent isolation); Windows uses the credentialed route. */
+export function supportsSessionMcpLocalTransport(): boolean {
+    return process.platform !== 'win32';
+}
+
 export class SessionMcpUnavailableError extends Error {
     readonly code: 'mcp_socket_access_unavailable' | 'not_authenticated';
     readonly phase?: 'context_read' | 'client_connect';

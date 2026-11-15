@@ -5,8 +5,9 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
-import { SESSION_MCP_CONTEXT_FILE_ENV, sessionActionTransportUnavailable, type SessionMcpAgentContext } from '@/mcp/runtime/sessionMcpLocalContext';
-import { SESSION_MCP_ACTION_REQUEST_ID_META_KEY, SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY, SESSION_MCP_TOOL_WARNINGS_META_KEY } from '@/mcp/runtime/sessionMcpToolsBridge';
+import { SESSION_MCP_CONTEXT_FILE_ENV, sessionActionTransportUnavailable, type SessionMcpAgentContext,
+  SESSION_MCP_ACTION_REQUEST_ID_META_KEY, SESSION_MCP_TOOL_SOURCES_META_KEY,
+  SESSION_MCP_TOOL_SOURCE_META_KEY, SESSION_MCP_TOOL_WARNINGS_META_KEY } from '@/mcp/runtime/sessionMcpLocalContext';
 
 const failureSchema = z.object({ ...ActionExecuteFailureSchema.shape,
   candidates: z.optional(z.array(z.string())) });

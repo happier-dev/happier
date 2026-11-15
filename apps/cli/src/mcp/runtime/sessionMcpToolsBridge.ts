@@ -4,11 +4,11 @@ import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, ListToolsResu
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { RequestMeta } from '@modelcontextprotocol/sdk/types.js';
 import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import { SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY,
+  SESSION_MCP_TOOL_WARNINGS_META_KEY } from './sessionMcpLocalContext';
 
-export const SESSION_MCP_TOOL_SOURCES_META_KEY = 'happier/tool-sources';
-export const SESSION_MCP_TOOL_SOURCE_META_KEY = 'happier/tool-source';
-export const SESSION_MCP_TOOL_WARNINGS_META_KEY = 'happier/tool-warnings';
-export const SESSION_MCP_ACTION_REQUEST_ID_META_KEY = 'happier/action-request-id';
+export { SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY,
+  SESSION_MCP_TOOL_WARNINGS_META_KEY, SESSION_MCP_ACTION_REQUEST_ID_META_KEY } from './sessionMcpLocalContext';
 
 export function readSessionMcpToolCallId(metadata: Readonly<Record<string, unknown>> | undefined, nativeKey?: string): string | undefined {
   const nativeId = nativeKey ? metadata?.[nativeKey] : undefined;
