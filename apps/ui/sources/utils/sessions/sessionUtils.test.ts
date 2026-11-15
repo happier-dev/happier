@@ -308,6 +308,37 @@ describe('shared transient session titles', () => {
 });
 
 describe('getSessionStatus', () => {
+    it('shares observed managed wake with Session faces while keeping runtime connectivity truthful', async () => {
+        const { getSessionStatus, presentSessionAwarenessV1 } = await import('./sessionUtils');
+        const { deriveManagedWakeProjection } = await import('@/sync/domains/pending/managedWakeProjection');
+        const { readBotActivity } = await import('@/components/sessions/bots/botActivity');
+        const session = createSessionFixture({ encryptionMode: 'plain', active: false, activeAt: 100, presence: 'offline' });
+        const managed = { id: 'managed-a', homeId: 'home-a', creationState: 'active' as const,
+            allocation: 'bound' as const, enrolledMachineId: 'guest-a', wakeOnAcceptedMessage: true,
+            controller: { machineId: 'controller-a', installationId: 'installation-a' },
+            observation: { observedAt: 200, availability: 'present' as const, power: 'stopped' as const, storage: 'retained' as const },
+            submittedNativeEffect: { intent: 'start' as const, intentRevision: 2, requestId: 'wake-a',
+                controller: { machineId: 'controller-a', installationId: 'installation-a' } },
+        };
+        const projection = deriveManagedWakeProjection({ managed,
+            pending: { source: 'server_pending', pendingDeliveryStatus: 'server_queued' },
+            activation: { requestId: 'pending-a', requestedAt: 200, status: 'waiting' },
+            machineReachable: false, runtimeResuming: false });
+        expect(projection?.kind).toBe('starting');
+        for (const source of [session, buildSessionListRenderableFromSession(session, undefined, [])]) {
+            const status = getSessionStatus(source, 300, { managedWakeProjection: projection });
+            expect(status).toMatchObject({ state: 'resuming', bucket: 'working', isConnected: false, isPulsing: false });
+            expect(presentSessionAwarenessV1(status.awareness).state).toBe('resuming');
+            expect(readBotActivity(source, 300, status)).toBe('working');
+        }
+        expect(getSessionStatus(session, 300)).toMatchObject({ state: 'disconnected', isConnected: false });
+        const terminal = { ...session, latestTurnStatus: 'completed' as const, latestTurnStatusObservedAt: 250,
+            latestReadyEventSeq: 1 };
+        expect(getSessionStatus(terminal, 300, { managedWakeProjection: projection }).state).toBe('ready');
+        const permission = { ...session, active: true, presence: 'online' as const, pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0, pendingRequestObservedAt: 290 };
+        expect(getSessionStatus(permission, 300, { managedWakeProjection: projection }).state).toBe('permission_required');
+    });
     it.each([
         ['encrypted_access_pending', 'access_pending'],
         ['recipient_encryption_setup_required', 'setup_required'],

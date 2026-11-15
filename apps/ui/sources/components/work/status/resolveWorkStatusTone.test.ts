@@ -13,6 +13,22 @@ import { t } from '@/text';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 describe('resolveWorkStatusTone', () => {
+    it('keeps classified managed sleep and wake on nonterminal runs without hiding outcomes or attention', () => {
+        for (const nativeState of ['asleep', 'starting'] as const) {
+            const machineStatus = resolveWorkStatusTone({ kind: 'machine', facts: {
+                online: false, nativeState, word: 'Offline', machineName: 'Build box', needsYouCount: 0, runningSessionCount: 0,
+            } });
+            const facts = { state: 'running', word: 'Running', machineReachable: false, machineStatus } as const;
+            expect(resolveWorkStatusTone({ kind: 'workflow_run', facts })).toEqual(machineStatus);
+            expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...facts, cancelRequested: true } })).toEqual(machineStatus);
+            expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...facts, state: 'succeeded' } }))
+                .toMatchObject({ state: 'succeeded', bucket: 'finished' });
+            expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...facts, inAttentionWindow: true } }))
+                .toMatchObject({ state: 'running', bucket: 'needs_you' });
+            expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...facts, state: 'failed', failureUnseen: true } }))
+                .toMatchObject({ state: 'failed', tone: 'danger', bucket: 'finished' });
+        }
+    });
     it('uses current authorized teammate work without treating unavailable or stale summaries as idle', () => {
         const facts = { online: true, needsYouCount: 0, runningSessionCount: 0, word: 'Online' };
         const summary = { kind: 'summary', summary: { kind: 'current', requesters: [

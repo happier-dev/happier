@@ -1,3 +1,4 @@
+import { readUiSessionAwarenessWorkStatus, type UiSessionManagedWakeFacts } from '@/sync/domains/session/attention/runtimePresentation';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
@@ -68,7 +69,7 @@ export type SessionAwarenessPresentationV1 = Readonly<{
     quiet: boolean;
 }>;
 
-type UiSessionAwareness = SessionAwarenessPresentationFactsV1;
+type UiSessionAwareness = SessionAwarenessPresentationFactsV1 & UiSessionManagedWakeFacts;
 
 export interface SessionStatus {
     actionRequiredReason?: ReturnType<typeof readSessionAwarenessWorkStatusV1>['actionRequiredReason'];
@@ -79,7 +80,7 @@ export interface SessionStatus {
      * that has a `SessionStatus` always has the semantic answer too, so none of them needs a
      * second derivation path to fall back to.
      */
-    awareness: import('@happier-dev/protocol/sessions/awareness/projectionV1').SessionAwarenessProjectionV1;
+    awareness: import('@happier-dev/protocol/sessions/awareness/projectionV1').SessionAwarenessProjectionV1 & UiSessionManagedWakeFacts;
     state: SessionAwarenessPresentationStateV1;
     isConnected: boolean;
     bucket: ReturnType<typeof readSessionAwarenessWorkStatusV1>['bucket'];
@@ -122,7 +123,7 @@ type SessionStatusTextColors = Readonly<{
     attention: string;
     default: string;
 }>;
-type GetSessionStatusOptions = Readonly<{
+type GetSessionStatusOptions = UiSessionManagedWakeFacts & Readonly<{
     presentationSource?: SessionListPresentationSource;
     archiving?: boolean;
     includeTitle?: boolean;
@@ -379,7 +380,7 @@ export function presentSessionAwarenessV1(
         freshness?: UiSessionAwareness['freshness'];
     }>,
 ): SessionAwarenessPresentationV1 {
-    const status = readSessionAwarenessWorkStatusV1({ awareness });
+    const status = readUiSessionAwarenessWorkStatus({ awareness });
     const presented = presentSessionAwarenessStateV1(status.state, {
         ...options, freshness: awareness.freshness,
     });
@@ -471,7 +472,7 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
     const contentReadable = isSessionAwarenessContentReadableV1(awareness.encryption);
     const canAnimate = awareness.freshness === 'live' && contentReadable;
     const facts = { ...awareness, viewer: session.viewer, archiving };
-    const status = readSessionAwarenessWorkStatusV1({ awareness: facts });
+    const status = readUiSessionAwarenessWorkStatus({ awareness: facts });
     const presented = presentSessionAwarenessStateV1(status.state, {
         freshness: awareness.freshness,
         lastSeenAtMs: source ? readSessionRuntimeObservation(readSessionListPresentationRuntime(source)).activeAt : session.activeAt,

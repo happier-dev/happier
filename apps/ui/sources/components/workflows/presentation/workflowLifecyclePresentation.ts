@@ -291,7 +291,7 @@ const WORKFLOW_RUN_STATE_SHAPES: Readonly<Record<
 
 export function describeWorkflowRunState(
     state: WorkflowRunStateV1,
-    context?: Readonly<{ word?: string; inAttentionWindow?: boolean; workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState']; cancelRequested?: boolean; machineReachable?: boolean; machineName?: string | null }>,
+    context?: Readonly<{ word?: string; inAttentionWindow?: boolean; workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState']; cancelRequested?: boolean; machineReachable?: boolean; machineName?: string | null; machineStatus?: WorkStatusPresentation | null }>,
 ): WorkflowRunStatePresentation {
     const shape = WORKFLOW_RUN_STATE_SHAPES[state];
     // A live Run that waits on the person says so in the one attention word ("Needs you"): its
@@ -310,6 +310,7 @@ export function describeWorkflowRunState(
         cancelRequested: context?.cancelRequested,
         machineReachable: context?.machineReachable,
         machineName: context?.machineName,
+        machineStatus: context?.machineStatus,
     } });
     return {
         state,

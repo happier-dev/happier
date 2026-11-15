@@ -1,7 +1,7 @@
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { resolveManagedMachineWorkStatus } from '@/components/work/status/resolveWorkStatusTone';
 import { View } from 'react-native';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useDestinationInstanceKey, useDestinationParams, useDestinationRouter, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -894,10 +894,10 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const managedHomeId = activelyViewed ? activeAccountScope?.serverId ?? null : null;
     const managedHomes = React.useMemo(() => managedHomeId ? [managedHomeId] : [], [managedHomeId]);
     const managedInventory = useManagedMachineInventory(managedHomes);
-    const runMachineStatus = runMachineId !== null && activeAccountScope && runMachineReachability !== 'unknown' ? resolveWorkStatusTone({ kind: 'machine', facts: {
-        machineId: runMachineId, revokedAt: runMachineRevokedAt, online: runMachineReachable === true, word: '', needsYouCount: 0, runningSessionCount: 0,
+    const runMachineStatus = runMachineId !== null && activeAccountScope ? resolveManagedMachineWorkStatus({
+        machineId: runMachineId, revokedAt: runMachineRevokedAt, online: runMachineReachable ?? null,
         managedMachine: managedInventory.machinesByEnrolledMachineIdByServerId[activeAccountScope.serverId]?.[runMachineId],
-    } }) : undefined;
+    }) ?? undefined : undefined;
     const visibleDefinition = contentBelongsToActiveScope ? definition : null;
     const visibleAcceptedContext = contentBelongsToActiveScope ? acceptedContext : null;
     const failureToAcknowledge = props.acknowledgeFailure && activelyViewed && contentBelongsToActiveScope && detail && visibleAcceptedContext

@@ -20,6 +20,7 @@ import {
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import { t } from '@/text';
+import { resolveManagedMachineWorkStatus } from '@/components/work/status/resolveWorkStatusTone';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -443,6 +444,16 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.runningSentence'));
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, cancelRequested: true })).toBe(t('workflows.run.stopping'));
         expect(formatWorkflowRunOutcomeLabel({ state: 'claimed', coverage, cancelRequested: true })).toBe(t('workflows.run.stopping'));
+    });
+    it('uses the classified managed state in the Run headline without hiding terminal or attention outcomes', () => {
+        const coverage = { observedLeafCounts: { completed: 0, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
+        const machineStatus = resolveManagedMachineWorkStatus({ online: false, nativeState: 'asleep' });
+        const context = { coverage, machineReachable: false, machineStatus };
+        expect(formatWorkflowRunOutcomeLabel({ ...context, state: 'running' })).toBe(t('managedPower.asleep'));
+        expect(formatWorkflowRunOutcomeLabel({ ...context, state: 'running', cancelRequested: true })).toBe(t('managedPower.asleep'));
+        expect(formatWorkflowRunOutcomeLabel({ ...context, state: 'succeeded' })).toBe(t('workflows.runState.succeeded'));
+        expect(formatWorkflowRunOutcomeLabel({ ...context, state: 'claimed', inAttentionWindow: true, waitingOnlyForYou: false }))
+            .toBe(t('workflows.runState.waiting_for_review'));
     });
     it('names only live independent lanes and their frozen join, without promising advancement while paused or failed', () => {
         const step = (id: string, name: string) => ({ kind: 'step', id, name,

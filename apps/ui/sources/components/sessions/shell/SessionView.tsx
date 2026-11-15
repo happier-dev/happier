@@ -1,3 +1,4 @@
+import { useSessionManagedWakePresentation, type SessionManagedWakePresentation } from '@/components/sessions/pending/useSessionManagedWakePresentation';
 import { Typography } from "@/constants/Typography";
 import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { usePluginLocalizedTextResolver } from "@/sync/domains/plugins/ui/i18n";
@@ -36,7 +37,8 @@ import { sendTranscriptSelectionToSession } from "@/components/sessions/transcri
 import { useTranscriptSelectionEligibleMessageIds } from "@/components/sessions/transcript/messageSelection/useTranscriptSelectionEligibleMessageIds";
 import { EmptyMessages } from "@/components/ui/empty/EmptyMessages";
 import type { DropdownMenuItem } from "@/components/ui/forms/dropdown/DropdownMenu";
-import { SessionDraftHydrationBoundary } from "@/components/sessions/drafts/SessionDraftHydrationBoundary";
+import { useSessionDraftHydrationAdmission } from "@/components/sessions/drafts/SessionDraftHydrationBoundary";
+import { SessionDraftAdmissionContext } from "@/components/sessions/drafts/sessionDraftAdmission";
 import { useNavigateToSession } from "@/hooks/session/useNavigateToSession";
 import { useFeatureEnabled } from "@/hooks/server/useFeatureEnabled";
 import { SESSION_BOARD_HEADER_MENU_ACTION_ID } from "@/components/sessions/board/sessionBoardDestination";
@@ -71,6 +73,8 @@ import type { BrowserContextState } from "@/sync/domains/browser/context";
 import { SessionBrowserContextRuntimeProvider, type SessionBrowserContextRuntime, useSessionBrowserContextRuntime } from "@/components/sessions/browser/sessionBrowserContextRuntime";
 import { alertBrowserContextUnavailable } from "@/components/sessions/browser/alertBrowserContextUnavailable";
 import { useSessionAgentActivity } from "@/hooks/session/useSessionAgentActivity";
+import { useAgentCatalogIdentities } from '@/agents/registry/useSessionAgentCatalogIdentity';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { hasSessionSubagentLaunchCards } from "@/agents/registry/sessionSubagentUiBehavior";
 import { nowServerMs } from "@/sync/runtime/time";
 import { readSessionUiTelemetryNowMs } from "@/sync/runtime/performance/sessionUiTelemetry";
@@ -125,10 +129,11 @@ import { SessionBoardControllerProvider, useMountedSessionBoardController } from
 import { SessionScreenTestIdsProvider } from "./sessionScreenTestIds";
 import { useSessionScreenIsFocused } from "./useSessionScreenIsFocused";
 import { resolveMultiPaneDeviceType } from "@/components/appShell/panes/layout/resolveMultiPaneDeviceType";
-import type { SessionPaneUrlState } from "@/components/sessions/panes/url/sessionPaneUrlState";
 import { buildScopedSessionRouteHref } from "@/hooks/session/sessionRouteServerScope";
 import { SessionResumeProvider } from "@/components/sessions/model/SessionResumeContext";
 import { useExternalSessionMaterialize } from "@/components/sessions/model/useExternalSessionMaterialize";
+import { useExternalSessionContinueInNewSession } from "@/components/sessions/model/useExternalSessionContinueInNewSession";
+import { useExternalSessionReplayForkLauncher } from "@/components/sessions/model/useExternalSessionReplayForkLauncher";
 import { useExternalSessionRuntime } from "@/components/sessions/model/useExternalSessionRuntime";
 import { SessionExternalSessionRuntimeProvider } from "@/components/sessions/model/useSessionExternalSessionRuntime";
 import { useAuth } from "@/auth/context/AuthContext";
@@ -136,6 +141,7 @@ import { selectSyncErrorForServer } from "@/sync/runtime/connectivity/syncErrorS
 import type { SessionParticipantTarget } from "@/sync/domains/session/participants/participantTargets";
 import type { PendingMessage } from "@/sync/domains/state/storageTypes";
 import { useSessionViewBootstrap } from "./view/useSessionViewBootstrap";
+import { SessionPaneUrlSyncHost } from "./view/SessionPaneUrlSyncHost";
 import { useSessionViewedLifecycle } from "./view/useSessionViewedLifecycle";
 import { resolveMobileWorkspaceExperienceToggleActionId } from "@/components/workspaceCockpit/mobileWorkspaceExperience";
 import { useMobileWorkspaceExperienceState } from "@/components/workspaceCockpit/useMobileWorkspaceExperienceState";
@@ -213,7 +219,6 @@ type SessionViewProps = Readonly<{
     routeServerId?: string | null;
     jumpToSeq?: number | null;
     jumpToMessageId?: string | null;
-    paneUrlState?: SessionPaneUrlState | null;
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
     surfaceFocusedOverride?: boolean | null;
     surfaceVisibleOverride?: boolean | null;
@@ -627,7 +632,7 @@ const SessionTranscriptLoadIssueBody = React.memo(function SessionTranscriptLoad
     // itself with none); the notice stands in the seat either way.
     return (
         <ExternalTranscriptLoadIssueBanner sessionId={props.sessionId} serverId={props.session.serverId ?? null}
-            machineId={readSessionOwnerMetadataView(props.session)?.machineId ?? null}
+            machineId={readSessionOwnerMetadataView(props.session)?.machineId ?? null} agentId={readSessionPresentationAgentId(props.session)}
             retainedTranscriptVisible={retainedTranscriptVisible} />
     );
 });
@@ -663,9 +668,12 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
     sessionId,
     serverId,
     machineId,
+    agentId,
     retainedTranscriptVisible = false,
-}: Readonly<{ sessionId: string; serverId: string | null; machineId: string | null; retainedTranscriptVisible?: boolean }>) {
+}: Readonly<{ sessionId: string; serverId: string | null; machineId: string | null; agentId: string | null; retainedTranscriptVisible?: boolean }>) {
     const issue = storage((state) => state.sessionTranscriptLoadIssues[sessionId] ?? null);
+    // The same catalog identity the header mark reads names the Agent in a format failure.
+    const agentName = useAgentCatalogIdentities({ agentIds: agentId ? [agentId] : [], machineId, serverId })[0]?.entry.title ?? null;
     const [retrying, setRetrying] = React.useState(false);
     const retryInFlightRef = React.useRef(false);
     // The same where-and-why context the Files pane gives: the Machine or Home the read could not reach.
@@ -674,7 +682,7 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
     // Only a saved Home has a name to give; an unknown profile would read as the product name.
     const homeLabel = useHomeDisplayLabel(homeProfile);
     const homeName = homeProfile ? homeLabel || null : null;
-    const presented = issue ? presentTranscriptLoadIssue(issue, { retainedTranscriptVisible, machineName, homeName }) : null;
+    const presented = issue ? presentTranscriptLoadIssue(issue, { retainedTranscriptVisible, machineName, homeName, agentName }) : null;
     const retryable = presented?.retryable ?? false;
     const handleRetry = React.useCallback(async () => {
         if (!retryable || retryInFlightRef.current) return;
@@ -1200,20 +1208,20 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         sessionId,
         serverId: session?.serverId ?? currentSessionRouteServerId,
         paneScopeId,
-        paneUrlState: props.paneUrlState ?? null,
-        multiPaneEnabled,
-        sessionsRightPaneDefaultOpen: sessionsRightPaneDefaultOpen === true,
-        deviceType,
         sessionPath: ownerMetadata?.path ?? null,
         sessionAccepted: session != null,
         surfaceFocused: isFocused,
         surfaceRetained: shouldRetainSessionSurface,
         surfaceVisible: isSurfaceVisible,
         routeAnchor: isActiveSessionRoute,
-        paneUrlSyncRouteActive: isPaneUrlSyncRouteActive,
-        paneEffectsEnabled: !embedded,
     });
     const { messages: pendingMessages, isLoaded: pendingMessagesLoaded, readState: pendingReadState } = useSessionPendingMessages(sessionId);
+    const managedWakePresentation = useSessionManagedWakePresentation({
+        session: shouldRenderSessionSurface && !headerBlockedSurface ? session : null,
+        accountLifetime: sessionAccountBinding,
+        machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
+        pendingMessages, pendingLoaded: pendingMessagesLoaded, pendingReadState,
+    });
     const stableSessionForLoadedView = session;
     const stableSessionForHeader = stableSessionForLoadedView ?? session;
     const externalSessionRuntime = useExternalSessionRuntime({
@@ -1580,6 +1588,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         routeHydrationState,
         blockedSurface: headerBlockedSurface,
         session: stableSessionForHeader,
+        managedWakeProjection: managedWakePresentation.projection,
         currentMachineId: currentSessionMachineId,
         sessionId,
         sessionInfoHref: buildCurrentSessionHref('/info'),
@@ -1635,6 +1644,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             isPhone: deviceType === 'phone',
         } : undefined,
     }), [
+        managedWakePresentation.projection,
         voiceConversationSubtitle,
         actionRailVisible,
         mobileTerminalTabAvailable,
@@ -1854,6 +1864,15 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         <SessionBrowserContextRuntimeProvider runtime={sessionBrowserContextRuntime}>
         <SessionExternalSessionRuntimeProvider value={externalSessionRuntime}>
         <SessionScreenTestIdsProvider enabled={isFocused}>
+            <SessionPaneUrlSyncHost
+                paneScopeId={paneScopeId}
+                multiPaneEnabled={multiPaneEnabled}
+                sessionsRightPaneDefaultOpen={sessionsRightPaneDefaultOpen === true}
+                deviceType={deviceType}
+                surfaceVisible={isSurfaceVisible}
+                paneUrlSyncRouteActive={isPaneUrlSyncRouteActive}
+                paneEffectsEnabled={!embedded}
+            />
             {props.contentOverride == null ? (
                 <SessionPendingMessagesRefresh
                     sessionId={sessionId}
@@ -1931,11 +1950,11 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                   ) : (
                       // Normal session view
                        <ComposerBannerCollapseProvider>
+                       <SessionHeaderSlotContext.Provider value={sessionHeader}>
                        <MemoizedSessionViewLoaded
                            renderComposer={props.renderComposer}
                            authSurfaceState={authSurfaceState}
                            key={props.sessionSurfaceKey}
-                           header={sessionHeader}
                            headerTitle={headerProps.title}
                            headerAgentId={headerProps.agentId ?? null}
                            headerMachineId={headerMachineTarget?.machineId ?? null}
@@ -1958,7 +1977,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                            participantTargets={participantTargets}
                            approvalRequests={approvalRequests}
                            transcriptApprovalRequests={transcriptApprovalRequests}
-                           paneUrlState={props.paneUrlState ?? null}
                            initialAttachmentDrafts={props.initialAttachmentDrafts ?? null}
                            attachmentsUploadsEnabled={attachmentsUploadsEnabled}
                            attachmentsUploadsAvailable={attachmentsUploadsAvailable}
@@ -1969,6 +1987,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                            pendingMessages={pendingMessages}
                            pendingMessagesLoaded={pendingMessagesLoaded}
                            pendingReadState={pendingReadState}
+                           managedWakePresentation={managedWakePresentation}
                            externalSessionRuntime={externalSessionRuntime}
                            externalSessionRuntimePresentation={externalSessionRuntimePresentation}
                            externalSessionIdentityPresentation={externalSessionIdentityPresentation}
@@ -1988,6 +2007,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                            embedded={embedded}
                            embeddedArrangement={props.embeddedArrangement}
                        />
+                       </SessionHeaderSlotContext.Provider>
                        </ComposerBannerCollapseProvider>
                   )}
                 </PaneHeaderScrollScope>
@@ -2018,20 +2038,35 @@ function SessionTranscriptSelectionBoundary(props: Readonly<{
 }
 
 function SessionViewLoaded(props: Parameters<typeof SessionViewLoadedContent>[0]) {
+    // The transcript, header and panes present at once; only the composer waits for this Session's
+    // own draft read (never the Account's whole draft collection) before it takes custody.
+    const draftAddresses = React.useMemo(() => [{ kind: 'session' as const, sessionId: props.sessionId }], [props.sessionId]);
+    const draftsAdmitted = useSessionDraftHydrationAdmission({ lifetime: props.accountBinding, addresses: draftAddresses });
     const interaction = React.useMemo(
         () => narrowTranscriptInteractionForPresentation(deriveTranscriptInteractionFromSession(props.session), props.embedded),
         [props.session.access, props.session.active, props.session.presence, props.embedded],
     );
     return <AppSessionTranscriptSourceProvider sessionId={props.sessionId} serverId={props.routeServerId ?? props.session.serverId} interaction={interaction} navigation={props.embedded?.navigation}>
-        <SessionDraftHydrationBoundary lifetime={props.accountBinding} addresses={[{ kind: 'session', sessionId: props.sessionId }]}>
+        <SessionDraftAdmissionContext.Provider value={draftsAdmitted}>
             <SessionDiscussionSourceLinksProvider sessionId={props.sessionId} serverId={props.routeServerId ?? props.session.serverId ?? null}>
                 <SessionViewLoadedContent {...props} />
             </SessionDiscussionSourceLinksProvider>
-        </SessionDraftHydrationBoundary>
+        </SessionDraftAdmissionContext.Provider>
     </AppSessionTranscriptSourceProvider>;
 }
 type SessionComposerView = ReturnType<typeof useSessionComposerController>['view'];
 const SessionComposerModelContext = React.createContext<SessionComposerModel | null>(null);
+
+/**
+ * The session header opens the transcript column, so the loaded frame seats it, but its content (title, status,
+ * plugin actions, counts) changes on its own schedule. It reaches the frame through this slot, not through the
+ * loaded view's props, so a header change redraws the header and never re-runs the composer controller.
+ */
+const SessionHeaderSlotContext = React.createContext<React.ReactNode>(null);
+
+function SessionHeaderSlot() {
+    return <>{React.useContext(SessionHeaderSlotContext)}</>;
+}
 
 function SessionComposerSlot({ renderComposer }: Readonly<{ renderComposer?: SessionComposerRenderer }>) {
     const composer = React.useContext(SessionComposerModelContext);
@@ -2066,7 +2101,6 @@ function SessionHeaderBesideCompanionRail(props: React.PropsWithChildren<Readonl
 const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     renderComposer,
     authSurfaceState,
-    header,
     headerTitle,
     headerAgentId,
     headerMachineId,
@@ -2080,6 +2114,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     surfacePresented,
     onBackPress,
     isEncryptedSessionLocked,
+    executionRunsEnabled,
     jumpToSeq,
     jumpToMessageId,
     approvalRequests,
@@ -2117,6 +2152,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     externalSessionTakeoverInFlight,
     externalSessionTakeoverPreflightInFlight,
     externalSessionOperationShell,
+    externalSessionOperationPresentation,
     isHiddenSystemSessionSession,
     sessionAccountScope,
     router,
@@ -2138,8 +2174,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     handleResumeSession,
 }: {
     renderComposer?: SessionComposerRenderer;
-    /** The session header: it opens the transcript column, so it spans the transcript's width. */
-    header: React.ReactNode;
     headerTitle: string;
     headerAgentId: string | null;
     headerMachineId: string | null;
@@ -2166,7 +2200,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     approvalRequests: ReadonlyArray<OpenApprovalAttentionArtifactForSession>;
     /** Open approvals plus decided ones whose body keeps a settled presentation (the transcript's list). */
     transcriptApprovalRequests: ReadonlyArray<OpenApprovalArtifactForSession>;
-    paneUrlState: SessionPaneUrlState | null;
     initialAttachmentDrafts: readonly AttachmentDraft[] | null;
     attachmentsUploadsEnabled: boolean;
     attachmentsUploadsAvailable: boolean;
@@ -2177,6 +2210,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     pendingMessages: readonly PendingMessage[];
     pendingMessagesLoaded: boolean;
     pendingReadState: 'loading' | 'error' | undefined;
+    managedWakePresentation: SessionManagedWakePresentation;
     externalSessionRuntime: ReturnType<typeof useExternalSessionRuntime>;
     externalSessionRuntimePresentation: ReturnType<
         typeof resolveExternalSessionRuntimePresentation
@@ -2311,6 +2345,25 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     const requestExternalSessionMaterialize = useEventCallback(
         () => externalSessionMaterialize.requestMaterialize(),
     );
+    const openExternalSessionReplayFork = useExternalSessionReplayForkLauncher({
+        sessionId,
+        session,
+        serverId: externalSessionRuntime.sessionServerId ?? sessionRouteServerId ?? null,
+        machineId: machineId ?? null,
+        enabled: externalSessionRuntime.externalSessionLink !== null,
+        executionRunsEnabled,
+        router,
+    });
+    const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
+    const externalSessionContinueInNewSession = useExternalSessionContinueInNewSession({
+        sessionId,
+        replayEnabled: sessionReplayEnabled,
+        materializeNeeded: externalSessionMaterializeNeeded,
+        importPublished: externalTranscriptAuthorityState.sharing.kind === 'published_snapshot',
+        operation: externalSessionOperationPresentation,
+        requestMaterialize: requestExternalSessionMaterialize,
+        openReplayFork: openExternalSessionReplayFork,
+    });
     const externalControlFooter = React.useMemo(
         () => resolveSessionViewExternalControlFooter({
             externalSessionOperationRunning: externalSessionOperationShell.running,
@@ -2353,6 +2406,11 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                 materializeInFlight: externalSessionMaterialize.materializeInFlight,
                 requestMaterialize: requestExternalSessionMaterialize,
             },
+            externalSessionContinueInNewSession: {
+                available: externalSessionContinueInNewSession.available,
+                inFlight: externalSessionContinueInNewSession.inFlight,
+                requestContinue: externalSessionContinueInNewSession.requestContinue,
+            },
             isHiddenSystemSessionSession,
         }),
         [
@@ -2360,6 +2418,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             externalSessionIdentityPresentation.machineLabel,
             externalSessionMaterialize.materializeInFlight,
             externalSessionMaterializeNeeded,
+            externalSessionContinueInNewSession.available,
+            externalSessionContinueInNewSession.inFlight,
+            externalSessionContinueInNewSession.requestContinue,
             externalSessionOperationShell.blocksNewOperation,
             externalSessionOperationShell.running,
             externalSessionRuntime.externalSessionLink?.machineId,
@@ -2704,7 +2765,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                 rail's side: its title and controls then stand on the transcript's column, as they do without the rail. */}
             {embedded ? null : <PaneMainTopAnchor>
                 <SessionHeaderBesideCompanionRail sessionId={sessionId} serverId={companionAddress?.serverId ?? null} paneScopeId={paneScopeId}>
-                    {header}
+                    <SessionHeaderSlot />
                 </SessionHeaderBesideCompanionRail>
                 <SessionPageTabs />
             </PaneMainTopAnchor>}

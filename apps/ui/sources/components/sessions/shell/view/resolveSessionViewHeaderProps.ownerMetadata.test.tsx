@@ -151,6 +151,24 @@ function createManyPluginHeaderProjection(actionCount: number) {
 }
 
 describe('resolveSessionViewHeaderProps owner metadata', () => {
+    it('passes observed wake activity to the existing Bot face without asserting a connected runtime', () => {
+        const session = createSessionFixture({ encryptionMode: 'plain', active: false, activeAt: 100, presence: 'offline',
+            metadata: { path: '/work', host: 'host', bot: { kind: 'bot' } } });
+        const header = resolveSessionViewHeaderProps({
+            isDataReady: true, session, sessionId: session.id,
+            sessionInfoHref: `/session/${session.id}/info`, sessionRunsHref: `/session/${session.id}/runs`,
+            sessionAutomationsHref: `/session/${session.id}/automations`, paneScopeId: session.id, windowWidth: 1400,
+            sessionAutomationsEnabledCount: 0, sessionExecutionRunsSupported: true, showAutomations: true,
+            shouldShowSubagentsButton: false, subagentActiveCount: 0, navigateWithBlurOnWeb: action => action(),
+            handleHeaderExtraItemSelect: () => false, router: { push: () => {}, navigate: () => {} },
+            actionIconColor: '#000', headerTintColor: '#000', statusErrorColor: '#f00', externalSessionRuntime: null,
+            managedWakeProjection: { kind: 'connecting', inputCustody: 'queued', canWithdraw: true,
+                canRetryAgentStart: false, canRequestWake: false, canResumeRuntime: false },
+        });
+        expect(header.botFace).not.toBeNull();
+        expect(header.botActivity).toBe('working');
+        expect(header.isConnected).toBe(false);
+    });
     it('resolves a deleted-session title in the current language after locale activation', async () => {
         const previousLanguage = getPreferredLanguage();
         const input: Parameters<typeof resolveSessionViewHeaderProps>[0] = {

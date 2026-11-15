@@ -1,3 +1,4 @@
+import type { ManagedWakeProjection } from '@/sync/domains/pending/managedWakeProjection';
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
@@ -90,6 +91,7 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     routeHydrationState?: SessionRouteHydrationState | null;
     blockedSurface?: SessionViewHeaderBlockedSurface | null;
     session: Session | null;
+    managedWakeProjection?: ManagedWakeProjection | null;
     currentMachineId?: unknown;
     sessionId: string;
     sessionInfoHref: `/session/${string}`;
@@ -233,9 +235,10 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         : undefined;
     const avatarId = getSessionAvatarId(session);
     const botFace = readSessionBotFaceFacts(session, session.serverId ?? null);
-    const botActivity = botFace ? readBotActivity(session, Date.now()) : undefined;
+    const status = getSessionStatus(session, Date.now(), { managedWakeProjection: input.managedWakeProjection });
+    const botActivity = botFace ? readBotActivity(session, Date.now(), status) : undefined;
     const agentId = readSessionPresentationAgentId(session);
-    const isConnected = getSessionStatus(session).isConnected;
+    const isConnected = status.isConnected;
     const flavor = agentId;
     // Only an external Session names its storage: every other Session here is a Happier Session,
     // and a badge saying so is healthy-state noise that costs the title its width.

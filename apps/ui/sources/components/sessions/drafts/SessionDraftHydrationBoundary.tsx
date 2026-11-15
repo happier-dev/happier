@@ -12,17 +12,32 @@ import {
 import { prepareLocalSessionDraftScope } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-/** Editable hosts take custody after their own scoped draft hydration attempt. */
-export function SessionDraftHydrationBoundary(props: Readonly<{
-    children: React.ReactNode;
+type SessionDraftHydrationAdmissionInput = Readonly<{
     /** Omit only when the consumer needs the complete draft collection. */
     addresses?: readonly Extract<SessionDraftAddressV2, { kind: 'session' | 'newSession' }>[];
     lifetime?: ServerAccountScopeLifetime | null;
     /** Exact local custody for a host that has no Account draft-read authority. */
     localScope?: ServerAccountScope | null;
+}>;
+
+/** Editable hosts take custody after their own scoped draft hydration attempt. */
+export function SessionDraftHydrationBoundary(props: SessionDraftHydrationAdmissionInput & Readonly<{
+    children: React.ReactNode;
     /** The host's existing surface shape while first admission is pending. */
     fallback?: React.ReactNode;
 }>) {
+    return useSessionDraftHydrationAdmission(props)
+        ? <>{props.children}</>
+        : props.fallback ?? <PaneLoadingFallback testID="session-drafts-hydrating" />;
+}
+
+/**
+ * Whether an editable draft host may take custody: the complete collection is ready, or this
+ * host's own exact addresses were hydrated (one read each). A host whose non-editable surface
+ * does not depend on drafts (a Session's transcript and header) presents it at once and gates
+ * only its editor on this admission.
+ */
+export function useSessionDraftHydrationAdmission(props: SessionDraftHydrationAdmissionInput): boolean {
     const collectionReady = useIsSessionDraftsReady();
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = props.lifetime === undefined ? activeLifetime : props.lifetime;
@@ -77,7 +92,5 @@ export function SessionDraftHydrationBoundary(props: Readonly<{
     const surfaceReady = admitted !== null && admitted.lifetime === lifetime
         && admitted.localScopeKey === localScopeKey && admitted.addressKey === addressKey
         && (localScopeKey !== null || lifetime?.isCurrent());
-    return ready || surfaceReady || retainsCustody
-        ? <>{props.children}</>
-        : props.fallback ?? <PaneLoadingFallback testID="session-drafts-hydrating" />;
+    return ready || surfaceReady || retainsCustody;
 }

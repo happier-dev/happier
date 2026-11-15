@@ -253,9 +253,7 @@ import { useManagedWakeRecovery } from "@/components/sessions/pending/useManaged
 import { submitPendingActivationRequest } from "@/components/sessions/pending/pendingActivationRequest";
 import { useSessionPendingActivationPresentation } from "@/components/sessions/pending/useSessionPendingActivationPresentation";
 import { findExchangeCheckInRoot, SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
-import { useManagedPendingWakeObservation } from "@/components/sessions/pending/useManagedPendingWakeObservation";
-import { useMachineListStatusForServer } from "@/sync/domains/state/storage";
-import { readManagedWakeAuthorization } from "@/sync/domains/pending/managedWakeProjection";
+import type { SessionManagedWakePresentation } from "@/components/sessions/pending/useSessionManagedWakePresentation";
 import { ManagedWakePopover, describeManagedWakeLabel } from "@/components/sessions/pending/ManagedWakePopover";
 import { getMachineSentenceName } from "@/utils/sessions/machineDisplayNames";
 import { describeMachinePresenceLine } from "@/utils/sessions/machinePresenceLine";
@@ -528,8 +526,7 @@ export type SessionComposerControllerOptions = Readonly<{
     browserContextStateForComposer: BrowserContextState | null;
     browserContextComposerContext: SessionBrowserContextRuntime['composerContext'] | null;
     pendingMessages: readonly PendingMessage[];
-    pendingMessagesLoaded: boolean;
-    pendingReadState: 'loading' | 'error' | undefined;
+    managedWakePresentation: SessionManagedWakePresentation;
     externalSessionRuntime: ReturnType<typeof useExternalSessionRuntime>;
     sessionRunnerRuntimeStatus: SessionRunnerRuntimeStatusSnapshot | null;
     sessionRunnerRuntimeStatusMachineId: string | null;
@@ -565,8 +562,7 @@ export function useSessionComposerController({
     browserContextStateForComposer,
     browserContextComposerContext,
     pendingMessages,
-    pendingMessagesLoaded,
-    pendingReadState,
+    managedWakePresentation,
     externalSessionRuntime,
     sessionRunnerRuntimeStatus,
     sessionRunnerRuntimeStatusMachineId,
@@ -1435,14 +1431,8 @@ export function useSessionComposerController({
     // Reconnect and the existing exact Home AccountChange edge reread native
     // observations; this does not submit Start or introduce a consumer timer.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;
-    const managedWakeAuthorization = readManagedWakeAuthorization(session);
-    const managedPendingObservation = useManagedPendingWakeObservation({
-        sessionId, authorization: managedWakeAuthorization,
-        accountLifetime: sessionAccountLifetime,
-        reconnectSignal: socketConnectionGeneration,
-    });
-    const managedPendingMachine = managedPendingObservation.machine;
-    const managedWakeInventoryStatus = useMachineListStatusForServer(sessionAccountScope?.serverId ?? '');
+    const managedWakeAuthorization = managedWakePresentation.authorization;
+    const managedPendingMachine = managedWakePresentation.observation.machine;
     const managedWakeController = useServerScopedMachine(sessionAccountScope?.serverId ?? '',
         managedPendingMachine?.controller?.machineId ?? managedWakeAuthorization?.managedWakeTargetV1?.controller?.machineId ?? '');
     // One owner for the managed wake projection, the explicit-stop hold and an in-flight resume: the Inbox's
@@ -1450,9 +1440,8 @@ export function useSessionComposerController({
     const { presentation: pendingActivationPresentation, deliveryFailure: sessionDeliveryFailure, autoResumeAdmission } = useSessionPendingActivationPresentation({
         sessionId, session, ownerMetadata,
         machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
-        canWrite: hasWriteAccess, pendingMessages, pendingLoaded: pendingMessagesLoaded, pendingReadState,
-        managed: managedPendingMachine, managedReadState: managedPendingObservation.kind,
-        machineInventoryState: managedWakeInventoryStatus === 'loading' ? 'loading' : 'read',
+        canWrite: hasWriteAccess, pendingMessages,
+        managedWakeProjection: managedWakePresentation.projection,
         suppressed: isComposerSending,
         machineAccessRemoved: sessionMachineAccessRemoved,
     });

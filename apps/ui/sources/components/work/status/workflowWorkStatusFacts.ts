@@ -10,7 +10,7 @@ export type WorkflowRunWorkStatusFacts = Extract<WorkStatusInput, { kind: 'workf
 /** Normalize already-admitted Run facts; failure identity and attention stay with the Run owner. */
 export function readWorkflowRunWorkStatusFacts(
     summary: WorkflowRunWorkStatusSummary,
-    context: Pick<WorkflowRunWorkStatusFacts, 'machineReachable' | 'machineName' | 'cancelRequested'> & Readonly<{ word?: string }> = {},
+    context: Pick<WorkflowRunWorkStatusFacts, 'machineReachable' | 'machineName' | 'machineStatus' | 'cancelRequested'> & Readonly<{ word?: string }> = {},
 ): WorkflowRunWorkStatusFacts {
     return {
         state: summary.state,

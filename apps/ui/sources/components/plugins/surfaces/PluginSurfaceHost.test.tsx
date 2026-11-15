@@ -15848,6 +15848,7 @@ describe('Composer physical surface mount', () => {
         const { definePlugin } = await import('@happier-dev/plugin-sdk');
         const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
         const { useSessionComposerController } = await import('@/components/sessions/composer/useSessionComposerController');
+        const { useSessionManagedWakePresentation } = await import('@/components/sessions/pending/useSessionManagedWakePresentation');
         const { SessionComposerAgentInput } = await import('@/components/sessions/composer/SessionComposerAgentInput');
         const { useExternalSessionRuntime } = await import('@/components/sessions/model/useExternalSessionRuntime');
         const { AppSessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/appSessionTranscriptSource');
@@ -15925,12 +15926,14 @@ describe('Composer physical surface mount', () => {
         function SessionComposer({ accountBinding }: Readonly<{ accountBinding: import('@/sync/domains/scope/useServerCredentialAccountScopes').ServerCredentialAccountScopeBinding }>) {
             const pane = useAppPaneScope('session:responsive-composer-session');
             const externalSessionRuntime = useExternalSessionRuntime({ sessionId: session.id, serverId, metadata: session.metadata, enabled: false });
+            const managedWakePresentation = useSessionManagedWakePresentation({ session, accountLifetime: accountBinding,
+                machineReachable: true, pendingMessages: [], pendingLoaded: true });
             const controller = useSessionComposerController({ sessionId: session.id, routeServerId: serverId, accountBinding, session, pane,
                 authSurfaceState: null, embedded: null, isMachineReachable: true, machineReachability: 'reachable', surfaceFocused: true,
                 surfacePresented: true, isEncryptedSessionLocked: false, executionRunsEnabled: false, participantTargets: [], approvalRequests: [],
                 initialAttachmentDrafts: null, attachmentsUploadsEnabled: false, attachmentsUploadsAvailable: false,
-                browserContextStateForComposer: null, browserContextComposerContext: null, pendingMessages: [], pendingMessagesLoaded: true,
-                pendingReadState: undefined, externalSessionRuntime, sessionRunnerRuntimeStatus: null, sessionRunnerRuntimeStatusMachineId: null,
+                browserContextStateForComposer: null, browserContextComposerContext: null, pendingMessages: [], managedWakePresentation,
+                externalSessionRuntime, sessionRunnerRuntimeStatus: null, sessionRunnerRuntimeStatusMachineId: null,
                 onSessionRunnerRuntimeStatusInvalidated: () => {}, collaborationTarget: null, collaborationAvailable: false,
                 foldCollaborationHeaderEntry: false, openSessionAccess: () => {}, openWorkStateRequestKey: null });
             const input = findComposerInput(controller.composer.content);

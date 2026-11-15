@@ -34,6 +34,31 @@ afterEach(async () => {
 });
 
 describe('reactive Machine presence', () => {
+    it('does not resolve a Home inventory until a mounted consumer demands a Machine', async () => {
+        const machine = createMachineFixture({ id: 'demanded-machine', activeAt: Date.now() });
+        machine.metadata = { ...machine.metadata!, displayName: 'Demanded Machine' };
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        let inventoryReads = 0;
+        const inventories = storage.getState().machineListByServerId;
+        storage.setState({ machineListByServerId: new Proxy(inventories, {
+            get(target, property, receiver) {
+                if (property === serverId) inventoryReads += 1;
+                return Reflect.get(target, property, receiver);
+            },
+        }) });
+        const hook = await renderHook(() => {
+            const [ids, setIds] = React.useState<readonly string[]>([]);
+            return { summaries: useMachinePresenceSummaries(serverId, ids, null), setIds };
+        });
+        try {
+            expect(hook.getCurrent().summaries).toEqual([]);
+            expect(inventoryReads).toBe(0);
+            await act(async () => { hook.getCurrent().setIds([machine.id]); });
+            expect(hook.getCurrent().summaries[0]).toMatchObject({ name: machine.metadata!.displayName, machineIsKnown: true });
+            expect(inventoryReads).toBeGreaterThan(0);
+        } finally { await hook.unmount(); }
+    });
+
     it('does not derive a selected Machine summary for another row or Home', async () => {
         let nameReads = 0;
         const selected = createMachineFixture({ id: 'selected', activeAt: Date.now() });
@@ -224,6 +249,36 @@ describe('reactive Machine presence', () => {
             } })));
             expect(hook.getCurrent()[0]!.name).toBe(firstName);
         } finally { await hook.unmount(); }
+    });
+    it('derives one Home membership per fleet change however many consumers are mounted', async () => {
+        const rows = Array.from({ length: 64 }, (_, index) => createMachineFixture({ id: `shared-membership-${index}`, activeAt: Date.now() }));
+        const visitsFor = async (consumers: number) => {
+            storage.getState().applyMachines(rows, true, { sourceServerId: serverId });
+            storage.setState(state => ({ machineListStatusByServerId: { ...state.machineListStatusByServerId, [serverId]: 'idle' } }));
+            const hook = await renderHook(() => Array.from({ length: consumers }, () => useMachinePresenceMembership(serverId)));
+            try {
+                await waitForHomeGovernance(() => expect(hook.getCurrent()[0]!.onlineMachineIds).toHaveLength(rows.length));
+                let rowVisits = 0;
+                for (let change = 0; change < 4; change += 1) {
+                    const current = storage.getState().machineListByServerId[serverId]!;
+                    const changed = current.map((row, index) => index === change ? { ...row, metadataVersion: 10 + change,
+                        metadata: { ...row.metadata!, displayName: `Renamed ${consumers}-${change}` } } : row);
+                    const measured = new Proxy(changed, { get(target, property, receiver) {
+                        if (typeof property === 'string' && /^\d+$/.test(property)) rowVisits += 1;
+                        return Reflect.get(target, property, receiver);
+                    } });
+                    await act(async () => storage.setState(state => ({ machineListByServerId: { ...state.machineListByServerId, [serverId]: measured } })));
+                }
+                const first = hook.getCurrent()[0]!;
+                return { rowVisits, shared: hook.getCurrent().every(value => value === first) };
+            } finally { await hook.unmount(); }
+        };
+        const one = await visitsFor(1);
+        const five = await visitsFor(5);
+        console.info('P03_UI_A_SHARED_MEMBERSHIP_COUNTS', JSON.stringify({ machines: rows.length, changes: 4, oneConsumerRowVisits: one, fiveConsumerRowVisits: five }));
+        expect(one.rowVisits).toBeGreaterThan(0);
+        expect(five.rowVisits).toBe(one.rowVisits);
+        expect(five.shared).toBe(true);
     });
     it('observes only the requested Machine name/home and remains inert without a retained target', async () => {
         const previous = storage.getState();

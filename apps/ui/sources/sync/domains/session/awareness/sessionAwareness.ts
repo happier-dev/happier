@@ -1,3 +1,4 @@
+import type { UiSessionManagedWakeFacts } from '../attention/runtimePresentation';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import { readSessionRuntimeWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
@@ -18,7 +19,7 @@ import { readSessionUsageLimitRecoveryFromMetadata } from '@happier-dev/protocol
 import { readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField, readSessionListPresentationDisplay, readSessionListPresentationPendingFlags,
     readSessionListPresentationPendingObservedAt, type SessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
 
-export type UiSessionAwarenessOptions = Readonly<{
+export type UiSessionAwarenessOptions = UiSessionManagedWakeFacts & Readonly<{
     presentationSource?: SessionListPresentationSource;
     /** Status/count consumers need the same classification without constructing the display title. */
     includeTitle?: boolean;
@@ -144,6 +145,7 @@ export function projectUiSessionAwareness(
     session: Session | SessionListRenderableSession,
     nowMs: number,
     options?: UiSessionAwarenessOptions,
-): SessionAwarenessProjectionV1 {
-    return projectSessionAwarenessV1(createUiSessionAwarenessInput(session, nowMs, options));
+): SessionAwarenessProjectionV1 & UiSessionManagedWakeFacts {
+    const awareness = projectSessionAwarenessV1(createUiSessionAwarenessInput(session, nowMs, options));
+    return options?.managedWakeProjection ? { ...awareness, managedWakeProjection: options.managedWakeProjection } : awareness;
 }

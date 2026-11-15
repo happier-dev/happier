@@ -10,7 +10,7 @@ import { submitPendingActivationRequest } from '@/components/sessions/pending/pe
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { canUseDirectPendingDeliveryActions, getPendingDeliveryBlockedReasonPresentation,
     resolvePendingMessagesPresentation } from '@/components/sessions/pending/pendingMessageVisualState';
-import { useManagedPendingWakeObservation } from '@/components/sessions/pending/useManagedPendingWakeObservation';
+import { useSessionManagedWakePresentation } from '@/components/sessions/pending/useSessionManagedWakePresentation';
 import { describeManagedWakeLabel } from '@/components/sessions/pending/ManagedWakePopover';
 import { useManagedWakeRecovery } from '@/components/sessions/pending/useManagedWakeRecovery';
 import { useSessionPendingActivationPresentation } from '@/components/sessions/pending/useSessionPendingActivationPresentation';
@@ -22,7 +22,7 @@ import { readManagedWakeAuthorization } from '@/sync/domains/pending/managedWake
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readSessionPresentationControl, type SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { useMachineListStatusForServer, useServerScopedMachine, useSocketStatus } from '@/sync/domains/state/storage';
+import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { useActiveServerAccountScopeLifetime, useSessionPendingMessages } from '@/sync/store/hooks';
@@ -60,15 +60,15 @@ export function InboxManagedWakeSessionRow(props: Readonly<{
 function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentationRecord; serverId: string; render: RowRender }>) {
     const { session, serverId } = props;
     const lifetime = useActiveServerAccountScopeLifetime();
-    const authorization = readManagedWakeAuthorization(session);
     const pending = useSessionPendingMessages(session.id);
     React.useEffect(() => {
         if (!pending.isLoaded) fireAndForget(sync.fetchPendingMessages(session.id), { tag: 'InboxManagedWakeSessionRow.fetchPendingMessages' });
     }, [pending.isLoaded, session.id]);
-    const observation = useManagedPendingWakeObservation({ sessionId: session.id, authorization, accountLifetime: lifetime,
-        reconnectSignal: useSocketStatus().lastConnectedAt });
     const reachability = useSessionMachineReachability(session.id, serverId);
-    const inventory = useMachineListStatusForServer(serverId);
+    const wake = useSessionManagedWakePresentation({ session, accountLifetime: lifetime,
+        machineReachable: reachability.machineReachability === 'unknown' ? null : reachability.machineReachable,
+        pendingMessages: pending.messages, pendingLoaded: pending.isLoaded, pendingReadState: pending.readState });
+    const { authorization, observation } = wake;
     const controllerName = useServerScopedMachine(serverId,
         observation.machine?.controller?.machineId ?? authorization?.managedWakeTargetV1?.controller?.machineId ?? '',
         machine => machine ? getMachineSentenceName(machine) : null);
@@ -80,9 +80,8 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
         sessionId: session.id, session, ownerMetadata: metadata,
         machineReachable: reachability.machineReachability === 'unknown' ? null : reachability.machineReachable,
         canWrite,
-        pendingMessages: pending.messages, pendingLoaded: pending.isLoaded, pendingReadState: pending.readState,
-        managed: observation.machine, managedReadState: observation.kind,
-        machineInventoryState: inventory === 'loading' ? 'loading' : 'read',
+        pendingMessages: pending.messages,
+        managedWakeProjection: wake.projection,
     });
     const blockedMessage = resolvePendingMessagesPresentation(pending.messages, { session }).blockedMessage;
     const blockedReason = blockedMessage ? getPendingDeliveryBlockedReasonPresentation(blockedMessage, false, session) : null;

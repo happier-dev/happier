@@ -1,3 +1,4 @@
+import { useSessionManagedWakeStatus } from '@/components/sessions/pending/useSessionManagedWakeStatus';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { HAPPIER_COLLECTION_ROW_METRICS, HAPPIER_META_COLUMN_STYLE, HappierMaterialRoleProvider, resolveHappierCollectionTreeChildIndentPx, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
@@ -76,7 +77,7 @@ import {
     sessionRowTitleInk,
 } from './row/sessionRowTitleColorRole';
 import { WorkStatusRowMark, WorkStatusRowWord } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMarkModel';
 import { SessionRowReportsChip, SessionRowReportsDisclosure, hasSessionRowReportsChip } from './row/SessionRowReportsChip';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { CollectionRowBadge, CollectionRowBadges, CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
@@ -145,7 +146,7 @@ import {
     SessionListIdentity,
     type SessionListIdentityDisplay,
 } from './SessionListIdentity';
-import type { BotActivity } from '@/components/sessions/bots/botActivity';
+import { readBotActivity, type BotActivity } from '@/components/sessions/bots/botActivity';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RowSwipeAction } from '@/components/ui/lists/RowSwipeAction';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -2195,6 +2196,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
     const { theme } = useUnistyles();
     const { rowViewModel, ...itemProps } = props;
     const rowSession = rowViewModel.session;
+    const managedWakeProjection = useSessionManagedWakeStatus(rowSession, itemProps.serverId);
     const rowStatus = rowViewModel.sessionStatus;
     const archivePending = useSessionArchivePending(normalizeSessionAddress(itemProps.serverId, rowSession?.id));
     if (!rowSession || !rowStatus) {
@@ -2204,10 +2206,11 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
         rowSession,
         providedSession: itemProps.session,
     });
-    const sessionStatus = archivePending || rowStatus.state === 'archiving' || session !== rowSession
+    const sessionStatus = managedWakeProjection || archivePending || rowStatus.state === 'archiving' || session !== rowSession
         ? getSessionStatus(session, Date.now(), {
             archiving: archivePending,
             statusColors: theme.colors.status,
+            managedWakeProjection,
         }) : rowStatus;
     const contentUnavailable = !isSessionAwarenessContentReadableV1(sessionStatus.awareness.encryption);
     // Encryption pending is not a reason to forget a name this device already holds:
@@ -2232,6 +2235,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             activityTimeLabel={rowViewModel.activityTimeLabel}
             guardState={rowViewModel.guardState}
             sessionStatus={sessionStatus}
+            botActivity={managedWakeProjection ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}
             externalSessionIdentity={rowViewModel.externalSessionIdentity}
             sessionNameResolved={sessionNameResolved}
             sessionSubtitle={contentUnavailable ? '' : itemProps.subtitleOverride ?? rowViewModel.subtitleOverride ?? getSessionSubtitle(session, itemProps.serverId)}

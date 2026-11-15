@@ -36,6 +36,7 @@ describe('managed pending wake protected observation', () => {
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/auth/ping') return Response.json({ ok: true });
             state.paths.push(url.pathname);
             expect(JSON.parse(String(init?.body))).toEqual({ homeId: 'srv_home_a', managedId: 'managed-a' });
             if (state.power === 'running') await options.readGate?.();

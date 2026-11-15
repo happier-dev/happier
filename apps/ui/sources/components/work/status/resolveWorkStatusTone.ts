@@ -1,6 +1,7 @@
+import { readUiSessionAwarenessWorkStatus } from '@/sync/domains/session/attention/runtimePresentation';
 import { isInProgressAgentActivityStatus, isTerminalAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
-import { readSessionAwarenessWorkStatusV1, readSessionManagedSessionsPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
+import { readSessionManagedSessionsPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { SessionAwarenessPresentationFactsV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import type { SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -105,6 +106,8 @@ type WorkflowFacts = Readonly<{
     /** Absent means unknown, not offline. */
     machineReachable?: boolean;
     machineName?: string | null;
+    /** Classified native state from the managed Machine presentation owner. */
+    machineStatus?: WorkStatusPresentation | null;
     workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState'];
 }>;
 
@@ -300,6 +303,7 @@ export function isWorkflowRunStopping(facts: WorkflowRunStopFacts): boolean {
 }
 
 function presentWorkflowStop(facts: WorkflowFacts): WorkStatusPresentation {
+    if (facts.machineStatus) return facts.machineStatus;
     return facts.machineReachable === false
         ? workStatus('disconnected', { bucket: 'offline', tone: 'neutral' }, facts.machineName
             ? t('workflows.run.stopWhenMachineReconnects', { machine: facts.machineName })
@@ -319,6 +323,7 @@ function presentWorkflow(state: string, shape: StatusShape, facts: WorkflowFacts
         { bucket: 'needs_you', tone: 'attention' }, facts.word, 'decision');
     const outcome = facts.outcome;
     const terminal = shape.bucket === 'finished' || outcome === 'source_unavailable';
+    if (!terminal && facts.machineStatus) return facts.machineStatus;
     if (!terminal && facts.machineReachable === false) return workStatus('disconnected', { bucket: 'offline', tone: 'neutral' }, facts.word);
     return workStatus(state, {
         bucket: terminal ? 'finished' : shape.bucket,
@@ -402,7 +407,7 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
         case 'session': {
             const { awareness, viewer, settled, word, archiving, requestFollowEvent } = input.facts;
             const attentionType = input.facts.attentionType ?? null;
-            const status = readSessionAwarenessWorkStatusV1({ awareness: { ...awareness, viewer, archiving }, settled });
+            const status = readUiSessionAwarenessWorkStatus({ awareness: { ...awareness, viewer, archiving }, settled });
             const actionable = attentionType !== null && inboxItemViewV1(attentionType) === 'needs_you';
             const quietRequest = requestFollowEvent && !resolveFollowDeliveryV1({ policies: [{ preset: 'important' }], event: requestFollowEvent }).person.push;
             return workStatus(status.state, {

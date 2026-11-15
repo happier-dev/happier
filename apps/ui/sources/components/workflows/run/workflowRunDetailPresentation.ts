@@ -843,6 +843,7 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState'];
     machineReachable?: boolean;
     machineName?: string | null;
+    machineStatus?: WorkStatusPresentation | null;
     /** Membership in the canonical attention window, independent of its step kinds. */
     inAttentionWindow?: boolean;
     /**
@@ -865,8 +866,8 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
             inAttentionWindow: params.inAttentionWindow,
         }).label;
     }
-    return formatWorkflowRunStateLabel(params.state === 'claimed' && params.coverage.observedLeafCounts.completed > 0
-        ? 'running' : params.state);
+    return describeWorkflowRunState(params.state === 'claimed' && params.coverage.observedLeafCounts.completed > 0
+        ? 'running' : params.state, { machineStatus: params.machineStatus }).label;
 }
 
 /**
