@@ -8187,6 +8187,12 @@ does not rewrite accepted/replay metadata, query a mutable definition, or add
 per-row reads. Opened detail publishes the same display metadata into the
 Account Run store.
 
+Removing a trigger or its source stops future admission and preserves the owner's
+Run history. The existing Account/operator age-retention policy still applies,
+including `keepForever`; deleting a source is not a request to clear history.
+Explicit Run-history deletion remains custody-safe. Removing a Team member
+withdraws that member's access without changing the owner's history.
+
 In 0.3 development, `session.work.get` and `inbox.get` use this same CLI ingress to
 prefer the answering app's mounted canonical projection for the exact Home and
 Account. The mounted Work Session or Inbox advertises its own address on the

@@ -1098,7 +1098,7 @@ describe("automationRunRetentionRule", () => {
         })).resolves.toEqual({ eventSourceDefinitionsRevision: 11n });
     });
 
-    it("deletes a soft-deleted Automation's custody-terminal history even when the Account keeps live history forever", async () => {
+    it("retains a deleted Automation's history until the Run retention policy expires it", async () => {
         const account = await db.account.create({
             data: {
                 id: "account-automation-finalize",
@@ -1184,10 +1184,23 @@ describe("automationRunRetentionRule", () => {
             dryRun: false,
             maxDeletesPerRulePerRun: 100,
             now: new Date("2026-08-12T00:00:00.000Z"),
+        })).resolves.toMatchObject({ id: "automationRuns", deleted: 0 });
+
+        await expect(db.automationRun.findUnique({
+            where: { id: "run-finalize-expired" }, select: { id: true },
+        })).resolves.toEqual({ id: "run-finalize-expired" });
+        // Even terminal history keeps its deleted parent while keepForever applies.
+        await expect(db.automation.count({ where: { accountId: account.id } })).resolves.toBe(3);
+
+        // An explicit operator age policy still expires terminal history normally.
+        await expect(rule.run({
+            policy: createPolicy(),
+            batchSize: 100,
+            dryRun: false,
+            maxDeletesPerRulePerRun: 100,
+            now: new Date("2026-08-12T00:00:00.000Z"),
         })).resolves.toMatchObject({ id: "automationRuns", deleted: 1 });
 
-        // The parent whose last Run just disappeared is gone; the one that still
-        // restricts its parent, and the live definition, are untouched.
         await expect(db.automation.findMany({
             where: { accountId: account.id },
             orderBy: { id: "asc" },

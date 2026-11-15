@@ -81,11 +81,6 @@ function isAutomationRunEligibleForDeletion(
     policy: RetentionPolicy,
     now: Date,
 ): boolean {
-    // Deleting an Automation is an explicit request to clear its retained Run
-    // history. Custody safety remains owned by automationRunCustodyTerminalWhere;
-    // once a Run is terminal, Account keep-forever history must not strand the
-    // soft-deleted parent indefinitely.
-    if (run.automation?.deletedAt !== null && run.automation !== null) return true;
     if (run.finishedAt === null) return false;
     const operatorDays = readOperatorAutomationRunRetentionDays(policy);
     const retentionDays = run.account.automationRunRetention === 'thirtyDays'
@@ -204,10 +199,7 @@ export function createAutomationRunRetentionRule(): RetentionRule {
             const candidatesWithLookahead = await db.automationRun.findMany({
                 where: {
                     ...automationRunCustodyTerminalWhere(),
-                    OR: [
-                        ...automationRunAgeRetentionWhere(params.policy, params.now),
-                        { automationId: { not: null }, automation: { deletedAt: { not: null } } },
-                    ],
+                    OR: [...automationRunAgeRetentionWhere(params.policy, params.now)],
                 },
                 select: automationRunRetentionCandidateSelect,
                 orderBy: { id: 'asc' },
