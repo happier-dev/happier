@@ -169,6 +169,27 @@ describe('Services column', () => {
     controller.retire();
   });
 
+  it('is one keyboard tree through the shared tree owner: treeitem levels, expanded state, ArrowRight opens a Project', async () => {
+    const controller = controllerFor(ITEMS);
+    const { screen } = await render(controller, { kind: 'all' });
+    const treeItemOf = (testID: string) => screen.root
+      .findAll((node) => node.props.testID === testID && 'treeItem' in node.props)[0]?.props.treeItem;
+    const project = treeItemOf('services-column:project:source-shop');
+    expect(project).toMatchObject({ webRole: 'treeitem', accessibilityLevel: 1, accessibilityExpanded: false });
+    expect(treeItemOf('services-column:environment:env-api')).toMatchObject({ webRole: 'treeitem', accessibilityLevel: 1 });
+    expect(treeItemOf('services-column:environment:env-api')?.accessibilityExpanded).toBeUndefined();
+    // One roving tab stop: exactly one row is in the tab order.
+    const tabStops = rowIds(screen).filter((id) => treeItemOf(id)?.webTabIndex === 0);
+    expect(tabStops).toHaveLength(1);
+    await act(async () => {
+      project.onKeyDown({ key: 'ArrowRight', preventDefault: () => {} });
+    });
+    expect(rowIds(screen)).toContain('services-column:environment:env-shop-staging');
+    expect(treeItemOf('services-column:project:source-shop')?.accessibilityExpanded).toBe(true);
+    expect(treeItemOf('services-column:environment:env-shop-staging')).toMatchObject({ accessibilityLevel: 2 });
+    controller.retire();
+  });
+
   it('opens the Project the open Environment belongs to, selects that Environment, and navigates rows to the one Environment route', async () => {
     const controller = controllerFor(ITEMS);
     const { screen, onNavigate } = await render(controller, {

@@ -17,6 +17,7 @@ import {
   CollectionSkeletonRows,
   collectionListStyles,
 } from '@/components/ui/lists/collection/CollectionList';
+import { useCollectionTreeKeyboard, type CollectionTreeRow } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -29,7 +30,7 @@ import {
   useDeploymentEnvironmentRowParts,
 } from './DeploymentEnvironmentCollection';
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
-import { buildDeploymentEnvironmentHref, SERVICES_ROUTE } from './deploymentNavigation';
+import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref, SERVICES_ROUTE } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
 
 /** What the open route has selected in the Services column. */
@@ -81,6 +82,9 @@ const COLUMN_DEMAND: DeploymentReadDemandV1 = Object.freeze({
   focused: true,
 });
 const NO_KEYS: ReadonlySet<string> = new Set();
+
+/** A Services column row as the tree reads it, with what a press (or Enter) opens and the Project it discloses. */
+type ServicesTreeRow = CollectionTreeRow & Readonly<{ href: string | null; groupKey?: string }>;
 
 /**
  * The Services destination's column (lab pfc-redesign `sideSvc`, variant A): the page's views stay its tab bar, and the
@@ -200,9 +204,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         })
       : null;
   const projectHref = (projectSourceId: string) =>
-    serverId
-      ? `/deployments/${encodeURIComponent(projectSourceId)}?serverId=${encodeURIComponent(serverId)}`
-      : null;
+    serverId ? buildDeploymentProjectHref({ serverId, projectSourceId }) : null;
   const complete =
     read.snapshot.value !== undefined &&
     read.snapshot.value !== null &&
@@ -210,6 +212,61 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     !read.hasPreviousPage;
   const searchable = items.length > 0;
   const status = read.snapshot;
+  // The column's rows in drawing order, as the shared tree reads them: one roving tab stop, arrows move, Right/Left
+  // disclose a Project, Enter opens what a press opens (`useCollectionTreeKeyboard`, as the Projects tree).
+  const tree = React.useMemo(() => {
+    const presented = groups.map((group) => {
+      const only =
+        group.rows.length === 1 &&
+        group.key !== 'unnamed' &&
+        isSameDeploymentName(group.rows[0]!.title, group.title)
+          ? group.rows[0]!
+          : null;
+      return { group, only, open: only === null && isOpen(group.key) };
+    });
+    const environmentRow = (row: (typeof rows)[number], level: number): ServicesTreeRow => ({
+      key: `environment:${row.environmentId}`,
+      level,
+      expandable: false,
+      expanded: false,
+      href: environmentHref(row.projectSourceId, row.environmentId),
+    });
+    const treeRows: ServicesTreeRow[] = [
+      { key: 'all', level: 0, expandable: false, expanded: false, href: SERVICES_ROUTE },
+      ...presented.flatMap(({ group, only, open }) =>
+        only
+          ? [environmentRow(only, 0)]
+          : [
+              {
+                key: `project:${group.key}`,
+                level: 0,
+                expandable: true,
+                expanded: open,
+                href: group.key === 'unnamed' ? null : projectHref(group.key),
+                groupKey: group.key,
+              },
+              ...(open ? group.rows.map((row) => environmentRow(row, 1)) : []),
+            ],
+      ),
+    ];
+    return { presented, rows: treeRows, byKey: new Map(treeRows.map((row) => [row.key, row])) };
+    // isOpen, environmentHref and projectHref read exactly these inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, expanded, collapsed, routeProject, needle, serverId]);
+  const keyboard = useCollectionTreeKeyboard(tree.rows, {
+    onToggle: (key) => {
+      const groupKey = tree.byKey.get(key)?.groupKey;
+      if (groupKey !== undefined) toggle(groupKey, isOpen(groupKey));
+    },
+    onOpenRow: (row) => {
+      if (row.href) onNavigate(row.href);
+      else if (row.groupKey !== undefined) toggle(row.groupKey, isOpen(row.groupKey));
+    },
+  });
+  const treeItemOf = (key: string) => {
+    const row = tree.byKey.get(key);
+    return row ? keyboard.getRowProps(row) : undefined;
+  };
 
   const renderEnvironment = (
     row: (typeof rows)[number],
@@ -231,6 +288,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         subtitle={row.subtitleLeading ? row.subtitle : undefined}
         subtitleLeading={row.subtitleLeading}
         needsYouStatus={row.needsYouStatus}
+        treeItem={treeItemOf(`environment:${row.environmentId}`)}
         child={child}
         disclosure={null}
         selected={
@@ -270,6 +328,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         <CollectionNavigationRow
           testID="services-column:all"
           href={SERVICES_ROUTE}
+          treeItem={treeItemOf('all')}
           title={t('projects.deployments.services.allServices')}
           icon={<Icon name="rocket-launch" />}
           selected={selection?.kind === 'all'}
@@ -304,16 +363,9 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         {groups.length > 0 ? (
           <CollectionListGroupLabel title={t('tabs.projects')} />
         ) : null}
-        {groups.map((group) => {
+        {tree.presented.map(({ group, only, open }) => {
           // A Project whose one Environment carries its name folds into that Environment's row.
-          const only =
-            group.rows.length === 1 &&
-            group.key !== 'unnamed' &&
-            isSameDeploymentName(group.rows[0]!.title, group.title)
-              ? group.rows[0]!
-              : null;
           if (only) return renderEnvironment(only, false, group.title);
-          const open = isOpen(group.key);
           const trouble = open
             ? null
             : (group.rows.find((row) => row.needsYouStatus)?.needsYouStatus ??
@@ -327,6 +379,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
                 title={group.title}
                 icon={<Icon name="folder" />}
                 needsYouStatus={trouble}
+                treeItem={treeItemOf(`project:${group.key}`)}
                 count={open ? null : group.rows.length}
                 disclosure={{
                   expanded: open,
