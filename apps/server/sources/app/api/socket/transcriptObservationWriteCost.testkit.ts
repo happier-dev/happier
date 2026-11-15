@@ -142,7 +142,7 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
         const lines = 4;
         const { postCommit } = await streamTranscriptLines(provider, lines, async ({ ownerId, sessionId }) => {
             const follower = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: "plain" }, select: { id: true } });
-            await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId, sharedWithUserId: follower.id, accessLevel: "view" } });
+            await db.sessionGrant.create({ data: { principalKind: "account", sessionId, createdByAccountId: ownerId, accountId: follower.id, accessLevel: "view" } });
             await db.accountSessionFollow.create({ data: { accountId: follower.id, sessionId, following: true, hasPersistentFollow: true,
                 followPolicy: JSON.stringify({ preset: "everything" }) } });
         });
