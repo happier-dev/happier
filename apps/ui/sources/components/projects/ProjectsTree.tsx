@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Status } from '@happier-dev/plugin-ui';
 import {
     HAPPIER_COLLECTION_LIST_METRICS,
+    HAPPIER_WORK_STATUS_SEMANTIC_TONE,
     resolveHappierCollectionTreeChildIndentPx,
 } from '@happier-dev/plugin-ui/presentation';
 
@@ -335,7 +337,9 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
         <>
             {props.rows.map((row) => {
                 const target = projectsTreeRowOpenTarget(row);
-                const status = row.attention === 'needs-you' ? (
+                // An Environment row is one line: its one fact stands at its end (lab rdProj).
+                const status = row.kind === 'environment' ? <ProjectsTreeRowFact row={row} testID={`${props.testID}-${row.key}-fact`} />
+                    : row.attention === 'needs-you' ? (
                     <StatusDot testID={`${props.testID}-${row.key}-needs-you`} color={theme.colors.state.warning.foreground} size={6}
                         accessibilityLabel={t('projects.checkouts.needsYou')} />
                 ) : row.attention === 'working' ? (
@@ -359,7 +363,6 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         )}
                         disclosure={row.expandable ? { expanded: row.expanded, onToggle: () => props.onToggle(row.key) } : null}
                         status={status}
-                        needsYouStatus={row.needsYouStatus}
                         count={row.count}
                         selected={row.selected}
                         dimmed={row.offline === true}
@@ -373,6 +376,17 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
             })}
         </>
     );
+}
+
+/**
+ * An Environment row's one fact at its end (lab rdProj: "v1.42", "● Deploy failed"): trouble as the shared status word
+ * in its tone, the way Services draws it; otherwise the quiet fact. The column and the phone list both draw it.
+ */
+export function ProjectsTreeRowFact(props: Readonly<{ row: Pick<ProjectsTreeRow, 'fact' | 'needsYouStatus'>; testID?: string }>) {
+    const status = props.row.needsYouStatus;
+    const testID = props.testID === undefined ? {} : { testID: props.testID };
+    if (status) return <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} label={status.word} presentation="inline" {...testID} />;
+    return props.row.fact ? <Text {...testID} numberOfLines={1} style={styles.count}>{props.row.fact}</Text> : null;
 }
 
 /** The structural rows (level 0 starts a Project) grouped per Project. */

@@ -24,12 +24,11 @@ import { useProjectsListModel } from './useProjectsListModel';
 import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeGlyphIcon, projectsTreeRowSubtitle, type ProjectsTreeEnvironmentChild, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
 import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
-import { ProjectsTree, openProjectsTreeRow } from './ProjectsTree';
+import { ProjectsTree, ProjectsTreeRowFact, openProjectsTreeRow } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
@@ -291,7 +290,8 @@ function ProjectsListRow(props: Readonly<{
     const trailing = (
         <View style={styles.trailing}>
             {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
-            {row.attention === 'needs-you' ? (
+            {row.kind === 'environment' ? <ProjectsTreeRowFact row={row} testID={`projects-list-project-${row.key}:fact`} />
+            : row.attention === 'needs-you' ? (
                 <StatusDot color={theme.colors.state.warning.foreground} size={6} accessibilityLabel={t('projects.checkouts.needsYou')} />
             ) : row.attention === 'working' ? (
                 <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
@@ -333,7 +333,6 @@ function ProjectsListRow(props: Readonly<{
             title={row.title}
             titleQualifier={row.titleQualifier}
             subtitle={subtitle || undefined}
-            subtitleLeading={row.needsYouStatus ? <WorkStatusRowMark status={row.needsYouStatus} testIDSuffix={`projects-list-project-${row.key}`} /> : undefined}
             subtitleLines={ref ? model.workspaceSubtitleLines(ref) : 1}
             icon={<Icon name={projectsTreeGlyphIcon(row.glyph)} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}

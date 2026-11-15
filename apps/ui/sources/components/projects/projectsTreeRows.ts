@@ -79,8 +79,11 @@ export type ProjectsTreeEnvironmentAddress = Readonly<{ serverId: string; projec
 export type ProjectsTreeEnvironment = ProjectsTreeEnvironmentAddress & Readonly<{
     title: string;
     titleQualifier: string | null;
-    /** Its state while it needs a look or deploys, otherwise where it runs. */
-    subtitle: string | null;
+    /**
+     * The one fact at the row's end (lab rdProj: "v1.42", "● Deploy failed"): its state word while it needs a look or
+     * deploys, otherwise its live version, otherwise how long ago it changed. Environment rows are one line.
+     */
+    fact: string | null;
     attention: ProjectsTreeAttention;
     /** The one environment row's trouble mark (failed rose, unverified amber), drawn before its state word. */
     needsYouStatus?: WorkStatusPresentation | null;
@@ -137,6 +140,8 @@ export type ProjectsTreeRow = Readonly<{
     newFromSession?: boolean;
     /** An Environment row: the Environment page it opens. Read through `projectsTreeRowEnvironment`. */
     environment?: ProjectsTreeEnvironmentAddress;
+    /** An Environment row's one fact at its end; with `needsYouStatus`, that status's word in its tone. */
+    fact?: string | null;
     /** An Environment row in trouble: its mark leads the state word, so the row needs no second dot. */
     needsYouStatus?: WorkStatusPresentation | null;
     /** A service or database under an Environment: where it opens. Read through `projectsTreeRowChild`. */
@@ -221,7 +226,8 @@ function environmentRows(project: ProjectsTreeProject, context: EnvironmentRowsC
             kind: 'environment',
             title: environment.title,
             titleQualifier: environment.titleQualifier,
-            subtitle: environment.subtitle,
+            subtitle: null,
+            fact: environment.fact,
             glyph: 'environment',
             expandable,
             expanded,
