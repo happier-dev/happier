@@ -55,6 +55,7 @@ import {
     dispatchCurrentRunnerDaemonPluginService,
     isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
     openCurrentRunnerTeamCredentialProviderBinding,
+    projectDaemonServiceRefusalCause,
     readCurrentRunnerTeamCredentialBrokerFailureEvidence,
     recordRunnerTeamCredentialRefusalRead,
     resolveCurrentAgentRuntimeDaemonTurnContributions,
@@ -1896,9 +1897,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     status: 'admitted' as const,
                 });
             }
-            throw createNativeAgentSessionEffectBoundaryError(
+            throw Object.assign(createNativeAgentSessionEffectBoundaryError(
                 'authority_unavailable_before_effect',
-            );
+            ), response.ok ? {} : { failureCause: projectDaemonServiceRefusalCause(response.error) });
         },
         async attestSessionOpen(params) {
             await attestCurrentRunnerAgentSessionOpen({

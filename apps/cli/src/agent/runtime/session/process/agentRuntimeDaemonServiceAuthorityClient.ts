@@ -19,6 +19,8 @@ import type {
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { SessionInputEnqueueResultV1 } from '@happier-dev/protocol';
 import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { TeamCredentialErrorCodeV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import {
   HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
@@ -140,7 +142,8 @@ export function isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition(
       === RUNNER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_TRANSITION_CODE;
 }
 
-function unavailableResponse(cause?: RunnerDaemonPluginServicesPreparationCauseV1): AgentRuntimeDaemonServiceResponseV1 {
+function unavailableResponse(cause?: RunnerDaemonPluginServicesPreparationCauseV1,
+  failureCause?: ActionFailureCauseV1): AgentRuntimeDaemonServiceResponseV1 {
   return {
     ok: false,
     error: {
@@ -148,11 +151,12 @@ function unavailableResponse(cause?: RunnerDaemonPluginServicesPreparationCauseV
       message:
         'Native Agent privileged effect authority is unavailable before dispatch',
       ...(cause ? { cause } : {}),
+      ...(failureCause ? { failureCause } : {}),
     },
   };
 }
-
-function unknownOutcomeResponse(cause?: RunnerDaemonPluginServicesPreparationCauseV1): AgentRuntimeDaemonServiceResponseV1 {
+function unknownOutcomeResponse(cause?: RunnerDaemonPluginServicesPreparationCauseV1,
+  failureCause?: ActionFailureCauseV1): AgentRuntimeDaemonServiceResponseV1 {
   return {
     ok: false,
     error: {
@@ -160,8 +164,28 @@ function unknownOutcomeResponse(cause?: RunnerDaemonPluginServicesPreparationCau
       message:
         'Native Agent privileged effect outcome is unknown after dispatch',
       ...(cause ? { cause } : {}),
+      ...(failureCause ? { failureCause } : {}),
     },
   };
+}
+
+/** The failed control-route boundary: its status only. Refusal codes stay file-log evidence. */
+function responseCause(httpStatus: number): ActionFailureCauseV1 {
+  return { phase: 'agent_runtime.daemon_response', errorClass: 'HttpStatusError', errorCode: null,
+    httpStatus: httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null };
+}
+
+/**
+ * A refusal collapsed to authority-unavailable keeps the boundary that failed.
+ * Synthesized responses carry their own cause; a typed daemon result keeps only
+ * its closed result code (this host's daemon vocabulary, never response prose).
+ */
+export function projectDaemonServiceRefusalCause(
+  error: Extract<AgentRuntimeDaemonServiceResponseV1, { ok: false }>['error'],
+) {
+  return projectSessionRuntimeFailureCause(error.failureCause !== undefined ? error : { failureCause: {
+    phase: 'agent_runtime.daemon_result', errorClass: 'Error', errorCode: readActionErrorCodeV1(error), httpStatus: null,
+  } }, 'turn_start');
 }
 
 async function didCurrentRunnerAuthorityRotate(
@@ -252,7 +276,7 @@ export function createCurrentRunnerManagedProviderRunServices(
     if (code.success) throw createProviderErrorV1(code.data,
       'runtimeBindingBasis' in operation ? { connectionId: operation.runtimeBindingBasis.connectionId } : {}, response.error);
     throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
-      failureCause: projectSessionRuntimeFailureCause(response.error, 'turn_start'),
+      failureCause: projectDaemonServiceRefusalCause(response.error),
     });
   };
   const services: RunnerManagedProviderRunServices = {
@@ -278,7 +302,7 @@ export function createCurrentRunnerManagedProviderRunServices(
         if (code.success) throw createProviderErrorV1(code.data, { connectionId: proof.runtimeBindingBasis.connectionId }, result.error);
       }
       throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
-        ...(!result.ok ? { failureCause: projectSessionRuntimeFailureCause(result.error, 'turn_start') } : {}),
+        ...(!result.ok ? { failureCause: projectDaemonServiceRefusalCause(result.error) } : {}),
       });
     },
     async closeBinding(proof) {
@@ -331,7 +355,7 @@ export async function openCurrentRunnerTeamCredentialProviderBinding(
     }
   }
   throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
-    ...(!response.ok ? { failureCause: projectSessionRuntimeFailureCause(response.error, 'turn_start') } : {}),
+    ...(!response.ok ? { failureCause: projectDaemonServiceRefusalCause(response.error) } : {}),
   });
 }
 
@@ -560,7 +584,7 @@ export async function authorizeCurrentAgentRuntimeDaemonModelTransition(
     }
   }
   throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
-    ...(!response.ok ? { failureCause: projectSessionRuntimeFailureCause(response.error, 'turn_start') } : {}),
+    ...(!response.ok ? { failureCause: projectDaemonServiceRefusalCause(response.error) } : {}),
   });
 }
 
@@ -869,7 +893,7 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
       checkpoint: 'authority_read',
       code: NATIVE_AGENT_SESSION_EFFECT_AUTHORITY_UNAVAILABLE_CODE,
     });
-    return unavailableResponse();
+    return unavailableResponse(undefined, { phase: 'agent_runtime.authority_read', errorClass: 'Error', errorCode: null, httpStatus: null });
   }
 
   const issuedRequest = input.createRequest(authority.capability);
@@ -959,10 +983,10 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
               === 'agent_runtime_daemon_service_admission_invalid'
           )
         ) {
-          return unknownOutcomeResponse(cause);
+          return unknownOutcomeResponse(cause, responseCause(response.status));
         }
       }
-      return unavailableResponse(cause);
+      return unavailableResponse(cause, responseCause(response.status));
     }
     const parsedBody = rawBody.trim()
       ? JSON.parse(rawBody) as unknown
@@ -981,7 +1005,7 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
     })) {
       throw createRunnerAgentRuntimeDaemonServiceAuthorityTransitionError();
     }
-    return unknownOutcomeResponse();
+    return unknownOutcomeResponse(undefined, responseCause(response.status));
   } catch (error) {
     input.signal?.throwIfAborted();
     if (
@@ -996,10 +1020,10 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
       throw createRunnerAgentRuntimeDaemonServiceAuthorityTransitionError();
     }
     if (isProvenPreDispatchConnectionFailure(error)) {
-      return unavailableResponse();
+      return unavailableResponse(undefined, projectActionFailureCauseV1(error, 'agent_runtime.daemon_connect'));
     }
     return unknownOutcomeResponse(timeoutSignal?.aborted
       ? { code: 'TimeoutError', stage: 'dispatch' }
-      : undefined);
+      : undefined, projectActionFailureCauseV1(error, 'agent_runtime.daemon_response'));
   }
 }

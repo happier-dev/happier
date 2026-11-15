@@ -998,7 +998,7 @@ describe('current Agent runtime daemon service authority client', () => {
           },
         }),
       });
-    await expect(dispatch()).resolves.toEqual({
+    await expect(dispatch()).resolves.toMatchObject({
       ok: false,
       error: {
         code: 'native_agent_privileged_effect_authority_unavailable',
@@ -1006,7 +1006,7 @@ describe('current Agent runtime daemon service authority client', () => {
           'Native Agent privileged effect authority is unavailable before dispatch',
       },
     });
-    await expect(dispatch()).resolves.toEqual({
+    await expect(dispatch()).resolves.toMatchObject({
       ok: false,
       error: {
         code: 'native_agent_privileged_effect_outcome_unknown',
@@ -1107,7 +1107,7 @@ describe('current Agent runtime daemon service authority client', () => {
     // The daemon settled the request after dispatch: the admission custody
     // effect may already have been recorded, so the closed typed outcome is
     // unknown — never "unavailable before dispatch".
-    await expect(dispatch('custody-503')).resolves.toEqual({
+    await expect(dispatch('custody-503')).resolves.toMatchObject({
       ok: false,
       error: {
         code: 'native_agent_privileged_effect_outcome_unknown',
@@ -1116,7 +1116,7 @@ describe('current Agent runtime daemon service authority client', () => {
       },
     });
     // A merely typed 503 is not evidence that dispatch occurred.
-    await expect(dispatch('typed-predispatch-503')).resolves.toEqual({
+    await expect(dispatch('typed-predispatch-503')).resolves.toMatchObject({
       ok: false,
       error: {
         code: 'native_agent_privileged_effect_authority_unavailable',
@@ -1125,7 +1125,7 @@ describe('current Agent runtime daemon service authority client', () => {
       },
     });
     // The route refused before dispatch while quiescing: not attempted.
-    await expect(dispatch('quiescing-503')).resolves.toEqual({
+    await expect(dispatch('quiescing-503')).resolves.toMatchObject({
       ok: false,
       error: {
         code: 'native_agent_privileged_effect_authority_unavailable',
