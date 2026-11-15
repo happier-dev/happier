@@ -19,6 +19,20 @@ function makeAgentAccountSettings(account: Readonly<Record<string, unknown>>) {
 }
 
 describe('createAgentUiBehaviorFromDescriptor', () => {
+    it('declares availability Account reads from nested dependency and resume conditions', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            resume: { experimentSwitches: [{ id: 'resume', when: { any: [
+                { kind: 'settingTrue', settingKey: { scope: 'host', localId: 'experiments' } },
+                { kind: 'settingTrue', settingKey: { scope: 'daemon', localId: 'daemonOnly' } },
+            ] } }] },
+            newSession: { relevantInstallableDeps: [{ keys: ['test-dep'], when: { all: [
+                { kind: 'settingEquals', settingKey: { scope: 'account', localId: 'codexBackendMode' }, value: 'acp' },
+                { kind: 'settingTrue', settingKey: { scope: 'account', localId: 'showLineNumbers' } },
+            ] } }] },
+        }, 'acme');
+        expect(diagnostics).toEqual([]);
+        expect(behavior.newSession?.availabilitySettingKeys).toEqual(['codexBackendMode', 'experiments']);
+    });
     it('refuses malformed pool settings with a projection diagnostic', () => {
         const result = createAgentUiBehaviorFromDescriptor({
             kind: 'plugin.ui.v1', pluginId: 'acme.agent', agentId: 'acme', version: 1,

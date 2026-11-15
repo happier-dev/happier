@@ -280,6 +280,8 @@ export type AgentUiBehavior = Readonly<{
     newSession?: Readonly<{
         /** Account dependencies are declared beside the descriptor interpreter that reads them. */
         configuredRuntimeSettingKeys?: readonly string[];
+        /** Account reads made by installable dependency and resume experiment callbacks. */
+        availabilitySettingKeys?: readonly string[];
         transcriptStorageSettingKeys?: readonly string[];
         /** Parsed native declarations for descriptive consumers; no chip factories or option-state reads. */
         agentInputExtraActionChipDefinitions?: readonly BooleanOptionActionChipDefinition[];

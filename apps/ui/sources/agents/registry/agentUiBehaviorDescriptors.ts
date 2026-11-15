@@ -397,6 +397,14 @@ function normalizeContextWindowBumpTokens(value: readonly number[] | undefined):
     )).sort((left, right) => left - right);
 }
 
+function getConditionAccountSettingKeys(condition: DescriptorCondition | undefined): readonly string[] {
+    if (!condition) return [];
+    if ('all' in condition) return condition.all.flatMap(getConditionAccountSettingKeys);
+    if ('any' in condition) return condition.any.flatMap(getConditionAccountSettingKeys);
+    return condition.kind === 'settingEquals' || condition.kind === 'settingTrue'
+        ? getAgentUiSettingAccountKeys(condition.settingKey) : [];
+}
+
 function evaluateDescriptorCondition(
     condition: DescriptorCondition | undefined,
     ctx: Readonly<{
@@ -1642,7 +1650,13 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
             return acc;
         }, []);
 
+    const availabilitySettingKeys = [...new Set([
+        ...conditionalRelevantInstallableDeps.flatMap(entry => getConditionAccountSettingKeys(entry.when)),
+        ...experimentSwitches.flatMap(entry => entry.when
+            ? getConditionAccountSettingKeys(entry.when) : getAgentUiSettingAccountKeys(entry.settingKey)),
+    ])];
     const newSessionBehavior: NonNullable<AgentUiBehavior['newSession']> = {
+        ...(availabilitySettingKeys.length > 0 ? { availabilitySettingKeys } : {}),
         ...(relevantInstallableDepKeys.length > 0 || conditionalRelevantInstallableDeps.length > 0
             ? {
                 getRelevantInstallableDepKeys: (ctx) => {

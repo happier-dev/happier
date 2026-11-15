@@ -33,6 +33,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from '@/sync/store/hooks';
+import { getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
 import type {
     AgentPluginSettingsReadiness,
     AgentPluginSettingsSnapshot,
@@ -96,7 +97,11 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const getBackendEntryMachineAgent = React.useCallback((entry: ResolvedBackendCatalogEntry) =>
         findMachineAgentForBackendTargetKey(machineAgents.agents, entry.backendTargetKey), [machineAgents.agents]);
     const tmuxRequested = resolveTerminalHost({ settings: params.settings, machineId: params.selectedMachineId }) === 'tmux';
-    // Agent callbacks can read arbitrary released Account carriers; whole-snapshot demand is explicit.
+    const availabilitySettingsKeys = getAgentUiSettingsKeys({
+        agentIds: behaviorAgentId ? [behaviorAgentId] : [],
+        machineId: params.selectedMachineId,
+        domain: 'availability',
+    });
     const relevantInstallableDepKeys = useSettingsSelector(React.useCallback((settings) => {
         if (!params.selectedMachineId || !behaviorAgentId) return [];
 
@@ -109,7 +114,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             resumeSessionId: params.resumeSessionId ?? '',
             machineId: params.selectedMachineId,
         });
-    }, [behaviorAgentId, params.pluginSettings, params.pluginProjectionV2, params.resumeSessionId, params.selectedMachineId]), true);
+    }, [behaviorAgentId, params.pluginSettings, params.pluginProjectionV2, params.resumeSessionId, params.selectedMachineId]), availabilitySettingsKeys);
     const selectedInstallables = React.useMemo(() => relevantInstallableDepKeys.length === 0 ? []
         : getInstallablesRegistryEntries({ pluginProjection: params.pluginProjectionV2 ?? undefined })
             .filter((entry) => relevantInstallableDepKeys.includes(entry.key)), [params.pluginProjectionV2, relevantInstallableDepKeys]);

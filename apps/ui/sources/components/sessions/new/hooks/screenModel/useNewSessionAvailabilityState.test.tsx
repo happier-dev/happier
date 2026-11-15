@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { act } from 'react-test-renderer';
+import { CODEX_ACP_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -34,6 +35,46 @@ afterEach(async () => {
 afterAll(() => network.dispose());
 
 describe('machine launch readiness', () => {
+    it('does no availability computation for unrelated settings and updates declared Account carriers', async () => {
+        const catalog = await import('@/agents/catalog/catalog');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const home = await network.addHome('https://availability-settings.example.test', 'availability-settings-owner');
+        storage.getState().applySettings(settingsParse({ ...settingsDefaults, codexBackendMode: 'mcp' }), 1);
+        const compute = vi.spyOn(catalog, 'getNewSessionRelevantInstallableDepKeys');
+        const machine = createMachineFixture({ id: 'availability-settings', active: true, activeAt: Date.now() });
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            machineAgents, selectedMachineId: machine.id, selectedMachine: machine, capabilityServerId: home.id,
+            staticAgentId: 'codex', machineProbesEnabled: false, externalSessionsFeatureEnabled: false,
+            pluginProjectionV2: { familiesById: { managedDependencies: { family: 'managedDependencies', entriesById: {
+                [INSTALLABLE_KEYS.CODEX_ACP]: {
+                    id: INSTALLABLE_KEYS.CODEX_ACP, key: INSTALLABLE_KEYS.CODEX_ACP, capabilityId: CODEX_ACP_DEP_ID,
+                    sourceKind: 'github_release_binary', display: { name: 'Codex ACP' }, experimental: false,
+                    defaultPolicy: { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },
+                },
+            } } } },
+            settings: settingsDefaults, resumeSessionId: null, backendNewSessionOptionStateByTargetKey: {},
+            resolvedBackendEntries: [], selectedBackendEntry: null, setBackendTarget: vi.fn(), machines: [machine], allProfiles: [],
+        }));
+        try {
+            expect(hook.getCurrent().wizardInstallableDeps).toEqual([]);
+            compute.mockClear();
+            for (let revision = 2; revision <= 4; revision++) {
+                await act(async () => {
+                    const current = storage.getState();
+                    current.applySettings({ ...current.settings, showLineNumbers: !current.settings.showLineNumbers }, revision);
+                });
+            }
+            expect(compute).toHaveBeenCalledTimes(0);
+            await act(async () => {
+                storage.getState().applySettings(settingsParse({ ...storage.getState().settings, codexBackendMode: 'acp' }), 5);
+            });
+            expect(compute.mock.calls.length).toBeGreaterThan(0);
+            expect(hook.getCurrent().wizardInstallableDeps.map(dep => dep.entry.key)).toEqual([INSTALLABLE_KEYS.CODEX_ACP]);
+        } finally {
+            compute.mockRestore();
+            await hook.unmount();
+        }
+    });
     it('uses inventory offline and recovery status for the Agent picker availability callbacks', async () => {
         const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
         const [entry] = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] });

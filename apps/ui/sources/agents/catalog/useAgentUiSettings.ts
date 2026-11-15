@@ -3,7 +3,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
-type AgentUiSettingsDomain = 'runtime' | 'transcriptStorage';
+type AgentUiSettingsDomain = 'runtime' | 'transcriptStorage' | 'availability';
 
 /** Consume dependencies from the same interpreted behavior that will read the selected values. */
 export function getAgentUiSettingsKeys(params: Readonly<{
@@ -17,7 +17,9 @@ export function getAgentUiSettingsKeys(params: Readonly<{
         const behavior = resolveAgentUiBehavior(agentId, params.machineId, params.accountScope).newSession;
         const dependencies = params.domain === 'runtime'
             ? behavior?.configuredRuntimeSettingKeys
-            : behavior?.transcriptStorageSettingKeys;
+            : params.domain === 'availability'
+                ? behavior?.availabilitySettingKeys
+                : behavior?.transcriptStorageSettingKeys;
         dependencies?.forEach(key => keys.add(key));
     }
     return [...keys];
