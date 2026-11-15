@@ -47,6 +47,7 @@ export function buildSessionAllTabsSections(params: Readonly<{
 }
 
 type PhoneTabs = ReturnType<typeof usePhoneWorkspaceTabs>;
+const NO_DEMANDED_TABS: ReadonlySet<string> = new Set();
 
 export type SessionAllTabsSnapshot = Readonly<{
     currentKey: string;
@@ -127,8 +128,9 @@ export function useSessionAllTabsPage(session: Readonly<{ sessionId: string; ser
     done: () => void;
 }> {
     const router = useRouter();
-    // The page names every open tab, so it demands every tab's content while it is open.
-    const phoneTabs = usePhoneWorkspaceTabs(null);
+    // The cards are one snapshot read when the page opens (below), so content demanded after that is never
+    // shown here: the page demands none and names tabs from content already held or their saved titles.
+    const phoneTabs = usePhoneWorkspaceTabs(NO_DEMANDED_TABS);
     const navigateToSession = useNavigateToSession();
     const [snapshot] = React.useState(() => readSessionAllTabs({ session, phoneTabs }));
     const latest = React.useRef({ phoneTabs, navigateToSession });

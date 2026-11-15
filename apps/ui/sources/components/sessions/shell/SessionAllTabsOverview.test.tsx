@@ -22,11 +22,18 @@ const row = (key: string, section: SessionSwitcherRow['section'], target: Sessio
     status: null, timeLabel: '', excerpt: null, draft: null, unavailable: false,
 });
 
+// The page's virtualized list is a third-party rendering boundary; the testkit recycler substitute
+// renders the rows a phone viewport holds.
+vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItemLimit: 8 }));
+
+// Resolve the page's module graph during collection, not inside the first test's deadline.
+const { buildSessionAllTabsSections } = await import('./useSessionAllTabsOpener');
+const { SessionAllTabsOverviewBody } = await import('./SessionAllTabsOverview');
+
 describe('All tabs overview', () => {
     afterEach(() => standardCleanup());
 
     it('leads with open tabs, then recents; without open tabs the recents are this phone’s own', async () => {
-        const { buildSessionAllTabsSections } = await import('./useSessionAllTabsOpener');
         const withTabs = buildSessionAllTabsSections({
             synced: true,
             rows: [
@@ -46,7 +53,6 @@ describe('All tabs overview', () => {
     });
 
     it('marks the session on screen, opens the tapped card, and invites when there is nothing else', async () => {
-        const { SessionAllTabsOverviewBody } = await import('./SessionAllTabsOverview');
         const { buildServerScopedSessionKey } = await import('@/sync/domains/session/navigation/sessionNavigationOrder');
         const onOpen = vi.fn();
         const current = row('tab:here', 'openTabs', { kind: 'session', sessionId: 'here', serverId: 's', tabId: 'here' });
@@ -68,5 +74,22 @@ describe('All tabs overview', () => {
         );
         expect(empty.findByTestId('session-all-tabs-card:tab:other')).toBeNull();
         expect(empty.getTextContent()).toContain('phoneNav.allTabs.emptyTitle');
+    });
+
+    it('mounts only the cards near the viewport, independent of how many tabs are open', async () => {
+        const mountedCards = async (count: number) => {
+            const rows = Array.from({ length: count }, (_, index) => row(`tab:${count}-${index}`, 'openTabs',
+                { kind: 'session', sessionId: `${count}-${index}`, serverId: 's', tabId: `${count}-${index}` }));
+            const screen = await renderScreen(<SessionAllTabsOverviewBody
+                sections={[{ key: 'openTabs', title: 'Open tabs', rows }]} currentKey={null} onOpen={() => {}} />);
+            const cards = screen.root.findAll(node => typeof node.type === 'string'
+                && String(node.props.testID ?? '').startsWith('session-all-tabs-card:')).length;
+            await screen.unmount();
+            return cards;
+        };
+        const small = await mountedCards(40);
+        const large = await mountedCards(400);
+        expect({ small, large, sameWindow: small === large, withinViewport: small > 0 && small < 40 })
+            .toMatchObject({ sameWindow: true, withinViewport: true });
     });
 });

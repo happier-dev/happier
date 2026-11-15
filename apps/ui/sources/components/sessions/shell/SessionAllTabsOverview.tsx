@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
@@ -9,6 +9,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import type { SessionSwitcherRow } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherRows';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { Text } from '@/components/ui/text/Text';
+import { VirtualizedList, type VirtualizedListRenderItemInfo } from '@/components/ui/lists/virtualized';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -61,21 +62,17 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.link,
     },
     scroll: {
-        flexGrow: 0,
+        flex: 1,
     },
     body: {
         paddingHorizontal: theme.space.s12,
         paddingBottom: theme.space.s16,
-        gap: theme.space.s12,
     },
     sectionTitle: {
         ...Typography.variant('body', 'semiBold'),
         color: theme.colors.text.secondary,
         paddingHorizontal: theme.space.s4,
         paddingTop: theme.space.s4,
-    },
-    grid: {
-        gap: theme.space.s12,
     },
     gridRow: {
         flexDirection: 'row',
@@ -228,44 +225,73 @@ function pairs<T>(items: readonly T[]): Array<readonly [T, T | null]> {
     return result;
 }
 
+/** One list row: a section's title, or a row of two cards (session cards first, then compact tab cards). */
+type AllTabsListItem =
+    | Readonly<{ kind: 'title'; key: string; title: string; first: boolean }>
+    | Readonly<{ kind: 'cards'; key: string; left: SessionSwitcherRow; right: SessionSwitcherRow | null; leadsGroup: boolean }>;
+
+/** A row of two cards is about one card tall plus the grid gap. */
+const ESTIMATED_LIST_ROW_HEIGHT = CARD_MIN_HEIGHT + 12;
+
+function buildAllTabsListItems(sections: readonly SessionAllTabsSection[]): readonly AllTabsListItem[] {
+    const items: AllTabsListItem[] = [];
+    for (const section of sections) {
+        if (section.rows.length === 0) continue;
+        items.push({ kind: 'title', key: `title:${section.key}`, title: section.title, first: items.length === 0 });
+        for (const group of [section.rows.filter((row) => row.target.kind !== 'tab'), section.rows.filter((row) => row.target.kind === 'tab')]) {
+            pairs(group).forEach(([left, right], index) => items.push({ kind: 'cards', key: left.key, left, right, leadsGroup: index === 0 }));
+        }
+    }
+    return items;
+}
+
+/**
+ * The cards scroll in the canonical virtualized list: a person can keep hundreds of tabs open, and only the
+ * rows near the viewport are built. The spacing is the page's own: a section's title sits a grid gap below
+ * the section before it, the first row of each group sits closer under its title.
+ */
 export function SessionAllTabsOverviewBody(props: Readonly<{
     sections: readonly SessionAllTabsSection[];
     currentKey: string | null;
     onOpen: (key: string) => void;
 }>) {
-    const sections = props.sections.filter((section) => section.rows.length > 0);
+    const { theme } = useUnistyles();
+    const items = React.useMemo(() => buildAllTabsListItems(props.sections), [props.sections]);
+    const { currentKey, onOpen } = props;
+    const renderItem = React.useCallback(({ item }: VirtualizedListRenderItemInfo<AllTabsListItem>) => item.kind === 'title' ? (
+        <Text style={[styles.sectionTitle, item.first ? null : { marginTop: theme.space.s12 }]} accessibilityRole="header">{item.title}</Text>
+    ) : (
+        <View style={[styles.gridRow, { paddingTop: item.leadsGroup ? theme.space.s8 : theme.space.s12 }]}>
+            <View style={styles.cell}>
+                <SessionAllTabsCardView row={item.left} current={isCurrentRow(item.left, currentKey)} onPress={onOpen} />
+            </View>
+            {/* An odd last card keeps its column instead of stretching across both. */}
+            <View style={styles.cell}>
+                {item.right ? <SessionAllTabsCardView row={item.right} current={isCurrentRow(item.right, currentKey)} onPress={onOpen} /> : null}
+            </View>
+        </View>
+    ), [currentKey, onOpen, theme.space.s12, theme.space.s8]);
     return (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.body} testID="session-all-tabs-overview">
-            {sections.length === 0 ? (
+        <VirtualizedList
+            testID="session-all-tabs-overview"
+            style={styles.scroll}
+            contentContainerStyle={styles.body}
+            data={items}
+            keyExtractor={allTabsListItemKey}
+            renderItem={renderItem}
+            extraData={currentKey}
+            estimatedItemSize={ESTIMATED_LIST_ROW_HEIGHT}
+            ListEmptyComponent={(
                 <View style={styles.empty}>
                     <Text style={styles.emptyTitle}>{t('phoneNav.allTabs.emptyTitle')}</Text>
                     <Text style={styles.emptyDescription}>{t('phoneNav.allTabs.emptyDescription')}</Text>
                 </View>
-            ) : sections.map((section) => (
-                <View key={section.key} style={{ gap: 8 }}>
-                    <Text style={styles.sectionTitle} accessibilityRole="header">{section.title}</Text>
-                    {[section.rows.filter((row) => row.target.kind !== 'tab'), section.rows.filter((row) => row.target.kind === 'tab')]
-                        .filter((group) => group.length > 0)
-                        .map((group) => (
-                    <View key={group[0]!.key} style={styles.grid}>
-                        {pairs(group).map(([left, right]) => (
-                            <View key={left.key} style={styles.gridRow}>
-                                <View style={styles.cell}>
-                                    <SessionAllTabsCardView row={left} current={isCurrentRow(left, props.currentKey)} onPress={props.onOpen} />
-                                </View>
-                                {/* An odd last card keeps its column instead of stretching across both. */}
-                                <View style={styles.cell}>
-                                    {right ? <SessionAllTabsCardView row={right} current={isCurrentRow(right, props.currentKey)} onPress={props.onOpen} /> : null}
-                                </View>
-                            </View>
-                        ))}
-                    </View>
-                        ))}
-                </View>
-            ))}
-        </ScrollView>
+            )}
+        />
     );
 }
+
+function allTabsListItemKey(item: AllTabsListItem): string { return item.key; }
 
 /** The All tabs page: a large title with Done, then the cards. Rendered by the `/all-tabs` route. */
 export function SessionAllTabsPageView(props: Readonly<{
