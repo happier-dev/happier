@@ -8,6 +8,9 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { stopReadAloud } from '@/voice/local/readAloudState';
+import { setVoiceSessionSnapshot, useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
+import { NavigationContext } from '@react-navigation/native';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,6 +25,10 @@ const modal = vi.hoisted(() => ({ spies: null as null | { alert: ReturnType<type
 const primeWebAudioPlayback = vi.hoisted(() => vi.fn());
 
 vi.mock('expo-speech', () => expoSpeech);
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ pathname: '/settings/voice' }).module;
+});
 vi.mock('@/voice/output/webAudioContext', () => ({ primeWebAudioPlayback }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -52,6 +59,7 @@ const localVoice = voiceSettingsParse({
 
 let utterances: SpeakOptions[] = [];
 const initialStorageState = storage.getState();
+const initialVoiceTargetState = useVoiceTargetStore.getState();
 
 describe('MessageSpeakButton', () => {
     beforeEach(async () => {
@@ -65,6 +73,8 @@ describe('MessageSpeakButton', () => {
         stopReadAloud();
         utterances.forEach(utterance => utterance.onStopped?.());
         storage.setState(initialStorageState, true);
+        setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+        useVoiceTargetStore.setState(initialVoiceTargetState, true);
         utterances = [];
         expoSpeech.speak.mockReset();
         expoSpeech.stop.mockReset();
@@ -162,5 +172,56 @@ describe('MessageSpeakButton', () => {
 
         await act(async () => { screen.pressByTestId('speak'); });
         await vi.waitFor(() => expect(modal.spies?.alert).toHaveBeenCalledWith('common.error', 'message.readAloudFailed'));
+    });
+
+    it.each(['speaking', 'preparing'] as const)('keeps one global Stop while %s after leaving the transcript and restores live placement afterward', async (phase) => {
+        const { MessageSpeakButton } = await import('./MessageSpeakButton');
+        const { VoiceSurface } = await import('@/components/voice/surface/VoiceSurface');
+        const { renderAppStackScreenWithVoiceSurface } = await import('@/components/navigation/appStackScreenLayout');
+        setup();
+        const synthesis = { signal: null as AbortSignal | null };
+        const tts = phase === 'preparing'
+            ? { provider: 'openai_compat', openaiCompat: { baseUrl: 'https://tts.example.test' } }
+            : { provider: 'device' };
+        setVoice(voiceSettingsParse({ ...localVoice, adapters: { local_conversation: { tts } }, ui: { surfaceLocation: 'session', scopeDefault: 'session' } }));
+        if (phase === 'preparing') {
+            // HTTP synthesis is pending at the network boundary; cancellation and the provider stay real.
+            vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (_input, init) => new Promise<Response>((_resolve, reject) => {
+                synthesis.signal = init?.signal ?? null;
+                synthesis.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            })));
+        }
+        setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 's1', status: 'connected', mode: 'idle', canStop: true });
+        const surfaces = <>
+            <VoiceSurface variant="sidebar" />
+            <VoiceSurface variant="session" sessionId="s1" />
+        </>;
+        const shell = (children: React.ReactElement, focused = true, key = 'current') => {
+            // Host boundary supplies only the SDK methods useIsFocused consumes; its hook stays real.
+            const navigation = { isFocused: () => focused, addListener: () => () => {} } as unknown as React.ContextType<typeof NavigationContext>;
+            return <NavigationContext.Provider key={key} value={navigation}>
+                {renderAppStackScreenWithVoiceSurface({ options: {}, children })}
+            </NavigationContext.Provider>;
+        };
+        const screen = await renderScreen(shell(<><MessageSpeakButton messageKey="m1" text="hello" testID="speak" />{surfaces}</>));
+        await act(async () => { screen.pressByTestId('speak'); });
+        if (phase === 'preparing') await vi.waitFor(() => expect(synthesis.signal).not.toBeNull());
+        await act(async () => {
+            useVoiceTargetStore.getState().setScope('global');
+            screen.tree.update(<>{shell(<></>, false, 'previous')}{shell(surfaces)}</>);
+        });
+
+        expect(expoSpeech.stop).not.toHaveBeenCalled();
+        expect(useVoiceTargetStore.getState().scope).toBe('global');
+        const controls = (label: string) => screen.findAllByType('Pressable').filter(button => button.props.accessibilityLabel === label);
+        const stops = controls('message.stopReadAloudA11y');
+        expect(stops).toHaveLength(1);
+        expect(controls('voiceAssistant.tapToEnd')).toHaveLength(0);
+        await act(async () => { stops[0].props.onPress(); });
+        if (phase === 'speaking') expect(expoSpeech.stop).toHaveBeenCalledTimes(1);
+        else expect(synthesis.signal?.aborted).toBe(true);
+        expect(useVoiceSessionStore.getState()).toMatchObject({ status: 'connected', sessionId: 's1', mode: 'idle' });
+        expect(controls('message.stopReadAloudA11y')).toHaveLength(0);
+        expect(controls('voiceAssistant.tapToEnd')).toHaveLength(1);
     });
 });

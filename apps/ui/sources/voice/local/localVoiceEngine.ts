@@ -208,6 +208,23 @@ async function startLocalVoiceInput(sessionId: string, provider: ReturnType<type
   else await startRecording(sessionId);
 }
 
+async function stopLocalVoiceInput(sessionId: string): Promise<void> {
+  // Disable endpointing before stopping recognition so discarded input cannot submit or re-arm.
+  deviceSttController.clearHandsFreeSession(sessionId);
+  sherpaSttController.clearHandsFreeSession(sessionId);
+  const activeRecorder = recorder;
+  const stopRecorder = async () => {
+    if (!activeRecorder) return;
+    await activeRecorder.stop();
+    if (recorder === activeRecorder) recorder = null;
+  };
+  await Promise.all([
+    stopRecorder(),
+    deviceSttController.stop(sessionId),
+    sherpaSttController.stop(sessionId),
+  ]);
+}
+
 async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<void> {
   patchLocalVoiceState({ status: 'transcribing', error: null });
 
@@ -348,6 +365,33 @@ async function runAbortableVoiceTurn(sessionId: string, runner: (signal: AbortSi
   }
 }
 
+/** Discards active microphone input without submitting it or ending the live voice session. */
+export async function cancelLocalVoiceRecording(): Promise<void> {
+  const current = getLocalVoiceState();
+  const sessionId = current.sessionId;
+  if (!sessionId) return;
+  if (current.status === 'recording') {
+    if (inFlight) await inFlight;
+    const recording = getLocalVoiceState();
+    if (recording.status === 'recording' && recording.sessionId === sessionId) {
+      const stopping = stopLocalVoiceInput(sessionId);
+      inFlight = stopping;
+      try {
+        await stopping;
+      } catch (error) {
+        patchLocalVoiceState(resolveLocalVoiceError(error, 'recording_stop_failed'));
+        throw error;
+      } finally {
+        if (inFlight === stopping) inFlight = null;
+      }
+    }
+  }
+
+  if (getLocalVoiceState().status === 'recording' && getLocalVoiceState().sessionId === sessionId) {
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+  }
+}
+
 export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
   const current = getLocalVoiceState();
   if (!current.sessionId) return;
@@ -361,8 +405,10 @@ export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
       // ignore
     }
   }
-
-  patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+  await cancelLocalVoiceRecording();
+  if (getLocalVoiceState().sessionId === sessionId) {
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+  }
 }
 
 export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
@@ -514,29 +560,10 @@ export async function stopLocalVoiceSession(): Promise<void> {
     activeTurnAbortSessionId = null;
   }
 
-  // Best-effort stop any recording (we intentionally do not send).
-  if (recorder) {
-    try {
-      await recorder.stop();
-    } catch {
-      // ignore
-    }
-    recorder = null;
-  }
-
   if (typeof activeSessionId === 'string' && activeSessionId.trim().length > 0) {
-    // Hang-up ends hands-free first so no auto-stop or re-arm can run while recognizers stop.
-    deviceSttController.clearHandsFreeSession(activeSessionId);
-    sherpaSttController.clearHandsFreeSession(activeSessionId);
-
     try {
-      await deviceSttController.stop(activeSessionId);
-    } catch {
-      // ignore
-    }
-
-    try {
-      await sherpaSttController.stop(activeSessionId);
+      if (current.status === 'recording') await cancelLocalVoiceRecording();
+      else await stopLocalVoiceInput(activeSessionId);
     } catch {
       // ignore
     }

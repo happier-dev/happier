@@ -27,6 +27,14 @@ export function getReadAloudActiveKey(): string | null {
   return activeKey;
 }
 
+export function isReadAloudRunCurrent(run: number): boolean {
+  return activeRun === run && activeKey !== null;
+}
+
+export function useIsReadAloudActive(): boolean {
+  return React.useSyncExternalStore(subscribe, () => activeKey !== null, () => false);
+}
+
 /** Whether this message is the one being read; other messages' hooks keep their value and do not rerender. */
 export function useIsReadingAloud(key: string): boolean {
   return React.useSyncExternalStore(subscribe, () => activeKey === key, () => false);

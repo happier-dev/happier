@@ -6,11 +6,13 @@ import { getCachedServerFeaturesSnapshot, subscribeServerFeaturesSnapshot } from
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import type { FeatureLocalPolicySettings } from '@/sync/domains/features/featureLocalPolicy';
+import { cancelLocalVoiceRecording, getLocalVoiceState } from './localVoiceEngine';
 
 import { isReadAloudAvailable, resolveLocalVoiceAdapterSettings, type LocalVoiceSettingsInput } from './localVoiceSettings';
 import {
   finishReadAloudRun,
   getReadAloudActiveKey,
+  isReadAloudRunCurrent,
   startReadAloudRun,
   stopReadAloud,
   trackReadAloudStopper,
@@ -58,9 +60,23 @@ export async function toggleReadAloud(params: Readonly<{
   ];
   const releaseSubscriptions = () => {
     for (const unsubscribe of subscriptions.splice(0)) unsubscribe();
+    unregisterRun();
+    untrackRun();
   };
+  const stopRun = () => {
+    releaseSubscriptions();
+    finishReadAloudRun(run);
+  };
+  const unregisterRun = localVoicePlaybackController.registerStopper(stopRun);
+  const untrackRun = trackReadAloudStopper(stopRun);
   const { config } = resolveLocalVoiceAdapterSettings(params.settings);
   try {
+    const localVoice = getLocalVoiceState();
+    if (localVoice.status === 'recording' && localVoice.sessionId) {
+      await cancelLocalVoiceRecording();
+      if (!isReadAloudRunCurrent(run)) return true;
+      if (!canReadAloud(storage.getState().settings)) return true;
+    }
     return await speakAssistantText({
       text: params.text,
       settings: params.settings,
@@ -71,8 +87,6 @@ export async function toggleReadAloud(params: Readonly<{
         const stop = () => {
           unregisterShared();
           untrack();
-          releaseSubscriptions();
-          finishReadAloudRun(run);
           stopper();
         };
         const unregisterShared = localVoicePlaybackController.registerStopper(stop);
@@ -85,6 +99,9 @@ export async function toggleReadAloud(params: Readonly<{
       onSpeaking: () => {},
       takeOverReadAloud: false,
     });
+  } catch (error) {
+    console.warn('[voice/readAloud] microphone cancellation failed', error instanceof Error ? error.message : error);
+    return false;
   } finally {
     releaseSubscriptions();
     finishReadAloudRun(run);

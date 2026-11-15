@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 import { usePathname } from 'expo-router';
 
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -38,9 +38,11 @@ import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Icon } from '@/components/ui/icons/Icon';
+import { stopReadAloud, useIsReadAloudActive } from '@/voice/local/readAloudState';
 
 
-export type VoiceSurfaceVariant = 'sidebar' | 'session';
+export type VoiceSurfaceVariant = 'sidebar' | 'session' | 'global';
+type VoiceSurfaceProps = Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: StyleProp<ViewStyle> }>;
 
 const EMPTY_EVENTS: ReadonlyArray<any> = [];
 
@@ -51,7 +53,14 @@ function resolveSessionIdFromPathname(pathname: string | null | undefined): stri
   return sessionId.length > 0 ? sessionId : null;
 }
 
-export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: any }>) {
+export function VoiceSurface(props: VoiceSurfaceProps) {
+  const readingAloud = useIsReadAloudActive();
+  // Standalone playback uses the app shell placement; live voice keeps its configured placement.
+  if (props.variant === 'global' ? !readingAloud : readingAloud) return null;
+  return <VoiceSurfaceContent {...props} readingAloud={readingAloud} />;
+}
+
+function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud: boolean }>) {
   const navigateToSession = useNavigateToSession();
   const pathname = usePathname();
   const { theme } = useUnistyles();
@@ -63,7 +72,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   const ui = voice?.ui ?? {};
   const scopeDefault = ui.scopeDefault === 'session' ? 'session' : 'global';
   const surfaceLocation = ui.surfaceLocation === 'sidebar' || ui.surfaceLocation === 'session' ? ui.surfaceLocation : 'auto';
-  const activityFeedEnabled = voice?.ui?.activityFeedEnabled === true;
+  const activityFeedEnabled = !props.readingAloud && voice?.ui?.activityFeedEnabled === true;
   const activityFeedAutoExpandOnStart = voice?.ui?.activityFeedAutoExpandOnStart === true;
 
   const sessionSurfaceSessionId = typeof props.sessionId === 'string' ? props.sessionId.trim() : '';
@@ -124,9 +133,10 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   const [expanded, setExpanded] = React.useState(false);
 
   React.useEffect(() => {
+    if (props.readingAloud) return;
     // Keep store scope in sync with the user's default voice scope.
     useVoiceTargetStore.getState().setScope(scopeDefault);
-  }, [scopeDefault]);
+  }, [props.readingAloud, scopeDefault]);
 
   const hydratedVoiceAgentEpochRef = React.useRef<number | null>(null);
   React.useEffect(() => {
@@ -204,13 +214,14 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     return scopeDefault === 'global' ? props.variant === 'sidebar' : props.variant === 'session';
   })();
 
-  const showSurface =
+  const showSurface = props.readingAloud || (
     providerId !== 'off' &&
     locationAllowsVariant &&
-    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionMetadata }));
+    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionMetadata })));
   if (!showSurface) return null;
 
   const statusInfo = (() => {
+    if (props.readingAloud) return { dot: theme.colors.status.connected, label: t('message.readAloudA11y') };
     switch (snap.status) {
       case 'connecting':
         return { dot: theme.colors.status.connecting, label: t('voiceAssistant.connecting') };
@@ -225,9 +236,9 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   })();
 
   const canStart = !daemonLocalVoiceUnavailable && (allowsGlobalStart ? true : Boolean(startSessionId));
-  const isConnected = snap.status === 'connected';
+  const isConnected = !props.readingAloud && snap.status === 'connected';
   const isSpeaking = isConnected && snap.mode === 'speaking';
-  const canStop = snap.canStop && snap.status !== 'disconnected';
+  const canStop = props.readingAloud || (snap.canStop && snap.status !== 'disconnected');
   const showConnectingSpinner = snap.status === 'connecting' && !canStop;
   const toggleDisabledReason = !canStop && !canStart
     ? (daemonLocalVoiceUnavailable
@@ -246,11 +257,11 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     typeof snap.sessionId === 'string' &&
     snap.sessionId.trim().length > 0 &&
     (snap.mode === 'thinking' || snap.mode === 'speaking');
-  const voiceError = typeof snap.errorCode === 'string' && snap.errorCode.trim().length > 0
+  const voiceError = !props.readingAloud && typeof snap.errorCode === 'string' && snap.errorCode.trim().length > 0
     ? formatLocalVoiceErrorMessage({ errorCode: snap.errorCode, errorMessage: snap.errorMessage })
     : null;
   const targetLabel =
-    props.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
+    !props.readingAloud && props.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
       ? (
         (primaryActionSessionMetadata
           ? getSessionName({ id: primaryActionSessionKey, metadata: primaryActionSessionMetadata })
@@ -263,6 +274,10 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
       : null;
 
   const onTogglePress = () => {
+    if (props.readingAloud) {
+      stopReadAloud();
+      return;
+    }
     if (canStop) {
       fireAndForget(voiceSessionManager.stop(''), { tag: 'VoiceSurface.stop' });
       return;
@@ -317,7 +332,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
           ) : (
             <View style={[styles.micBadge, { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default }]}>
               <StatusDot color={statusInfo.dot} isPulsing={snap.status === 'connecting'} size={7} style={styles.dot as any} />
-              <Icon name={snap.mode === 'listening' ? 'microphone' : 'microphone-slash'} size={14} color={theme.colors.text.primary} style={styles.micIcon as any} />
+              <Icon name={props.readingAloud ? 'speaker-high' : snap.mode === 'listening' ? 'microphone' : 'microphone-slash'} size={14} color={theme.colors.text.primary} style={styles.micIcon as any} />
             </View>
           )}
           <View style={styles.statusTextCol}>
@@ -369,7 +384,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             </Pressable>
           ) : null}
 
-          {openConversationSessionId ? (
+          {!props.readingAloud && openConversationSessionId ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t('common.open')}
@@ -425,7 +440,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             disabled={!canStop && !canStart}
             loading={showConnectingSpinner}
             active={snap.status !== 'disconnected' || providerId !== 'off'}
-            accessibilityLabel={canStop ? t('voiceAssistant.tapToEnd') : t('voiceAssistant.label')}
+            accessibilityLabel={props.readingAloud ? t('message.stopReadAloudA11y') : canStop ? t('voiceAssistant.tapToEnd') : t('voiceAssistant.label')}
           >
             {canStop ? (
               <Icon name="stop-circle" size={20} color={theme.colors.button?.primary?.tint ?? theme.colors.text.primary} />
