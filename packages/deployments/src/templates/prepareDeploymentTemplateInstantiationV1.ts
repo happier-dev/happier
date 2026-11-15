@@ -1,6 +1,7 @@
 import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, StoredAppPresetInputV1,
     DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/deployment-protocol';
 import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
+import { buildCatalogAppTemplateBindings } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 
 type TemplateRef = Extract<StoredAppPresetInputV1['definition'], { from: 'catalogApp' }>['templateRef'];
 export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
@@ -218,6 +219,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         return [{ ...domain, hostname: selected.hostname }];
     });
     const variables = new Map(template.variables.map(variable => [variable.key, variable]));
+    const generatedDefaults = new Map(buildCatalogAppTemplateBindings(template).bindings.map(binding => [binding.name, binding]));
     if (input.bindings.some(binding => !variables.has(binding.name))) return refuse('template_binding_unknown');
     const bindings: EnvironmentVariableBindingInputV1[] = [];
     let generatedSecrets: PreparedDeploymentTemplateInstantiationV1['generatedSecrets'] = [];
@@ -235,8 +237,11 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         }
         if (!selected && variable.default !== undefined) selected = { purpose: 'variable', name: variable.key,
             phase: 'runtime', source: { kind: 'value', value: variable.default } };
+        // The descriptor supplies generation defaults after explicit and retained selections.
+        // Preparation selects profiles only; the existing Saved Secret writer owns bytes and refs.
+        selected ??= generatedDefaults.get(variable.key);
         if (!selected) {
-            if (variable.required) return refuse('template_variable_required');
+            if (variable.required) return refuse('template_variable_required', { key: variable.key });
             continue;
         }
         if (selected.source.kind !== 'generated' && variable.secret && selected.source.kind !== 'secret') return refuse('template_secret_reference_required');

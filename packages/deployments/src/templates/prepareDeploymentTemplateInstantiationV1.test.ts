@@ -212,7 +212,7 @@ describe('stored template preparation', () => {
         const existing = { content, source: JSON.parse(first.document), baseline: { templateRef, source: repeatedSource } };
         const second = prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source: repeatedSource,
             ...{ intent: 'add' as const }, current: existing,
-            bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }] });
+            bindings: [] });
         const composed = JSON.parse(second.document);
         expect(Object.keys(composed.services)).toEqual(['db', 'db-2']);
         expect(composed.services.db).toEqual(repeatedSource.services.db);
@@ -232,11 +232,12 @@ describe('stored template preparation', () => {
         } });
         // An upgrade is still the existing service and credential when the caller does not request Add.
         const upgrade = prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source: repeatedSource,
-            current: existing, bindings: [binding] });
+            current: existing, bindings: [] });
         expect(Object.keys(JSON.parse(upgrade.document).services)).toEqual(['db']);
         expect(upgrade.template.data).toEqual([template.data]);
         expect(upgrade.template.volumes).toEqual(selected.volumes);
         expect(upgrade.generatedSecrets).toEqual([]);
+        expect(upgrade.bindings).toEqual([binding]);
         const removedVolumeMetadata = prepareDeploymentTemplateInstantiationV1({ template: { ...selected, volumes: [] },
             templateRef, source: repeatedSource, current: existing, bindings: [binding] });
         expect(removedVolumeMetadata.template.volumes).toBeUndefined();
@@ -334,14 +335,17 @@ describe('stored template preparation', () => {
             expect.objectContaining({ code: 'template_variable_required' }));
     });
 
-    it('previews the exact declared generation profile without generating bytes or a new ref', () => {
+    it('defaults missing bindings to declared generation without generating bytes or replacing saved selections', () => {
         const generated = DeploymentTemplateV1Schema.parse({ ...template,
             generatedSecrets: [{ key: 'DB_PASSWORD', purpose: 'database-password', label: 'Password', profile: { kind: 'base64url-32-bytes' } }] });
         const prepared = prepareDeploymentTemplateInstantiationV1({ template: generated, templateRef, source,
-            bindings: [{ ...binding, source: { kind: 'generated', key: 'DB_PASSWORD' } }] });
+            bindings: [] });
         expect(prepared.generatedSecrets).toEqual([{ name: 'DB_PASSWORD', phase: 'runtime', key: 'DB_PASSWORD', profile: { kind: 'base64url-32-bytes' } }]);
         expect(prepared.bindings).toEqual([]);
         expect(prepared.document).toBe(JSON.stringify(source));
+        const selected = prepareDeploymentTemplateInstantiationV1({ template: generated, templateRef, source, bindings: [binding] });
+        expect(selected.generatedSecrets).toEqual([]);
+        expect(selected.bindings).toEqual([binding]);
     });
 
     it.each(['db.example.test', 'qa-domain.localhost', 'xn--bcher-kva.example'])('derives domain host and URL values from admitted DNS hostname %s', hostname => {

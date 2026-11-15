@@ -15,14 +15,23 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createMachineSetupPlanAction } from './machineSetupAction';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { DeploymentContentV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['none', 'missing', 'bound'] as const)('prepares saved catalog setup intent before effects, retaining required address facts: %s', async address => {
+it.each(['none', 'missing', 'bound', 'selected', 'plaintext', 'required'] as const)('prepares saved catalog setup intent before effects, retaining template inputs: %s', async address => {
     const requiredAddress = address !== 'none';
-    const domainBindings = address === 'bound'
+    const domainBindings = requiredAddress && address !== 'missing'
         ? [{ templateDomainId: 'SERVICE_URL_REDISINSIGHT_5540', hostname: 'insight.example.test' }] : undefined;
+    const bindings = address === 'selected' ? [
+        { purpose: 'variable' as const, phase: 'runtime' as const, name: 'SERVICE_PASSWORD_RI_ENCRYPTION_KEY',
+            source: { kind: 'secret' as const, ref: 'happier:shared-secret:v1:saved-encryption-key', resourceRevision: 1 } },
+        { purpose: 'variable' as const, phase: 'runtime' as const, name: 'RI_LOG_LEVEL',
+            source: { kind: 'value' as const, value: 'debug' } },
+    ] : address === 'plaintext' ? [{ purpose: 'variable' as const, phase: 'runtime' as const,
+        name: 'SERVICE_PASSWORD_RI_ENCRYPTION_KEY', source: { kind: 'value' as const, value: 'not-a-secret-reference' } }] : [];
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain',
         accountId: 'owner', homeId: 'home', machineId: 'target', serverHttpBaseUrl: 'https://home.test',
@@ -35,11 +44,12 @@ it.each(['none', 'missing', 'bound'] as const)('prepares saved catalog setup int
         snapshot: { source: 'network', settings: accountSettingsParse({ deploymentDefaultsV1: { retainPreviousDeployments: 7 } }),
             settingsVersion: 1, loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: [] }, isCurrent: async () => true });
     const normalized = normalizeComposeTemplateV1({ title: 'Redis Insight', document:
-        'services:\n  redisinsight:\n    image: redis/redisinsight:2.70\n    environment:\n      - SERVICE_URL_REDISINSIGHT_5540\n' });
+        'services:\n  redisinsight:\n    image: redis/redisinsight:2.70\n    environment:\n      - SERVICE_URL_REDISINSIGHT_5540\n      - RI_ENCRYPTION_KEY=${SERVICE_PASSWORD_RI_ENCRYPTION_KEY}\n      - RI_LOG_LEVEL=${RI_LOG_LEVEL:-info}\n' });
     if (normalized.state !== 'ready') throw new Error(JSON.stringify(normalized.diagnostics));
     const descriptor = requiredAddress ? normalized.app : DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'App', compose: {
         document: 'services:\n  web:\n    image: nginx:1\n', profiles: [], services: ['web'] },
         variables: [], generatedSecrets: [], domains: [], volumes: [], firstRunSetup: true });
+    if (address === 'required') descriptor.generatedSecrets = [];
     const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
         url: 'https://apps.test/catalog.json', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
     const catalog = { schemaVersion: 1, apps: [{ itemId: 'app', app: descriptor }] };
@@ -95,7 +105,7 @@ it.each(['none', 'missing', 'bound'] as const)('prepares saved catalog setup int
         expect(body).toEqual({ homeId: 'home', machineId: 'target', sources: request.sources });
         return { status: 200, data: { sources: [{ ...preset, presetContent: { content: { t: 'plain', v: { v: 1, name: 'App preset',
             setup: { items: [{ kind: 'app', definition: { name: 'App', project: { kind: 'create' },
-                definition: { from: 'catalogApp', templateRef }, bindings: [],
+                definition: { from: 'catalogApp', templateRef }, bindings,
                 ...(domainBindings ? { domainBindings } : {}) } }] } } }, recipientEnvelope: null } }, direct] } };
     });
     const context = { ...fixture.context('machines.setup.plan'), runtimeAccountId: 'owner' };
@@ -104,6 +114,21 @@ it.each(['none', 'missing', 'bound'] as const)('prepares saved catalog setup int
         expect(result).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'template_domain_required',
             error: expect.stringContaining('SERVICE_URL_REDISINSIGHT_5540'),
             details: { key: 'SERVICE_URL_REDISINSIGHT_5540' } });
+        expect(sourceTransport).not.toHaveBeenCalled();
+        expect(contentWrites).toBe(0);
+        return;
+    }
+    if (address === 'plaintext' || address === 'required') {
+        expect(result).toMatchObject({ ok: false, effectAttempted: false,
+            errorCode: address === 'plaintext' ? 'template_secret_reference_required' : 'template_variable_required',
+            ...(address === 'required' ? { details: { key: 'SERVICE_PASSWORD_RI_ENCRYPTION_KEY' } } : {}) });
+        if (address === 'required') {
+            const refusal = normalizeActionExecuteResult(ActionExecuteFailureSchema.parse(result));
+            if (refusal.ok) throw new Error('Expected required-input refusal');
+            const output = projectCliActionFailure(refusal);
+            expect(output).toMatchObject({ code: 'template_variable_required', effectAttempted: false });
+            expect(output.details).toEqual({ key: 'SERVICE_PASSWORD_RI_ENCRYPTION_KEY' });
+        }
         expect(sourceTransport).not.toHaveBeenCalled();
         expect(contentWrites).toBe(0);
         return;
@@ -119,6 +144,16 @@ it.each(['none', 'missing', 'bound'] as const)('prepares saved catalog setup int
             creationDefaults: { values: { retainPreviousDeployments: 7 } } } }],
         support: [{ sourceIndex: 0, itemIndex: 0, status: 'drifted' }] });
     expect(planned.appChildren?.[0]?.input).toMatchObject(domainBindings ? { domainBindings } : {});
+    expect(planned.appChildren?.[0]?.input).toMatchObject({ bindings });
+    if (requiredAddress) expect(planned.appReviews?.[0]?.review).toMatchObject({
+        generatedSecrets: address === 'selected' ? [] : [expect.objectContaining({ name: 'SERVICE_PASSWORD_RI_ENCRYPTION_KEY' })],
+    });
+    if (address === 'selected') expect(planned.appReviews?.[0]?.review.bindings).toEqual(expect.arrayContaining(bindings));
+    else if (requiredAddress) {
+        // Compose expression fallbacks stay local to their sites, without a global binding.
+        expect(planned.appReviews?.[0]?.review.bindings.some(binding => binding.name === 'RI_LOG_LEVEL')).toBe(false);
+        expect(planned.appReviews?.[0]?.review.document).toContain('${RI_LOG_LEVEL:-info}');
+    }
     if (!requiredAddress) expect(planned.appReviews?.[0]?.review).toMatchObject({ firstRunSetup: true });
     expect(sourceTransport).not.toHaveBeenCalled();
     expect(contentWrites).toBe(0);

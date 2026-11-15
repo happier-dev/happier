@@ -123,7 +123,12 @@ the Artifact access owner before selecting the visible page. Source-controlled
 sharing and E2EE recipient-envelope availability use that same admission. The
 reader continues through inaccessible candidate windows so they do not consume
 visible slots or leave empty tail pages. Work follows examined candidates in
-the existing page-sized batches; no complete Account census or total is added.
+the existing page-sized batches. The optional `includeTotal: true` demand also
+scans the full query selection through that same header admission and returns
+`totalCount`, excluding cursor and page size. Ordinary reads avoid this census.
+The total is omitted when projection is incomplete, and is carried by the
+collection controller and `useDeploymentCollection` with the same Account and
+query identity as its rows; consumers do not count loaded pages.
 Malformed readable records retain the collection's partial-coverage behavior.
 
 The Account deployment activity projection counts readable, non-deleted Environments
@@ -139,10 +144,23 @@ The UI History transport opens the visible receipt page through the Account's
 mode-aware Artifact reader in a batch. `projectDeploymentReceiptHistoryEntryV1`
 exposes controller and Machine member `steps`, preserving their labels, states
 and recorded timing; member steps carry `machineId`. This is a client read
-projection, with no added receipt storage or per-row operation read. Actor names
-use `useDiscussionParticipantProfiles` with `accountIds` and no roster, then
-`resolveAccountActorPresentation`; unknown actors use the same Account owner's
-fallback. Names are never copied into receipt metadata.
+projection, with no added receipt storage or per-row operation read.
+
+Development receipt content records private `actor` references at the admitted
+root's first execution transition from `operationAcceptance.actor`. The Action
+operation owner captures the admitted cause and updates it with the actual
+approval before dispatch; receipt writers do not classify child contexts. The
+common Action attribution owner selects
+the authenticated approver, the present person's admitted trigger, the Session
+Agent, or the Workflow Run. Agent and Workflow `onBehalfOf` people retain both
+Home and Account IDs. Observation and recovery preserve captured attribution;
+older content without it remains unknown rather than classifying its
+`requestedByAccountId` as a person. History, Activity and the collection's latest
+deployment consume the same receipt-facts projection. Actor names remain with
+the existing people, Session Agent catalog and accepted Workflow metadata owners;
+`useDeploymentActorPresentations` composes those demanded names, including the
+Account owner's unknown-person fallback. Names are never copied into receipt
+metadata or public server columns.
 
 `useDeploymentBackupFacts` optionally reads native backup inventory for requested
 source IDs and exposes `restorePoints` as a ready count or unavailable. Receipt
@@ -362,8 +380,12 @@ invoke the existing Environment deletion owner. That owner retains its authority
 revision and complete-workload disposition checks. Partial or unavailable History
 and deployments on another target cannot establish this absence. A missing Docker
 executable alone does not prove absence on a previously used target. Unavailable
-observation or removal keeps the outcome unknown, with a sanitized cause code in
-the step proof and Action details; command output is not included.
+observation or interrupted removal keeps the outcome unknown, with a sanitized
+cause code in the step proof and Action details; command output is not included.
+Unknown teardown steps only re-observe: unchanged uncertainty writes nothing and
+never repeats removal. Authoritative absence permits continuation. A confirmed
+Docker network-removal refusal settles failed, so explicit retry can resume the
+same receipt from its first unproved step while skipping completed steps.
 Native teardown runs on the recorded Environment controller, which dispatches
 native observation and removal to the sole target Machine through the existing
 admitted-child transport. Prepared references stay pinned through review. Only
@@ -2492,6 +2514,14 @@ ids against the pinned template; in 0.3 development, an undeclared id returns
 Stored App Presets can retain the same optional `domainBindings` alongside
 `bindings` for a catalog App. Machine Setup forwards these selections into its
 ordinary template child and binds the reviewed child to that saved intent.
+The same preparer fills declared public defaults and omitted generator selections
+through `buildCatalogAppTemplateBindings`, after explicit selections and retained
+upgrade bindings. A preset's `bindings` carries public values or Saved Secret
+references (with `resourceRevision`), never plaintext for a secret-typed variable.
+Generated selections retain only the declared key; apply creates Saved Secrets
+and sends their references through `deployments.bindings.set`. Preview generates
+no bytes. Missing required variables without a default or generator return
+`template_variable_required` with the variable key in `details.key`.
 A required template Domain without a selection still returns
 `template_domain_required`; Setup does not invent a hostname. These inert
 selections survive preset source copies and capture; authored Compose App

@@ -138,7 +138,7 @@ it.each([false, true])('persists independent generated credentials from a bundle
                 target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: identity.installationId },
                 destination: ordinal === 1 ? { kind: 'stored' }
                     : { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
-                bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }],
+                bindings: [],
                 ...(ordinal === 1 ? {} : { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } }) });
             if (ordinal === 1) {
                 const stalePin = await fixture.inHome(() => templates.instantiate({ ...input, mode: 'preview',
