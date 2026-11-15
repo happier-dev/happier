@@ -1,4 +1,5 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { PLUGIN_MANIFEST as OPENCODE_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
@@ -42,6 +43,48 @@ vi.mock('@/daemon/controlServer', async importOriginal => ({
   },
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); boundary.control = null; });
+
+it('resolves an OpenCode child Run CLI independently of its Codex carrier launch', async () => {
+  const cliRoot = await mkdtemp(join(tmpdir(), 'happier-opencode-child-cli-'));
+  onTestFinished(() => rm(cliRoot, { recursive: true, force: true }));
+  const executable = join(cliRoot, 'opencode');
+  await writeFile(executable, '');
+  await chmod(executable, 0o700);
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, 'codex', false,
+    undefined, createPluginReloadController(), {
+      additionalPluginIds: ['happier.agent.opencode'],
+      processEnv: { HAPPIER_OPENCODE_PATH: executable },
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_session_home', machineId: 'machine' }),
+      agentIsolation: { managedHappierBinaryPath: process.execPath,
+        read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) },
+    });
+  h.tracked.runnerAgentInvocationContext = { ...h.tracked.runnerAgentInvocationContext!,
+    agentCliLaunch: { localAgentId: 'codex', spec: {
+      source: 'override', resolvedPath: join(h.f.directory, 'codex'),
+      command: join(h.f.directory, 'codex'), args: ['--carrier-only'],
+    } },
+  };
+  const snapshot = await h.dispatch({ kind: 'execution_run.snapshot.acquire_v1',
+    backendTarget: { kind: 'backend', backendId: 'opencode' } });
+  if (!snapshot.ok || snapshot.result.kind !== 'execution_run.snapshot') throw new Error(`Missing OpenCode Run snapshot: ${JSON.stringify(snapshot)}`);
+  const snapshotId = snapshot.result.snapshotId;
+  const runId = 'opencode-on-codex-carrier';
+  try {
+    const prepared = await h.dispatch({ kind: 'plugin_services.prepare_v1', ...h.operationBase(runId), executionRunCwd: h.cwd }, snapshotId);
+    expect(prepared).toMatchObject({ ok: true });
+    const spec = buildOpenCodeManagedServerSpawnSpec({ id: 'opencode-server', dialect: 'v1', systemToolId: OPEN_CODE_SYSTEM_TOOL_ID });
+    if (spec.mode.kind !== 'spawn') throw new Error('Expected managed server launch');
+    const authorized = await h.dispatch({ kind: 'managed_server.supervision.authorize', requestId: 'opencode-child-launch',
+      operationClaimId: runId, contributionId: 'happier.agent.opencode/agents/opencode', serverId: spec.id,
+      executable: spec.mode.launch.executable, environmentKeys: projectManagedServiceSpawnEnvironmentKeys(spec),
+    }, snapshotId);
+    expect(authorized, JSON.stringify(authorized)).toMatchObject({ ok: true, result: { kind: 'managed_server.supervision', status: 'authorized',
+      launch: { kind: 'daemonResolved', value: { command: executable, args: [] } } } });
+  } finally {
+    await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase(runId) }, snapshotId);
+    await h.dispatch({ kind: 'execution_run.snapshot.release_v1', snapshotId });
+  }
+});
 
 it('projects the detached OpenCode Run exact profile through its requester Account owner instead of the parent binding', async () => {
   const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({ defaultModeId: 'token', modes: [{

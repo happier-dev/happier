@@ -94,7 +94,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     daemonCredentials = (await readStoredCredentialsForServerId(serverId))!;
   }
   const plugin = bundledAgentId ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory,
-    controller: runtimeController, runtimeOptions: { pluginIds: [`happier.agent.${bundledAgentId}`] } })
+    controller: runtimeController, runtimeOptions: { pluginIds: [`happier.agent.${bundledAgentId}`, ...(requesterOptions?.additionalPluginIds ?? [])] } })
     : await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory, controller: runtimeController,
     ...(requesterOptions?.additionalPluginIds ? { runtimeOptions: { pluginIds: ['acme.project-launch', ...requesterOptions.additionalPluginIds] } } : {}),
     plugins: [authoredPlugin ?? { manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch', contributes: { agents: [{ id: 'agent', title: 'Project launch Agent',

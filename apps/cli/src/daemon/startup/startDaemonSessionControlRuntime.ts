@@ -13959,7 +13959,7 @@ export async function startDaemonSessionControlRuntime(
                   attested,
                   happyHomeDir: configuration.happyHomeDir,
                   processEnv: params.processEnv ?? process.env,
-                  ...(context.invocationContext.agentCliLaunch
+                  ...(!executionRunSnapshotId && context.invocationContext.agentCliLaunch
                     ? { agentCliLaunch: context.invocationContext.agentCliLaunch }
                     : {}),
                   request: {
