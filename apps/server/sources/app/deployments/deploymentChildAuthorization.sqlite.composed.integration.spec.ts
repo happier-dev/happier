@@ -3762,6 +3762,32 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await readDeploymentReadAuthorizationInTx(db, binding, admission)).toBeNull();
     });
 
+    it.each(['vercel', 'workers'] as const)(
+        'admits the %s Environment owner current health read on its controller; another Account or a former Team member stays refused',
+        async platformTarget => {
+            const mint = (f: Awaited<ReturnType<typeof fixture>>, accountId: string, tokenEpoch: number) => {
+                const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, machineId: f.controller.id };
+                const target = { kind: 'machine' as const, machineId: f.controller.id };
+                const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+                return auth.mintExternalActionExecutionAuthorization({ accountId,
+                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch },
+                    actionId: 'deployments.health.current', machineId: f.controller.id, target,
+                    requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    deploymentReadAdmission: projectDeploymentReadAdmissionV1('deployments.health.current', input) });
+            };
+            const owned = await fixture('account', 'account', { platformTarget });
+            // The controller's health owner answers for the platform link; Home admits only the read.
+            await expect(mint(owned, owned.account.id, owned.account.tokenEpoch))
+                .resolves.toMatchObject({ binding: { actionId: 'deployments.health.current' } });
+            const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await expect(mint(owned, stranger.id, stranger.tokenEpoch)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            const shared = await fixture('team', 'account', { platformTarget, separateMemberCustodian: true });
+            const formerMember = shared.member.accountId;
+            const formerEpoch = (await db.account.findUniqueOrThrow({ where: { id: formerMember } })).tokenEpoch;
+            await db.teamMembership.deleteMany({ where: { accountId: formerMember } });
+            await expect(mint(shared, formerMember, formerEpoch)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        });
+
     it('admits the Environment-qualified receipt read made by retained build logs', async () => {
         const f = await fixture();
         const actionId = 'deployments.logs.read' as const;

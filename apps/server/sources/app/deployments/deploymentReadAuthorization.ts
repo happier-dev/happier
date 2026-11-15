@@ -128,13 +128,14 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
 ): Promise<DeploymentTargetAuthorization> {
     const scope = getActionSpec(admission.actionId).deploymentReadScope;
     if (scope?.target === 'current_health') {
+        // Home admits who may read this runtime link's health on its controller;
+        // the controller's health owner answers what each target kind can report.
         const link = await tx.deploymentTargetLink.findFirst({ where: {
             id: admission.targetLinkId, environmentId: environment.id,
         } });
         if (!link || environment.deletedAt || environment.controllerMachineId !== admission.machineId
             || environment.runtimeTargetLinkId !== link.id
-            || link.deletedAt || link.detachedAt || link.role !== 'runtime'
-            || link.targetKind !== 'ownServer') return null;
+            || link.deletedAt || link.detachedAt || link.role !== 'runtime') return null;
         return { ok: true, artifactIds: [] };
     }
     if (!scope || !('deploymentId' in admission)) return null;

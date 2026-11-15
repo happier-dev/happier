@@ -698,11 +698,13 @@ describe('installed deployment storage and target composition', () => {
         expect(requests).toHaveBeenCalled();
         // A platform (Vercel-shaped) runtime link reaches the same controller owner,
         // which answers with a typed reason instead of an authorization refusal.
-        link.targetKind = 'platform';
+        const ownServerRow = detail.targetLinks[0]!;
+        detail.targetLinks[0] = { ...ownServerRow, targetLink: { ...link, targetKind: 'platform', machines: [], members: [],
+            source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.vercel', localId: 'vercel' } } } };
         await expect(deps.deploymentAction('deployments.health.current', input, context)).resolves.toMatchObject({
             ok: false, errorCode: 'unsupported_action', effectAttempted: false,
             details: { reason: 'target_not_supported', targetKind: 'platform', supportedAction: 'deployments.observation.get' } });
-        link.targetKind = 'ownServer';
+        detail.targetLinks[0] = ownServerRow;
         detail.environment.controllerMachineId = 'machine-b';
         await expect(deps.deploymentAction('deployments.health.current', input, context)).resolves.toMatchObject({
             ok: false, errorCode: 'target_mismatch', details: { reason: 'controller_placement', controllerMachineId: 'machine-b' } });

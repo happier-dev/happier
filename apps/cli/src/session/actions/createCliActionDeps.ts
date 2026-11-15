@@ -115,10 +115,11 @@ import type { readCliMemoryInheritedContext, readCliMemoryScopeContext } from '.
 import { createCliProjectSourceActionDeps } from './projectSourceActionDeps';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
+import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healthChecks/currentHealthPlacement';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -1252,6 +1253,13 @@ export function createCliActionDeps(params: CliActionDepsParams,
       // The same original-root owner retains requester review for every controller dispatch.
       if (nativeRead && (!('machineId' in input) || typeof input.machineId !== 'string'))
         return executionRunActionFailure('invalid_parameters');
+      if (actionId === DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1) {
+        const health = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+        if (!health.success) return executionRunActionFailure('invalid_parameters');
+        // Settle placement before Home is asked to admit a read no Machine can serve.
+        const placement = readDeploymentHealthCurrentPlacementFailure(health.data, opened.environment, opened.targetLinks);
+        if (placement) return placement;
+      }
       const execution = await dispatchOriginalDeploymentRoot(actionId, input, context, async () => ({ ok: true,
         machineId: nativeRead && 'machineId' in input && typeof input.machineId === 'string'
           ? input.machineId : opened.environment.controllerMachineId }));
