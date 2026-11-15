@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Collection, Status, useHappierCollection, type CollectionAnatomy, type HappierCollectionGrouping } from '@happier-dev/plugin-ui';
+import { Status, useHappierCollection, type CollectionAnatomy, type HappierCollectionGrouping } from '@happier-dev/plugin-ui';
 import {
   isDeploymentReadDemandActiveV1,
   projectDeploymentDomainDnsReadinessV1,
@@ -16,8 +16,7 @@ import { ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalF
 import { presentActionFailureTechnicalDetails } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
-import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { useItemSubtitleTextStyle } from '@/components/ui/lists/ItemSubtitleText';
 import { StatusWord, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
@@ -28,6 +27,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { t } from '@/text';
 import { deploymentDomainAttention, type DomainCredentialRole, type DomainItem } from './deploymentDomainAttention';
+import { ServicesPageList } from './DeploymentEnvironmentRows';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
@@ -96,8 +96,11 @@ export function DeploymentDomainsList<Item extends DomainItem>(props: Readonly<{
     accountId: props.accountId, serverId: props.serverId, disabled: props.disabled, ownMachineId: props.ownMachineId ?? null,
     machineName: props.machineName ?? null, actions: props.actions ?? null, notFound,
   }), [notFound, props.accountId, props.actions, props.disabled, props.machineName, props.ownMachineId, props.serverId]);
+  // A platform's addresses have no service route or certificate of ours: without a routed address the two columns
+  // would stay empty and squeeze the host and its DNS record, so they are drawn only when some address routes here.
+  const routed = props.items.some(item => item.content.target.kind !== 'provider');
   const anatomy = React.useMemo<CollectionAnatomy<Item>>(() => ({
-    glyph: () => <Icon name="globe" size={18} color={theme.colors.text.secondary} />,
+    glyph: () => <Icon name="globe" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
     // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole.
     title: (item) => item.content.hostname,
     titleIdentifier: true,
@@ -110,12 +113,12 @@ export function DeploymentDomainsList<Item extends DomainItem>(props: Readonly<{
     titleMetaAlign: 'row',
     // The facts keep tight columns so the host keeps most of the row (lab envDom: Domain about 45%).
     fields: [
-      { key: 'reaches', title: t('projects.deployments.editors.domainColumnReaches'), minWidth: 104, priority: 3, listColumn: true,
-        render: (item) => <DomainReaches item={item} /> },
+      ...(routed ? [{ key: 'reaches', title: t('projects.deployments.editors.domainColumnReaches'), minWidth: 104, priority: 3,
+        listColumn: true, render: (item: Item) => <DomainReaches item={item} /> }] : []),
       ...(environmentTitle ? [{ key: 'environment', title: t('projects.deployments.editors.domainColumnEnvironment'), minWidth: 112,
         priority: 1, listColumn: true, render: (item: Item) => <DomainEnvironment title={environmentTitle(item)} /> }] : []),
-      { key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 120, priority: 2, listColumn: true,
-        render: (item) => <DomainCertificate item={item} /> },
+      ...(routed ? [{ key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 120, priority: 2,
+        listColumn: true, render: (item: Item) => <DomainCertificate item={item} /> }] : []),
       // The state and the row's ⋯ share the last column, so the bar's titles stay over their figures.
       { key: 'state', title: t('projects.deployments.editors.domainColumnState'), minWidth: 128, priority: 4, listColumn: true,
         align: 'end', control: true, render: (item) => <DomainRowEnd item={item} context={context} /> },
@@ -126,22 +129,11 @@ export function DeploymentDomainsList<Item extends DomainItem>(props: Readonly<{
       title: t('projects.deployments.editors.domainColumnDomain'),
       titleMeta: t('projects.deployments.editors.domainColumnState'),
     },
-  }), [context, environmentTitle, theme.colors.text.secondary]);
+  }), [context, environmentTitle, routed, theme.colors.text.secondary]);
   return (
-    <CoreCollectionScope>
-      <Collection<Item>
-        testID={props.testID}
-        model={model}
-        anatomy={anatomy}
-        accessibilityLabel={t('projects.deployments.tabDomains')}
-        presentation="list"
-        detail="none"
-        scroll="page"
-        minListWidth={0}
-        minDetailWidth={0}
-        preferredListRatio={1}
-      />
-    </CoreCollectionScope>
+    // The Services page's one list shell (Apps, Databases, Checks, Watched): the same bands, column bar and phone rows.
+    <ServicesPageList<Item> testID={props.testID} model={model} anatomy={anatomy}
+      accessibilityLabel={t('projects.deployments.tabDomains')} />
   );
 }
 
@@ -323,11 +315,15 @@ function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRo
   const providerDetails = providerCause ? presentActionFailureTechnicalDetails({ error: providerCause.errorCode ?? providerCause.phase,
     errorCode: providerCause.errorCode ?? providerCause.phase, failureCause: providerCause }, 'deployment') : null;
   if (!adoptTunnel && !checkAgain && !addRecords && !investigate && !failure && !providerDetails) return null;
-  return <View style={styles.controls}>
+  const actions = adoptTunnel || addRecords || checkAgain || investigate ? <View style={styles.controls}>
     {adoptTunnel}
     {addRecords}
     {checkAgain}
     {investigate}
+  </View> : null;
+  // Details open beneath the row's actions, never beside them: an open disclosure is a block, not a control.
+  return <View style={styles.controlStack}>
+    {actions}
     {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
     {providerDetails ? <ApprovalTechnicalDetails lines={providerDetails} /> : null}
   </View>;
@@ -445,4 +441,5 @@ function credentialChoiceTitle(role: DomainCredentialRole): string {
 const styles = StyleSheet.create((theme) => ({
   rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
+  controlStack: { gap: theme.space.s4 },
 }));

@@ -276,12 +276,10 @@ describe('Environment → Domains', () => {
         screen.changeTextByTestId(`${id}.check`, '/');
         screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
-      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-      const mode = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.mode`)!;
-      await act(async () => mode.props.onSelect('cloudflare'));
+      await screen.pressByTestIdAsync(`${id}.ingress.mode:cloudflare`);
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(addDomain).not.toHaveBeenCalled();
-      await act(async () => mode.props.onSelect('environment'));
+      await screen.pressByTestIdAsync(`${id}.ingress.mode:environment`);
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: {
         hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 },
@@ -1240,7 +1238,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
           : actionId === 'deployments.backups.inventory' ? { kind: 'inventory', environmentId: detail.environment.id,
             configRevision: 1, repositoryId: manifest.repositoryId, snapshots: [{ snapshot, source: { sourceId: 'db', kind: 'dump' },
               verification: { kind: 'verified', backupOperationId: 'backup-operation', configRevision: 1 } },
-              { snapshot: { ...snapshot, snapshotId: 'e'.repeat(64) }, source: null,
+              { snapshot: { ...snapshot, snapshotId: 'e'.repeat(64), time: new Date(Date.parse(snapshot.time) + 60_000).toISOString() }, source: null,
                 verification: { kind: 'unknown', reason: 'captureReceiptUnavailable' } }] }
           : { kind: 'verified', operationId: 'verify-operation', backupOperationId: 'backup-operation', environmentId: detail.environment.id,
             configRevision: 1, repositoryId: manifest.repositoryId, snapshotId: snapshot.snapshotId,
@@ -1280,6 +1278,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(effects.map((effect) => effect.actionId)).toEqual(['deployments.backups.history']);
       await screen.pressByTestIdAsync(`${id}.verify`);
       expect(await settle(`${id}.snapshot.${'e'.repeat(64)}`)).not.toBeNull();
+      // Saved copies read newest first: the later 'e' snapshot leads the list.
+      const listed = screen.findAll(node => typeof node.props.testID === 'string'
+        && /\.snapshot\.[0-9a-f]{64}$/.test(node.props.testID)).map(node => node.props.testID as string);
+      expect([...new Set(listed)]).toEqual([`${id}.snapshot.${'e'.repeat(64)}`, `${id}.snapshot.${snapshot.snapshotId}`]);
       expect(screen.findByTestId(`${id}.snapshot.${'e'.repeat(64)}.manifestReadBack`)).toBeNull();
       expect(effects[1]).toMatchObject({ actionId: 'deployments.backups.inventory' });
       await screen.pressByTestIdAsync(`${id}.verify`);

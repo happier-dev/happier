@@ -97,6 +97,7 @@ const previewEditorCopy = {
 const restoreExtendedCopy = {
   uploadTitle: 'Restore a local backup', upload: 'Choose backup file', uploading: 'Uploading backup…',
   uploadBody: 'Upload the backup to this Machine, then check its contents before replacing data.',
+  uploadDatabasePlaceholder: 'Database name',
   uploaded: 'Uploaded backup', volume: 'Named volume', snapshot: 'Take a Machine snapshot first',
   coverage: 'Snapshot coverage', coverageValue: ({ root, volumes }: { root: string; volumes: string }) => `Root disk: ${root}. Attached volumes: ${volumes}.`,
   billing: 'Provider billing', priceUnknown: 'Billed by the provider; price not supplied',

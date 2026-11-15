@@ -17,6 +17,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -47,6 +48,8 @@ type DomainActions = Pick<
 > & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings' | 'previewDomainDns' | 'createDomainDns'>>
   & Readonly<{ inspectPlatformTarget?: DomainIngressInspection }>;
 type EnvironmentContent = DeploymentEnvironmentContentV1;
+/** Where visitors reach a new address: the Environment's own Caddy, or a Cloudflare tunnel. */
+type IngressMode = 'environment' | 'cloudflare';
 type RouteExport = Readonly<{ service: string; containerPort: number }>;
 const NO_SERVICES: readonly string[] = Object.freeze([]);
 const NO_EXPORTS: readonly RouteExport[] = Object.freeze([]);
@@ -444,7 +447,7 @@ function DomainAddForm(
   React.useEffect(() => {
     if (servicePorts.length === 1) setPort(current => current === '' ? String(servicePorts[0]) : current);
   }, [servicePorts]);
-  const [ingressMode, setIngressMode] = React.useState(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
+  const [ingressMode, setIngressMode] = React.useState<IngressMode>(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
   const needsZone = props.provider?.providerEnvironment?.kind === 'script';
   const principal = props.provider?.credentialPrincipal;
@@ -531,14 +534,19 @@ function DomainAddForm(
         {!provider && !props.recordedIngress ? (
           <>
             <FieldItem label={t('projects.deployments.editors.reachThrough')}>
-              <ValueFieldSelect testID="project-deployments.environment.domains.add.ingress.mode" fill
-                label={t('projects.deployments.editors.reachThrough')}
-                items={[
-                  // The place visitors reach, named as the lab does ("Caddy on vps-2 · public"), not the mechanism.
-                  { id: 'environment', title: t('projects.deployments.editors.reachCaddy', { machine: props.machine }) },
-                  { id: 'cloudflare', title: t('projects.deployments.domainIngressTitle') },
+              {/* Two places visitors reach, each with what it opens (lab d2 `adddomain`): tiles, not a two-item menu. */}
+              <SelectionTiles<IngressMode> testIdPrefix="project-deployments.environment.domains.add.ingress.mode"
+                accessibilityLabel={t('projects.deployments.editors.reachThrough')}
+                density="compact" subtitleLines={0} minimumTileWidth={220}
+                options={[
+                  { id: 'environment', icon: 'globe', disabled: props.busy,
+                    title: t('projects.deployments.editors.reachCaddy', { machine: props.machine }),
+                    subtitle: t('projects.deployments.editors.reachCaddyBody') },
+                  { id: 'cloudflare', icon: 'cloud', disabled: props.busy,
+                    title: t('projects.deployments.domainIngressTitle'),
+                    subtitle: t('projects.deployments.editors.reachTunnelBody') },
                 ]}
-                selectedId={ingressMode} onSelect={setIngressMode} disabled={props.busy} />
+                value={ingressMode} onChange={next => { if (next) setIngressMode(next); }} />
             </FieldItem>
           </>
         ) : null}
@@ -647,29 +655,35 @@ function DomainAddForm(
             </FieldItem>
           </>
         ) : null}
-        <FieldItem
-          label={t('projects.deployments.domainFieldCheck')}
-          supportingText={t('projects.deployments.domainCheckHint')}
-        >
-          <FieldTextInput
-            testID="project-deployments.environment.domains.add.check"
-            value={checkPath}
-            onChangeText={setCheckPath}
-            monospace
-            autoCapitalize="none"
-            accessibilityLabel={t('projects.deployments.domainFieldCheck')}
-          />
-        </FieldItem>
-        <FieldItem label={t('projects.deployments.domainFieldCheckStatus')}>
-          <FieldTextInput
-            testID="project-deployments.environment.domains.add.checkStatus"
-            value={checkStatus}
-            onChangeText={setCheckStatus}
-            monospace
-            keyboardType="number-pad"
-            accessibilityLabel={t('projects.deployments.domainFieldCheckStatus')}
-          />
-        </FieldItem>
+        {/* The page and the status it should answer are one check: one line on wide screens, like the route. */}
+        <View style={props.phone ? styles.stack : styles.route}>
+          <FieldItem
+            label={t('projects.deployments.domainFieldCheck')}
+            supportingText={t('projects.deployments.domainCheckHint')}
+            style={props.phone ? undefined : styles.routeService}
+          >
+            <FieldTextInput
+              testID="project-deployments.environment.domains.add.check"
+              value={checkPath}
+              onChangeText={setCheckPath}
+              monospace
+              autoCapitalize="none"
+              accessibilityLabel={t('projects.deployments.domainFieldCheck')}
+              placeholder="/health"
+            />
+          </FieldItem>
+          <FieldItem label={t('projects.deployments.domainFieldCheckStatus')} style={props.phone ? undefined : styles.routePort}>
+            <FieldTextInput
+              testID="project-deployments.environment.domains.add.checkStatus"
+              value={checkStatus}
+              onChangeText={setCheckStatus}
+              monospace
+              keyboardType="number-pad"
+              accessibilityLabel={t('projects.deployments.domainFieldCheckStatus')}
+              placeholder="200"
+            />
+          </FieldItem>
+        </View>
         </> : null}
         {dnsDraft && props.checkDns ? <DomainDnsCheck content={dnsDraft} machine={props.machine} check={props.checkDns} /> : null}
         {missingField ? (

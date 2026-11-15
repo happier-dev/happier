@@ -50,6 +50,7 @@ export function BackupPathCapacityReview(props: Readonly<{ capacity?: StoragePat
   return <Item testID={`${props.testID}.capacity`} mode="info"
     title={t('projects.deployments.settingsSections.setupCapacityKnown')}
     detail={formatMachineBytes(capacity.freeBytes, 'storage')}
-    subtitle={[props.machine, capacity.volume?.label,
-      capacity.volume?.mountPath ?? capacity.path, formatAsOfTime(capacity.observedAt)].filter(Boolean).join(' · ')} />;
+    // A volume labelled by its own mount path ("/") names it once.
+    subtitle={[...new Set([props.machine, capacity.volume?.label,
+      capacity.volume?.mountPath ?? capacity.path, formatAsOfTime(capacity.observedAt)].filter(Boolean))].join(' · ')} />;
 }

@@ -770,7 +770,6 @@ describe('Environment → Domains: credentials an address needs', () => {
 
 describe('Environment → Domains: add form reads as a place, once (PAGE-ACCEPT-85 D3)', () => {
   it('names where visitors reach it instead of the topology paragraph, and prefills Compose\'s primary service', async () => {
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: undefined } };
     const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
@@ -778,9 +777,8 @@ describe('Environment → Domains: add form reads as a place, once (PAGE-ACCEPT-
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
       expect(screen.findByTestId(`${id}.ingress.notRecorded`)).toBeNull();
-      const mode = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.mode`)!;
-      const environment = mode.props.items.find((item: { id: string }) => item.id === 'environment');
-      expect(environment.title).not.toBe(t('projects.deployments.domainIngressEnvironment'));
+      // Where visitors reach it is named as a place (a tile per choice), not the topology paragraph.
+      expect(screen.findByTestId(`${id}.ingress.mode:environment`)).not.toBeNull();
       // The fixture's compose.yaml names `app` as its primary service.
       expect(screen.findByTestId(`${id}.service`)?.props.value).toBe('app');
       // An empty Domains list says so once: not again under the open form.

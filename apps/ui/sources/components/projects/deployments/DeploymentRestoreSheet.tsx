@@ -281,6 +281,7 @@ function DeploymentRestoreSheet(
       {uploadDestination?.kind === 'database' ? <Item title={t('projects.deployments.restoreDatabase')}
         subtitle={uploadDestination.service} accessoryLayout="adaptive" rightElement={<FieldTextInput testID="project-deployments.restore.uploadDatabase"
           value={uploadDatabase} onChangeText={setUploadDatabase} editable={!busy}
+          placeholder={t('projects.deployments.settingsSections.restoreExtended.uploadDatabasePlaceholder')}
           accessibilityLabel={t('projects.deployments.restoreDatabase')} autoCapitalize="none" />} /> : null}
       <Item testID="project-deployments.restore.upload" title={t('projects.deployments.settingsSections.restoreExtended.upload')}
         subtitle={t('projects.deployments.settingsSections.restoreExtended.uploadBody')} disabled={busy || !uploadDestination || uploadDestination.kind === 'database' && !uploadDatabase.trim()}
@@ -488,9 +489,11 @@ function DeploymentRestoreSheet(
               : t('projects.deployments.restoreReadyLeadEmpty', {
                   name: props.name,
                 })
+            // Before an upload there is no backup yet: the sheet asks for one rather than naming "this backup".
+            : uploadTarget && !target ? t('projects.deployments.restoreChooseLead', { name: props.name })
             : t('projects.deployments.restoreLead', { name: props.name })}
         </Text>
-        <ItemGroup testID="project-deployments.restore.facts" header="none">
+        {facts.length > 0 ? <ItemGroup testID="project-deployments.restore.facts" header="none">
           {facts.map((fact) => (
             <Item
               key={fact.key}
@@ -501,7 +504,7 @@ function DeploymentRestoreSheet(
               mode="info"
             />
           ))}
-        </ItemGroup>
+        </ItemGroup> : null}
         {uploadForm}
         {preparation?.snapshotUnavailable ? <Item testID="project-deployments.restore.snapshotUnavailable"
           title={t('projects.deployments.settingsSections.restoreExtended.unavailable')} mode="info" /> : null}

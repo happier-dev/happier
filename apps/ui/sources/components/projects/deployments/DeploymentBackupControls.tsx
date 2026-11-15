@@ -125,21 +125,25 @@ export function DeploymentBackupControls(props: Readonly<{
   });
   return (
     <>
-      <Item title={t('projects.deployments.backupRun')} mode="info" rightElement={
-        <SectionActionButton testID={`${props.testID}.run`} title={t('projects.deployments.backupRun')}
-          disabled={change.running} onPress={run} />
-      } />
-      <Item title={t('projects.deployments.backupVerify')} subtitle={t('projects.deployments.backupVerifyDescription')}
+      {/* Each row names what it is and its button the operation, so no row says the same thing twice. */}
+      <Item title={t('projects.deployments.backupRunTitle')} subtitle={t('projects.deployments.backupRunDescription')}
         mode="info" rightElement={
-          <SectionActionButton testID={`${props.testID}.verify`} title={t('projects.deployments.backupVerify')}
+          <SectionActionButton testID={`${props.testID}.run`} title={t('projects.deployments.backupRun')}
+            disabled={change.running} onPress={run} />
+        } />
+      {/* The saved copies are read when asked (one inventory read), then each can be checked without a restore. */}
+      <Item title={t('projects.deployments.backupListTitle')} subtitle={t('projects.deployments.backupListDescription')}
+        mode="info" rightElement={
+          <SectionActionButton testID={`${props.testID}.verify`}
+            title={t(open ? 'projects.deployments.backupListHide' : 'projects.deployments.backupListShow')}
             disabled={change.running} onPress={inspect} />
         } />
-      {change.running ? <Item title={t('projects.deployments.loading')} mode="info" /> : null}
+      {change.running ? <Item title={t('common.loading')} mode="info" /> : null}
       {result ? <Item testID={`${props.testID}.result`} title={result} mode="info" /> : null}
       {change.outcome ? <DeployOutcomeBanner controller={change.banner}
         machine={props.machineName(target.machineId)} copy="setting" /> : null}
       {open && snapshots?.length === 0 ? <Item title={t('projects.deployments.backupNoSnapshots')} mode="info" /> : null}
-      {open ? snapshots?.map(snapshot => (
+      {open ? newestFirst(snapshots)?.map(snapshot => (
         <Item key={snapshot.snapshot.snapshotId} testID={`${props.testID}.snapshot.${snapshot.snapshot.snapshotId}`}
           title={formatAsOfTime(Date.parse(snapshot.snapshot.time))}
           subtitle={snapshot.verification.kind === 'unknown'
@@ -157,6 +161,11 @@ export function DeploymentBackupControls(props: Readonly<{
       )) : null}
     </>
   );
+}
+
+/** Saved copies read newest first, the one a person most likely wants (lab `database/backups`). */
+function newestFirst(snapshots: readonly Snapshot[] | null): readonly Snapshot[] | null {
+  return snapshots && [...snapshots].sort((a, b) => Date.parse(b.snapshot.time) - Date.parse(a.snapshot.time));
 }
 
 type Retention = DeploymentBackupConfigurationV1['retention'];
