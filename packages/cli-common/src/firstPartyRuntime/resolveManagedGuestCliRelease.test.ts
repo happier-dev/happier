@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { assertManagedGuestCliVersion, resolveManagedGuestCliRelease } from './resolveManagedGuestCliRelease.js';
+import { assertManagedGuestCliVersion, ManagedGuestCliReleaseError, resolveManagedGuestCliRelease } from './resolveManagedGuestCliRelease.js';
 import { resolveFirstPartyComponentRelease } from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -104,7 +104,9 @@ describe('managed guest CLI release selection', () => {
   it('refuses an invalid release-list response without reporting an unavailable line', async () => {
     vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', undefined);
     const fetchImpl: typeof fetch = async () => Response.json({ message: 'invalid response' });
-    await expect(resolveManagedGuestCliRelease({ line: '0.3', githubToken: '', fetchImpl })).rejects.toThrow('[github] invalid release list response');
+    const failure = await resolveManagedGuestCliRelease({ line: '0.3', githubToken: '', fetchImpl }).then(() => null, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(ManagedGuestCliReleaseError);
   });
 });
 
