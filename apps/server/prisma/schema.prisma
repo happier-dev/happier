@@ -1625,6 +1625,8 @@ model Session {
     @@index([accountId, needsAttention, meaningfulActivityAt(sort: Desc), id(sort: Desc)])
     @@index([accountId, archivedAt(sort: Desc)])
     @@index([lastActiveAt(sort: Asc), updatedAt(sort: Asc)])
+    // Presence deadline: next-due and expired live Sessions, never the inactive history.
+    @@index([active, lastActiveAt])
     @@index([responsibleAccountId])
     @@index([primaryTeamId])
 }
