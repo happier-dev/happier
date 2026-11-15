@@ -299,6 +299,52 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
+  // F-B-MEMBER-SCM-WRITES-1116: Manage is full control (owner ruling 2026-10-31), so the Git panel's
+  // writes in a member folder work, run whole in that member's child; daemon Git never runs there.
+  it('runs Manage Git writes of a member folder (stage, commit, branch, push) in that member child', async () => {
+    const f = await fixture();
+    const remote = join(f.directory, 'member-remote.git');
+    execFileSync('git', ['init', '-q', '--bare', remote]);
+    git(f.memberRepository, 'remote', 'add', 'origin', remote);
+    // The member's own repository identity (their Git config), which their commits carry.
+    git(f.memberRepository, 'config', 'user.name', 'Member test');
+    git(f.memberRepository, 'config', 'user.email', 'member@example.invalid');
+    await writeFile(join(f.memberRepository, 'notes.txt'), 'from manage\n');
+    const cwd = f.memberRepository;
+    // As in the owner push case: a local bare remote matches no forge.
+    const services = { resolveScmHostingProviderRegistry: async () => ({
+      detectRemote: () => ({ kind: 'unresolved' }), buildCompareUrl: () => ({ kind: 'unresolved' }) }) };
+    for (const [method, params] of [
+      [RPC_METHODS.SCM_CHANGE_INCLUDE, { cwd, paths: ['notes.txt'] }],
+      [RPC_METHODS.SCM_COMMIT_CREATE, { cwd, message: 'manage commit' }],
+      [RPC_METHODS.SCM_BRANCH_CREATE, { cwd, name: 'feature', checkout: true }],
+      [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'feature' }],
+    ] as const) {
+      const response = await runWithHostingProviderRuntimeServices(services as unknown as Parameters<typeof runWithHostingProviderRuntimeServices>[0],
+        () => f.invoke(method, params, 'manager-account', 'manage'));
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: true });
+    }
+    expect(git(f.memberRepository, 'log', '-1', '--format=%s|%an')).toBe('manage commit|Member test\n');
+    expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'feature'], { encoding: 'utf8' }).trim())
+      .toBe(git(f.memberRepository, 'rev-parse', 'HEAD').trim());
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(4).fill(['workspace-effect', 2401]));
+    expect(gitLaunches().length).toBeGreaterThan(0);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  it('refuses a Git write in a member folder for a Team member without Manage, before any Git', async () => {
+    const f = await fixture();
+    await writeFile(join(f.memberRepository, 'notes.txt'), 'from use\n');
+    for (const accountId of ['member-account', 'team-member-account']) {
+      expect(await f.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: f.memberRepository, message: 'refused' }, accountId, 'use'))
+        .toMatchObject({ errorCode: 'machine_manage_required' });
+    }
+    expect(git(f.memberRepository, 'log', '-1', '--format=%s')).toBe('initial\n');
+    expect(gitLaunches()).toEqual([]);
+    expect(os.runAs).toEqual([]);
+  });
+
   it('refuses Can use reads of another folder and forge methods before any daemon Git or state read', async () => {
     const f = await fixture();
     expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.ownerRepository }, 'member-account', 'use'))

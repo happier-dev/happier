@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import type {
@@ -20,7 +19,7 @@ import {
 } from '@/workspaces/activation/workspaceEffect';
 import { resolveCwd } from '@/scm/runtime';
 
-/** One local repository read, executed whole by the member-owned Workspace effect child. */
+/** One local repository operation (a read, or a Manage write), executed whole by the member-owned Workspace effect child. */
 export type MemberScmReadEffect = Readonly<{
   kind: 'scm_read';
   /** The member folder; the child runs with it as its working directory. */
@@ -41,8 +40,9 @@ const unavailable = (code = 'agent_isolation_unavailable') =>
   });
 
 /**
- * Daemon side. A Can use member's read touches member-controlled Git metadata (state
- * files may be symlinks or FIFOs), so the daemon never opens a path in the member folder:
+ * Daemon side. Repository work in a member folder (a Can use member's read, or Manage's read
+ * or write) touches member-controlled Git metadata and config (state files may be symlinks or
+ * FIFOs; config may name hooks), so the daemon never opens a path in the member folder:
  * Git and every metadata read run in the existing member Workspace effect child
  * (`workspace-effect`, the Project Open/Sync member owner), as the member OS user.
  */
@@ -130,13 +130,12 @@ export async function readScmAsMember(
   }
 }
 
-/** Member child side: the same SCM handlers, confined to the member folder, with Git run directly as the member. */
+/** Member child side: the same SCM handlers, confined to the member folder, with Git run directly
+ * as the member. The daemon already decided which method may run here; the child adds no decision. */
 export async function executeMemberScmRead(
   effect: MemberScmReadEffect,
   signal: AbortSignal,
 ): Promise<unknown> {
-  if (!isScmLocalRepositoryReadRpcMethod(effect.method))
-    throw unavailable('machine_manage_required');
   const folder =
     effect.root !== undefined
       ? resolveCwd(effect.root, effect.workspaceRoot, {

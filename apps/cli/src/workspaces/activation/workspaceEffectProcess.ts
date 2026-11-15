@@ -17,7 +17,7 @@ type LaunchContext = Omit<
 
 /** The one member child for Workspace effects (`workspace-effect`): the same
  * installed binary, run as the requester's member user with the member folder
- * as its working directory. Checkout, Sync, SCM reads and Session import share it. */
+ * as its working directory. Checkout, Sync, SCM repository work and Session import share it. */
 export function authorizeWorkspaceEffectLaunch(
   input: LaunchContext &
     Readonly<{

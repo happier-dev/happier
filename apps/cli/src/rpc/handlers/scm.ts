@@ -109,7 +109,7 @@ import { createHostScmCommandRunner, isRequesterScmCommandRunnerSelected, resolv
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { ApiMachineClient } from '@/api/apiMachine';
-import { isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
@@ -149,17 +149,18 @@ export function registerScmHandlers(
         return typeof code === 'string' ? code : 'agent_isolation_unavailable';
     };
     // Can use runs as the person's own member user, only in their own folder (owner rulings
-    // 2026-11-02, 2026-11-14). The whole read (Git and every repository metadata read) runs in
-    // the member Workspace effect child: the daemon never opens a member-controlled path
+    // 2026-11-02, 2026-11-14), and Manage's repository work in a member folder runs as that folder's
+    // member. The whole operation (Git and every repository metadata read) runs in the member
+    // Workspace effect child: the daemon never opens a member-controlled path
     // (SEC-FORKC-1115F F1: a symlinked or FIFO Git state file).
-    const readAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
+    const runAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
         method: string, projectRoot: string | undefined, input: unknown): Promise<unknown> => {
         if (!deps?.nativeOperationRuntime) return refused('agent_isolation_unavailable');
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
             ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
         let native: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>;
         try {
-            // A read consumes the existing member binding; a person without one has no folder to read.
+            // This consumes the existing member binding; a person without one has no folder here.
             native = await deps.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: context,
                 signal: context.signal, readMaterial: () => material, allowMemberPreparation: false });
         } catch (error) { return refused(readErrorCode(error)); }
@@ -189,18 +190,19 @@ export function registerScmHandlers(
             const identity = requester.identity;
             if (isHostRequesterUnrestrictedOwner(identity)) {
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
-                // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): the read runs in
-                // that member's own child. Happier never adds a safe.directory exception for it.
+                // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
+                // reads and writes (F-B) run in that member's own child, as that member. Happier never
+                // adds a safe.directory exception for it.
                 const target = projectRoot ?? readRequestCwd(input);
                 const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
-                const member = readOwner && target !== undefined && isScmLocalRepositoryReadRpcMethod(method)
+                const member = readOwner && target !== undefined && isScmLocalRepositoryRpcMethod(method)
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refused('agent_isolation_unavailable');
-                if (member) return await readAsMember(context, member, method, projectRoot, input);
+                if (member) return await runAsMember(context, member, method, projectRoot, input);
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
             if (!isScmLocalRepositoryReadRpcMethod(method)) return await run();
-            return identity.kind === 'isolated' ? await readAsMember(context, identity, method, projectRoot, input)
+            return identity.kind === 'isolated' ? await runAsMember(context, identity, method, projectRoot, input)
                 : refused('agent_isolation_unavailable');
         } finally { await requester.dispose(); }
     };

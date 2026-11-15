@@ -2634,19 +2634,27 @@ an Agent cannot gain the person's terminal authority through copied context.
 Session-less Project SCM (the Machine-scoped `scm.*` RPCs) runs where the
 admitted viewer may run. The SCM handler resolves the requester through the
 filesystem-effect requester owner. An admitted Manage requester or the custodian
-runs Git as the daemon user, unisolated, like its file effects and shell.
+runs Git as the daemon user, unisolated, like its file effects and shell,
+except in a member folder: there every local repository read and write runs as
+the member who owns the folder (named by the committed member binding), in that
+member's `workspace-effect` child, so daemon Git never runs a member repository's
+config or hooks. Writes there (stage, commit, branch, stash, conflicts,
+worktrees, remotes, fetch/pull/push) use the member's own Git identity and
+credentials; Happier adds no `safe.directory` exception.
 A person with Can use (or their own Account automation) gets local repository
-reads only: the SCM Action specs mark them `localRepositoryRead` (status, log,
-history, branches, stashes, commit and file diffs, file content, backend
-describe), and `isScmLocalRepositoryReadRpcMethod` projects that flag for
-ingress and the handler. The handler runs the whole read (Git and every
+reads only. The SCM Action specs mark each Git-only repository method
+`localRepository: 'read'` (status, log, history, branches, stashes, commit and
+file diffs, file content, backend describe) or `'write'`;
+`isScmLocalRepositoryReadRpcMethod` projects the reads for ingress and the
+handler, and `isScmLocalRepositoryRpcMethod` both kinds for the member-folder
+placement. The handler runs the whole read (Git and every
 repository metadata read, such as rebase/merge state files and `shallow`) in
 the member's `workspace-effect` child, the Project Open/Sync member owner,
 launched as the member through `prepareNativeOperation`. The daemon never
 opens a path in the member folder, so a symlinked or FIFO state file only
 reaches what the member itself can read (SEC-FORKC-1115F F1). When the daemon
-user runs Git in a repository the member owns (a Manage viewer's Session-less
-SCM, or registering a member Session's Project), Git itself refuses with
+user runs Git in a repository the member owns (a Manage viewer's forge or other
+non-repository method there, or registering a member Session's Project), Git itself refuses with
 `detected dubious ownership` before the backend opens any state file, so those
 reads fail closed rather than reaching member-planted files (MEMBER-PATH-READS-1115).
 A `safe.directory` exception in the daemon user's Git config removes that refusal. The child

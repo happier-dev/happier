@@ -16,7 +16,7 @@ export type WorkspaceEffectServices = Readonly<{
   fail(error: Error, effectsIssued: boolean): Promise<void>;
   readNativeSyncConfiguration?(): Promise<Readonly<{ configuration: PrivateProjectSyncEffectConfiguration; network: PrivateProjectSyncNetwork }>>;
   completeNativeSync?(result: PrivateProjectNativeSyncProcessPort): Promise<void>;
-  /** A member's local repository read: its whole SCM response. */
+  /** A local repository operation run as the member: its whole SCM response. */
   completeScmRead?(response: unknown): Promise<void>;
   /** A member's handoff Session import: the Agent's native result or typed failure. */
   completeSessionImport?(record: MemberSessionImportRecord): Promise<void>;
