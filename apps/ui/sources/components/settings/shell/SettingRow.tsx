@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t, usePreferredLanguage } from '@/text';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { usePopoverScrollSourceRef } from '@/components/ui/popover';
+import { findVerticalScroller } from '@/components/ui/code/view/readCodeViewReadingLine';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -69,6 +70,16 @@ function useRegisterRequestedAnchor(anchor: string, isTarget: boolean) {
 }
 
 /**
+ * Centres a host that fits the visible page; a taller one (a whole section on a phone) lands at the
+ * top of its scroller, so its heading sits just under the page header instead of above the screen.
+ */
+function revealWebBlock(host: unknown): 'center' | 'start' {
+    if (typeof HTMLElement === 'undefined' || !(host instanceof HTMLElement)) return 'center';
+    const scroller = findVerticalScroller(host);
+    return scroller && host.getBoundingClientRect().height > scroller.clientHeight ? 'start' : 'center';
+}
+
+/**
  * Scrolls the host into view and pulses its overlay twice once `active` turns on (after `delayMs`);
  * under reduced motion it marks it briefly without animation.
  */
@@ -86,11 +97,11 @@ export function useSettingReveal(active: boolean, delayMs: number) {
         if (!active || !focused) return;
         const timer = setTimeout(() => {
             const node = hostRef.current as unknown as {
-                scrollIntoView?: (options: Readonly<{ block: 'center'; behavior: 'auto' | 'smooth' }>) => void;
+                scrollIntoView?: (options: Readonly<{ block: 'center' | 'start'; behavior: 'auto' | 'smooth' }>) => void;
                 measureLayout?: (relativeTo: unknown, onSuccess: (x: number, y: number) => void, onFail: () => void) => void;
             } | null;
             if (Platform.OS === 'web') {
-                node?.scrollIntoView?.({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
+                node?.scrollIntoView?.({ block: revealWebBlock(hostRef.current), behavior: reducedMotion ? 'auto' : 'smooth' });
             } else {
                 const scroll = scrollSourceRef?.current as { scrollTo?: (options: Readonly<{ y: number; animated: boolean }>) => void; getInnerViewNode?: () => unknown } | null | undefined;
                 node?.measureLayout?.(scroll?.getInnerViewNode?.() ?? scroll, (_x, y) => {
