@@ -333,9 +333,16 @@ The invoking UI's Account-native enrollment currently has no default Home-payloa
 supplier. Its native guest exec/file adapters can deliver bytes, but cannot read
 the controller's local payload root; native SSH's self-download path likewise has
 no Home artifact export to consume. Both paths retain `guest_payload_missing`
-rather than selecting a public channel. Supporting them requires a Home payload
+rather than selecting a public channel, and direct the user to choose a connected
+controller for installation. Supporting direct app delivery requires a Home payload
 export consumed by the same enrollment installer, including a decision about
 controllerless Account execution; no such export is provided by this contract.
+Add Machine's command handoff makes the same refusal for a Stack-configured Home
+(`stack-env` profile source), on POSIX and Windows, instead of emitting a public
+development-channel installer. Native task execution remains available through
+its existing installer. SSH transfer failures preserve the OpenSSH exception's
+exit status in the existing closed diagnostic grammar; native error output is
+not copied into the public operation summary.
 Linux ARM64 source payloads can also be built on Linux x64 when the canonical
 support producer's ARM cross-toolchain prerequisites are installed; a foreign
 launcher alone is insufficient because each target needs its native support.

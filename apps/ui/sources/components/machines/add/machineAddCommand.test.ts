@@ -14,6 +14,12 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 
 const home = { descriptor: null, profileSource: null, fallbackHomeUrl: 'https://home.example.test' };
 describe('machine add commands', () => {
+    it.each(MACHINE_ADD_COMMAND_OS)('refuses public installation for a source Home (%s)', os => {
+        const target = { ...home, profileSource: 'stack-env' as const };
+        expect(resolveWebDesktopSetupHandoffTarget(target)).toMatchObject({ kind: 'unavailable', code: 'guest_payload_missing' });
+        expect(buildMachineAddCommand({ ...target, os, kind: 'joinHome' })).toBeNull();
+        expect(buildMachineAddCommand({ ...target, os, kind: 'sshMachine', sshDraft: createDefaultSshCredentialsDraft() })).toBeNull();
+    });
     it.each(['http://happier-agent-qa-unified-work-dev.localhost:3009', 'http://127.0.0.1:3009', 'https://[::1]:3009'])(
         'refuses controller-only setup on another computer while preserving same-computer setup (%s)', url => {
             const target = { ...home, fallbackHomeUrl: url, descriptor: { v: 1 as const, homeServerIdentityId: 'srv_home',

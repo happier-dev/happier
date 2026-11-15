@@ -167,7 +167,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             }
             const target = { descriptor: buildHomeConnectionDescriptorForProfile(profile), profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl, remote: true };
             const handoff = resolveWebDesktopSetupHandoffTarget(target);
-            if (handoff.kind === 'unavailable') return { ok: false, errorCode: handoff.code, error: 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.' };
+            if (handoff.kind === 'unavailable') return { ok: false, errorCode: handoff.code, error: 'message' in handoff ? handoff.message : 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.' };
             const command = buildMachineAddCommand({ ...target, os: input.os, ...(input.method === 'ssh' ? {
                 kind: 'sshMachine', enrollmentIdentity: input.enrollmentIdentity, sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
                     username: input.username ?? '', port: input.port === undefined ? '' : String(input.port), identityFilePath: input.identityFilePath ?? '' },

@@ -17,6 +17,7 @@ export type WebDesktopSetupHandoffTarget =
     | Readonly<{ kind: 'https'; homeUrl: string }>
     | Readonly<{ kind: 'account_service' }>
     | Readonly<{ kind: 'descriptor_file_required' }>
+    | Readonly<{ kind: 'unavailable'; code: 'guest_payload_missing'; message: string }>
     | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
 export type MachineAddHomeTarget = Readonly<{
     descriptor: HomeConnectionDescriptorV1 | null;
@@ -28,6 +29,12 @@ export type MachineAddHomeTarget = Readonly<{
 
 /** A descriptor without HTTPS needs a file; the installer's stdin cannot carry it. */
 export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget): WebDesktopSetupHandoffTarget {
+    // A Stack Home runs its own source payload. There is no browser export of
+    // that controller-local artifact, so a public installer is not its supplier.
+    if (params.profileSource === 'stack-env') return {
+        kind: 'unavailable', code: 'guest_payload_missing',
+        message: 'This Home does not export its CLI payload to this app. Choose a connected controller to install this machine, then retry.',
+    };
     if (params.remote) {
         const remote = resolveRemoteHomeApplicationCarrier(params.descriptor ?? {
             endpoints: params.fallbackHomeUrl ? [{ kind: 'https', url: params.fallbackHomeUrl }] : [],
@@ -61,7 +68,6 @@ function quoteShellValue(value: string, os: MachineAddCommandOs): string {
     return os === 'windows' ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
-export function buildMachineAddCommand(input: MachineAddCommandInput & { remote?: false }): string;
 export function buildMachineAddCommand(input: MachineAddCommandInput, target: Exclude<WebDesktopSetupHandoffTarget, { kind: 'unavailable' }>): string;
 export function buildMachineAddCommand(input: MachineAddCommandInput, target?: WebDesktopSetupHandoffTarget): string | null;
 export function buildMachineAddCommand(input: MachineAddCommandInput, target = resolveWebDesktopSetupHandoffTarget(input)): string | null {

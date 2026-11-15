@@ -238,7 +238,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
             context?.emit({ type: 'progress', stepId: 'ssh.installCli.transfer',
               message: `Transferring Happier: ${transferredBytes} of ${totalBytes} bytes` });
           } };
-        if (!deps.installNativePayload) throw new SystemTaskExecutionError('guest_payload_missing', 'This Home cannot supply its guest CLI payload through this transport.');
+        if (!deps.installNativePayload) throw new SystemTaskExecutionError('guest_payload_missing', 'This app cannot read the Home guest CLI payload. Choose a connected controller to install this machine, then retry.');
         const installed = await deps.installNativePayload(installation);
         binaryPath = installed.binaryPath;
         return installed;

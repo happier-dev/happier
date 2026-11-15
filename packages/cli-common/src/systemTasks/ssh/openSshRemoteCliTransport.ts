@@ -32,7 +32,7 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
       });
     } catch (error) {
       request.signal?.throwIfAborted();
-      throw sshCommandFailure(error instanceof Error ? error.message : '');
+      throw sshCommandFailure(error instanceof Error ? error : '');
     }
   };
   const exec: DedicatedDaemonBootstrapExec = request => {
@@ -77,7 +77,7 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
             });
           } catch (error) {
             signal?.throwIfAborted();
-            throw sshCommandFailure(error instanceof Error ? error.message : '');
+            throw sshCommandFailure(error instanceof Error ? error : '');
           }
           if (temporary) {
             const archiveRoot = posix.join(remotePath, basename(localPath));
