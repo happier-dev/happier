@@ -184,12 +184,19 @@ export function ServicesDatabasesView(
       glyph: () => <Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
       title: (row) => row.service,
       // Line 2: the engine and how it grew; a phone also says its size.
+      // A phone row (no columns) leads line 2 with "Not backed up" when it speaks; the name keeps line 1 whole.
       byline: (row, layout) => {
-        const line = [row.engine, row.growth, layout?.fieldColumns === true ? null : row.size].filter(Boolean).join(' · ');
-        return line ? <Text style={meta} numberOfLines={1}>{line}</Text> : null;
+        const columns = layout?.fieldColumns === true;
+        const line = [row.engine, row.growth, columns ? null : row.size].filter(Boolean).join(' · ');
+        const lead = !columns && coverage.get(row.environmentId) === 'uncovered';
+        if (!line && !lead) return null;
+        return (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
+            {lead ? backupWord(row) : null}
+            {line ? <Text style={meta} numberOfLines={1}>{lead ? `· ${line}` : line}</Text> : null}
+          </View>
+        );
       },
-      titleMeta: (row) => coverage.get(row.environmentId) === 'uncovered' ? backupWord(row) : null,
-      titleMetaAlign: 'row',
       fields: [
         { key: 'size', title: t('projects.deployments.services.sizeLabel'), minWidth: 216, priority: 2, listColumn: true,
           render: (row) => row.size },
@@ -200,7 +207,7 @@ export function ServicesDatabasesView(
       testID: (row) => `services.databases.row.${row.environmentId}.${row.service}`,
       columnTitles: { title: t('projects.deployments.services.columnDatabase') },
     };
-  }, [coverage, theme.colors.text.secondary]);
+  }, [coverage, theme.colors.text.secondary, theme.space.s4]);
   const uncovered = backups.coverage?.rows.filter((row) => row.status === 'uncovered').length ?? 0;
   const countParts = React.useMemo(() => read.snapshot.value ? [
     rows.length > 0 ? t('projects.deployments.services.countDatabases', { count: rows.length }) : null,

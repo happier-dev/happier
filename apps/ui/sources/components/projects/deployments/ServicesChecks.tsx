@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
@@ -185,10 +186,17 @@ function ChecksList(props: Readonly<{
         const named = row2 && row2.title !== row.native.name ? row.native.name : null;
         const line = [row2?.kind, named, columns ? null : row2?.every, columns ? null : row2?.lastResult]
           .filter(Boolean).join(' · ');
-        return line ? <Text style={meta} numberOfLines={1}>{line}</Text> : null;
+        // A phone row (no columns) leads line 2 with the state when it speaks (failing, degraded, switched off).
+        const status = facts.get(row.key)?.status ?? 'unknown';
+        const lead = !columns && (!row.native.enabled || serviceCheckStatusTone(status) !== null);
+        if (!line && !lead) return null;
+        return (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
+            {lead ? stateWord(row) : null}
+            {line ? <Text style={meta} numberOfLines={1}>{lead ? `· ${line}` : line}</Text> : null}
+          </View>
+        );
       },
-      titleMeta: stateWord,
-      titleMetaAlign: 'row',
       fields: [
         { key: 'every', title: t('projects.deployments.services.columnEvery'), minWidth: 72, priority: 2,
           listColumn: true, render: (row) => listFacts.get(row.key)?.every ?? null },
@@ -203,7 +211,7 @@ function ChecksList(props: Readonly<{
       testID: (row) => `services.checks.row.${row.automationId}.${row.triggerId}`,
       columnTitles: { title: t('projects.deployments.services.columnCheck') },
     };
-  }, [facts, listFacts, props.input, theme.colors.text.secondary]);
+  }, [facts, listFacts, props.input, theme.colors.text.secondary, theme.space.s4]);
   const failing = rows.filter((row) => row.native.enabled && facts.get(row.key)?.status === 'down').length;
   const count = React.useMemo(() => [t('projects.deployments.services.countChecks', { count: rows.length }),
     failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, rows.length]);

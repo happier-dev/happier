@@ -81,3 +81,13 @@ describe('deploymentEnvironmentRowLine (Services → Apps line 2, lab envRow)', 
       { columns: false, hereMachine: true })).toBe('Build · 31s · docs: faster search');
   });
 });
+
+describe('deploymentEnvironmentRowLeadState (DESIGN "Phones recompose")', () => {
+  it('leads a phone row\'s line 2 with the state that speaks; columns keep it in State; healthy says nothing', async () => {
+    const { deploymentEnvironmentRowLeadState } = await import('./DeploymentEnvironmentRows');
+    const failing = { state: { tone: 'warning' as const, text: 'Running, not verified' } };
+    expect(deploymentEnvironmentRowLeadState(failing, { columns: false })).toEqual(failing.state);
+    expect(deploymentEnvironmentRowLeadState(failing, { columns: true })).toBeNull();
+    expect(deploymentEnvironmentRowLeadState({ state: null }, { columns: false })).toBeNull();
+  });
+});
