@@ -132,6 +132,28 @@ describe('GitHub Viewed Actions through production registration and admission', 
     expect(ScmFileViewedReadResultV1Schema.safeParse(result).success).toBe(true);
   });
 
+  it.each([readId, setId])('settles a rate-limited %s through its closed SCM result contract', async (action) => {
+    let graphqlCalls = 0;
+    const stub = createStubGithubTransport({ respond(request) {
+      if (!new URL(request.url).pathname.endsWith('/graphql')) return undefined;
+      graphqlCalls++;
+      const body = readRecordedJsonBody(request) as { query: string };
+      if (action === setId && body.query.startsWith('query')) return { status: 200, body: { data: { repository: { pullRequest: { id: 'PR_test' } } } } };
+      return { status: 403, headers: { 'retry-after': '60', 'x-github-request-id': 'github-viewed-limited' },
+        body: { message: 'You have exceeded a secondary rate limit.' } };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    try {
+      const result = await plugin.invokeAction(action, action === readId ? input() : { ...input(), path: 'a.ts', viewed: true },
+        { surface: 'plugin', requestId: 'viewed-rate-limited' });
+      expect(result).toEqual({ kind: 'unavailable', failure: { class: 'rateLimit', code: 'github_secondary_rate_limited',
+        detail: 'GitHub request ID: github-viewed-limited', retryNotBeforeMs: expect.any(Number) } });
+      expect(graphqlCalls).toBe(action === readId ? 1 : 2);
+    } finally { await plugin.dispose(); }
+  });
+
   it('refuses a foreign credential purpose before materialization or requests', async () => {
     const stub = createStubGithubTransport({ respond: () => undefined });
     const request = input();

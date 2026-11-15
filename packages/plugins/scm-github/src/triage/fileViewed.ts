@@ -22,7 +22,13 @@ const UNMARK_MUTATION = `mutation GithubUnmarkFileViewed($pullRequestId: ID!, $p
 }`;
 const INVALID_INPUT: TriageSourceFailureV1 = { class: 'unsupportedContract', code: 'github_detail_input_invalid' };
 const INVALID_RESPONSE: TriageSourceFailureV1 = { class: 'unsupportedContract', code: 'github_graphql_response_invalid' };
-function unavailable(failure: TriageSourceFailureV1) { return { kind: 'unavailable' as const, failure }; }
+function unavailable(failure: TriageSourceFailureV1): Extract<ScmFileViewedReadResultV1, { kind: 'unavailable' }> {
+  // Triage's invocation requestId is outside the closed SCM failure contract.
+  return { kind: 'unavailable', failure: { class: failure.class, code: failure.code,
+    ...(failure.detail === undefined ? {} : { detail: failure.detail }),
+    ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }),
+  } };
+}
 function record(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
