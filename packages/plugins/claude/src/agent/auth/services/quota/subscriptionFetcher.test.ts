@@ -127,7 +127,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
 
         expect(snapshot?.meters.some((meter) => meter.meterId === 'five_hour')).toBe(true);
         expect(snapshot?.meters.find((meter) => meter.meterId === 'five_hour')?.windowDurationMs).toBe(18_000_000);
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/api/oauth/usage');
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1');
     });
 
     it('allows the Claude-owned private Anthropic OAuth usage endpoint when configured', async () => {
@@ -158,7 +158,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
         });
 
         expect(snapshot?.meters.some((meter) => meter.meterId === 'five_hour')).toBe(true);
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/api/oauth/usage');
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1');
     });
 
     it('fetches and parses Claude subscription OAuth usage into a quota snapshot', async () => {
@@ -588,7 +588,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
         });
 
         expect(snapshot?.staleAfterMs).toBe(123_000);
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://quota.happier.dev/anthropic/oauth/usage');
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://quota.happier.dev/anthropic/oauth/usage?cedar_ember=1&at_wall=1');
         expect(headersFromFetchCall(fetchMock.mock.calls[0] ?? [])['User-Agent']).not.toBe('happier-test');
     });
 
@@ -773,7 +773,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
         const now = 4_000_000;
         let usageCalls = 0;
         const fetchMock = vi.fn(async (url: string | URL | Request) => {
-            const ordinaryUsage = !String(url).includes('?');
+            const ordinaryUsage = String(url).includes('/oauth/usage');
             if (ordinaryUsage) usageCalls += 1;
             if (ordinaryUsage && usageCalls === 1) {
                 return {
@@ -877,7 +877,32 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
             signal: new AbortController().signal,
         });
 
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://quota.happier.dev/anthropic/oauth/usage');
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('https://quota.happier.dev/anthropic/oauth/usage?cedar_ember=1&at_wall=1');
         expect(snapshot?.meters.find((meter) => meter.meterId === 'five_hour')?.utilizationPct).toBe(18);
+    });
+    it('attaches the OAuth-profile subscription status without inventing renewal or a period end', async () => {
+        const now = 1_000_000;
+        const json = (body: unknown, status = 200) => ({
+            ok: status >= 200 && status < 300, status, statusText: '', headers: new Headers(status === 429 ? { 'retry-after': '600' } : {}),
+            json: async () => body, text: async () => JSON.stringify(body), arrayBuffer: async () => new ArrayBuffer(0),
+        } as Response);
+        const usage = { five_hour: { utilization: 18, resets_at: '2026-02-16T00:00:00Z' } };
+        let usageStatus = 200;
+        const fetchMock = vi.fn(async (url: string) => String(url).endsWith('/profile')
+            ? json({ account: { uuid: 'user' }, organization: { uuid: 'org', organization_type: 'claude_max', subscription_status: 'active' } })
+            : json(usage, usageStatus));
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+        const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
+
+        const snapshot = await fetcher.loadQuota({ record: buildClaudeOAuthRecord(now), now, signal: new AbortController().signal });
+
+        expect(snapshot?.subscription).toEqual({ status: 'subscribed', renewal: 'unknown', observedAtMs: now, staleAfterMs: 300_000 });
+        expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/profile'))).toHaveLength(1);
+
+        fetchMock.mockClear();
+        usageStatus = 429;
+        await expect(fetcher.loadQuota({ record: buildClaudeOAuthRecord(now + 1), now: now + 1, signal: new AbortController().signal }))
+            .rejects.toBeInstanceOf(ConnectedServiceQuotaFetchError);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/profile'))).toBe(false);
     });
 });

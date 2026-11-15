@@ -148,11 +148,17 @@ function isLinkData(value: unknown): value is AgentExternalSessionLinkData {
         && Object.values(value).every((entry) => isLinkDataValue(entry, new Set([value])));
 }
 
+function isTerminalObservation(
+    item: AgentExternalSessionTranscriptItem | AgentExternalSessionTerminalObservation,
+): item is AgentExternalSessionTerminalObservation {
+    return item.raw.role === 'source_observation';
+}
+
 function mapTranscriptItem(
     item: Awaited<ReturnType<typeof pageClaudeJsonlExternalSessionTranscript>>['items'][number],
 ): AgentExternalSessionTranscriptItem | AgentExternalSessionTerminalObservation | null {
     if (!isLinkData(item.raw)) return null;
-    if (item.raw.role === 'source_observation') {
+    if (isTerminalObservation(item)) {
         return { id: item.id, createdAtMs: item.createdAtMs, raw: item.raw };
     }
     return {
@@ -356,12 +362,11 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                         }
                         : {}),
                     resultBudget: {
-                        fits(candidates, nextCursor, searchIncomplete, preparation) {
+                        fits(candidates, nextCursor, searchIncomplete) {
                             return serializedByteLength(ok({
                                 candidates: candidates.map(mapCandidate),
                                 nextCursor,
                                 ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-                                ...(preparation !== undefined ? { preparation } : {}),
                                 // The complete envelope is one byte larger
                                 // than partial, so either real page fits.
                                 ...(request.searchTarget === 'content' ? { contentCoverage: 'complete' } : {}),
@@ -375,7 +380,6 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     candidates: listed.candidates.map(mapCandidate),
                     nextCursor: listed.nextCursor,
                     ...(listed.searchIncomplete !== undefined ? { searchIncomplete: listed.searchIncomplete } : {}),
-                    ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
                     ...(listed.contentCoverage !== undefined ? { contentCoverage: listed.contentCoverage } : {}),
                 });
             } catch (error) {

@@ -62,6 +62,28 @@ export function normalizeClaudeOauthProfileEntitlement(value: unknown): ClaudeOa
   } };
 }
 
+const ACTIVE_CLAUDE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due']);
+const ENDED_CLAUDE_SUBSCRIPTION_STATUSES = new Set(['canceled', 'cancelled', 'expired', 'inactive']);
+const PAID_CLAUDE_ORGANIZATION_TYPES = new Set(['claude_max', 'claude_pro', 'claude_team', 'claude_enterprise']);
+
+/**
+ * Subscription status attested by the OAuth profile. The profile exposes no renewal or
+ * period end, so callers must not infer either. `null` means the payload carries no evidence.
+ */
+export function readClaudeOauthProfileSubscriptionStatus(value: unknown): 'subscribed' | 'none' | null {
+  const root = readObject(value);
+  if (!root) return null;
+  const account = readObject(root.account);
+  const organization = readObject(root.organization);
+  const status = (readString(organization?.subscription_status) ?? readString(root.subscription_status))?.toLowerCase();
+  if (status && ACTIVE_CLAUDE_SUBSCRIPTION_STATUSES.has(status)) return 'subscribed';
+  if (status && ENDED_CLAUDE_SUBSCRIPTION_STATUSES.has(status)) return 'none';
+  if (status) return null;
+  const organizationType = readString(organization?.organization_type);
+  return (organizationType && PAID_CLAUDE_ORGANIZATION_TYPES.has(organizationType))
+    || account?.has_claude_max === true || account?.has_claude_pro === true ? 'subscribed' : null;
+}
+
 export const CLAUDE_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 export const CLAUDE_OAUTH_AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
 export const CLAUDE_OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';

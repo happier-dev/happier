@@ -31,6 +31,8 @@ export type NormalizedClaudeRuntimeRateLimitMeter = Readonly<{
   utilizationPct: number | null;
   resetsAtMs: number | null;
   source: 'runtimeSignal';
+  /** Claude extra usage observed in-band: provider credits that keep serving spent windows. */
+  credits?: Readonly<{ exhausted: boolean }>;
 }>;
 
 export type NormalizedClaudeRuntimeRateLimitsObservation =
@@ -115,14 +117,33 @@ function readSdkRateLimitObservation(value: unknown): NormalizedClaudeRuntimeRat
     return [{ meterId, label: resolveConnectedServiceQuotaMeterLabel(meterId), utilizationPct,
       resetsAtMs: readTimestampMs(raw.resetsAt), source: 'runtimeSignal' as const }];
   });
-  if (meters.length > 0) return { status: 'loaded_data', meters };
+  const extraUsage = readSdkExtraUsageMeter(info);
+  if (meters.length > 0) return { status: 'loaded_data', meters: extraUsage ? [...meters, extraUsage] : meters };
   const meterId = readString(info.rateLimitType ?? info.rate_limit_type);
   const utilizationPct = readSdkUtilizationPercent(info.utilization, false);
   if (meterId && utilizationPct !== null) {
-    return { status: 'loaded_data', meters: [{ meterId, label: resolveConnectedServiceQuotaMeterLabel(meterId), utilizationPct,
-      resetsAtMs: readTimestampMs(info.resetsAt ?? info.resets_at), source: 'runtimeSignal' }] };
+    const window: NormalizedClaudeRuntimeRateLimitMeter = { meterId, label: resolveConnectedServiceQuotaMeterLabel(meterId),
+      utilizationPct, resetsAtMs: readTimestampMs(info.resetsAt ?? info.resets_at), source: 'runtimeSignal' };
+    return { status: 'loaded_data', meters: extraUsage ? [window, extraUsage] : [window] };
   }
   return null;
+}
+
+/**
+ * The event's overage status is the in-band form of the usage endpoint's `extra_usage` credit
+ * meter, so a spent window that extra usage keeps serving is not read as an exhausted account.
+ */
+function readSdkExtraUsageMeter(info: Record<string, unknown>): NormalizedClaudeRuntimeRateLimitMeter | null {
+  const status = normalizeOverageStatus(info.overageStatus ?? info.overage_status);
+  if (status === 'unknown') return null;
+  return {
+    meterId: 'extra_usage',
+    label: 'Extra usage',
+    utilizationPct: null,
+    resetsAtMs: readTimestampMs(info.overageResetsAt ?? info.overage_resets_at),
+    source: 'runtimeSignal',
+    credits: { exhausted: status === 'rejected' },
+  };
 }
 
 export function mapClaudeRuntimeRateLimitsToUsageObservation(

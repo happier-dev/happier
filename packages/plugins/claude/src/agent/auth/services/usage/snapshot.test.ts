@@ -157,3 +157,30 @@ describe('Claude provider account usage snapshots', () => {
         expect(nativeSnapshot.recordKey).not.toEqual(connectedSnapshot.recordKey);
     });
 });
+
+describe('Claude in-band extra usage', () => {
+    it('records the overage status of a spent window as the extra-usage credit meter', async () => {
+        const { mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot } = await import('./snapshot.js');
+        const snapshot = mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot({
+            subject: resolveClaudeUsageSubjectRef({ oauthAccountId: 'claude-account-1', organizationId: 'organization-a', accountLabel: null }),
+            observation: mapClaudeRuntimeRateLimitsToUsageObservation({
+                type: 'rate_limit_event',
+                rate_limit_info: {
+                    status: 'allowed', isUsingOverage: true, overageStatus: 'allowed',
+                    unifiedWindows: { seven_day: { utilization: 1, resetsAt: 1_790_378_400 } },
+                },
+            }),
+            observedAtMs: 1_768_000_000_000,
+            fetchedAtMs: 1_768_000_000_000,
+            accountLabel: null,
+        });
+        expect(snapshot?.meters).toEqual([
+            expect.objectContaining({ meterId: 'seven_day', utilizationPct: 100 }),
+            expect.objectContaining({ meterId: 'extra_usage', unit: 'credits', isExhausted: false, status: 'ok' }),
+        ]);
+        expect(mapClaudeRuntimeRateLimitsToUsageObservation({
+            type: 'rate_limit_event',
+            rate_limit_info: { status: 'allowed', unifiedWindows: { seven_day: { utilization: 0.4 } } },
+        })).toEqual({ status: 'loaded_data', meters: [expect.objectContaining({ meterId: 'seven_day' })] });
+    });
+});

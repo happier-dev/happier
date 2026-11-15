@@ -208,6 +208,7 @@ export function createClaudeNativeAgentSdkContext(
       },
       ...(services.nativeHome ? { nativeHome: services.nativeHome } : {}),
       ...(services.inputFiles ? { inputFiles: services.inputFiles } : {}),
+      ...(services.adoptsHeldAgent ? { adoptsHeldAgent: true } : {}),
       toolExecution: services.toolExecution,
       modes: services.modes,
     },

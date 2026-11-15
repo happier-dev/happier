@@ -849,7 +849,7 @@ describe('Claude Subscription Connected Account', () => {
       ].map((limit) => expect.objectContaining(limit))),
     });
     expect(request).toHaveBeenCalledWith({
-      url: 'https://api.anthropic.com/api/oauth/usage',
+      url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1',
       method: 'GET',
       headers: {
         Authorization: 'Bearer claude-access',

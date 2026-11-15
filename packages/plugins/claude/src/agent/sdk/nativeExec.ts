@@ -73,6 +73,9 @@ export function createClaudeNativeSdkQueryContext(
           ...(spec.launch.env ? { env: spec.launch.env } : {}),
         },
         maxFrameBytes: CLAUDE_SDK_MAX_FRAME_BYTES,
+        // The Session runtime surfaces a held Agent's in-flight turn
+        // (`startHeldAgentAdoption` in `runtime/remote/sdk/session.ts`).
+        adoptsHeldAgentTurns: 'streamJsonControl',
       }, options?.signal || nativeLaunch ? {
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(nativeLaunch ? { nativeLaunch } : {}),
@@ -84,6 +87,7 @@ export function createClaudeNativeSdkQueryContext(
       });
       const client: ClaudeSdkJsonStreamClient = {
         closed: exit.then(() => undefined),
+        ...(handle.client.heldAgentTurn ? { heldAgentTurn: handle.client.heldAgentTurn } : {}),
         subscribe(listener) {
           const subscription = handle.client.subscribe(listener);
           return () => subscription.dispose();

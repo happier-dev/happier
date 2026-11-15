@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
+import { isUtf8 } from 'node:buffer';
 import { readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
@@ -225,6 +226,131 @@ export function resolveClaudeTitle(accumulator: ClaudeTitleAccumulator): string 
         ?? accumulator.fallbackTitle;
 }
 
+// Forward-scanner parity: a record that cannot complete within this allowance
+// fails the title read instead of being skipped.
+const TITLE_RECORD_MAX_BYTES = 8 * 1024 * 1024;
+const TITLE_RECORD_NEEDLES = [Buffer.from('"custom-title"'), Buffer.from('"ai-title"')];
+const titleChunksInFlight = new Map<string, Promise<Buffer>>();
+
+type ClaudeTitleTailScan = Readonly<{
+    accumulator: ClaudeTitleAccumulator;
+    verifiedThroughBytes: number;
+    stoppedAtIncompleteTail: boolean;
+}>;
+
+const MALFORMED_UTF8 = Symbol('malformed_utf8');
+
+function parseTitleLine(line: Buffer): unknown {
+    // The forward scanner drops a malformed UTF-8 line with a diagnostic.
+    if (!isUtf8(line)) return MALFORMED_UTF8;
+    const raw = line.toString('utf8').trim();
+    if (raw.length === 0) return undefined;
+    try {
+        return JSON.parse(raw) as unknown;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Title choice is custom title, then AI title (the last of each wins), then the
+ * first user text. The last records of both kinds are found from the end; only
+ * lines carrying a title record type are parsed. The body is skipped once both
+ * kinds are seen, and a transcript lacking either is still scanned to its
+ * start, so absence keeps today's choice. Claude's writer emits the record type
+ * as a plain JSON string, which is what the byte probe matches.
+ */
+async function scanClaudeTitleTail(params: Readonly<{
+    filePath: string;
+    remoteSessionId: string;
+    identity: ClaudeTranscriptIdentity;
+    fileSystem: JsonlScannerFileSystem | undefined;
+}>): Promise<ClaudeTitleTailScan> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    const readRaw = async (position: number, length: number): Promise<Buffer> => {
+        if (params.fileSystem) return await params.fileSystem.read(params.filePath, position, length);
+        handle ??= await open(params.filePath, 'r');
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, position);
+        return buffer.subarray(0, bytesRead);
+    };
+    const readChunk = async (position: number, length: number): Promise<Buffer> => {
+        // An explicit filesystem can describe a different source at the same path.
+        if (params.fileSystem) return await readRaw(position, length);
+        const key = JSON.stringify([params.filePath, params.identity, position, length]);
+        const pending = titleChunksInFlight.get(key);
+        if (pending) return await pending;
+        const started = readRaw(position, length);
+        titleChunksInFlight.set(key, started);
+        try {
+            return await started;
+        } finally {
+            titleChunksInFlight.delete(key);
+        }
+    };
+    try {
+        let accumulator: ClaudeTitleAccumulator = Object.freeze({ customTitle: null, aiTitle: null, fallbackTitle: null });
+        let verifiedThroughBytes = params.identity.sizeBytes;
+        let stoppedAtIncompleteTail = false;
+        let end = params.identity.sizeBytes;
+        // Bytes after the newest newline seen so far, waiting for their line start.
+        let carry: Buffer = Buffer.alloc(0);
+        let finalLine = true;
+        const applyLine = (line: Buffer, startOffsetBytes: number) => {
+            if (finalLine) {
+                finalLine = false;
+                const value = parseTitleLine(line);
+                // An unterminated final record is still being written.
+                if (value === null && startOffsetBytes + line.length === params.identity.sizeBytes
+                    && line.toString('utf8').trim() !== 'null') {
+                    verifiedThroughBytes = startOffsetBytes;
+                    stoppedAtIncompleteTail = true;
+                    return;
+                }
+                if (value !== undefined && value !== MALFORMED_UTF8) {
+                    accumulator = applyClaudeTitleRecord(accumulator, value, params.remoteSessionId, 'backward');
+                }
+                return;
+            }
+            if (line.length >= TITLE_RECORD_MAX_BYTES) throw new Error('Claude transcript title record exceeds the read allowance');
+            if (!TITLE_RECORD_NEEDLES.some(needle => line.includes(needle))) return;
+            const value = parseTitleLine(line);
+            if (value !== undefined && value !== MALFORMED_UTF8) {
+                accumulator = applyClaudeTitleRecord(accumulator, value, params.remoteSessionId, 'backward');
+            }
+        };
+        const done = () => accumulator.customTitleSeen === true && accumulator.aiTitleSeen === true;
+        while (end > 0 && !done()) {
+            const length = Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, end);
+            const start = end - length;
+            const chunk = await readChunk(start, length);
+            if (chunk.length !== length) throw new Error('Claude transcript changed while indexing its title');
+            const bytes = carry.length > 0 ? Buffer.concat([chunk, carry]) : chunk;
+            let lineEnd = bytes.length;
+            for (let index = bytes.lastIndexOf(0x0a, lineEnd - 1); index >= 0 && !done();
+                index = index > 0 ? bytes.lastIndexOf(0x0a, index - 1) : -1) {
+                const isTrailingNewline = finalLine && index === bytes.length - 1 && start + bytes.length === params.identity.sizeBytes;
+                if (isTrailingNewline) {
+                    // A terminated final record is complete; it is just a line.
+                    finalLine = false;
+                } else {
+                    applyLine(bytes.subarray(index + 1, lineEnd), start + index + 1);
+                }
+                lineEnd = index;
+            }
+            carry = bytes.subarray(0, lineEnd);
+            if (carry.length >= TITLE_RECORD_MAX_BYTES && start > 0) {
+                throw new Error('Claude transcript title record exceeds the read allowance');
+            }
+            end = start;
+        }
+        if (end === 0 && carry.length > 0 && !done()) applyLine(carry, 0);
+        return { accumulator, verifiedThroughBytes, stoppedAtIncompleteTail };
+    } finally {
+        await handle?.close();
+    }
+}
+
 /**
  * Claude owns title and cwd semantics; the host candidate index owns persistence. A
  * matching state resumes at the verified byte boundary of the same transcript
@@ -268,36 +394,69 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
         let accumulator = readTitleAccumulatorFromState(canResume ? previousState : null);
         let cwd = canResume && previousState ? previousState.cwd : null;
         let stoppedAtIncompleteTail = false;
-        while (offsetBytes < before.sizeBytes) {
-            const page = await readClaudeTitlePage(
-                params.filePath,
-                offsetBytes,
-                before,
-                params.fileSystem,
-            );
-            for (const line of page.items) {
-                if (
-                    line.value === null
-                    && line.rawLine !== 'null'
-                    && line.endOffsetBytes === before.sizeBytes
-                ) {
-                    offsetBytes = line.startOffsetBytes;
-                    stoppedAtIncompleteTail = true;
-                    break;
-                }
-                cwd ??= readWorkingDirectory(line.value);
-                accumulator = applyClaudeTitleRecord(
-                    accumulator,
-                    line.value,
-                    params.remoteSessionId,
+        if (canResume) {
+            while (offsetBytes < before.sizeBytes) {
+                const page = await readClaudeTitlePage(
+                    params.filePath,
+                    offsetBytes,
+                    before,
+                    params.fileSystem,
                 );
+                for (const line of page.items) {
+                    if (
+                        line.value === null
+                        && line.rawLine !== 'null'
+                        && line.endOffsetBytes === before.sizeBytes
+                    ) {
+                        offsetBytes = line.startOffsetBytes;
+                        stoppedAtIncompleteTail = true;
+                        break;
+                    }
+                    cwd ??= readWorkingDirectory(line.value);
+                    accumulator = applyClaudeTitleRecord(
+                        accumulator,
+                        line.value,
+                        params.remoteSessionId,
+                    );
+                }
+                if (stoppedAtIncompleteTail) break;
+                if (page.truncated || page.nextOffsetBytes <= offsetBytes) {
+                    throw new Error('Claude transcript title scan did not advance');
+                }
+                offsetBytes = page.nextOffsetBytes;
+                if (page.reachedEnd) break;
             }
-            if (stoppedAtIncompleteTail) break;
-            if (page.truncated || page.nextOffsetBytes <= offsetBytes) {
-                throw new Error('Claude transcript title scan did not advance');
+        } else {
+            const tail = await scanClaudeTitleTail({
+                filePath: params.filePath,
+                remoteSessionId: params.remoteSessionId,
+                identity: before,
+                fileSystem: params.fileSystem,
+            });
+            // The first user text and working directory come from the head.
+            let head: ClaudeTitleAccumulator = Object.freeze({ customTitle: null, aiTitle: null, fallbackTitle: null });
+            let headOffsetBytes = 0;
+            headScan: while (headOffsetBytes < tail.verifiedThroughBytes && (head.fallbackTitle === null || cwd === null)) {
+                const page = await readClaudeTitlePage(params.filePath, headOffsetBytes, before, params.fileSystem);
+                for (const line of page.items) {
+                    if (line.startOffsetBytes >= tail.verifiedThroughBytes) break headScan;
+                    cwd ??= readWorkingDirectory(line.value);
+                    head = applyClaudeTitleRecord(head, line.value, params.remoteSessionId);
+                    if (head.fallbackTitle !== null && cwd !== null) break headScan;
+                }
+                if (page.truncated || page.nextOffsetBytes <= headOffsetBytes) {
+                    throw new Error('Claude transcript title scan did not advance');
+                }
+                headOffsetBytes = page.nextOffsetBytes;
+                if (page.reachedEnd) break;
             }
-            offsetBytes = page.nextOffsetBytes;
-            if (page.reachedEnd) break;
+            accumulator = Object.freeze({
+                customTitle: tail.accumulator.customTitle,
+                aiTitle: tail.accumulator.aiTitle,
+                fallbackTitle: head.fallbackTitle,
+            });
+            offsetBytes = tail.verifiedThroughBytes;
+            stoppedAtIncompleteTail = tail.stoppedAtIncompleteTail;
         }
 
         const after = await readTranscriptIdentity(params.filePath);

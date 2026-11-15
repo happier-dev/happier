@@ -1,10 +1,15 @@
-import { normalizeClaudeOauthProfileEntitlement, readClaudeOauthCredentialOrganizationId } from '@happier-dev/protocol/providers/claude/oauth-profile';
+import {
+    normalizeClaudeOauthProfileEntitlement,
+    readClaudeOauthCredentialOrganizationId,
+    readClaudeOauthProfileSubscriptionStatus,
+} from '@happier-dev/protocol/providers/claude/oauth-profile';
 import { resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { CLAUDE_ACCOUNT_USAGE_PLAN_METADATA } from '../../../../connectedAccounts/planLabels.js';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     AgentAccountUsageMeter,
     AgentAccountUsageSnapshot,
+    AgentAccountUsageSubscription,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     ConnectedAccountRuntime,
@@ -822,23 +827,65 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
             const accessToken = record.oauth.accessToken;
 
             const data = await client.readUsage({ accessToken, now, signal });
-            const snapshot = buildClaudeProviderHttpQuotaSnapshot({
+            // Read only after usage succeeded, so a rate-limited account adds no profile request.
+            const subscription = await readClaudeProfileSubscription({ client, accessToken, now, staleAfterMs, signal,
+                expectedProviderAccountId: record.oauth.providerAccountId });
+            const snapshot: AgentAccountUsageSnapshot = { ...buildClaudeProviderHttpQuotaSnapshot({
                 record, now, staleAfterMs, planLabel,
                 accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
                 meters: parseClaudeSubscriptionUsageMeters(data),
-            });
+            }), subscription };
+            // The usage read already evaluated both reset programs; malformed reset data never hides usage.
+            const cedar = isRecord(data) && isRecord(data.cedar_ember) ? data.cedar_ember : null;
+            const diagnostics = cedar?.ineligible_reason === 'cli_version' ? [...(snapshot.diagnostics ?? []), {
+                kind: 'provider_http' as const, code: 'claude_reset_cli_version_ineligible', observedAtMs: now,
+                message: 'Claude rejected reset eligibility for the detected Claude Code version; resets stay hidden until a current version is detected.',
+            }] : snapshot.diagnostics;
+            const observed = diagnostics ? { ...snapshot, diagnostics } : snapshot;
             try {
-                const inventory = (await client.readResets({ accessToken, now, signal })).inventory;
-                if (!inventory) return snapshot;
-                return { ...snapshot, ...inventory };
+                const inventory = parseClaudeQuotaResets(data, now);
+                if (!inventory) return observed;
+                return { ...observed, ...inventory };
             } catch {
-                return { ...snapshot, diagnostics: [...(snapshot.diagnostics ?? []), {
+                return { ...observed, diagnostics: [...(observed.diagnostics ?? []), {
                     kind: 'provider_http', code: 'claude_reset_discovery_failed', observedAtMs: now,
-                    message: 'Claude reset discovery failed; ordinary usage remains available.',
+                    message: 'Claude reset data is malformed; ordinary usage remains available.',
                 }] };
             }
         },
     };
+}
+
+/**
+ * Subscription status from the OAuth profile. Claude OAuth tokens cannot read renewal or the period end
+ * (claude.ai needs browser cookies), so neither is ever reported. Failures stay `unavailable`, which the
+ * host merges without erasing a previous observation.
+ */
+async function readClaudeProfileSubscription(input: Readonly<{
+    client: ReturnType<typeof createClaudeSubscriptionHttpClient>;
+    accessToken: string;
+    expectedProviderAccountId: string | null | undefined;
+    now: number;
+    staleAfterMs: number;
+    signal: AbortSignal;
+}>): Promise<AgentAccountUsageSubscription> {
+    const unavailable = (code: NonNullable<AgentAccountUsageSubscription['lastRefreshError']>['code'], status?: number | null): AgentAccountUsageSubscription => ({
+        status: 'unavailable', renewal: 'unknown', observedAtMs: input.now, staleAfterMs: input.staleAfterMs,
+        lastRefreshError: { observedAtMs: input.now, code, ...(typeof status === 'number' ? { status } : {}) },
+    });
+    let profile: Awaited<ReturnType<typeof input.client.readProfileContext>>;
+    try {
+        profile = await input.client.readProfileContext({ accessToken: input.accessToken, now: input.now, signal: input.signal,
+            expectedProviderAccountId: input.expectedProviderAccountId });
+    } catch (error) {
+        input.signal.throwIfAborted();
+        return error instanceof ConnectedServiceQuotaFetchError
+            ? unavailable(error.quotaFetchErrorCode, error.status)
+            : unavailable('network');
+    }
+    if (profile.status === 'identityMismatch') return unavailable('auth_failure');
+    if (profile.status !== 'accepted' || !profile.subscriptionStatus) return unavailable('malformed');
+    return { status: profile.subscriptionStatus, renewal: 'unknown', observedAtMs: input.now, staleAfterMs: input.staleAfterMs };
 }
 
 function readNonEmptyEnv(env: Readonly<Record<string, string | undefined>>, key: string): string | undefined {
@@ -901,16 +948,19 @@ export function createClaudeSubscriptionHttpClient(params: Readonly<{
         if (expected && !providerAccountId) return { status: 'unavailable' as const };
         if (expected && providerAccountId !== expected) return { status: 'identityMismatch' as const };
         return { status: 'accepted' as const, providerAccountId, providerEmail,
-            metadata: normalizeClaudeOauthProfileEntitlement(profile)?.claudeAiOauth ?? {} };
+            metadata: normalizeClaudeOauthProfileEntitlement(profile)?.claudeAiOauth ?? {},
+            subscriptionStatus: readClaudeOauthProfileSubscriptionStatus(profile) };
     }
+    // One read returns usage windows, spend and both reset programs (CodexBar uses the same single
+    // `?cedar_ember=1` read); a second read per poll doubled pressure on a heavily 429-limited endpoint.
+    const evaluatedUsageUrl = new URL(usageUrl);
+    evaluatedUsageUrl.searchParams.set('cedar_ember', '1'); evaluatedUsageUrl.searchParams.set('at_wall', '1');
     async function readResets(input: Input) {
-        const url = new URL(usageUrl);
-        url.searchParams.set('cedar_ember', '1'); url.searchParams.set('at_wall', '1'); url.searchParams.set('skip_spend', '1');
-        const payload = await get(url.toString(), input);
+        const payload = await get(evaluatedUsageUrl.toString(), input);
         return { payload, inventory: parseClaudeQuotaResets(payload, input.now) };
     }
     return {
-        readUsage: (input: Input) => get(usageUrl, input, true),
+        readUsage: (input: Input) => get(evaluatedUsageUrl.toString(), input, true),
         readResets,
         readProfileContext,
         async consume(input: Input & Readonly<{ idempotencyKey: string; providerCreditId?: string; providerLimitIds?: readonly string[]; expectedProviderAccountId?: string | null; expectedProviderOrganizationId?: string | null }>): Promise<ClaudeResetConsumeStatus> {
@@ -926,6 +976,10 @@ export function createClaudeSubscriptionHttpClient(params: Readonly<{
                     const exhausted = new Set(parseClaudeSubscriptionUsageMeters(payload)
                         .filter(meter => meter.utilizationPct !== null && meter.utilizationPct >= 100)
                         .map(meter => meter.providerLimitId ?? meter.meterId));
+                    // The provider's exhausted list names limits (e.g. the Fable cap seven_day_overage_included)
+                    // in the grant-clears vocabulary, which derived meter ids do not always share.
+                    const cedar = isRecord(payload) && isRecord(payload.cedar_ember) ? payload.cedar_ember : null;
+                    for (const id of Array.isArray(cedar?.exhausted) ? cedar.exhausted : []) if (typeof id === 'string' && id) exhausted.add(id);
                     if (!input.providerLimitIds.some(id => clears.includes(id) && exhausted.has(id))) return 'not_available';
                 }
                 const profile = await readProfileContext(input);

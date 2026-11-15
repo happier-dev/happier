@@ -79,6 +79,24 @@ function readRuntimeMeterScope(meterId: string): ClaudeRuntimeMeterScope {
 }
 
 function runtimeMeterToQuotaMeter(meter: NormalizedClaudeRuntimeRateLimitMeter): AgentAccountUsageMeter {
+    if (meter.credits) {
+        return {
+            meterId: meter.meterId,
+            label: meter.label,
+            used: null,
+            limit: null,
+            providerLimitId: meter.meterId,
+            unit: 'credits',
+            utilizationPct: null,
+            resetsAt: meter.resetsAtMs,
+            resetAtMs: meter.resetsAtMs,
+            isExhausted: meter.credits.exhausted,
+            status: 'ok',
+            source: 'in_band_provider_snapshot',
+            limitScope: 'account',
+            details: {},
+        };
+    }
     const remainingPct = meter.utilizationPct === null
         ? null
         : Math.max(0, Math.min(100, 100 - meter.utilizationPct));

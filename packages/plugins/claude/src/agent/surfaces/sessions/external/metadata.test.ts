@@ -87,6 +87,44 @@ describe('Claude external-session metadata', () => {
         }
     });
 
+    it('reads the latest title records from the end of a long transcript without reading its body', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-tail-'));
+        try {
+            const filePath = join(root, 'session-one.jsonl');
+            const body = Array.from({ length: 6_000 }, () => jsonlLine({ type: 'progress', data: 'x'.repeat(1_024) })).join('');
+            const transcript = [
+                jsonlLine({ type: 'user', cwd: '/repo', message: { content: 'First user task' } }),
+                jsonlLine({ type: 'custom-title', sessionId: 'session-one', customTitle: 'Old custom' }),
+                jsonlLine({ type: 'ai-title', sessionId: 'session-one', aiTitle: 'Old ai' }),
+                body,
+                jsonlLine({ type: 'ai-title', sessionId: 'session-one', aiTitle: 'Latest ai' }),
+                jsonlLine({ type: 'custom-title', sessionId: 'other-session', customTitle: 'Not this session' }),
+                jsonlLine({ type: 'custom-title', sessionId: 'session-one', customTitle: '  Latest   custom ' }),
+                jsonlLine({ type: 'assistant', message: { content: 'tail' } }),
+            ].join('');
+            await writeFile(filePath, transcript);
+            const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+            const handles: FileHandle[] = [];
+            openMock.mockImplementation(async (...args) => {
+                const handle = await actual.open(...args);
+                if (String(args[0]) === filePath) { vi.spyOn(handle, 'read'); handles.push(handle); }
+                return handle;
+            });
+            const result = await readClaudeJsonlSessionTitleWithIndex({ filePath, remoteSessionId: 'session-one' });
+            let bytesRead = 0;
+            for (const handle of handles) for (const call of vi.mocked(handle.read).mock.results) {
+                if (call.type === 'return') bytesRead += (await call.value).bytesRead;
+            }
+            expect(result).toMatchObject({ title: 'Latest custom', cwd: '/repo', indexState: {
+                customTitle: 'Latest custom', aiTitle: 'Latest ai', fallbackTitle: 'First user task',
+                verifiedThroughBytes: Buffer.byteLength(transcript) } });
+            // The body sits between the head and the latest title records; neither needs it.
+            expect(bytesRead).toBeLessThan(Buffer.byteLength(body) / 2);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('re-derives cwd from an older checkpoint and learns it from appended native records', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-cwd-index-'));
         try {

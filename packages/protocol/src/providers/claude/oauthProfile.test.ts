@@ -7,6 +7,7 @@ import {
   CLAUDE_OAUTH_PROFILE_URL,
   CLAUDE_OAUTH_TOKEN_URL,
   normalizeClaudeOauthProfileEntitlement,
+  readClaudeOauthProfileSubscriptionStatus,
 } from './oauthProfile';
 
 describe('normalizeClaudeOauthProfileEntitlement', () => {
@@ -28,5 +29,14 @@ describe('normalizeClaudeOauthProfileEntitlement', () => {
     })).toEqual({
       claudeAiOauth: { subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x', organizationUuid: 'organization-a' },
     });
+  });
+
+  it('reads only an attested subscription status from the OAuth profile', () => {
+    const profile = (organization: Record<string, unknown>) => ({ account: { uuid: 'user' }, organization });
+    expect(readClaudeOauthProfileSubscriptionStatus(profile({ subscription_status: 'active', organization_type: 'claude_max' }))).toBe('subscribed');
+    expect(readClaudeOauthProfileSubscriptionStatus(profile({ subscription_status: 'canceled', organization_type: 'claude_max' }))).toBe('none');
+    expect(readClaudeOauthProfileSubscriptionStatus(profile({ organization_type: 'claude_pro' }))).toBe('subscribed');
+    expect(readClaudeOauthProfileSubscriptionStatus(profile({ subscription_status: 'mystery' }))).toBeNull();
+    expect(readClaudeOauthProfileSubscriptionStatus({ five_hour: { utilization: 1 } })).toBeNull();
   });
 });

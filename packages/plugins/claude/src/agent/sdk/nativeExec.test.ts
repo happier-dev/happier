@@ -75,6 +75,7 @@ describe('createClaudeNativeSdkQueryContext', () => {
         },
       },
       maxFrameBytes: 32 * 1024 * 1024,
+      adoptsHeldAgentTurns: 'streamJsonControl',
     }, { nativeLaunch });
     expect(callOrder).toEqual(['resolve', 'spawn']);
   });

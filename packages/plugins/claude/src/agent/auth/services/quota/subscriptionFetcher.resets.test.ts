@@ -28,14 +28,14 @@ function network(payload = usage(), post: unknown = { result: 'reset' }, profile
 beforeEach(() => vi.spyOn(Date, 'now').mockReturnValue(now));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe('Claude reset HTTP vertical', () => {
- it('discovers saved grants alongside ordinary meters in the legacy adapter', async () => {
-  const { requests } = network();
+ it('reads ordinary meters and saved grants in one usage request in the legacy adapter', async () => {
+  const { requests } = network(usage({ extra_usage: { is_enabled: true, used_credits: 20, monthly_limit: 100 } }));
   const fetcher = createClaudeSubscriptionQuotaFetcher({ userAgent: 'claude-cli/2.1.296 (external, cli)' });
   const snapshot = await fetcher.loadQuota({ record, now, signal });
   expect(snapshot?.meters.find(m => m.meterId === 'extra_usage')?.used).toBe(20);
   expect(snapshot?.recoveryCredits).toMatchObject({ availableCount: 2, totalCount: 3, credits: [{ id: 'promo', status: 'available' }] });
   expect(snapshot?.recoveryCreditDetails?.promo).toEqual({ remainingCount: 2, appliesToProviderLimitIds: ['five_hour', 'seven_day'] });
-  expect(requests[1]).toMatchObject({ method: 'GET', url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1&skip_spend=1' });
+  expect(requests.filter(r => r.url.includes('/oauth/usage')).map(r => r.url)).toEqual(['https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1']);
  });
  it('redeems the freshly selected provider grant using the organization and stable UUID', async () => {
   const { requests } = network();
@@ -83,6 +83,25 @@ describe.each(['legacy', 'qualified'] as const)('%s real HTTP reset adapter', ki
   const { requests } = network(usage({ five_hour: { utilization: 70 } }));
   expect(await adapter(kind).consume('promo', targets)).toBe('not_available');
   expect(requests.filter(r => r.method === 'POST')).toHaveLength(0);
+ });
+ // Live shape (November 2026 authenticated read): next_grant_id names a default, while Claude Code 2.1.319
+ // offers every grant whose own usable_now is true.
+ it('keeps every individually usable grant redeemable, not only the provider default', async () => {
+  const payload = usage(); payload.cedar_ember.grants.push({ ...payload.cedar_ember.grants[0], id: 'launch-fable', resets_left: 1, resets_total: 1, clears: ['seven_day_overage_included'] });
+  const { requests } = network(payload);
+  expect(await adapter(kind).read()).toMatchObject({ availableCount: 3 });
+  expect(await adapter(kind).consume('launch-fable')).toBe('consumed');
+  expect(requests.filter(r => r.method === 'POST').map(r => (r.body as { grant_id?: string }).grant_id)).toEqual(['launch-fable']);
+ });
+ // The Fable cap is a limits[] weekly_scoped row (meter seven_day_fable) that the provider names
+ // seven_day_overage_included in grant clears, cedar_ember.exhausted, and runtime rate-limit events.
+ it('automatically resets a Fable wall from the provider-reported exhausted limit', async () => {
+  const payload = usage({ five_hour: null, limits: [{ kind: 'weekly_scoped', group: 'weekly', percent: 100, resets_at: '2026-10-15T00:00:00Z', scope: { model: { id: null, display_name: 'Fable' } } }] });
+  Object.assign(payload.cedar_ember, { at_limit: true, exhausted: ['seven_day_overage_included'] });
+  payload.cedar_ember.grants[0].clears = ['seven_day_overage_included'];
+  const { requests } = network(payload);
+  expect(await adapter(kind).consume('promo', ['seven_day_overage_included'])).toBe('consumed');
+  expect(requests.filter(r => r.method === 'POST')).toHaveLength(1);
  });
  it('keeps saved but unusable units outside available balance', async () => {
   const payload = usage(); payload.cedar_ember.grants[0].usable_now = false;
@@ -139,12 +158,8 @@ it('declares the admitted recovery facet and exact reset POST origin', () => {
   scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.anthropic.com' }], methods: ['POST'] } }));
 });
 
-it('keeps ordinary meters and a visible diagnostic when ancillary legacy discovery fails', async () => {
- const { fetch } = network();
- vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
-  if (String(url).includes('cedar_ember=1')) throw new Error('read unavailable');
-  return fetch(url, init);
- });
+it('keeps ordinary meters and a visible diagnostic when legacy reset data is malformed', async () => {
+ network(usage({ extra_usage: { is_enabled: true, used_credits: 20, monthly_limit: 100 }, cedar_ember: { eligible: 'unknown' } }));
  const snapshot = await createClaudeSubscriptionQuotaFetcher().loadQuota({ record, now, signal });
  expect(snapshot?.meters.find(m => m.meterId === 'extra_usage')?.used).toBe(20);
  expect(snapshot?.recoveryCredits).toBeUndefined();
@@ -168,7 +183,7 @@ it('uses the managed launch version in qualified discovery identity', async () =
 
 it.each(['plugin_exec_agent_cli_version_unavailable', 'plugin_exec_agent_cli_version_failed', 'plugin_exec_system_tool_denied', 'plugin_exec_system_tool_unavailable', 'plugin_exec_argument_denied',
  'plugin_host_access_resource_not_selected', 'plugin_service_unavailable', 'plugin_host_access_declaration_missing'])('retains ordinary usage and reports unavailable native identity %s', async code => {
- const { requests } = network(); const warn = vi.fn(); const configured = context();
+ const { requests } = network(usage({ extra_usage: { is_enabled: true, used_credits: 20, monthly_limit: 100 } })); const warn = vi.fn(); const configured = context();
  const unavailable = { ...configured, services: { ...configured.services, logger: { warn },
   exec: { agentCli: { async checkReadiness() { throw new PluginError({ code, message: 'private host detail', details: { serviceId: 'exec' } }); } } } } } as typeof configured;
  const quota = await claudeSubscriptionConnectedAccountRuntime.quota!(unavailable);
