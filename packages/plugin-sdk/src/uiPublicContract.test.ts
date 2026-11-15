@@ -24,9 +24,9 @@ import type {
     PluginUiPageHeaderActionV1,
     PluginUiSemanticCommandV1,
     PluginUiSessionServerStartDraftV1,
-    PluginUiSessionPendingPermissionV1,
-    PluginUiSessionPermissionAnswerV1,
-    PluginUiSessionPermissionResponseRequestV1,
+    SessionPendingPermissionV1,
+    SessionPermissionAnswerV1,
+    SessionPermissionResponseRequestV1,
     PluginUiViewV2Input,
 } from './ui/publicContract.js';
 import type { SessionServerStartSpawnDraftV1 } from './services/sessions.js';
@@ -42,7 +42,7 @@ import type {
     PluginUiHostMethodV1 as CanonicalPluginUiHostMethodV1,
     PluginUiSessionPendingPermissionV1 as CanonicalPluginUiSessionPendingPermissionV1,
     PluginUiSessionPermissionAnswerV1 as CanonicalPluginUiSessionPermissionAnswerV1,
-    PluginUiSessionPermissionResponseRequestV1 as CanonicalPluginUiSessionPermissionResponseRequestV1,
+    PluginUiRespondToSessionPermissionRequestV1 as CanonicalPluginUiSessionPermissionResponseRequestV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginUiViewDestinationBindingInputV2 as CanonicalPluginUiViewDestinationBindingInputV2,
@@ -237,9 +237,9 @@ void (undefined as unknown as typeof NormalCreatePluginRegistrationScope);
 
 describe('UI/testing public type contract', () => {
     it('derives native permission choices and answers from the Protocol owner', () => {
-        expectTypeOf<PluginUiSessionPendingPermissionV1>().toEqualTypeOf<CanonicalPluginUiSessionPendingPermissionV1>();
-        expectTypeOf<PluginUiSessionPermissionAnswerV1>().toEqualTypeOf<CanonicalPluginUiSessionPermissionAnswerV1>();
-        expectTypeOf<PluginUiSessionPermissionResponseRequestV1>().toEqualTypeOf<CanonicalPluginUiSessionPermissionResponseRequestV1>();
+        expectTypeOf<SessionPendingPermissionV1>().toEqualTypeOf<CanonicalPluginUiSessionPendingPermissionV1>();
+        expectTypeOf<SessionPermissionAnswerV1>().toEqualTypeOf<CanonicalPluginUiSessionPermissionAnswerV1>();
+        expectTypeOf<SessionPermissionResponseRequestV1>().toEqualTypeOf<CanonicalPluginUiSessionPermissionResponseRequestV1>();
     });
 
     it('keeps the concise author host and resource vocabulary identical to the canonical UI types', () => {

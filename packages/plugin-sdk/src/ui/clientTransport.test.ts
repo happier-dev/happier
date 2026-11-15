@@ -696,8 +696,8 @@ describe('plugin UI domain client transport adapter', () => {
                 createdAtMs: 1, label: null, lastOpenedAtMs: null },
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' }, branch: 'main' },
     ] satisfies readonly PluginUiHostApiSurfaceContextV1['target'][])(
-        'keeps the $kind Protocol surface context mutually assignable through direct and watched reads', async (target) => {
-        const protocolSurface: PluginUiHostApiSurfaceContextV1 = createSurfaceContextFixture({
+        'keeps the $kind Protocol surface context assignable to the SDK through direct and watched reads', async (target) => {
+        const protocolSurface = PluginUiHostApiSurfaceContextV1Schema.parse(createSurfaceContextFixture({
             mount: {
                 kind: 'destination',
                 destination: { pluginId: 'com.acme.fixture', localId: 'inbox' },
@@ -706,7 +706,7 @@ describe('plugin UI domain client transport adapter', () => {
             target,
             page: { columnVisible: true },
             requesterExecutionReady: false,
-        });
+        }));
         const sdkSurface: SurfaceContext = protocolSurface;
         let receive: ((message: unknown) => void) | undefined;
         let requestSequence = 0;

@@ -19,7 +19,7 @@ async function fixture(supported = true, holdPrepared = false) {
                 apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: supported ? PLUGIN_UI_HOST_METHODS_V1 : ['context'] });
             if (holdPrepared && message.kind === 'request' && message.method === 'actionControl'
                 && message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload)
-                && message.payload.kind === 'prepared') { preparedRequest = message; return; }
+                && 'kind' in message.payload && message.payload.kind === 'prepared') { preparedRequest = message; return; }
             if (message.kind === 'subscribe' || message.kind === 'request') receive?.({ wireVersion: 1,
                 kind: 'result', identity, requestId: message.requestId, method: message.method, result: null });
         },

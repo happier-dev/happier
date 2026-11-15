@@ -83,6 +83,7 @@ import type {
     CurrentSessionPresentationIntentV1,
     SessionCompanionPresentationItem,
     InteractionOptions,
+    ApprovalInteractionOptions,
     InteractionTerminalStatusV1,
     InteractionTransientApprovalAuthorRequestV1,
     InteractionTransientApprovalResultV1,
@@ -238,7 +239,7 @@ describe('CORE.T1/T5 public contract', () => {
             .toEqualTypeOf<Promise<InteractionTransientQuestionsResultV1>>();
         expectTypeOf<InteractionsService['requestApproval']>().parameters.toEqualTypeOf<[
             request: InteractionTransientApprovalAuthorRequestV1,
-            options?: InteractionOptions,
+            options?: ApprovalInteractionOptions,
         ]>();
         expectTypeOf<InteractionsService['requestApproval']>().returns
             .toEqualTypeOf<Promise<InteractionTransientApprovalResultV1>>();
