@@ -256,6 +256,7 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                                     key={run.runId}
                                     run={run as any}
                                     serverId={machineServerId}
+                                    machineId={machineId}
                                     subtitle={formatDaemonRunProcessFacts(run)}
                                     onPress={() => openRunDetails({ sessionId, serverId: machineServerId, machineId, runId: run.runId })}
                                     rightAccessory={canStop ? (

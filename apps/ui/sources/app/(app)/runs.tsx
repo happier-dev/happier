@@ -471,6 +471,7 @@ export default function RunsScreen() {
                             key={run.runId}
                             run={run as any}
                             serverId={serverId}
+                            machineId={machineId}
                             selected={run.runId === requestedRunId}
                             subtitle={formatDaemonRunProcessFacts(run)}
                             onPress={() => openRunDetails({ sessionId, serverId, machineId, runId: run.runId })}

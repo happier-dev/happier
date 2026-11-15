@@ -125,6 +125,7 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     originTitle?: string | null;
     /** The machine the Run works on, by name. A walkthrough conversation names it beside its model (lab WT3-D3). */
     machineName?: string | null;
+    machineReachable?: boolean;
     stopAction?: Readonly<{ stopping: boolean; onStop: () => void }> | null;
     deleteAction?: Readonly<{ pending: boolean; onDelete: () => void }> | null;
     cancelResponseAction?: Readonly<{ pending: boolean; onCancel: () => void }> | null;
@@ -145,7 +146,8 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     const status = readExecutionRunAgentActivityStatus(props.run.status);
     const attention = props.attention ?? null;
     const running = isExecutionRunActive(props.run);
-    const statusPresentation = attention ?? resolveAgentActivityStatusPresentation(status, running);
+    const activityPresentation = resolveAgentActivityStatusPresentation(status, running, props.machineReachable);
+    const statusPresentation = activityPresentation.workStatus.bucket === 'offline' ? activityPresentation : attention ?? activityPresentation;
     const agentId = resolveAgentId(props.run);
     const originLabel = resolveLaunchOriginLabel(props.run, props.hostSessionId ?? null, props.originTitle ?? null);
     const modelId = readExecutionRunModelId(props.run);
@@ -215,7 +217,7 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
             metaLeading={<View style={styles.live}>
                 <ExecutionRunAgentMark testID="session-run-header-mark" agentId={agentId} size={20} />
                 <StatusPill variant={statusPresentation.variant} label={statusPresentation.label} labelVariant={attention ? 'phrase' : 'micro'} hideDot />
-                {running && !attention && startedAtMs !== null ? <RunElapsed startedAtMs={startedAtMs} /> : null}
+                {activityPresentation.workStatus.bucket === 'working' && !attention && startedAtMs !== null ? <RunElapsed startedAtMs={startedAtMs} /> : null}
                 {tookSeconds !== null ? <Text testID="session-run-header-elapsed" style={styles.elapsed}>{formatElapsed(tookSeconds)}</Text> : null}
             </View>}
             menu={<ExecutionRunActionsMenu

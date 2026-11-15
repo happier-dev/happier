@@ -7,7 +7,7 @@ import {
     readExecutionRunAgentActivityStatus,
     resolveAgentActivityStatusPresentation,
 } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
-import { resolveWorkStatusTone, WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
+import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { presentExecutionRunFailure, presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { Text } from '@/components/ui/text/Text';
@@ -21,6 +21,7 @@ import { resolveExecutionRunTitle } from './resolveExecutionRunTitle';
 import { resolveExecutionRunSelectionLabel, resolveRunNativeModelLabel, type RunNativeModelCatalog } from './resolveExecutionRunSelectionLabel';
 import { useExecutionRunSourceLabel } from './useExecutionRunSourceLabel';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 
 export type ExecutionRunRowRun =
@@ -62,6 +63,7 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
     /** The host's facts about this Run (its process), after the Agent and model. */
     subtitle?: string;
     serverId?: string | null;
+    machineId?: string | null;
     nativeModelCatalog?: RunNativeModelCatalog;
     rightAccessory?: React.ReactNode;
     selected?: boolean;
@@ -78,10 +80,9 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
     const agentMarkId = resolveExecutionRunAgentMarkId(run.backendTarget, theme);
     // The run's state in the roster's words (sessionAgentActivityPresentation) and the shared tone (I3).
     const activityStatus = readExecutionRunAgentActivityStatus(run.status);
-    const status = resolveWorkStatusTone({
-        kind: 'agent_activity',
-        facts: { status: activityStatus, word: resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run)).label },
-    });
+    const presence = useMachinePresenceSummary(props.serverId, props.machineId);
+    const status = resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run),
+        presence.reachability === 'unknown' ? undefined : presence.reachability === 'reachable').workStatus;
     const display = run.display && typeof run.display === 'object' ? run.display as { title?: unknown; participantLabel?: unknown } : null;
     const participantLabel = typeof display?.participantLabel === 'string' ? display.participantLabel.trim() : '';
     const givenTitle = typeof display?.title === 'string' ? display.title.trim() : '';

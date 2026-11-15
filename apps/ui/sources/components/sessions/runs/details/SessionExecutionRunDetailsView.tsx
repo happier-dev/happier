@@ -22,6 +22,8 @@ import {
     useSessionSidechainMessages,
 } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { readExecutionRunAgentActivityStatus, resolveAgentActivityStatusPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import { SessionRunWorkNotifications } from '@/components/sessions/work/RunWorkNotifications';
 import { renderExecutionRunStructuredMeta } from '@/components/sessions/runs/renderExecutionRunStructuredMeta';
 import { SessionExecutionRunInfoCard } from '@/components/sessions/runs/details/SessionExecutionRunInfoCard';
@@ -623,7 +625,11 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         () => rosterRunEntry ? resolveSessionAgentActivityPresentation({ entry: rosterRunEntry }).attention : null,
         [rosterRunEntry],
     );
-    const runStatus = state.status === 'loaded' ? String((state.run as { status?: unknown }).status ?? 'unknown') : null;
+    const machine = useExecutionRunMachineName(session, pendingScopeServerId, props.workspace?.machineId);
+    const presence = useMachinePresenceSummary(pendingScopeServerId, machine.machineId);
+    const machineReachable = presence.reachability === 'unknown' ? undefined : presence.reachability === 'reachable';
+    const runStatus = state.status === 'loaded' ? resolveAgentActivityStatusPresentation(
+        readExecutionRunAgentActivityStatus(state.run.status), isExecutionRunActive(state.run), machineReachable).label : null;
     const runAnnouncement = stopError ?? interactionError ?? (runStatus === null
         ? ''
         : t('executionRuns.details.labels.statusValue', { value: runStatus }));
@@ -702,7 +708,6 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         setStopError(null);
         void load();
     }, [load]);
-    const machine = useExecutionRunMachineName(session, pendingScopeServerId, props.workspace?.machineId);
     const modelRun = state.status === 'loaded' && loadedRunAddressRef.current === runAddressKey ? state.run : null;
     const { engine: answeringEngine, sessionModels, catalogProfiles: nativeModelCatalog } = useRunAnsweringEngine({
         backendTarget: modelRun?.backendTarget, modelId: modelRun ? readExecutionRunModelId(modelRun) : null,
@@ -921,6 +926,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                         daemonProcessLine={daemonProcessLine}
                         originTitle={discussionOriginTitle}
                         machineName={machine.name}
+                        machineReachable={machineReachable}
                         attention={runAttention}
                         stopAction={canMutateRunViaSessionRpc && state.run.status === 'running'
                             ? { stopping: isStopping, onStop: stopRun }

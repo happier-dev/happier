@@ -105,10 +105,6 @@ function statusTone(status: AgentActivityStatusV1): WorkStatusTone {
     return resolveWorkStatusTone({ kind: 'agent_activity', facts: { status, word: '' } }).tone;
 }
 
-function statusVariant(status: AgentActivityStatusV1): StatusPillVariant {
-    return WORK_STATUS_PILL_VARIANT[statusTone(status)];
-}
-
 const KIND_ICON_NAMES = {
     execution_run: WORKER_KIND_GLYPHS.execution_run,
     agent_team_member: 'users',
@@ -136,12 +132,15 @@ export function readExecutionRunAgentActivityStatus(status: unknown): AgentActiv
  * The words and colour of one canonical status, for surfaces that show a status without a roster
  * entry around it (the running Agent conversation's header). Same vocabulary as every roster row.
  */
-export function resolveAgentActivityStatusPresentation(status: AgentActivityStatusV1, isActive?: boolean): Readonly<{
+export function resolveAgentActivityStatusPresentation(status: AgentActivityStatusV1, isActive?: boolean, machineReachable?: boolean): Readonly<{
     label: string;
     variant: StatusPillVariant;
+    workStatus: ReturnType<typeof resolveWorkStatusTone>;
 }> {
-    return { label: status === 'running' && isActive === false
-        ? t('diagnosis.machineRuns.idle') : t(STATUS_LABEL_KEYS[status]), variant: statusVariant(status) };
+    const workStatus = resolveWorkStatusTone({ kind: 'agent_activity', facts: { status, isActive, machineReachable, word: '' } });
+    const label = workStatus.state === 'disconnected' ? t('sessionWork.workerFollow.offline')
+        : status === 'running' && isActive === false ? t('diagnosis.machineRuns.idle') : t(STATUS_LABEL_KEYS[status]);
+    return { label, variant: WORK_STATUS_PILL_VARIANT[workStatus.tone], workStatus: { ...workStatus, word: label } };
 }
 
 function resolveAttention(

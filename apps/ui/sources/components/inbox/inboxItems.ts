@@ -267,11 +267,8 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             producer: 'live', type, view: inboxItemView(type), title, context: null,
             createdAt: run.startedAtMs, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
             phase: type === 'approval' ? 'attention' : 'live',
-            workStatus: resolveWorkStatusTone({ kind: 'agent_activity', facts: { status: activityStatus,
-                machineReachable: entry.unavailable ? false : undefined,
-                // The Run is not offline, its Machine is: the same calm reason a followed worker reads.
-                word: entry.unavailable && isExecutionRunActive(run) ? t('sessionWork.workerFollow.offline')
-                    : resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run)).label } }),
+            workStatus: resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run),
+                entry.unavailable ? false : undefined).workStatus,
             source: { kind: 'execution_run', id: run.runId, serverId: address.serverId, displayName: title,
                 ...(onceDeliveries.length ? { onceDeliveries } : {}) } });
     }

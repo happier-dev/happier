@@ -7,7 +7,25 @@ import {
 import type { ToolCallMessage } from '@happier-dev/session-core/messages';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
-import { resolveSessionAgentActivityPresentation } from './sessionAgentActivityPresentation';
+import { resolveAgentActivityStatusPresentation, resolveSessionAgentActivityPresentation } from './sessionAgentActivityPresentation';
+import { t } from '@/text';
+
+describe('Run status with Machine presence', () => {
+    it('shows lost contact for an open Run, recovers on presence push, and preserves a terminal result', () => {
+        for (const active of [true, false]) {
+            const offline = resolveAgentActivityStatusPresentation('running', active, false);
+            expect(offline.label).toBe(t('sessionWork.workerFollow.offline'));
+            expect(offline.workStatus.bucket).toBe('offline');
+            expect(resolveAgentActivityStatusPresentation('running', active, true).workStatus.bucket)
+                .toBe(active ? 'working' : 'idle');
+        }
+        expect(resolveAgentActivityStatusPresentation('running', true, undefined).workStatus.bucket).toBe('working');
+        for (const status of ['succeeded', 'failed', 'cancelled', 'timedOut'] as const) {
+            expect(resolveAgentActivityStatusPresentation(status, false, false))
+                .toEqual(resolveAgentActivityStatusPresentation(status, false, true));
+        }
+    });
+});
 import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 
 function entry(overrides: Partial<AgentActivityEntry> = {}): AgentActivityEntry {

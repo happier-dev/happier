@@ -56,6 +56,19 @@ async function openRunMenu(screen: Awaited<ReturnType<typeof renderScreen>>): Pr
 }
 
 describe('SessionExecutionRunInfoCard', () => {
+    it('replaces live status with Machine offline and stops the live clock until contact returns', async () => {
+        const run = ExecutionRunPublicStateSchema.parse({
+            runId: 'offline-run', callId: 'call', sidechainId: 'side', intent: 'delegate',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+            retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'streaming', status: 'running', startedAtMs: 1,
+        });
+        const screen = await renderScreen(<SessionExecutionRunInfoCard run={run} machineReachable={false} />);
+        expect(screen.getTextContent()).toContain('sessionWork.workerFollow.offline');
+        expect(screen.findAllByTestId('session-run-header-elapsed')).toHaveLength(0);
+        await screen.update(<SessionExecutionRunInfoCard run={run} machineReachable />);
+        expect(screen.getTextContent()).not.toContain('sessionWork.workerFollow.offline');
+        expect(screen.findAllByTestId('session-run-header-elapsed').length).toBeGreaterThan(0);
+    });
     it('shows the host-resolved model instead of requested intent in the child summary', async () => {
         const screen = await renderScreen(<SessionExecutionRunInfoCard run={ExecutionRunPublicStateSchema.parse({
             runId: 'run_1', callId: 'call_1', sidechainId: 'side_1', intent: 'delegate',
