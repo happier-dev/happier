@@ -32,6 +32,11 @@ import { createRequire } from 'node:module';
 import { resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { diagnosticHunks, diagnosticMessageText, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDeclaration.mjs';
+import { commitProducerClosure } from './commitProducerClosure.mjs';
+
+// The textual producer-closure scan (missing modules/exports, untracked lockfile importers) runs
+// before any compiler or admission on every commit path, including the fast private-index path.
+export { commitProducerClosure };
 
 const require = createRequire(import.meta.url);
 let ts;
@@ -579,7 +584,7 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
     reusedGroups: checked.groups.map(group => group.id).filter(id => !rechecked.has(id)).sort(),
   });
   while (true) {
-    if (checked.fresh.length || checked.unowned.length) return outcome();
+    if (checked.fresh.length || checked.unowned.length || checked.closure?.length) return outcome();
     const head = git.gitText(['rev-parse', 'HEAD']).trim();
     if (head !== checked.base) {
       const replayStarted = Date.now();
@@ -648,6 +653,13 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
       console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
       continue;
     }
+    // A landed commit can drop an export or module the packet reads; check the replayed parent.
+    const closure = checked.base === original.base ? []
+      : commitProducerClosure({ repo, base: head, tree: checked.tree }).findings;
+    if (closure.length) {
+      checked = { ...checked, closure };
+      continue;
+    }
     const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
     const commit = git.git(['commit-tree', ...(sign ? ['-S'] : []), checked.tree, '-p', head], { input: message, encoding: 'utf8' }).trim();
     try {
@@ -706,23 +718,33 @@ function main(argv) {
   };
   for (const target of targets) {
     const result = checkCommitTypeCoherence({ repo, ...target, beforeCompiler });
-    const verdict = result.fresh.length || result.unowned.length ? 'INCOHERENT' : 'coherent';
+    // Blocking producer closure (owner 2026-11-15). TS packets reach it after admission, because
+    // the CLI does no work before its queued process image is replaced; zero-TS packets need none.
+    const closure = commitProducerClosure({ repo, base: result.base, tree: result.tree }).findings;
+    const verdict = result.fresh.length || result.unowned.length || closure.length ? 'INCOHERENT' : 'coherent';
     console.log(
-      `${verdict} ${target.label}: changed=${result.changed} roots=${result.roots} new=${result.fresh.length} unowned=${result.unowned.length} ${(result.ms / 1000).toFixed(1)}s`,
+      `${verdict} ${target.label}: changed=${result.changed} roots=${result.roots} new=${result.fresh.length} unowned=${result.unowned.length} closure=${closure.length} ${(result.ms / 1000).toFixed(1)}s`,
     );
+    if (closure.length) console.log('  producer closure:');
+    for (const finding of closure) console.log(`  ${finding}`);
     for (const row of result.fresh)
       console.log(
         `  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`,
       );
     for (const file of result.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-    if (result.fresh.length || result.unowned.length) incoherent += 1;
+    if (result.fresh.length || result.unowned.length || closure.length) incoherent += 1;
+    if (messageFile && closure.length) {
+      console.error(`Packet refused: closure=${closure.length}`);
+      return 1;
+    }
     if (messageFile) {
       const finalized = finalizeCommitTypeCoherence({ repo, checked: result, message: readFileSync(messageFile, 'utf8'), ref: option('ref') });
       if (!finalized.commit) {
         for (const row of finalized.checked.fresh)
           console.log(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
         for (const file of finalized.checked.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-        console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length}`);
+        for (const finding of finalized.checked.closure ?? []) console.log(`  ${finding}`);
+        console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length} closure=${finalized.checked.closure?.length ?? 0}`);
         return 1;
       }
       console.log(`committed ${finalized.commit}: parent=${finalized.checked.base} reused=${finalized.reusedGroups.join(',')} rechecked=${finalized.recheckedGroups.join(',')}`);

@@ -804,7 +804,9 @@ import { registerHooks } from 'node:module';
 import { appendFileSync } from 'node:fs';
 registerHooks({ resolve(specifier, context, next) {
   const result = next(specifier, context);
-  const kind = specifier === 'typescript' || specifier === '@typescript/native/sync' ? 'compiler'
+  // The TypeScript 5.9 parser serves the compiler-free producer-closure scan (owner 2026-11-15);
+  // only the native compiler API and admission are compiler work.
+  const kind = specifier === '@typescript/native/sync' ? 'compiler'
     : result.url.endsWith('/admission_client.mjs') ? 'admission' : undefined;
   if (kind) appendFileSync(${JSON.stringify(trace)}, kind + '\\n');
   return result;
@@ -942,4 +944,41 @@ test('retains the nested cause in native compiler diagnostic messages', () => {
   ] };
   assert.equal(diagnosticMessages.diagnosticMessageText(diagnostic),
     'Types are incompatible.\n  The return value is incompatible.\n    Property revision is missing.');
+});
+
+test('the checker CLI refuses a script packet that imports an export its tree lacks, before any compiler', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('producer.mjs', 'export function shipped() {}\n');
+  await write('consumer.mjs', "import { shipped } from './producer.mjs';\nshipped();\n");
+  const base = commitOnly('producer.mjs', 'consumer.mjs');
+  await write('producer.mjs', 'export function shipped() {}\nexport function unshipped() {}\n');
+  await write('consumer.mjs', "import { shipped, unshipped } from './producer.mjs';\nshipped(); unshipped();\n");
+  const broken = commitOnly('consumer.mjs');
+  const cli = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('./checkCommitTypeCoherence.mjs', import.meta.url)), ...args],
+    { cwd: repo, encoding: 'utf8' });
+  const refused = cli(broken);
+  assert.equal(refused.status, 1, refused.stderr);
+  assert.match(refused.stdout, /INCOHERENT[^\n]*closure=1[\s\S]*consumer\.mjs imports \{ unshipped \}/u);
+  const fixed = commitOnly('producer.mjs');
+  const accepted = cli(`--base=${base}`, `--tree=${fixed}`);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+});
+
+test('finalization refuses a checked script packet once a landed commit drops the export it newly reads', async (t) => {
+  const { repo, write, commitOnly, git } = await checkout(t);
+  await write('producer.mjs', 'export function shipped() {}\nexport function extra() {}\n');
+  await write('consumer.mjs', "import { shipped } from './producer.mjs';\nshipped();\n");
+  const base = commitOnly('producer.mjs', 'consumer.mjs');
+  await write('consumer.mjs', "import { shipped, extra } from './producer.mjs';\nshipped(); extra();\n");
+  git('add', '--', 'consumer.mjs');
+  const tree = git('write-tree').trim();
+  git('read-tree', base);
+  const checked = checkCommitTypeCoherence({ repo, base, tree });
+  // The landed commit leaves HEAD coherent; only the packet's new import loses its producer.
+  await write('producer.mjs', 'export function shipped() {}\n');
+  const parent = commitOnly('producer.mjs');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
+  assert.equal(result.commit, undefined);
+  assert.ok(result.checked.closure.some(finding => finding.includes('consumer.mjs imports { extra }')), result.checked.closure.join('\n'));
+  assert.equal(git('rev-parse', 'HEAD').trim(), parent);
 });

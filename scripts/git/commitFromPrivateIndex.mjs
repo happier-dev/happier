@@ -51,7 +51,7 @@ async function syncSharedIndex(cwd, commit, paths) {
   }
 }
 
-export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], messageFile, patchFile, syncCommit, warn = console.error }) {
+export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], messageFile, patchFile, syncCommit }) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-commit-'));
   const env = { ...process.env, GIT_LITERAL_PATHSPECS: '1', GIT_INDEX_FILE: path.join(temp, 'index') };
   const git = (...args) => gitAt(cwd, env)(...args).trim();
@@ -84,15 +84,14 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       if (!committed.length) throw new Error('Refusing an empty commit');
       if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
       const tree = git('write-tree');
-      // Advisory only: a missing producer must remain visible without turning
-      // commit-time coherence into an admission gate (owner 2026-11-07).
-      try {
-        if (committed.some(name => /\.(?:[cm]?[jt]sx?)$/.test(name))) {
-          const { treeImportWarnings } = await import('./treeImportWarnings.mjs');
-          for (const warning of treeImportWarnings({ cwd, tree, paths: committed })) warn(warning);
-        }
-      } catch {
-        warn('WARN committed import resolution unavailable; commit continues');
+      // Blocking producer closure (owner 2026-11-15, supersedes the 11-07 warn-only rule for this
+      // check): the commit checker's textual scan runs on every packet, at every CAS attempt.
+      const { commitProducerClosure } = await import('../workspaces/checkCommitTypeCoherence.mjs');
+      const closure = commitProducerClosure({ repo: cwd, base: head, tree });
+      if (closure.findings.length) {
+        throw new Error([`Commit refused: producer closure found ${closure.findings.length} new break(s) in the packet's tree:`,
+          ...closure.findings.map(finding => `  ${finding}`),
+          'Commit each producer (export, module, package.json) with its consumer, or the importer adaptations with the producer change; otherwise leave the consumer uncommitted.'].join('\n'));
       }
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
       try {
