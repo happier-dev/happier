@@ -38,6 +38,36 @@ test('an isolated user Home can be the native process working directory', () => 
   }
 });
 
+test('isolated native guests can promote and extract a compressed payload', { skip: process.platform === 'win32' }, () => {
+  const temporary = createTestTempDirectory('happier-native-payload-tools-');
+  const partial = join(temporary.root, 'payload.tar.gz.partial');
+  const archive = join(temporary.root, 'payload.tar.gz');
+  const destination = join(temporary.root, 'installed');
+  try {
+    writeFileSync(join(temporary.root, 'payload.txt'), 'native payload');
+    const packed = spawnSync('tar', ['-czf', partial, '-C', temporary.root, 'payload.txt'], { encoding: 'utf8' });
+    assert.ifError(packed.error);
+    assert.equal(packed.status, 0, packed.stderr);
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { mkdirSync, readFileSync } from 'node:fs';
+      import { spawnSync } from 'node:child_process';
+      import { installTestHomeEnvironment } from './scripts/testing/testHomeEnvironment.mjs';
+      const home = installTestHomeEnvironment({ isolateExecutables: true });
+      try {
+        mkdirSync(${JSON.stringify(destination)});
+        const delivered = spawnSync('/bin/sh', ['-c', 'mv "$1" "$2" && tar -xf "$2" -C "$3"',
+          'native-payload', ${JSON.stringify(partial)}, ${JSON.stringify(archive)}, ${JSON.stringify(destination)}], { encoding: 'utf8' });
+        assert.ifError(delivered.error);
+        assert.equal(delivered.status, 0, delivered.stderr);
+        assert.equal(readFileSync(${JSON.stringify(join(destination, 'payload.txt'))}, 'utf8'), 'native payload');
+      } finally { home.cleanup(); }
+    `], { cwd: repoRoot, encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+  } finally { temporary.cleanup(); }
+});
+
 test('package harnesses isolate even a configuration import before worker setup', async () => {
   const sentinel = createTestTempDirectory('happier-home-sentinel-');
   const before = { ...process.env };
