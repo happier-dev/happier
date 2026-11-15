@@ -20,7 +20,8 @@ import { build, version as esbuildVersion } from 'esbuild';
  */
 export const HOST_PROVIDED_SUBPATHS_FILE = 'src/plugins/ui/hostProvidedProtocolSubpaths.generated.ts';
 export const HOST_PROVIDED_MODULES_FILE = 'src/plugins/ui/hostProvidedProtocolModules.generated.ts';
-const generatedSources = new Set([HOST_PROVIDED_SUBPATHS_FILE, HOST_PROVIDED_MODULES_FILE]
+export const HOST_PROVIDED_MODULE_LOADERS_FILE = 'src/plugins/ui/hostProvidedProtocolModuleLoaders.generated.ts';
+const generatedSources = new Set([HOST_PROVIDED_SUBPATHS_FILE, HOST_PROVIDED_MODULES_FILE, HOST_PROVIDED_MODULE_LOADERS_FILE]
   .map(file => file.slice('src/'.length, -'.ts'.length)));
 const cacheFile = 'node_modules/.cache/happier-protocol-host-provided-modules.json';
 const analyzerIdentity = createHash('sha256')
@@ -210,6 +211,17 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES: Readonly<Record<string, u
   provided.map(specifier => `    '${specifier}': ${local.get(candidates.get(specifier))},\n`).join('')}});\n`;
 }
 
+/**
+ * The same set for Metro hosts. Metro evaluates a namespace import when its importer
+ * evaluates, but keeps a literal `require` inside the function that calls it, so the
+ * app evaluates a subpath only when an artifact imports it. Node hosts use the table above.
+ */
+function renderModuleLoaders(provided) {
+  return `${header}\n// Metro hosts: each loader evaluates its subpath on first use. Node hosts use hostProvidedProtocolModules.\n${
+    'export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULE_LOADERS: Readonly<Record<string, () => unknown>> = Object.freeze({\n'}${
+    provided.map(specifier => `    '${specifier}': () => require('${specifier}'),\n`).join('')}});\n`;
+}
+
 async function readText(path) {
   try { return await readFile(path, 'utf8'); } catch (error) {
     if (error?.code === 'ENOENT') return null;
@@ -217,7 +229,7 @@ async function readText(path) {
   }
 }
 
-/** Derives both generated files; throws when a listed (provided) subpath stopped being loadable. */
+/** Derives the generated files; throws when a listed (provided) subpath stopped being loadable. */
 export async function deriveHostProvidedProtocolModules({ packageRoot, publicSources, exports }) {
   const candidates = readCandidates(publicSources, exports);
   const { provided, refused } = await analyze(packageRoot, candidates);
@@ -232,18 +244,21 @@ export async function deriveHostProvidedProtocolModules({ packageRoot, publicSou
     ].join('\n'));
   }
   const currentModules = await readText(join(packageRoot, HOST_PROVIDED_MODULES_FILE));
+  const currentModuleLoaders = await readText(join(packageRoot, HOST_PROVIDED_MODULE_LOADERS_FILE));
   const listed = [...readPreviouslyProvided(currentSubpaths)];
   const providedSet = new Set(provided);
   // A set that lacks newer loadable modules is still coherent: the compiler and
   // every host read the same files, so those modules are bundled as before.
   // Verification-only callers (CI, workers, publication) accept it; authoring regenerates.
   const coherent = currentSubpaths !== null && listed.every(specifier => providedSet.has(specifier))
-    && currentSubpaths === renderSubpaths(listed) && currentModules === renderModules(listed, candidates);
+    && currentSubpaths === renderSubpaths(listed) && currentModules === renderModules(listed, candidates)
+    && currentModuleLoaders === renderModuleLoaders(listed);
   return {
     coherent,
     files: [
       { path: join(packageRoot, HOST_PROVIDED_SUBPATHS_FILE), current: currentSubpaths, next: renderSubpaths(provided) },
       { path: join(packageRoot, HOST_PROVIDED_MODULES_FILE), current: currentModules, next: renderModules(provided, candidates) },
+      { path: join(packageRoot, HOST_PROVIDED_MODULE_LOADERS_FILE), current: currentModuleLoaders, next: renderModuleLoaders(provided) },
     ],
   };
 }
