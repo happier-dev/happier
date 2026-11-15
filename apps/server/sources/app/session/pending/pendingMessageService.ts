@@ -417,7 +417,9 @@ async function projectPendingSessionMessageRows(sessionId: string, actorAccountI
 }
 
 export type ListPendingMessagesResult =
-    | { ok: true; pending: PendingMessageRow[]; targetPendingState?: TargetPendingState }
+    | { ok: true; pending: PendingMessageRow[]; targetPendingState?: TargetPendingState;
+        /** Main-route custody read: the statuses are current at least through this version. */
+        pendingVersion?: number }
     | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "internal" };
 
 export type ReadSessionPendingStateResult =
@@ -591,6 +593,10 @@ export async function listPendingMessages(params: {
             return { ok: true, pending: await projectPendingSessionMessageRows(sessionId, actorUserId, rows, params.authentication) };
         }
 
+        // Read before the rows: every delivery-status writer bumps `pendingVersion` in its own
+        // transaction, so rows read after this version are at least as new as it (never older).
+        const versionRow = await db.session.findUnique({ where: { id: sessionId }, select: { pendingVersion: true } });
+        if (!versionRow) return { ok: false, error: "session-not-found" };
         const [queued, discarded] = await Promise.all([
             db.sessionPendingMessage.findMany({
                 where: { sessionId, targetExecutionRunId, status: "queued" },
@@ -612,7 +618,8 @@ export async function listPendingMessages(params: {
             }),
         ]);
 
-        return { ok: true, pending: await projectPendingSessionMessageRows(sessionId, actorUserId, [...queued, ...discarded], params.authentication) };
+        return { ok: true, pending: await projectPendingSessionMessageRows(sessionId, actorUserId, [...queued, ...discarded], params.authentication),
+            pendingVersion: versionRow.pendingVersion };
     } catch {
         return { ok: false, error: "internal" };
     }

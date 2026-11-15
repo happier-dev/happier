@@ -570,6 +570,8 @@ export function createSessionClientInteractionApi(
             localIds: readonly string[],
             statuses: readonly PendingCustodyDeliveryStatus[],
         ) => Promise<void>;
+        /** The claim reply proves every held custody status through its Pending version. */
+        observePendingCustodyStatusesCurrentAt?: (pendingVersion: number, localIds: readonly string[]) => void;
         getProviderInputConsumerAttachedAtMs: () => number | null;
         setProviderInputConsumerAttachedAtMs: (value: number | null) => void;
         wakePendingMaterialization: () => void;
@@ -777,6 +779,14 @@ export function createSessionClientInteractionApi(
         }
         if (claimCustodyLocalIds.length && materializeResult.custodyDeliveryStatuses) {
             await deps.applyPendingCustodyDeliveryStatuses?.(claimCustodyLocalIds, materializeResult.custodyDeliveryStatuses);
+        }
+        // Held statuses rode on this reply (or nothing was held), and a newly claimed input is this
+        // host's own claim: all custody is current through the claim's Pending version.
+        const claimPendingVersion = materializeResult.pendingQueueState?.pendingVersion;
+        if (!target && retainedContextLocalIds.length === 0 && typeof claimPendingVersion === 'number'
+            && (claimCustodyLocalIds.length === 0 || materializeResult.custodyDeliveryStatuses)) {
+            deps.observePendingCustodyStatusesCurrentAt?.(claimPendingVersion, [...claimCustodyLocalIds,
+                ...(materializeResult.didMaterialize && materializeResult.localId ? [materializeResult.localId] : [])]);
         }
         const pendingStateChanged = !target && materializeResult.pendingQueueState
             ? deps.applyPendingQueueState(materializeResult.pendingQueueState)

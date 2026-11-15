@@ -82,4 +82,29 @@ describe('ApiSessionClient Pending custody before a claim', () => {
         expect(client.hasPendingProviderInput('archived-local')).toBe(true);
         await client.close();
     });
+
+    it('skips the delivery-status list for a push at the version its held statuses are current at, and reads on a version gap', async () => {
+        vi.resetModules();
+        sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+        userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+        const axios = (await import('axios')).default as any;
+        const pendingPath = '/v2/sessions/session-1/pending';
+        // Home HTTP boundary: the held input is still queued (custody unsettled) at Pending version 7.
+        const getSpy = vi.spyOn(axios, 'get').mockImplementation((async (url: string) => new URL(url).pathname === pendingPath
+            ? { data: { pending: [{ localId: 'held-local', status: 'queued', deliveryStatus: { status: 'queued' } }], pendingVersion: 7 } }
+            : { status: 404, data: {} }) as never);
+        const pendingListReads = () => getSpy.mock.calls.filter(([url]) => new URL(String(url)).pathname === pendingPath).length;
+        const { ApiSessionClient } = await import('./sessionClient');
+        const client = createTestApiSessionClient(ApiSessionClient, 'fake-token', createPlainSessionFixture({ id: 'session-1' }));
+        (client as any).materializationRuntime.markPendingQueueMaterializedLocalId('held-local');
+
+        await client.reconcilePendingProviderInputCustodyBeforeMaterialization({ pushedPendingVersion: 7 });
+        expect(pendingListReads()).toBe(1);
+        await client.reconcilePendingProviderInputCustodyBeforeMaterialization({ pushedPendingVersion: 7 });
+        await client.reconcilePendingProviderInputCustodyBeforeMaterialization({ pushedPendingVersion: 6 });
+        expect(pendingListReads()).toBe(1);
+        await client.reconcilePendingProviderInputCustodyBeforeMaterialization({ pushedPendingVersion: 8 });
+        expect(pendingListReads()).toBe(2);
+        await client.close();
+    });
 });

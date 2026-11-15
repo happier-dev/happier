@@ -269,7 +269,9 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             if (request.params.runId && !targetPendingState) {
                 return reply.code(500).send({ error: "internal" });
             }
-            return reply.send({ pending: res.pending.map(toPendingJson), ...(request.params.runId ? {
+            return reply.send({ pending: res.pending.map(toPendingJson),
+                ...(!request.params.runId && typeof res.pendingVersion === "number" ? { pendingVersion: res.pendingVersion } : {}),
+                ...(request.params.runId ? {
                 recipient: { kind: "execution_run", runId: request.params.runId },
                 ...targetPendingState,
             } : {}) });

@@ -961,6 +961,8 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
     recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
+    /** Receives the Pending version the listed main-route statuses are current through (when Home reports it). */
+    observePendingVersion?: (pendingVersion: number) => void;
 }): Promise<PendingQueueV2DeliveryStatusEntry[]> {
     const serverUrl = resolveServerHttpBaseUrl();
     const recipient = params.recipient === undefined
@@ -986,6 +988,10 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
         }
     }
     const pending = Array.isArray(data?.pending) ? data.pending : [];
+    const listedVersion = (data as { pendingVersion?: unknown } | null | undefined)?.pendingVersion;
+    if (!recipient && typeof listedVersion === 'number' && Number.isSafeInteger(listedVersion) && listedVersion >= 0) {
+        params.observePendingVersion?.(listedVersion);
+    }
     const seen = new Set<string>();
     const entries: PendingQueueV2DeliveryStatusEntry[] = [];
     for (const row of pending) {
