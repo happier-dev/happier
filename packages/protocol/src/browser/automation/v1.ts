@@ -33,7 +33,7 @@ export {
   redactBrowserAutomationTimelineDetails,
 } from './redaction.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 const PositiveTimeoutMsSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 
@@ -156,7 +156,7 @@ export function resolveBrowserAutomationActionRequester(
 }
 
 export const BrowserAutomationRequesterRefV1Schema = lazyZodSchema(() => z.strictObject({
-    kind: z.string().check(z.trim(), z.minLength(1), z.maxLength(64)),
+    kind: z.string().check(z.trim(), z.minLength(1)),
     id: IdSchema,
   }));
 export type BrowserAutomationRequesterRefV1 = z.infer<typeof BrowserAutomationRequesterRefV1Schema>;
@@ -524,9 +524,9 @@ export const BrowserInjectedRuntimeCommandMessageV1Schema = lazyZodSchema(() => 
     navigationGeneration: NonNegativeIntSchema,
     frameId: z.optional(IdSchema),
     commandId: IdSchema,
-    capabilityVersion: z.string().check(z.trim(), z.minLength(1), z.maxLength(64)),
+    capabilityVersion: z.string().check(z.trim(), z.minLength(1)),
     module: BrowserInjectedRuntimeModuleV1Schema,
-    commandName: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    commandName: z.string().check(z.trim(), z.minLength(1)),
     payload: z._default(z.optional(z.record(z.string(), z.unknown())), {}),
   }));
 export type BrowserInjectedRuntimeCommandMessageV1 = z.infer<
@@ -546,7 +546,7 @@ export const BrowserInjectedRuntimeResultMessageV1Schema = lazyZodSchema(() => z
     navigationGeneration: NonNegativeIntSchema,
     frameId: z.optional(IdSchema),
     commandId: IdSchema,
-    capabilityVersion: z.string().check(z.trim(), z.minLength(1), z.maxLength(64)),
+    capabilityVersion: z.string().check(z.trim(), z.minLength(1)),
     module: BrowserInjectedRuntimeModuleV1Schema,
     ok: z.boolean(),
     fidelity: z.literal('injectedPage'),

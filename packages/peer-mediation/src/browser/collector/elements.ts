@@ -21,7 +21,7 @@ const ELEMENT_DESCRIPTION_RUNTIME = `
       if (tagName === 'html') break;
       current = current.parentElement;
     }
-    return parts.join(' > ').slice(0, 2048);
+    return parts.join(' > ');
   }
 
   function accessibleNameFor(node) {
@@ -31,7 +31,7 @@ const ELEMENT_DESCRIPTION_RUNTIME = `
         || node.getAttribute('title')
         || node.textContent
         || '';
-      return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 512);
+      return String(raw).replace(/\\s+/g, ' ').trim();
     } catch (_error) {
       return '';
     }

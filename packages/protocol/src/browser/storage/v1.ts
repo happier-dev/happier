@@ -5,7 +5,7 @@ import { BrowserProfileStorageModeV1Schema } from '../profile/v1.js';
 import { BrowserViewTargetKindV1Schema } from '../target/v1.js';
 import { BrowserHttpOriginV1Schema } from '../url.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 export const BrowserStoragePersistenceV1Schema = lazyZodSchema(() => z.enum(['ephemeral', 'session', 'persistent', 'plugin']));
 export type BrowserStoragePersistenceV1 = z.infer<typeof BrowserStoragePersistenceV1Schema>;
@@ -29,7 +29,7 @@ export const BrowserStoragePartitionV1Schema = lazyZodSchema(() => z.strictObjec
     createdAt: z.number().check(z.int(), z.nonnegative()),
     updatedAt: z.number().check(z.int(), z.nonnegative()),
     expiresAt: z.optional(z.number().check(z.int(), z.nonnegative())),
-    disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(128)))),
+    disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   }).check(z.superRefine((partition, context) => {
     if (partition.state === 'unusable' && (partition.disabledReasons?.length ?? 0) === 0) {
       context.addIssue({

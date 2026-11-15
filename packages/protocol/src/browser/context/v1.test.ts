@@ -4,6 +4,21 @@ import { SessionRunStreamReadEnvelopeSchema } from '../../sessions/control/contr
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 describe('browser context protocol contracts', () => {
+  it('preserves complete eligible selections, summaries and picked element metadata', async () => {
+    const { BrowserContextItemV1Schema } = await import('./v1.js');
+    const base = {
+      v: 1, contextId: 'context-'.repeat(80), sourceViewId: 'view-'.repeat(80),
+      sourceAdapterKind: 'localPreview', fidelity: 'injectedPage', capturedAtMs: 1,
+      navigationGeneration: 2, lifecycleState: 'available', redactionLevel: 'metadataOnly',
+    };
+    for (const item of [
+      { ...base, kind: 'browserTextSelection', text: 'selected safe passage '.repeat(200), truncated: false },
+      { ...base, kind: 'browserPageTextSummary', summary: 'safe page content '.repeat(600), truncated: false },
+      { ...base, kind: 'browserSelectedElement', selectorPath: '#ancestor '.repeat(300).trim(),
+        accessibleName: 'Readable control '.repeat(80), componentName: 'Component'.repeat(40),
+        sourceLocation: { file: '/source'.repeat(200), line: 1 } },
+    ]) expect.soft(BrowserContextItemV1Schema.safeParse(item)).toEqual({ success: true, data: item });
+  });
   it('preserves picked element component and source location in generic element context', async () => {
     const { BrowserContextItemV1Schema } = await import('./v1.js');
     const picked = {
@@ -56,7 +71,7 @@ describe('browser context protocol contracts', () => {
             ? object(definitions[node.$ref.slice(prefix.length)])
             : node;
         };
-        expect(dereference(properties.contextId)).toEqual({ type: 'string', minLength: 1, maxLength: 256 });
+        expect(dereference(properties.contextId)).toEqual({ type: 'string', minLength: 1 });
         expect(dereference(properties.capturedAtMs)).toEqual({
           type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
         });

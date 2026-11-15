@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import { DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES, type BrowserContextCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import type { BrowserShellContextState } from '@/components/browser/BrowserShell';
@@ -31,10 +31,7 @@ const SESSION_BROWSER_CONTEXT_CAPABILITIES = {
         supported: false,
         requiresAttachmentUploads: true,
     },
-    text: {
-        maxSelectionChars: 2048,
-        maxSummaryChars: 8192,
-    },
+    text: DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES,
     disabledReasons: [],
     policyDeniedReasons: [],
 } satisfies BrowserContextCapabilities;

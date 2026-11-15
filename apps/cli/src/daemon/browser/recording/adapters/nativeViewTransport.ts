@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { rm } from 'node:fs/promises';
 
 import type { BrowserRecordingNativeViewCaptureTransport } from './nativeViewCommand';
 
@@ -52,21 +51,11 @@ export type DesktopBrowserRecordingFrameCaptureInvoke = (
 
 export type DesktopBrowserRecordingNativeViewCaptureTransportOptions = Readonly<{
   invokeRecordingFrameCapture: DesktopBrowserRecordingFrameCaptureInvoke;
-  /** Recording working directory; retained for daemon-side setup and test injection. */
-  workingDirectory: string;
-  /** Override the output directory (tests). */
-  outputDirectory?: string;
   /** Injectable unique-id source (tests); defaults to `crypto.randomUUID`. */
   randomId?: () => string;
-  /** Injectable directory-ensure seam (tests); defaults to `fs.mkdir(..., { recursive: true })`. */
-  ensureDirectory?: (directory: string) => Promise<void>;
   /** Injectable file-delete seam (tests); defaults to `fs.rm(..., { force: true })`. */
   deleteFile?: (path: string) => Promise<void>;
 }>;
-
-function defaultEnsureDirectory(directory: string): Promise<void> {
-  return mkdir(directory, { recursive: true }).then(() => undefined);
-}
 
 function defaultDeleteFile(path: string): Promise<void> {
   return rm(path, { force: true });
@@ -84,17 +73,12 @@ export function createDesktopBrowserRecordingNativeViewCaptureTransport(
   options: DesktopBrowserRecordingNativeViewCaptureTransportOptions,
 ): BrowserRecordingNativeViewCaptureTransport {
   const randomId = options.randomId ?? randomUUID;
-  const ensureDirectory = options.ensureDirectory ?? defaultEnsureDirectory;
   const deleteFile = options.deleteFile ?? defaultDeleteFile;
-  const outputDirectory = options.outputDirectory
-    ?? join(options.workingDirectory, '.happier', 'tmp', 'browser-recordings');
 
   return {
     async captureFrame({ recording }) {
       const captureRequestId = randomId();
       const outputPath = `${recording.recordingId}.${captureRequestId}.native-view.png`;
-
-      await ensureDirectory(outputDirectory);
 
       const request: DesktopBrowserRecordingFrameCaptureRequest = {
         browserSessionId: recording.browserSessionId,

@@ -36,7 +36,6 @@ import { BrowserDiagnosticsElementPickerResultV1Schema } from '@happier-dev/prot
  *  - `elementPicker.cancel`  -> `Overlay.setInspectMode(none)` + `Overlay.disable` (interrupts a start)
  */
 
-const ID_MAX = 256;
 const RELEASED_OBJECT_GROUP_KEY_LIMIT = 512;
 
 type CdpPageCommandTransport = Readonly<{
@@ -83,10 +82,6 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function clamp(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
 }
 
 function valuePreviewString(value: unknown): string {
@@ -144,7 +139,7 @@ function toRemoteObject(value: unknown): BrowserDiagnosticsRemoteObjectV1 | null
   if (!type) return null;
 
   const objectId = typeof cdp.objectId === 'string' && cdp.objectId.length > 0
-    ? clamp(cdp.objectId, ID_MAX)
+    ? cdp.objectId
     : undefined;
   const className = typeof cdp.className === 'string' && cdp.className.trim().length > 0
     ? cdp.className.trim()
@@ -685,7 +680,7 @@ export function createBrowserDiagnosticsInteractionTransport(
     await disablePickerOverlay(handle);
     if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
     if (outcome.kind === 'selected') {
-      return pickerResult(request, 'selected', { backendNodeRef: clamp(String(outcome.backendNodeId), ID_MAX) });
+      return pickerResult(request, 'selected', { backendNodeRef: String(outcome.backendNodeId) });
     }
     return pickerResult(request, 'cancelled');
   }

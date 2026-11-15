@@ -1,4 +1,4 @@
-import { BROWSER_CONTEXT_SELECTION_MAX_CHARS, BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
+import { buildBrowserContextMessageMetaOverrides } from '@/sync/domains/session/input/browserContext';
 import type {
     BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
 import type {
@@ -313,7 +313,7 @@ describe('browser context state', () => {
         expect(blocked.state.itemsById).toEqual({});
     });
 
-    it('captures bounded text and DOM summaries without retaining unavailable sensitive context', async () => {
+    it('captures full eligible text and DOM summaries without retaining unavailable sensitive context', async () => {
         const module = await import('./state') as Record<string, unknown>;
         expect(module.captureBrowserTextSelection).toBeTypeOf('function');
         expect(module.captureBrowserSummaryContext).toBeTypeOf('function');
@@ -380,14 +380,14 @@ describe('browser context state', () => {
             viewId: 'view_1',
             navigationGeneration: 7,
             capturedAtMs: 4_000,
-            text: 's'.repeat(BROWSER_CONTEXT_SELECTION_MAX_CHARS + 1),
+            text: 's'.repeat(4097),
         });
 
         if (selected.status !== 'captured') throw new Error('expected selected text capture to succeed');
         expect(selected.state.itemsById[selected.itemId]).toMatchObject({
             kind: 'browserTextSelection',
-            text: 's'.repeat(BROWSER_CONTEXT_SELECTION_MAX_CHARS),
-            truncated: true,
+            text: 's'.repeat(4097),
+            truncated: false,
             redactionLevel: 'summaryOnly',
             fidelity: 'injectedPage',
         });
@@ -401,17 +401,29 @@ describe('browser context state', () => {
             navigationGeneration: 7,
             capturedAtMs: 4_100,
             kind: 'browserDomSnapshotSummary',
-            summary: 'm'.repeat(BROWSER_CONTEXT_SUMMARY_MAX_CHARS + 1),
+            summary: 'm'.repeat(16385),
         });
 
         if (domSummary.status !== 'captured') throw new Error('expected DOM summary capture to succeed');
         expect(domSummary.state.itemsById[domSummary.itemId]).toMatchObject({
             kind: 'browserDomSnapshotSummary',
-            summary: 'm'.repeat(BROWSER_CONTEXT_SUMMARY_MAX_CHARS),
-            truncated: true,
+            summary: 'm'.repeat(16385),
+            truncated: false,
             redactionLevel: 'summaryOnly',
             fidelity: 'injectedPage',
         });
+
+        // RU2 B-P1: eligible content survives capture, attachment and the send envelope.
+        let attachedState = domSummary.state;
+        for (const [index, contextId] of [selected.itemId, domSummary.itemId].entries()) {
+            const attached = attachBrowserContextToComposer(attachedState, { attachmentId: `full_${index}`, contextId });
+            if (attached.status !== 'attached') throw new Error('expected full context attachment');
+            attachedState = attached.state;
+        }
+        const envelope = buildBrowserContextMessageMetaOverrides({ state: attachedState });
+        expect(envelope.ok).toBe(true);
+        expect(JSON.stringify(envelope)).toContain('s'.repeat(4097));
+        expect(JSON.stringify(envelope)).toContain('m'.repeat(16385));
 
         const blocked = captureBrowserTextSelection({
             state: domSummary.state,
@@ -546,7 +558,7 @@ describe('browser context state', () => {
                 status: 'selected',
                 audited: true,
                 backendNodeRef: 'backend_node_secret',
-                selectorPath: 'html > body > main:nth-of-type(1) > button',
+                selectorPath: 'main > '.repeat(300) + 'button',
                 rect: {
                     x: 12,
                     y: 24,
@@ -570,7 +582,7 @@ describe('browser context state', () => {
             navigationGeneration: 7,
             lifecycleState: 'available',
             redactionLevel: 'metadataOnly',
-            selectorPath: 'html > body > main:nth-of-type(1) > button',
+            selectorPath: 'main > '.repeat(300) + 'button',
             accessibleName: 'Run task',
             componentName: 'RunTaskButton',
             sourceLocation: { file: 'src/RunTaskButton.tsx', line: 24, column: 8 },

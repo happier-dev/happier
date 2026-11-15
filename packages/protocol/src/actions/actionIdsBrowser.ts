@@ -19,3 +19,13 @@ export function isBrowserExtensionActionIdV1(actionId: string): actionId is Brow
 export function isBrowserExtensionMutationActionIdV1(actionId: string): boolean {
   return (BROWSER_EXTENSION_MUTATION_ACTION_IDS as readonly string[]).includes(actionId);
 }
+
+/** Live diagnostics verbs routed to the selected browser's CDP interaction owner. */
+export const BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS = [
+  'browser.diagnostics.pause', 'browser.diagnostics.resume', 'browser.diagnostics.eval',
+  'browser.diagnostics.getProperties', 'browser.diagnostics.releaseObjectGroup',
+  'browser.diagnostics.elementPicker.start', 'browser.diagnostics.elementPicker.cancel',
+] as const;
+export function isBrowserDiagnosticsInteractionActionIdV1(actionId: string): actionId is typeof BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS[number] {
+  return (BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS as readonly string[]).includes(actionId);
+}

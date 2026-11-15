@@ -345,7 +345,15 @@ function projectFamily(
         };
     }
 
-    const latestFamilyEvent = familyEvents[familyEvents.length - 1];
+    // Content can continue after a partial collection failure. It does not recover
+    // the collector's degraded state; its next availability receipt does.
+    let latestFamilyEvent = familyEvents[familyEvents.length - 1];
+    for (let index = familyEvents.length - 1; index >= 0; index -= 1) {
+        const event = familyEvents[index];
+        if (!isBrowserDiagnosticLifecycleEvent(event)) continue;
+        if (event.kind === 'collector.degraded') latestFamilyEvent = event;
+        break;
+    }
     if (latestFamilyEvent?.kind === 'diagnostics.unavailable') {
         return {
             family,

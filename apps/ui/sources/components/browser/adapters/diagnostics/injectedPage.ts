@@ -188,7 +188,7 @@ function sanitizeOwnerStorageEntries(value: unknown): readonly Record<string, un
     if (!Array.isArray(value)) return undefined;
     const entries = value.flatMap((entry) => {
         if (!isRecord(entry)) return [];
-        const key = typeof entry.key === 'string' ? entry.key.slice(0, 256) : '';
+        const key = typeof entry.key === 'string' ? entry.key : '';
         const valueText = ownerValueText(entry.value);
         if (!key || valueText === undefined) return [];
         return [{

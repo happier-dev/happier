@@ -9,7 +9,7 @@ import {
 import { BrowserDiagnosticFidelityV1Schema } from '../diagnostics/v1.js';
 import { BrowserViewTargetKindV1Schema } from '../target/v1.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 const PositiveIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 
@@ -82,7 +82,7 @@ export const BrowserEvidenceSessionMediaReferenceV1Schema = lazyZodSchema(() => 
     refKind: z.literal('sessionMedia'),
     mediaId: IdSchema,
     mediaKind: z.enum(['image', 'video']),
-    mimeType: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    mimeType: z.string().check(z.trim(), z.minLength(1)),
     sizeBytes: PositiveIntSchema,
   }));
 export type BrowserEvidenceSessionMediaReferenceV1 = z.infer<
@@ -145,11 +145,11 @@ export const BrowserRecordingActionChapterV1Schema = lazyZodSchema(() => z.stric
     actionId: z.optional(IdSchema),
     startOffsetMs: NonNegativeIntSchema,
     endOffsetMs: NonNegativeIntSchema,
-    actionKind: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    actionKind: z.string().check(z.trim(), z.minLength(1)),
     status: z.enum(['queued', 'running', 'succeeded', 'failed', 'interrupted', 'canceled']),
     requesterClass: z.enum(['human', 'agent', 'system']),
-    targetSummary: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-    reason: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+    targetSummary: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
     diagnosticsRefs: z._default(z.optional(z.array(IdSchema)), []),
   }).check(z.superRefine((chapter, context) => {
     if (chapter.endOffsetMs < chapter.startOffsetMs) {
@@ -175,7 +175,7 @@ export const RecordingSessionFieldsV1Schema = lazyZodSchema(() => z.strictObject
     byteSize: NonNegativeIntSchema,
     frameCount: NonNegativeIntSchema,
     fps: z.number().check(z.nonnegative()),
-    mimeType: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    mimeType: z.string().check(z.trim(), z.minLength(1)),
     retentionClass: BrowserRecordingRetentionClassV1Schema,
     redactionLevel: BrowserRecordingRedactionLevelV1Schema,
     policyState: BrowserRecordingPolicyStateV1Schema,
@@ -308,8 +308,8 @@ export const BrowserEvidenceArtifactV1Schema = lazyZodSchema(() => z.strictObjec
 export type BrowserEvidenceArtifactV1 = z.infer<typeof BrowserEvidenceArtifactV1Schema>;
 
 export const DaemonBrowserRecordingUnavailableReasonV1Schema = lazyZodSchema(() => z.strictObject({
-    code: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
-    message: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+    code: z.string().check(z.trim(), z.minLength(1)),
+    message: z.string().check(z.trim(), z.minLength(1)),
   }));
 export type DaemonBrowserRecordingUnavailableReasonV1 = z.infer<
   typeof DaemonBrowserRecordingUnavailableReasonV1Schema
@@ -325,7 +325,7 @@ export const DaemonBrowserRecordingStartInputV1Schema = lazyZodSchema(() => z.st
     captureKind: BrowserRecordingCaptureKindV1Schema,
     fidelity: BrowserDiagnosticFidelityV1Schema,
     navigationGeneration: NonNegativeIntSchema,
-    mimeType: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    mimeType: z.string().check(z.trim(), z.minLength(1)),
     retentionClass: BrowserRecordingRetentionClassV1Schema,
     policyState: z.optional(BrowserRecordingPolicyStateV1Schema),
     mediaTarget: z.optional(BrowserRecordingSessionMediaTargetV1Schema),

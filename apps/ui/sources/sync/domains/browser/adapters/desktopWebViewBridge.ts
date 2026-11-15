@@ -194,6 +194,8 @@ export type DesktopBrowserDrainDiagnosticsResult = Readonly<{
     availability: DesktopWebViewNativeAvailability;
     /** Raw collector envelopes the injected page posted via `window.ipc.postMessage` (each is a JSON batch). */
     messages: readonly string[];
+    /** Native envelopes omitted since the previous drain; absent when the host does not report loss. */
+    droppedMessageCount?: number;
 }>;
 
 export type DesktopBrowserCaptureErrorCode =
@@ -707,10 +709,12 @@ function normalizeDesktopBrowserDrainDiagnosticsResult(payload: unknown): Deskto
     const availability = normalizeDesktopWebViewNativeAvailability(record.availability);
     const rawMessages = Array.isArray(record.messages) ? record.messages : [];
     const messages = rawMessages.filter((message): message is string => typeof message === 'string');
+    const droppedMessageCount = readNonNegativeInteger(record.droppedMessageCount);
     return {
         ok: record.ok === true,
         availability,
         messages,
+        ...(droppedMessageCount === null ? {} : { droppedMessageCount }),
     };
 }
 

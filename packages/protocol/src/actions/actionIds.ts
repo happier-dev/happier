@@ -75,11 +75,12 @@ export function isWorkspaceSyncRelationshipControlActionId(actionId: string): ac
 
 /** Actions that exercise the separately granted approval-decision authority. */
 export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
-import { BROWSER_EXTENSION_ACTION_IDS, BROWSER_PROFILE_ACTION_IDS } from './actionIdsBrowser.js';
+import { BROWSER_EXTENSION_ACTION_IDS, BROWSER_PROFILE_ACTION_IDS, BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS } from './actionIdsBrowser.js';
 export {
   BROWSER_EXTENSION_ACTION_IDS, BROWSER_EXTENSION_MUTATION_ACTION_IDS,
   isBrowserExtensionActionIdV1, isBrowserExtensionMutationActionIdV1, type BrowserExtensionActionIdV1,
   BROWSER_PROFILE_ACTION_IDS, BROWSER_PROFILE_MUTATION_ACTION_IDS, isBrowserProfileActionIdV1,
+  BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS, isBrowserDiagnosticsInteractionActionIdV1,
 } from './actionIdsBrowser.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
@@ -700,13 +701,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   browser_diagnostics: [
     'browser.diagnostics.snapshot',
     'browser.diagnostics.clear',
-    'browser.diagnostics.pause',
-    'browser.diagnostics.resume',
-    'browser.diagnostics.eval',
-    'browser.diagnostics.getProperties',
-    'browser.diagnostics.releaseObjectGroup',
-    'browser.diagnostics.elementPicker.start',
-    'browser.diagnostics.elementPicker.cancel',
+    ...BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS,
   ],
   browser_context: [
     'browser.context.capturePage',

@@ -53,10 +53,7 @@ function buildRuntime(
   options: Readonly<{ captureSourceAvailable?: boolean }> = {},
 ) {
   const transport = createDesktopBrowserRecordingNativeViewCaptureTransport({
-    workingDirectory: WORKING_DIRECTORY,
-    outputDirectory: `${WORKING_DIRECTORY}/out`,
     randomId: () => 'capture_1',
-    ensureDirectory: async () => undefined,
     deleteFile: async () => undefined,
     invokeRecordingFrameCapture: createReverseDesktopBrowserRecordingNativeViewCaptureInvoke({ callUi }),
   });

@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isBrowserDiagnosticsInteractionActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import type { BrowserDiagnosticsSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserDiagnosticsDaemonStore } from './store';
@@ -42,16 +43,6 @@ export type BrowserDiagnosticsInteractionTransport = Readonly<{
 export type BrowserDiagnosticsActionRoutes = Readonly<{
   dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<unknown>;
 }>;
-
-const INTERACTION_ACTION_IDS = new Set<RuntimeActionIdV1>([
-  'browser.diagnostics.pause',
-  'browser.diagnostics.resume',
-  'browser.diagnostics.eval',
-  'browser.diagnostics.getProperties',
-  'browser.diagnostics.releaseObjectGroup',
-  'browser.diagnostics.elementPicker.start',
-  'browser.diagnostics.elementPicker.cancel',
-]);
 
 const invalidParameters: BrowserDiagnosticsActionRouteFailure = {
   ok: false,
@@ -105,7 +96,7 @@ export function createBrowserDiagnosticsActionRoutes(input: Readonly<{
         store.clearView({ browserSessionId: parsed.browserSessionId, viewId: parsed.viewId });
         return { ok: true } as const;
       }
-      if (INTERACTION_ACTION_IDS.has(actionId)) {
+      if (isBrowserDiagnosticsInteractionActionIdV1(actionId)) {
         if (!interaction) return disabled('browser_diagnostics_route_unavailable');
         const parsed = getActionSpec(actionId).inputSchema.safeParse(rawInput ?? {});
         if (!parsed.success) return invalidParameters;

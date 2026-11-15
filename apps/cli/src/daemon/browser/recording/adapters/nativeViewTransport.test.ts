@@ -1,4 +1,5 @@
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
+import { mkdir } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserRecordingNativeViewCaptureCommand } from './nativeViewCommand';
@@ -7,6 +8,12 @@ import {
   type DesktopBrowserRecordingFrameCaptureInvoke,
   type DesktopBrowserRecordingFrameCaptureRequest,
 } from './nativeViewTransport';
+
+// The native producer owns filesystem setup; an unavailable daemon directory must not block it.
+vi.mock('node:fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('node:fs/promises')>(),
+  mkdir: vi.fn(async () => { throw new Error('Daemon output directory is unavailable'); }),
+}));
 
 function createRecording(overrides: Partial<BrowserRecordingSessionV1> = {}): BrowserRecordingSessionV1 {
   return {
@@ -38,14 +45,11 @@ function createRecording(overrides: Partial<BrowserRecordingSessionV1> = {}): Br
 }
 
 const TRANSPORT_SEAMS = {
-  workingDirectory: '/tmp/happier-home',
-  outputDirectory: '/tmp/happier-home/recordings',
   randomId: () => 'capture_1',
 } as const;
 
 describe('desktop browser recording native-view capture transport (daemon->native invoke)', () => {
   it('threads a root-relative artifact path and view identity to the canonical invoke', async () => {
-    const ensureDirectory = vi.fn(async () => undefined);
     const deleteFile = vi.fn(async () => undefined);
     let captured: DesktopBrowserRecordingFrameCaptureRequest | undefined;
     const invokeRecordingFrameCapture: DesktopBrowserRecordingFrameCaptureInvoke = vi.fn(async (request) => {
@@ -64,7 +68,6 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
 
     const transport = createDesktopBrowserRecordingNativeViewCaptureTransport({
       ...TRANSPORT_SEAMS,
-      ensureDirectory,
       deleteFile,
       invokeRecordingFrameCapture,
     });
@@ -72,7 +75,7 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
     const recording = createRecording();
     const result = await transport.captureFrame({ recording });
 
-    expect(ensureDirectory).toHaveBeenCalledWith('/tmp/happier-home/recordings');
+    expect(mkdir).not.toHaveBeenCalled();
     expect(captured).toEqual({
       browserSessionId: 'browser_session_1',
       viewId: 'view_1',
@@ -107,7 +110,6 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
 
     const transport = createDesktopBrowserRecordingNativeViewCaptureTransport({
       ...TRANSPORT_SEAMS,
-      ensureDirectory: async () => undefined,
       deleteFile,
       invokeRecordingFrameCapture,
     });
@@ -130,7 +132,6 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
 
     const transport = createDesktopBrowserRecordingNativeViewCaptureTransport({
       ...TRANSPORT_SEAMS,
-      ensureDirectory: async () => undefined,
       deleteFile,
       invokeRecordingFrameCapture,
     });
@@ -154,7 +155,6 @@ describe('desktop browser recording native-view capture transport (daemon->nativ
 
     const transport = createDesktopBrowserRecordingNativeViewCaptureTransport({
       ...TRANSPORT_SEAMS,
-      ensureDirectory: async () => undefined,
       deleteFile,
       invokeRecordingFrameCapture,
     });

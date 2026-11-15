@@ -4,7 +4,7 @@
  * SB-D: ten owners across the UI sync domain, the daemon browser tree and the sidecar each composed
  * `(browserSessionId, viewId)` into a string map key with three different separators — NUL, `:` and
  * a plain space. Every one of them was collision-capable: view and session ids are
- * `z.string().trim().min(1).max(256)` (`view/v1.ts`), which permits the separator character inside a
+ * non-empty strings (`view/v1.ts`), which permit the separator character inside a
  * component, so `{'a b', 'c'}` and `{'a', 'b c'}` produced the same space-separated key — and
  * therefore the same automation controller entry and the same diagnostics bucket.
  *

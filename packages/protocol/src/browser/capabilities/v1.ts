@@ -8,6 +8,6 @@ export const BrowserControlPlaneCapabilitiesV1Schema = z.strictObject({
     supportedCommands: z._default(z.optional(z.array(BrowserCommandKindV1Schema)), []),
     supportedEvents: z._default(z.optional(z.array(BrowserEventKindV1Schema)), []),
     adapters: z._default(z.optional(z.array(BrowserAdapterCapabilitiesV1Schema)), []),
-    disabledReasons: z._default(z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(128)))), []),
+    disabledReasons: z._default(z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))), []),
   });
 export type BrowserControlPlaneCapabilitiesV1 = z.infer<typeof BrowserControlPlaneCapabilitiesV1Schema>;

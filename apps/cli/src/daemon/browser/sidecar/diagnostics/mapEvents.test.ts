@@ -138,41 +138,6 @@ describe('daemon browser sidecar diagnostics mapping', () => {
         expect(JSON.stringify(event)).not.toContain('secret');
     });
 
-    it('maps CDP eval object results to daemon-owned remote object references', async () => {
-        const mod = await import('./mapEvents');
-
-        expect(mod).not.toBeNull();
-        if (!mod) return;
-
-        const result = mod.mapSidecarCdpEvalResult({
-            evalRequestId: 'eval_1',
-            viewId: 'view_1',
-            navigationGeneration: 9,
-            rawCdpObjectId: '{"injectedScriptId":1,"id":42}',
-            className: 'HTMLDivElement',
-            description: 'div#root',
-            preview: [{ name: 'id', valuePreview: 'root', truncated: false }],
-        });
-
-        expect(result).toMatchObject({
-            v: 1,
-            evalRequestId: 'eval_1',
-            viewId: 'view_1',
-            navigationGeneration: 9,
-            status: 'completed',
-            tier: 'cdp',
-            audited: true,
-            result: {
-                type: 'object',
-                objectId: expect.stringMatching(/^sidecar_object_[a-f0-9]{12}$/),
-                className: 'HTMLDivElement',
-                description: 'div#root',
-                preview: [{ name: 'id', valuePreview: 'root', truncated: false }],
-            },
-        });
-        expect(JSON.stringify(result)).not.toContain('injectedScriptId');
-    });
-
     it('retains console text for destination-aware owner egress', async () => {
         const mod = await import('./mapEvents');
 

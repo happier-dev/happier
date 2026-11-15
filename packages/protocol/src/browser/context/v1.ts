@@ -17,14 +17,8 @@ import { SessionImageMediaReferenceV1Schema } from '../../sessions/media/imageRe
 import { ImageMarksDocumentV1Schema } from '../../sessions/media/imageMarksV1.js';
 import { BrowserAutomationSecretFillRequestV1Schema } from '../automation/v1.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
-
-/** Shared projection budget for selected text. */
-export const BROWSER_CONTEXT_SELECTION_MAX_CHARS = 2048;
-
-/** Shared egress budget for context summaries and the snapshot's console projection. */
-export const BROWSER_CONTEXT_SUMMARY_MAX_CHARS = 8192;
 
 const CONTEXT_KEY_REJECTION_MESSAGE =
   'Browser context payloads must not contain inline bytes, secrets, storage values, or bodies.';
@@ -80,7 +74,7 @@ const BrowserContextItemBaseV1Schema = lazyZodSchema(() => z.strictObject({
     navigationGeneration: NonNegativeIntSchema,
     lifecycleState: BrowserContextLifecycleStateV1Schema,
     redactionLevel: BrowserContextRedactionLevelV1Schema,
-    disabledReason: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+    disabledReason: z.optional(z.string().check(z.trim(), z.minLength(1))),
   }));
 
 const PageReferenceSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
@@ -88,10 +82,10 @@ const PageReferenceSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(sch
   targetId: z.optional(IdSchema),
   targetKind: z.optional(BrowserViewTargetKindV1Schema),
   display: z.optional(BrowserTargetDisplayV1Schema),
-  url: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
-  title: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-  faviconUrl: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
-  origin: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+  url: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  title: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  faviconUrl: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  origin: z.optional(z.string().check(z.trim(), z.minLength(1))),
 })));
 
 const ScreenshotSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
@@ -106,7 +100,7 @@ const ScreenshotSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema
 
 const TextSelectionSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
   kind: z.literal('browserTextSelection'),
-  text: z.string().check(z.maxLength(BROWSER_CONTEXT_SELECTION_MAX_CHARS)),
+  text: z.string(),
   truncated: z._default(z.optional(z.boolean()), false),
 })));
 
@@ -117,15 +111,15 @@ const SummarySchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T
     'browserNetworkSummary',
     'browserConsoleSummary',
   ]),
-  summary: z.string().check(z.maxLength(BROWSER_CONTEXT_SUMMARY_MAX_CHARS)),
+  summary: z.string(),
   truncated: z._default(z.optional(z.boolean()), false),
 })));
 
 const SelectedElementSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
   kind: z.literal('browserSelectedElement'),
-  selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
-  accessibleName: z.optional(z.string().check(z.maxLength(512))),
-  componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  selectorPath: z.string().check(z.trim(), z.minLength(1)),
+  accessibleName: z.optional(z.string()),
+  componentName: z.optional(z.string().check(z.trim(), z.minLength(1))),
   sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
   rect: z.optional(z.strictObject({
       x: z.number(),
@@ -137,9 +131,9 @@ const SelectedElementSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(s
 
 export const BrowserContextAnnotationElementV2Schema = lazyZodSchema(() => z.strictObject({
   markId: z.string().check(z.minLength(1)),
-  selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
-  accessibleName: z.optional(z.string().check(z.maxLength(512))),
-  componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  selectorPath: z.string().check(z.trim(), z.minLength(1)),
+  accessibleName: z.optional(z.string()),
+  componentName: z.optional(z.string().check(z.trim(), z.minLength(1))),
   sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
 }));
 export type BrowserContextAnnotationElementV2 = z.infer<typeof BrowserContextAnnotationElementV2Schema>;
@@ -150,8 +144,8 @@ const annotationV2Fields = {
   imageRef: BrowserScreenshotMediaReferenceV1Schema,
   marks: ImageMarksDocumentV1Schema,
   elements: z.array(BrowserContextAnnotationElementV2Schema),
-  pageUrl: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
-  pageTitle: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+  pageUrl: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  pageTitle: z.optional(z.string().check(z.trim(), z.minLength(1))),
 };
 
 export const BrowserContextAnnotationItemV2Schema = lazyZodSchema(() => z.strictObject({
@@ -243,8 +237,8 @@ export const BrowserContextSnapshotV1Schema = lazyZodSchema(() => z.strictObject
     capturedAtMs: NonNegativeIntSchema,
     navigationGeneration: NonNegativeIntSchema,
     redactionLevel: BrowserContextRedactionLevelV1Schema,
-    url: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
-    title: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+    url: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    title: z.optional(z.string().check(z.trim(), z.minLength(1))),
     media: z.optional(BrowserScreenshotMediaReferenceV1Schema),
     visibleText: z.string(),
     visibleTextTruncated: z._default(z.optional(z.boolean()), false),
@@ -252,7 +246,7 @@ export const BrowserContextSnapshotV1Schema = lazyZodSchema(() => z.strictObject
     axNodesTruncated: z._default(z.optional(z.boolean()), false),
     interactiveElements: z.array(BrowserContextSnapshotInteractiveElementV1Schema),
     interactiveElementsTruncated: z._default(z.optional(z.boolean()), false),
-    consoleSummary: z.optional(z.string().check(z.maxLength(BROWSER_CONTEXT_SUMMARY_MAX_CHARS))),
+    consoleSummary: z.optional(z.string()),
     consoleTruncated: z._default(z.optional(z.boolean()), false),
     focusedCredentialTarget: z.optional(BrowserFocusedCredentialTargetV1Schema),
   }).check(z.superRefine((snapshot, context) => {
@@ -382,7 +376,7 @@ export const BrowserContextMessageMetaV1Schema = lazyZodSchema(() => z.strictObj
 export const BrowserContextRouteFailureV1Schema = lazyZodSchema(() => z.strictObject({
     ok: z.literal(false),
     errorCode: z.enum(['invalid_parameters', 'runtime_action_disabled']),
-    error: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+    error: z.string().check(z.trim(), z.minLength(1)),
   }));
 export type BrowserContextRouteFailureV1 = z.infer<typeof BrowserContextRouteFailureV1Schema>;
 

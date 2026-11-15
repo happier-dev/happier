@@ -63,14 +63,14 @@ export function redactDiagnosticsHeaders(
 
 /**
  * Report clipping separately from policy-based exclusions of unsafe header values.
- * `valueLimit: null` preserves complete values for admitted local-owner diagnostics.
+ * Values stay complete unless the destination supplies an explicit projection limit.
  */
 export function redactDiagnosticsHeadersWithResult(
   headers: TelemetryHeaders | undefined,
   options: Readonly<{ valueLimit?: number | null }> = {},
 ): RedactedDiagnosticsHeaders {
   if (!headers) return { headers: {}, truncated: false };
-  const valueLimit = options.valueLimit === undefined ? 256 : options.valueLimit;
+  const valueLimit = options.valueLimit ?? null;
   const out: Record<string, string> = {};
   let truncated = false;
   for (const [name, value] of Object.entries(headers)) {

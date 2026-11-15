@@ -4,7 +4,6 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { browserViewKey } from '../view/key.js';
-import { BROWSER_VIEW_ID_MAX_LENGTH } from '../view/v1.js';
 import { BrowserCommandDispatchResultV1Schema } from '../control/v1.js';
 import { BrowserAutomationActionResultV1Schema, BrowserAutomationCancelActiveResultV1Schema, BrowserAutomationInterruptedResultV1Schema, BrowserAutomationTimelineV1Schema } from './v1.js';
 import { BrowserDiagnosticsEvalResultV1Schema, BrowserDiagnosticsGetPropertiesResultV1Schema, BrowserDiagnosticsReleaseObjectGroupResultV1Schema, BrowserDiagnosticsElementPickerResultV1Schema } from '../diagnostics/v1.js';
@@ -54,8 +53,3 @@ export function isUiBrowserAutomationDispatchMethod(method: string): boolean {
   const prefix = `${RPC_METHODS.UI_BROWSER_AUTOMATION_DISPATCH}.`;
   return method.startsWith(prefix) && method.length > prefix.length;
 }
-
-// Each UTF-16 unit needs at most nine URI characters after JSON escaping. Include both
-// length prefixes and the encoded JSON quotes; the view identity schemas own the lengths.
-export const UI_BROWSER_AUTOMATION_DISPATCH_KEY_MAX_LENGTH =
-  9 * (2 * BROWSER_VIEW_ID_MAX_LENGTH + 2 * String(BROWSER_VIEW_ID_MAX_LENGTH).length + 2) + 6;

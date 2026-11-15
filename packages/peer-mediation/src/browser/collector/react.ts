@@ -18,14 +18,14 @@ export const INJECTED_REACT_CONTEXT_RUNTIME = `
   function componentNameForFiber(fiber) {
     var type = fiber && fiber.type;
     if (typeof type === 'function') {
-      return String(type.displayName || type.name || '').slice(0, 128);
+      return String(type.displayName || type.name || '');
     }
     if (type && typeof type === 'object') {
       var render = type.render;
       var name = type.displayName
         || (render && (render.displayName || render.name))
         || '';
-      return String(name).slice(0, 128);
+      return String(name);
     }
     return '';
   }
@@ -51,7 +51,7 @@ export const INJECTED_REACT_CONTEXT_RUNTIME = `
       var line = Number(match[2]);
       var column = Number(match[3]);
       if (line < 1 || column < 1) return undefined;
-      return { file: match[1].slice(0, 1024), line: line, column: column };
+      return { file: match[1], line: line, column: column };
     }
     return undefined;
   }
@@ -62,7 +62,7 @@ export const INJECTED_REACT_CONTEXT_RUNTIME = `
       var line = Number(source.lineNumber || 0);
       var column = Number(source.columnNumber || 0);
       return {
-        file: source.fileName.slice(0, 1024),
+        file: source.fileName,
         ...(line > 0 ? { line: line } : {}),
         ...(column > 0 ? { column: column } : {})
       };

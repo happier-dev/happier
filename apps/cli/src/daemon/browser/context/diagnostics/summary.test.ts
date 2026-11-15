@@ -78,7 +78,7 @@ function consoleEvent(input: Readonly<{ ordinal: number; capturedAtMs: number; l
 }
 
 describe('browser context diagnostics summary source (SB-G: reads the daemon diagnostics store)', () => {
-    it('preserves the newest retained event under output pressure before presenting events chronologically', () => {
+    it('preserves every retained eligible event beyond the former context cutoff in chronological order', () => {
         const summaries = summaryHarness({});
         const nowMs = Date.now();
         for (let ordinal = 1; ordinal <= 600; ordinal += 1) {
@@ -87,9 +87,10 @@ describe('browser context diagnostics summary source (SB-G: reads the daemon dia
         const result = summaries.summarize({ ...VIEW, kind: 'browserNetworkSummary' });
         const lines = result?.summary.split('\n') ?? [];
         expect(lines.at(-1)).toBe('GET https://api.test/request-600');
-        expect(result?.summary).not.toContain('/request-1\n');
-        expect(result?.truncated).toBe(true);
-        expect(result?.summary.length).toBeLessThanOrEqual(8192);
+        expect(lines[0]).toBe('GET https://api.test/request-1');
+        expect(lines).toHaveLength(600);
+        expect(result?.truncated).not.toBe(true);
+        expect(result?.summary.length).toBeGreaterThan(8192);
         const ordinals = lines.map(line => Number(line.split('request-')[1]));
         expect(ordinals).toEqual([...ordinals].sort((a, b) => a - b));
     });
@@ -112,14 +113,14 @@ describe('browser context diagnostics summary source (SB-G: reads the daemon dia
         expect(result?.truncated).not.toBe(true);
     });
 
-    it.each([0, 1])('uses the context protocol budget and marks an oversized newest projection incomplete (overflow=%s)', overflow => {
+    it.each([0, 1])('preserves an eligible oversized projection (overflow=%s)', overflow => {
         const summaries = summaryHarness();
         const prefix = 'GET https://api.test';
         const path = `/${'x'.repeat(8192 - prefix.length - 1 + overflow)}`;
         summaries.record(networkEvent({ ordinal: 1, capturedAtMs: Date.now(), method: 'GET', url: path }));
         const result = summaries.summarize({ ...VIEW, kind: 'browserNetworkSummary' });
-        expect(result?.summary).toBe(`${prefix}${path}`.slice(0, 8192));
-        expect(result?.truncated === true).toBe(overflow > 0);
+        expect(result?.summary).toBe(`${prefix}${path}`);
+        expect(result?.truncated).not.toBe(true);
     });
 
     it('serializes the recent network events into a network summary', () => {

@@ -244,7 +244,7 @@ describe('session browser recording runtime', () => {
                 viewId: 'view_1',
                 mediaTarget: {
                     sessionId: 'session_1',
-                    messageLocalId: 'browser-recording-view_1-10000',
+                    messageLocalId: expect.any(String),
                 },
             }),
         });
@@ -271,6 +271,8 @@ describe('session browser recording runtime', () => {
         expect(machineRpcMock.start).toHaveBeenCalledTimes(2);
         expect(hook.getCurrent()?.state.activeRecordingIdByViewId.view_1).toBe('recording_2');
         expect(machineRpcMock.start.mock.calls[1]?.[0].input).not.toHaveProperty('recordingId');
+        expect(machineRpcMock.start.mock.calls[1]?.[0].input.mediaTarget?.messageLocalId)
+            .not.toBe(machineRpcMock.start.mock.calls[0]?.[0].input.mediaTarget?.messageLocalId);
     });
 
     it('deduplicates concurrent start requests for the same browser view', async () => {

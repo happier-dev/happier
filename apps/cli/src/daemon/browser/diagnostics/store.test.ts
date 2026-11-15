@@ -102,6 +102,18 @@ function createEvent(overrides: Partial<BrowserDiagnosticEventV1> = {}): Browser
 }
 
 describe('daemon browser diagnostics store', () => {
+    it('retains the latest explanation for each rejection reason without a duplicate-history cutoff', async () => {
+        const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+        let now = 0;
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', now: () => ++now });
+        store.publishEvent(createEvent({ navigationGeneration: 2 }));
+        store.publishEvent(createEvent({ navigationGeneration: 1 }));
+        for (let rejected = 0; rejected < 51; rejected++) store.publishRawEvent({ invalid: true });
+        expect(store.getSnapshot().diagnostics).toEqual([
+            { code: 'stale_navigation', status: 'rejected', capturedAtMs: 1 },
+            { code: 'invalid_event', status: 'rejected', capturedAtMs: 52 },
+        ]);
+    });
     it('marks history omitted by the existing snapshot projection bound', async () => {
         const { createBrowserDiagnosticsDaemonStore } = await import('./store');
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', maxEventsPerView: 4, maxSnapshotEvents: 2 });

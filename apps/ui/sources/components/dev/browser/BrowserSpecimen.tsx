@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { BrowserContextCapabilities, BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import { DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES, type BrowserContextCapabilities, type BrowserRecordingCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import type { BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
@@ -54,7 +54,7 @@ const CONTEXT_CAPABILITIES = {
     supportedContextKinds: ['browserPageReference', 'browserAnnotation'],
     supportedAdapterKinds: ['externalUrl', 'localPreview', 'chromiumSidecar'],
     screenshot: { supported: true, requiresAttachmentUploads: true, maxBytes: 5_000_000 },
-    text: { maxSelectionChars: 2048, maxSummaryChars: 8192 },
+    text: DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES,
 } as unknown as BrowserContextCapabilities;
 
 const RECORDING_CAPABILITIES = {

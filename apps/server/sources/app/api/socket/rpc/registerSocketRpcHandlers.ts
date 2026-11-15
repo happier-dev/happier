@@ -30,7 +30,7 @@ import { ExternalActionMachineRpcExecutionV1Schema, isExternalActionManagedWakeR
 import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import { resolveEphemeralRunnerMachineRpcAuthority, type EphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
-import { isUiBrowserAutomationDispatchMethod, UI_BROWSER_AUTOMATION_DISPATCH_KEY_MAX_LENGTH } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { isUiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { isCurrentUiContextClientRpcMethod, isSessionUiActionClientRpcMethod, isVoiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { type MachineAccessRefusalCode, type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -196,7 +196,8 @@ function normalizeRpcMethodName(value: unknown): string | null {
     if (separatorIndex > 0 && (isWorkflowDraftClientRpcMethod(trimmed.slice(separatorIndex + 1))
         || isMountedWorkReadClientRpcMethod(trimmed.slice(separatorIndex + 1))
         || isSessionUiActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
-        || isVoiceRunActionClientRpcMethod(trimmed.slice(separatorIndex + 1)))) {
+        || isVoiceRunActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
+        || isUiBrowserAutomationDispatchMethod(trimmed.slice(separatorIndex + 1)))) {
         // Mounted addresses have no schema length ceiling. Their
         // encoded suffix is content carried by this known method family and
         // remains under the existing Socket.IO packet boundary. Retain the
@@ -206,17 +207,13 @@ function normalizeRpcMethodName(value: unknown): string | null {
             : isVoiceRunActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
                 ? `${RPC_METHODS.UI_ACTION_EXECUTE}.voice.`
             : isSessionUiActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
-                ? `${RPC_METHODS.UI_ACTION_EXECUTE}.session.` : `${RPC_METHODS.UI_ACTION_EXECUTE}.work.`;
+                ? `${RPC_METHODS.UI_ACTION_EXECUTE}.session.`
+            : isUiBrowserAutomationDispatchMethod(trimmed.slice(separatorIndex + 1))
+                ? `${RPC_METHODS.UI_BROWSER_AUTOMATION_DISPATCH}.` : `${RPC_METHODS.UI_ACTION_EXECUTE}.work.`;
         return separatorIndex + 1 + familyPrefix.length <= MAX_RPC_METHOD_NAME_LENGTH
             ? trimmed : null;
     }
-    const automationMethod = separatorIndex > 0
-        && isUiBrowserAutomationDispatchMethod(trimmed.slice(separatorIndex + 1));
-    // The pre-existing method budget covers the Machine prefix and method family. The
-    // exact browser view suffix is bounded by its Protocol identity schemas and encoding.
-    const maxLength = MAX_RPC_METHOD_NAME_LENGTH
-        + (automationMethod ? UI_BROWSER_AUTOMATION_DISPATCH_KEY_MAX_LENGTH + 1 : 0);
-    if (trimmed.length > maxLength) return null;
+    if (trimmed.length > MAX_RPC_METHOD_NAME_LENGTH) return null;
     return trimmed;
 }
 

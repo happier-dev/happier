@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { BrowserDiagnosticEventV1Schema, type BrowserDiagnosticEventV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { BrowserDiagnosticFamilyV1Schema, BrowserDiagnosticEventV1Schema, type BrowserDiagnosticEventV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { applyBrowserDiagnosticEvents, applyBrowserDiagnosticsSnapshotState, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView,
     selectBrowserDiagnosticEvents, selectBrowserDiagnosticRequest, selectBrowserDiagnosticRequests,
     selectBrowserDiagnosticStorageRows, selectBrowserDiagnosticResourceRows, serializeBrowserDiagnosticEvents } from './store';
+
+it('projects every protocol diagnostic family when a view is unavailable', () => {
+    const projection = selectBrowserDiagnosticsForView(createBrowserDiagnosticsUiStore(), { browserSessionId: 'browser', viewId: 'view' });
+    expect(projection.families.map(family => family.family)).toEqual(BrowserDiagnosticFamilyV1Schema.options);
+    expect(projection.families.every(family => family.status === 'unavailable')).toBe(true);
+});
 
 it('filters and exports the admitted projection and resolves the selected request after an upsert', () => {
     const request = BrowserDiagnosticEventV1Schema.parse({ ...nativePageInfoEvent(), eventId: 'request', family: 'network', kind: 'network.finished',
@@ -106,13 +112,15 @@ it('distinguishes supported quiet, degraded, retained disconnected and pushed re
     ]) });
     state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'degraded', kind: 'collector.degraded', capturedAtMs: 2100 }] });
     expect(read().families.find(family => family.family === 'console')?.status).toBe('stale');
+    state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'partial-content', kind: 'console.entry', capturedAtMs: 2150, data: { text: 'retained after loss' } }] });
+    expect(read().families.find(family => family.family === 'console')?.status).toBe('stale');
     state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'recovered', capturedAtMs: 2200 }] });
     expect(read().families.find(family => family.family === 'console')?.status).toBe('available');
     state = applyBrowserDiagnosticEvents(state, { events: [{ ...ready, eventId: 'message', kind: 'console.entry', capturedAtMs: 2300, data: { text: 'hello' } }] });
     const disconnected = { browserSessionId: ready.browserSessionId, viewId: ready.viewId, navigationGeneration: ready.navigationGeneration,
         connection: 'disconnected' as const, reasonCode: 'request_failed', evictedEventCount: 5 };
     state = applyBrowserDiagnosticsSnapshotState(state, disconnected);
-    expect(read()).toMatchObject({ status: 'stale', connection: 'disconnected', eventCount: 1, evictedEventCount: 5 });
+    expect(read()).toMatchObject({ status: 'stale', connection: 'disconnected', eventCount: 2, evictedEventCount: 5 });
     expect(applyBrowserDiagnosticsSnapshotState(state, disconnected)).toBe(state);
     const retained = state.viewsByKey[TEST_BROWSER_VIEW_KEY]?.events;
     state = applyBrowserDiagnosticsSnapshotState(state, { ...disconnected, connection: 'connected', reasonCode: undefined });

@@ -7,50 +7,43 @@ import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
  * a route owner must NOT be registered and an
  * action must NOT dispatch unless the server feature decision says enabled.
  */
-export type BrowserDaemonFeatureGateId =
-  | 'browser.sidecar'
-  | 'browser.context'
-  | 'browser.diagnostics'
-  | 'browser.recording'
-  | 'browser.recording.attachments'
-  | 'attachments.uploads'
-  | 'browser.automation';
+const BROWSER_DAEMON_FEATURE_GATE_IDS = [
+  'browser.sidecar',
+  'browser.context',
+  'browser.diagnostics',
+  'browser.recording',
+  'browser.recording.attachments',
+  'attachments.uploads',
+  'browser.automation',
+] as const;
+
+export type BrowserDaemonFeatureGateId = typeof BROWSER_DAEMON_FEATURE_GATE_IDS[number];
 
 export type BrowserDaemonFeatureGate = Readonly<{
-  // Synchronous read of the latest cached server-features decision. Fail-closed (returns false)
-  // until a snapshot has been cached via refresh().
+  // Synchronous read of the latest decision. Fail-closed until refresh() succeeds.
   isEnabled(featureId: BrowserDaemonFeatureGateId): boolean;
-  // Best-effort async refresh of the cached snapshot from the daemon-supplied provider. Awaited
-  // ONCE before route registration; thereafter callers read the cached value synchronously. A
-  // thrown/empty provider keeps the previous snapshot (or none) so the gate stays fail-closed
-  // rather than flapping.
+  // The daemon refreshes before route registration and on reconnect. A thrown/empty provider
+  // retains the previous decisions; a successful refresh also publishes withdrawals.
   refresh(): Promise<void>;
 }>;
 
 export function createBrowserDaemonFeatureGate(params: {
   env: ProcessEnvInput;
   // The SAME async provider shape already used for local-services inventory + connected-services
-  // quotas. The gate (not the call site) owns caching the resolved snapshot.
+  // quotas. This gate owns the resolved decisions consumed by routes and event publication.
   resolveServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
   onError?: (error: unknown) => void;
 }): BrowserDaemonFeatureGate {
-  // Mirror the local-services inventory gate (runtime.ts:534-552): hold the latest snapshot,
-  // refresh best-effort, resolve every decision through the canonical resolveCliFeatureDecision.
-  let cachedServerFeaturesSnapshot: CliServerFeaturesSnapshot | undefined;
-
-  const isEnabled = (featureId: BrowserDaemonFeatureGateId): boolean => {
-    const decision = resolveCliFeatureDecision({
-      featureId,
-      env: params.env,
-      ...(cachedServerFeaturesSnapshot ? { serverSnapshot: cachedServerFeaturesSnapshot } : {}),
-    });
-    return decision.state === 'enabled';
-  };
+  let enabledFeatures = new Set<BrowserDaemonFeatureGateId>();
+  const isEnabled = (featureId: BrowserDaemonFeatureGateId): boolean => enabledFeatures.has(featureId);
 
   const refresh = async (): Promise<void> => {
     try {
       const next = await params.resolveServerFeaturesSnapshot();
-      if (next) cachedServerFeaturesSnapshot = next;
+      if (next) {
+        enabledFeatures = new Set(BROWSER_DAEMON_FEATURE_GATE_IDS.filter(featureId =>
+          resolveCliFeatureDecision({ featureId, env: params.env, serverSnapshot: next }).state === 'enabled'));
+      }
     } catch (error) {
       params.onError?.(error);
     }

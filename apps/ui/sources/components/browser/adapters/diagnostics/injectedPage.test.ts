@@ -938,6 +938,8 @@ describe('injected browser diagnostics collector', () => {
 
         const localEntries: Record<string, string> = {
             theme: 'super-secret-value'.repeat(300),
+            ['k'.repeat(300) + 'a']: 'first-long-key',
+            ['k'.repeat(300) + 'b']: 'second-long-key',
             lastRoute: 'another-secret-value',
         };
         const localKeys = Object.keys(localEntries);
@@ -982,11 +984,13 @@ describe('injected browser diagnostics collector', () => {
                 kind: 'storage.keyInventory',
                 data: expect.objectContaining({
                     storageType: 'localStorage',
-                    keyCount: 2,
+                    keyCount: 4,
                     keys: expect.arrayContaining(['theme', 'lastRoute']),
                     entries: expect.arrayContaining([
                         { key: 'theme', value: localEntries.theme, valueTruncated: false },
                         { key: 'lastRoute', value: 'another-secret-value', valueTruncated: false },
+                        { key: 'k'.repeat(300) + 'a', value: 'first-long-key', valueTruncated: false },
+                        { key: 'k'.repeat(300) + 'b', value: 'second-long-key', valueTruncated: false },
                     ]),
                 }),
                 redaction: expect.objectContaining({ level: 'none' }),

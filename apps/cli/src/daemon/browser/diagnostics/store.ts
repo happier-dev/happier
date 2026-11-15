@@ -12,7 +12,6 @@ export type BrowserDiagnosticsPrivateNetworkRequest = Readonly<{
 
 const DEFAULT_MAX_EVENTS_PER_VIEW = 1_000;
 const DEFAULT_MAX_SNAPSHOT_EVENTS = 5_000;
-const DEFAULT_MAX_DIAGNOSTICS = 50;
 
 type BrowserDiagnosticsRetainedEvent = Readonly<{
     event: BrowserDiagnosticEventV1;
@@ -100,12 +99,10 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
     now?: () => number;
     maxEventsPerView?: number;
     maxSnapshotEvents?: number;
-    maxDiagnostics?: number;
 }>): BrowserDiagnosticsDaemonStore {
     const now = input.now ?? (() => Date.now());
     const maxEventsPerView = Math.max(1, Math.floor(input.maxEventsPerView ?? DEFAULT_MAX_EVENTS_PER_VIEW));
     const maxSnapshotEvents = Math.max(1, Math.floor(input.maxSnapshotEvents ?? DEFAULT_MAX_SNAPSHOT_EVENTS));
-    const maxDiagnostics = Math.max(0, Math.floor(input.maxDiagnostics ?? DEFAULT_MAX_DIAGNOSTICS));
     const viewsByKey = new Map<string, BrowserDiagnosticsDaemonViewState>();
     // Private CDP bindings/ExtraInfo live exactly as long as their existing ring event. They are
     // never serialized by snapshots; eviction/navigation/clear releases the sole strong event key.
@@ -118,17 +115,14 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
     }
 
     function appendDiagnostic(code: BrowserDiagnosticsDaemonDiagnostic['code']): void {
-        if (maxDiagnostics <= 0) {
-            return;
-        }
         diagnostics = [
-            ...diagnostics,
+            ...diagnostics.filter(diagnostic => diagnostic.code !== code),
             {
                 code,
                 status: 'rejected' as const,
                 capturedAtMs: now(),
             },
-        ].slice(-maxDiagnostics);
+        ];
     }
 
     function publishRawEvent(rawEvent: unknown, privateRequest?: BrowserDiagnosticsPrivateNetworkRequest): BrowserDiagnosticsDaemonPublishResult {

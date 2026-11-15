@@ -1,4 +1,3 @@
-import { BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { BrowserContextCaptureScope, BrowserContextSource, BrowserContextSourceSelectedElementResult, BrowserContextSourceTargetRef } from '../capture';
@@ -275,10 +274,8 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
 
             try {
                 const evaluated = evaluateString(await evaluate(handle, DOM_TEXT_EXPRESSION)) ?? '';
-                const collapsed = collapseWhitespace(evaluated);
-                const truncated = collapsed.length > BROWSER_CONTEXT_SUMMARY_MAX_CHARS;
-                const summary = collapsed.slice(0, BROWSER_CONTEXT_SUMMARY_MAX_CHARS);
-                return { ok: true, ...(handle.profileId ? { profileId: handle.profileId } : {}), summary, ...(truncated ? { truncated: true } : {}) };
+                const summary = collapseWhitespace(evaluated);
+                return { ok: true, ...(handle.profileId ? { profileId: handle.profileId } : {}), summary };
             } catch {
                 return CAPTURE_FAILED;
             }

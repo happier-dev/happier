@@ -68,10 +68,11 @@ export function createBrowserExtensionService(input: Readonly<{
         const profileId = request.profileId!;
         const profile = store.getProfile(profileId) ?? await store.loadPersistentProfile(profileId);
         if (!profile && actionId !== 'browser.extensions.install') return unavailable('profile_not_found');
-        const current = profile ? await store.listExtensions(profileId) : { ok: true as const, extensions: [] };
-        if (!current.ok) return unavailable(current.reason);
         const extensionId = 'extensionId' in request ? request.extensionId
           : 'source' in request && request.source.kind === 'webStore' ? request.source.extensionId : undefined;
+        const current = profile ? await store.listExtensions(profileId, extensionId ? [extensionId] : [])
+          : { ok: true as const, extensions: [] };
+        if (!current.ok) return unavailable(current.reason);
         const existing = current.extensions.find(extension => extension.id === extensionId);
         if (actionId === 'browser.extensions.openActionPopup' || actionId === 'browser.extensions.openOptions') {
           if (!existing) return unavailable('extension_not_found');

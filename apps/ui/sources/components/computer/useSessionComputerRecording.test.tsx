@@ -51,13 +51,22 @@ describe('useSessionComputerRecording', () => {
     });
 
     it('starts through computer.recording.start for the Session, on the shared source', async () => {
-        const machine = createMachine({ [ids.list]: [], [ids.start]: { status: 'started', recording } });
-        const hook = await mount(machine);
-        await act(async () => { hook.getCurrent()?.onStart(); await flushHookEffects(); });
-        const start = machine.calls.find(call => call.actionId === ids.start);
-        expect(start?.input).toMatchObject({ machineId: 'machine-1', sourceId: 'computer:1', mediaTarget: { sessionId: 'session-1' } });
-        expect(start?.context).toMatchObject({ defaultSessionId: 'session-1', externalActionTarget: { kind: 'machine', machineId: 'machine-1' } });
-        expect(hook.getCurrent()?.recording?.status).toBe('recording');
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+        try {
+            const machine = createMachine({ [ids.list]: [], [ids.start]: { status: 'started', recording } });
+            const hook = await mount(machine);
+            await act(async () => { hook.getCurrent()?.onStart(); await flushHookEffects(); });
+            const start = machine.calls.find(call => call.actionId === ids.start);
+            expect(start?.input).toMatchObject({ machineId: 'machine-1', sourceId: 'computer:1', mediaTarget: { sessionId: 'session-1' } });
+            expect(start?.context).toMatchObject({ defaultSessionId: 'session-1', externalActionTarget: { kind: 'machine', machineId: 'machine-1' } });
+            expect(hook.getCurrent()?.recording?.status).toBe('recording');
+            await act(async () => { hook.getCurrent()?.onStart(); await flushHookEffects(); });
+            const starts = machine.calls.filter(call => call.actionId === ids.start);
+            expect(starts[1]?.input.mediaTarget).toMatchObject({ sessionId: 'session-1' });
+            expect(starts[1]?.input.mediaTarget).not.toEqual(starts[0]?.input.mediaTarget);
+        } finally {
+            clock.mockRestore();
+        }
     });
 
     it('stops and leaves the finished video to the Session, showing no running recording', async () => {

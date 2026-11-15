@@ -21,7 +21,8 @@ import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewI
 
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';
 import type { BrowserRecordingStartControlRequest } from '@/components/browser/recording';
-import { buildRecordingMessageLocalId, presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
+import { presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
+import { randomUUID } from '@/platform/randomUUID';
 import {
     applyBrowserRecordingSessionSnapshot,
     createBrowserRecordingState,
@@ -249,7 +250,7 @@ export function useSessionBrowserRecordingRuntime(
                 startedAtMs,
                 mediaTarget: {
                     sessionId,
-                    messageLocalId: buildRecordingMessageLocalId(request.viewId, startedAtMs),
+                    messageLocalId: randomUUID(),
                 },
                 captureSource,
             }, {

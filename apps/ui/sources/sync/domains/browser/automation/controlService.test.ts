@@ -434,8 +434,7 @@ describe('browser automation control service', () => {
             browserSessionId: 'browser_session_1',
             viewId: 'browser_view_1',
         });
-        // Retirement must survive eviction from the recent-closed-view projection while the
-        // real engine action is still draining. 512 is the existing projection's boundary.
+        // An admitted action owns its close cancellation while its engine is still draining.
         for (let index = 0; index < 512; index += 1) {
             service.closeView({ browserSessionId: 'browser_session_1', viewId: `other_closed_${index}` });
         }
@@ -504,7 +503,7 @@ describe('browser automation control service', () => {
         expect(serialized).toContain('automation_request_wait_1');
     });
 
-    it('prunes controller and timeline state when a view closes and bounds closed-view tombstones', async () => {
+    it('retires closed views without keeping tombstones and admits a reopened owner', async () => {
         const mod = await loadControlServiceModule();
 
         expect(mod?.createBrowserAutomationControlService).toBeTypeOf('function');
@@ -532,8 +531,7 @@ describe('browser automation control service', () => {
             });
         }
 
-        // The tombstone set is bounded, so the oldest closed views are forgotten and degrade to
-        // `owner_disconnected` while recent ones still report the precise `view_closed`.
+        // An unregistered view is unavailable regardless of how recently it closed.
         expect(await service.executeAction(createRequest({
             automationRequestId: 'automation_request_evicted_view',
             viewId: 'closed_view_0',
@@ -541,7 +539,12 @@ describe('browser automation control service', () => {
         expect(await service.executeAction(createRequest({
             automationRequestId: 'automation_request_recent_closed_view',
             viewId: 'closed_view_519',
-        }))).toMatchObject({ status: 'canceled', errorCode: 'view_closed' });
+        }))).toMatchObject({ status: 'canceled', errorCode: 'owner_disconnected' });
+        service.registerOwner(createOwner({ viewId: 'closed_view_519' }));
+        expect(await service.executeAction(createRequest({
+            automationRequestId: 'automation_request_reopened_view',
+            viewId: 'closed_view_519',
+        }))).toMatchObject({ status: 'succeeded' });
     });
 
     it('preserves known automation error codes from owner rejections and records the redacted raw failure', async () => {

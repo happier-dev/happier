@@ -38,14 +38,14 @@ export type SidecarProcessPipeResult =
 type ActiveSidecarProcess = Readonly<{
     plan: SidecarPrivateLaunchPlan;
     process: SidecarSpawnedProcess;
-    stderrPreview: { value: string };
+    launchDiagnostics: { sandboxUnavailable: boolean };
     pipe: BrowserSidecarCdpPipe | null;
     disposeStderr: () => void;
     settled: Promise<void>;
     resolveSettled: () => void;
 }>;
 
-const MAX_STDERR_PREVIEW_CHARS = 64 * 1024;
+const SANDBOX_UNAVAILABLE_MESSAGE = 'No usable sandbox!';
 
 function statusForPlan(
     plan: SidecarPrivateLaunchPlan,
@@ -77,33 +77,30 @@ function unavailableStatus(updatedAtMs: number): BrowserSidecarRuntimeStatusV1 {
     });
 }
 
-function cdpUnavailable(stderr = ''): SidecarProcessPipeResult {
+function cdpUnavailable(sandboxUnavailable = false): SidecarProcessPipeResult {
     return {
         ok: false,
         errorCode: 'cdp_unavailable',
         disabledReason: 'Browser sidecar CDP pipe is unavailable.',
-        ...(stderr.includes('No usable sandbox!') ? { sandboxUnavailable: true } : {}),
+        ...(sandboxUnavailable ? { sandboxUnavailable: true } : {}),
     };
-}
-
-function appendStderrPreview(current: string, chunk: string | Uint8Array): string {
-    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
-    const next = `${current}${text}`;
-    return next.length > MAX_STDERR_PREVIEW_CHARS
-        ? next.slice(next.length - MAX_STDERR_PREVIEW_CHARS)
-        : next;
 }
 
 function createActiveSidecarProcess(
     plan: SidecarPrivateLaunchPlan,
     process: SidecarSpawnedProcess,
 ): ActiveSidecarProcess {
-    const stderrPreview: ActiveSidecarProcess['stderrPreview'] = { value: '' };
+    const launchDiagnostics = { sandboxUnavailable: false };
+    let stderrSuffix = '';
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
     const stderr = process.stderr ?? null;
     const listener = (chunk: string | Uint8Array): void => {
-        stderrPreview.value = appendStderrPreview(stderrPreview.value, chunk);
+        if (launchDiagnostics.sandboxUnavailable) return;
+        const text = stderrSuffix + (typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+        launchDiagnostics.sandboxUnavailable = text.includes(SANDBOX_UNAVAILABLE_MESSAGE);
+        // Only a possible cross-chunk prefix is needed; raw stderr is never published.
+        stderrSuffix = launchDiagnostics.sandboxUnavailable ? '' : text.slice(-(SANDBOX_UNAVAILABLE_MESSAGE.length - 1));
     };
     const disposeStderr = (): void => {
         stderr?.off?.('data', listener);
@@ -112,7 +109,7 @@ function createActiveSidecarProcess(
     const activeProcess: ActiveSidecarProcess = {
         plan,
         process,
-        stderrPreview,
+        launchDiagnostics,
         pipe: process.stdio?.[3] instanceof Writable && process.stdio?.[4] instanceof Readable
             ? { writable: process.stdio[3], readable: process.stdio[4] } : null,
         disposeStderr,
@@ -147,7 +144,7 @@ export function createSidecarProcessController(params: Readonly<{
     function handleExit(plan: SidecarPrivateLaunchPlan, code: number | null, signal: NodeJS.Signals | null): void {
         const current = active;
         if (current?.plan.sidecarId !== plan.sidecarId) return;
-        pipeFailure = cdpUnavailable(current.stderrPreview.value);
+        pipeFailure = cdpUnavailable(current.launchDiagnostics.sandboxUnavailable);
         disposeActiveSidecarProcess(current);
         active = null;
         const expectedStop = status.state === 'stopping' && (code === 0 || signal === 'SIGTERM');
@@ -236,7 +233,7 @@ export function createSidecarProcessController(params: Readonly<{
             if (!current || current.plan.sidecarId !== input.sidecarId) return pipeFailure;
             return current.pipe
                 ? { ok: true, pipe: current.pipe }
-                : cdpUnavailable(current.stderrPreview.value);
+                : cdpUnavailable(current.launchDiagnostics.sandboxUnavailable);
         },
     };
     return controller;

@@ -50,7 +50,7 @@ export const INJECTED_STORAGE_RUNTIME = `
         if (typeof name !== 'string') continue;
 	        totalCount += 1;
 	        if (keys.length < maxKeys) {
-	          var keyName = name.slice(0, 256);
+	          var keyName = name;
 	          keys.push(keyName);
 	          if (ownerValueCaptureEnabled() && typeof storage.getItem === 'function') {
 	            try {

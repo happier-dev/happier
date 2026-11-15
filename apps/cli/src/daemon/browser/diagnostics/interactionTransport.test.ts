@@ -133,6 +133,25 @@ function deferred<T>() {
 }
 
 describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
+  it('preserves opaque CDP object IDs from evaluation through property expansion', async () => {
+    const objectId = `remote:${'opaque'.repeat(100)}`;
+    const harness = createHarness({ responses: {
+      'Runtime.evaluate': { result: { type: 'object', objectId, className: 'Object' } },
+      'Runtime.getProperties': { result: [{ name: 'ready', value: { type: 'boolean', value: true } }] },
+    } });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    try {
+      const evaluated = BrowserDiagnosticsEvalResultV1Schema.parse(await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID));
+      expect(evaluated.result?.objectId).toBe(objectId);
+      const properties = BrowserDiagnosticsGetPropertiesResultV1Schema.parse(await transport.dispatch('browser.diagnostics.getProperties', {
+        v: 1, propertyRequestId: 'properties', viewId: VIEW_ID, navigationGeneration: 0, tier: 'cdp',
+        objectId: evaluated.result?.objectId, objectGroupId: 'group_1', diagnosticsInteractionEnabled: true,
+      }, BROWSER_SESSION_ID));
+      expect(properties).toMatchObject({ status: 'completed', objectId, properties: [{ name: 'ready' }] });
+      expect(harness.dispatchPageCommand).toHaveBeenCalledWith(expect.objectContaining({ method: 'Runtime.getProperties', params: expect.objectContaining({ objectId }) }));
+    } finally { await transport.dispose(); }
+  });
   it('keeps same-name picker selection and confidentiality drains isolated by Session', async () => {
     const controls = { session_a: createSurfaceInputControl(), session_b: createSurfaceInputControl() };
     const harness = createHarness({ resolveHandle: view => ({ targetId: view.browserSessionId, sessionId: view.browserSessionId }) });

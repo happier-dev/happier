@@ -1,4 +1,4 @@
-import { BrowserDaemonViewV1Schema, type BrowserDaemonViewV1 } from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserDaemonViewV1 } from '@happier-dev/protocol/browser/control/v1';
 import type { BrowserCommandScope, BrowserDaemonControlBroker, BrowserDaemonViewWatch } from './types';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 
@@ -6,7 +6,7 @@ import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stre
 export function projectBrowserDaemonViews(views: readonly BrowserDaemonViewV1[], captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>) {
   return views.map(view => {
     const source = captureRegistry?.resolve({ sourceId: view.sourceId, streamFamily: 'browser.streamed' });
-    return BrowserDaemonViewV1Schema.parse({ ...view, ...(source?.ok ? { captureSource: source.source.capabilities } : {}) });
+    return { ...view, ...(source?.ok ? { captureSource: source.source.capabilities } : {}) };
   });
 }
 

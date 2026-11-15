@@ -1,5 +1,6 @@
 mod cookie_store;
 mod cookie_types;
+mod diagnostics;
 mod login_cookies;
 mod keyboard;
 mod platform;
@@ -11,7 +12,13 @@ pub(crate) use platform::{
 pub(crate) use types::DesktopBrowserPlatform;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
+use diagnostics::DiagnosticsQueue;
+#[cfg(test)]
+use diagnostics::{
+    DESKTOP_BROWSER_DIAGNOSTICS_BUFFER_CAP, DESKTOP_BROWSER_DIAGNOSTICS_BYTES_CAP,
+    DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES,
+};
 use std::path::{Component, Path, PathBuf};
 #[cfg(test)]
 use std::sync::Arc;
@@ -30,23 +37,6 @@ use types::{
     DesktopBrowserViewCommandRequest, DesktopBrowserViewLoadingState,
 };
 use url::Url;
-
-/// Upper bound on buffered diagnostics batch envelopes per view. A chatty page can post
-/// continuously; beyond this many unread entries we drop the oldest so the buffer can never grow
-/// unbounded between drains.
-const DESKTOP_BROWSER_DIAGNOSTICS_BUFFER_CAP: usize = 2000;
-
-/// Upper bound on the total bytes of buffered diagnostics envelopes per view. The entry-count cap
-/// alone cannot bound memory: a page can post a small number of multi-MB envelopes and stay under
-/// the count cap while pinning unbounded heap. Once the running byte total exceeds this we evict the
-/// oldest entries until back under budget (in addition to the count cap).
-const DESKTOP_BROWSER_DIAGNOSTICS_BYTES_CAP: usize = 8 * 1024 * 1024;
-
-/// Upper bound on a single buffered diagnostics envelope. A single post larger than this is dropped
-/// outright rather than buffered — it can never fit under the aggregate budget and would force every
-/// other queued envelope to be evicted. Mirrors the per-line ceiling the canonical bounded JSONL
-/// reader enforces on the daemon side.
-const DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 type NativeSnapshotCompletion =
     Box<dyn FnOnce(Result<DesktopBrowserCapturedSnapshot, String>) + Send>;
@@ -181,7 +171,7 @@ struct DesktopBrowserProfileState {
 /// injected devtools through `window.ipc.postMessage(...)`. The IPC handler closure clones this
 /// `Arc` (mirroring how `DesktopBrowserPageInfoSink` clones the shared state `Arc`) and pushes the
 /// posted strings into it; `desktop_browser_drain_diagnostics` swaps the contents out.
-type DesktopBrowserDiagnosticsBuffer = StdArc<Mutex<VecDeque<String>>>;
+type DesktopBrowserDiagnosticsBuffer = StdArc<Mutex<DiagnosticsQueue>>;
 
 #[derive(Debug, Default)]
 struct DesktopBrowserStateInner {
@@ -820,12 +810,16 @@ impl DesktopBrowserState {
             buffer.clone()
         };
 
-        let messages: Vec<String> = {
+        let (messages, dropped_message_count) = {
             let mut entries = buffer.lock().expect("browser diagnostics lock poisoned");
-            entries.drain(..).collect()
+            entries.drain()
         };
 
-        DesktopBrowserDrainDiagnosticsResult::success(self.availability(), messages)
+        DesktopBrowserDrainDiagnosticsResult::success(
+            self.availability(),
+            messages,
+            dropped_message_count,
+        )
     }
 
     fn eval_view_script(
@@ -1413,11 +1407,8 @@ impl DesktopBrowserDiagnosticsSink {
     /// the oldest entries once a per-view bound is exceeded. A `Disabled` sink ignores the post.
     /// Shared by the real IPC handler closure and the fake host so both exercise the same cap path.
     ///
-    /// Three independent bounds keep the buffer from growing unbounded between drains:
-    /// - `DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES`: a single oversized envelope is dropped
-    ///   outright (it can never fit under the aggregate budget).
-    /// - `DESKTOP_BROWSER_DIAGNOSTICS_BUFFER_CAP`: entry-count ceiling.
-    /// - `DESKTOP_BROWSER_DIAGNOSTICS_BYTES_CAP`: aggregate byte budget across all buffered entries.
+    /// The queue owns retention and incremental accounting. Loss also notifies the consumer,
+    /// including when an oversized post leaves no envelope to drain.
     fn record_message(&self, message: String) {
         let Self::Enabled {
             buffer, notifier, ..
@@ -1425,21 +1416,8 @@ impl DesktopBrowserDiagnosticsSink {
         else {
             return;
         };
-        if message.len() > DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES {
-            return;
-        }
         let mut entries = buffer.lock().expect("browser diagnostics lock poisoned");
-        entries.push_back(message);
-        while entries.len() > DESKTOP_BROWSER_DIAGNOSTICS_BUFFER_CAP {
-            entries.pop_front();
-        }
-        let mut buffered_bytes: usize = entries.iter().map(String::len).sum();
-        while buffered_bytes > DESKTOP_BROWSER_DIAGNOSTICS_BYTES_CAP {
-            match entries.pop_front() {
-                Some(dropped) => buffered_bytes = buffered_bytes.saturating_sub(dropped.len()),
-                None => break,
-            }
-        }
+        entries.record(message);
         drop(entries);
         if let Some((key, notifier)) = notifier {
             (notifier.0)(DesktopBrowserViewEvent::DiagnosticsAvailable {

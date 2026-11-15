@@ -471,14 +471,21 @@ pub struct DesktopBrowserDrainDiagnosticsResult {
     /// Raw batch-envelope strings the page posted via `window.ipc.postMessage(...)`. The native
     /// side does not parse these — it forwards them verbatim and the TS bridge parses each entry.
     pub messages: Vec<String>,
+    /// Envelopes omitted since the previous drain, including oversized posts.
+    pub dropped_message_count: usize,
 }
 
 impl DesktopBrowserDrainDiagnosticsResult {
-    pub(crate) fn success(availability: DesktopBrowserAvailability, messages: Vec<String>) -> Self {
+    pub(crate) fn success(
+        availability: DesktopBrowserAvailability,
+        messages: Vec<String>,
+        dropped_message_count: usize,
+    ) -> Self {
         Self {
             ok: true,
             availability,
             messages,
+            dropped_message_count,
         }
     }
 
@@ -487,6 +494,7 @@ impl DesktopBrowserDrainDiagnosticsResult {
             ok: false,
             availability,
             messages: Vec::new(),
+            dropped_message_count: 0,
         }
     }
 }

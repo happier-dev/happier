@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { BrowserProfileStorageModeV1Schema } from '../profile/v1.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 
 export const BrowserSidecarRuntimeStateV1Schema = lazyZodSchema(() => z.enum([
@@ -41,15 +41,15 @@ export const BrowserSidecarBinaryProvenanceV1Schema = lazyZodSchema(() => z.stri
     /** Where the artifact provenance originates. Only managed_package is product-eligible. */
     origin: z.enum(['managed_package']),
     /** Exact pinned upstream build (e.g. a Chrome-for-Testing version like `127.0.6533.88`). */
-    pinnedVersion: z.string().check(z.trim(), z.minLength(1), z.maxLength(64)),
+    pinnedVersion: z.string().check(z.trim(), z.minLength(1)),
     /** Pinned release channel of the upstream distribution. */
     channel: z.enum(['stable', 'beta', 'dev', 'canary']),
     /** Locally-computed sha256 digest of the downloaded archive, verified before unpack. */
     integrityDigest: Sha256IntegrityDigestSchema,
     /** Optional detached signature reference if the upstream distribution provides one. */
-    signature: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2048))),
+    signature: z.optional(z.string().check(z.trim(), z.minLength(1))),
     /** SPDX-style license identifier of the managed distribution. */
-    license: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    license: z.string().check(z.trim(), z.minLength(1)),
   }));
 export type BrowserSidecarBinaryProvenanceV1 = z.infer<typeof BrowserSidecarBinaryProvenanceV1Schema>;
 
@@ -114,7 +114,7 @@ export const BrowserSidecarLaunchResultV1Schema = lazyZodSchema(() => z.discrimi
       accepted: z.literal(false),
       state: BrowserSidecarRuntimeStateV1Schema,
       errorCode: BrowserSidecarErrorCodeV1Schema,
-      disabledReason: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+      disabledReason: z.string().check(z.trim(), z.minLength(1)),
     }),
 ]));
 export type BrowserSidecarLaunchResultV1 = z.infer<typeof BrowserSidecarLaunchResultV1Schema>;

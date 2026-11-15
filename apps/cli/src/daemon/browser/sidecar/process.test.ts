@@ -64,6 +64,18 @@ function privateLaunchPlan(overrides: Partial<SidecarPrivateLaunchPlan> = {}): S
 }
 
 describe('daemon browser sidecar process lifecycle', () => {
+    it('retains the sandbox refusal fact across split stderr chunks and later output', () => {
+        const fake = createFakeProcess();
+        const controller = sidecarProcess.createSidecarProcessController({ nowMs: () => 100,
+            spawnProcess: () => ({ ...fake.process, stdio: [] }) });
+        controller.launch(privateLaunchPlan());
+        fake.emitStderr('No usable ');
+        fake.emitStderr('sandbox!');
+        fake.emitStderr('x'.repeat(70_000));
+        expect(controller.getCdpPipe({ sidecarId: 'sidecar_1' })).toMatchObject({ ok: false, sandboxUnavailable: true });
+        fake.emitExit(1);
+        expect(controller.getCdpPipe({ sidecarId: 'sidecar_1' })).toMatchObject({ ok: false, sandboxUnavailable: true });
+    });
     it('exposes only its current actual child identity and retires it on confirmed exit', () => {
         const fake = createFakeProcess();
         const controller = sidecarProcess.createSidecarProcessController({ nowMs: () => 100, spawnProcess: () => fake.process });

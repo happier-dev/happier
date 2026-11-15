@@ -14,7 +14,7 @@ import { z } from '../../zodRuntimePolicy.js';
  * The raw pixel buffer never crosses the RPC boundary in either direction.
  */
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 
 /**

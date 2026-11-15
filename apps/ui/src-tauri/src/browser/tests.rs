@@ -2489,6 +2489,7 @@ fn native_state_caps_buffered_diagnostics_by_dropping_oldest() {
         super::DESKTOP_BROWSER_DIAGNOSTICS_BUFFER_CAP
     );
     // The oldest 5 were dropped; the buffer retains the most recent cap entries in order.
+    assert_eq!(serde_json::to_value(&drained).unwrap()["droppedMessageCount"], 5);
     assert_eq!(drained.messages.first().map(String::as_str), Some("msg-5"));
     assert_eq!(
         drained.messages.last().map(String::as_str),
@@ -2537,6 +2538,14 @@ fn native_state_caps_buffered_diagnostics_by_aggregate_bytes() {
     // The count cap was never the binding constraint: far fewer than the count cap survive once the
     // byte budget evicts the oldest envelopes.
     assert!(drained.messages.len() < posts);
+    assert_eq!(
+        serde_json::to_value(&drained).unwrap()["droppedMessageCount"],
+        posts - drained.messages.len()
+    );
+    host.simulate_diagnostics_post("view_1", &envelope);
+    let next = state.drain_diagnostics(view_request("view_1"));
+    assert_eq!(next.messages.len(), 1);
+    assert_eq!(serde_json::to_value(next).unwrap()["droppedMessageCount"], 0);
 }
 
 #[test]
@@ -2547,6 +2556,14 @@ fn native_state_drops_oversized_diagnostics_envelope() {
         available_test_availability(),
         temp_dir.path().to_path_buf(),
         Box::new(host.clone()),
+    );
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = events.clone();
+    state.inner.lock().unwrap().event_senders.insert(
+        super::view_key("browser_session_1", "view_1"),
+        super::DesktopBrowserEventSender(Arc::new(move |event| {
+            observed.lock().unwrap().push(event);
+        })),
     );
 
     assert!(
@@ -2563,16 +2580,24 @@ fn native_state_drops_oversized_diagnostics_envelope() {
     // A single multi-MB envelope exceeds the per-message ceiling and is dropped outright so it can
     // never evict the rest of the buffer or pin unbounded heap.
     let oversized = "b".repeat(super::DESKTOP_BROWSER_DIAGNOSTICS_MAX_MESSAGE_BYTES + 1);
+    events.lock().unwrap().clear();
     host.simulate_diagnostics_post("view_1", &oversized);
+    assert!(matches!(
+        events.lock().unwrap().as_slice(),
+        [super::DesktopBrowserViewEvent::DiagnosticsAvailable { .. }]
+    ));
     host.simulate_diagnostics_post("view_1", "{\"kept\":true}");
 
     let drained = state.drain_diagnostics(view_request("view_1"));
     assert!(drained.ok);
     assert_eq!(drained.messages.len(), 1);
+    assert_eq!(serde_json::to_value(&drained).unwrap()["droppedMessageCount"], 1);
     assert_eq!(
         drained.messages.first().map(String::as_str),
         Some("{\"kept\":true}")
     );
+    let next = state.drain_diagnostics(view_request("view_1"));
+    assert_eq!(serde_json::to_value(&next).unwrap()["droppedMessageCount"], 0);
 }
 
 #[test]

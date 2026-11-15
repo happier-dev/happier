@@ -13,13 +13,13 @@ import { BrowserAutomationControllerStateV1Schema, BrowserAutomationActionResult
 import { BrowserInteractionStateV1Schema, BrowserEditableTargetV1Schema, BrowserViewportV1Schema } from '../input/v1.js';
 
 const BrowserEventBaseV1Schema = lazyZodSchema(() => z.strictObject({
-    eventId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-    browserSessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    eventId: z.string().check(z.trim(), z.minLength(1)),
+    browserSessionId: z.string().check(z.trim(), z.minLength(1)),
     occurredAt: z.number().check(z.int(), z.nonnegative()),
   }));
 
 const BrowserViewEventBaseV1Schema = lazyZodSchema(() => z.extend(BrowserEventBaseV1Schema, {
-  viewId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  viewId: z.string().check(z.trim(), z.minLength(1)),
   navigationGeneration: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));
 
@@ -53,12 +53,12 @@ export type BrowserEventKindV1 = z.infer<typeof BrowserEventKindV1Schema>;
 
 export const BrowserSessionCreatedEventV1Schema = lazyZodSchema(() => z.extend(BrowserEventBaseV1Schema, {
   kind: z.literal('sessionCreated'),
-  profileId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  profileId: z.string().check(z.trim(), z.minLength(1)),
 }));
 
 export const BrowserSessionClosedEventV1Schema = lazyZodSchema(() => z.extend(BrowserEventBaseV1Schema, {
   kind: z.literal('sessionClosed'),
-  reasonCode: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  reasonCode: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
 export const BrowserViewOpenedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
@@ -70,12 +70,12 @@ export const BrowserViewOpenedEventV1Schema = lazyZodSchema(() => z.extend(Brows
   adapterKind: BrowserSemanticAdapterKindV1Schema,
   engineKind: z.enum(BrowserRenderEngineKindV1Schema.options.filter((value): value is Exclude<(typeof BrowserRenderEngineKindV1Schema.options)[number], 'unavailable'> => !(['unavailable'] as readonly string[]).includes(value))),
   adapterCapabilities: BrowserAdapterCapabilitiesV1Schema,
-  openerViewId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+  openerViewId: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
 export const BrowserViewClosedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('viewClosed'),
-  reasonCode: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  reasonCode: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
 export const BrowserViewFocusedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
@@ -107,26 +107,26 @@ export const BrowserNavigationFinishedEventV1Schema = lazyZodSchema(() => z.exte
 export const BrowserNavigationFailedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('navigationFailed'),
   failedUrl: z.optional(BrowserHttpUrlV1Schema),
-  errorCode: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+  errorCode: z.string().check(z.trim(), z.minLength(1)),
 }));
 
 export const BrowserNavigationStateChangedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('navigationStateChanged'),
   currentUrl: z.optional(BrowserHttpUrlV1Schema),
   pendingUrl: z.optional(BrowserHttpUrlV1Schema),
-  title: z.optional(z.string().check(z.trim(), z.maxLength(512))),
+  title: z.optional(z.string().check(z.trim())),
   faviconUrl: z.optional(BrowserHttpUrlV1Schema),
   loadingState: BrowserNavigationLoadingStateV1Schema,
   loadingProgress: z.optional(z.number().check(z.minimum(0), z.maximum(1))),
   canGoBack: z.boolean(),
   canGoForward: z.boolean(),
   securityOrigin: z.optional(BrowserHttpOriginV1Schema),
-  lastError: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  lastError: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
 export const BrowserTitleChangedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('titleChanged'),
-  title: z.string().check(z.trim(), z.maxLength(512)),
+  title: z.string().check(z.trim()),
 }));
 
 export const BrowserControllerChangedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
@@ -146,38 +146,38 @@ export const BrowserLoadingProgressChangedEventV1Schema = lazyZodSchema(() => z.
 
 export const BrowserPermissionRequestedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('permissionRequested'),
-  permissionRequestId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-  permissionKind: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+  permissionRequestId: z.string().check(z.trim(), z.minLength(1)),
+  permissionKind: z.string().check(z.trim(), z.minLength(1)),
   origin: z.optional(BrowserHttpOriginV1Schema),
 }));
 
 export const BrowserDownloadRequestedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('downloadRequested'),
-  downloadRequestId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  downloadRequestId: z.string().check(z.trim(), z.minLength(1)),
   url: BrowserHttpUrlV1Schema,
 }));
 
 export const BrowserPopupRequestedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('popupRequested'),
-  popupRequestId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  popupRequestId: z.string().check(z.trim(), z.minLength(1)),
   url: BrowserHttpUrlV1Schema,
 }));
 
 export const BrowserExternalOpenRequestedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('externalOpenRequested'),
-  url: z.string().check(z.trim(), z.minLength(1), z.maxLength(4096)),
+  url: z.string().check(z.trim(), z.minLength(1)),
 }));
 
 export const BrowserViewCrashedEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('viewCrashed'),
-  reasonCode: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+  reasonCode: z.string().check(z.trim(), z.minLength(1)),
   autoReloadAttempted: z._default(z.optional(z.boolean()), false),
 }));
 
 export const BrowserAdapterUnavailableEventV1Schema = lazyZodSchema(() => z.extend(BrowserViewEventBaseV1Schema, {
   kind: z.literal('adapterUnavailable'),
   adapterKind: BrowserSemanticAdapterKindV1Schema,
-  reasonCode: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+  reasonCode: z.string().check(z.trim(), z.minLength(1)),
 }));
 
 export const BrowserEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

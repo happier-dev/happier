@@ -12,15 +12,15 @@ export { BROWSER_VIEWPORT_PRESETS, BrowserViewportEmulationV1Schema, BrowserView
 export type { BrowserViewportEmulationV1, BrowserViewportPresetIdV1 } from '../input/v1.js';
 
 const BrowserCommandBaseV1Schema = lazyZodSchema(() => z.strictObject({
-    commandId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    commandId: z.string().check(z.trim(), z.minLength(1)),
   }));
 
 const BrowserSessionCommandBaseV1Schema = lazyZodSchema(() => z.extend(BrowserCommandBaseV1Schema, {
-  browserSessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  browserSessionId: z.string().check(z.trim(), z.minLength(1)),
 }));
 
 const BrowserViewCommandBaseV1Schema = lazyZodSchema(() => z.extend(BrowserSessionCommandBaseV1Schema, {
-  viewId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  viewId: z.string().check(z.trim(), z.minLength(1)),
 }));
 
 export const BrowserCommandKindV1Schema = lazyZodSchema(() => z.enum([
@@ -47,8 +47,8 @@ export const BrowserOpenViewCommandV1Schema = lazyZodSchema(() => z.extend(Brows
   currentUrl: z.optional(BrowserHttpUrlV1Schema),
   currentUrlExpiresAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   focus: z._default(z.optional(z.boolean()), true),
-  profileId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
-  openerViewId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+  profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  openerViewId: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
 export const BrowserCloseViewCommandV1Schema = lazyZodSchema(() => z.extend(BrowserViewCommandBaseV1Schema, {
@@ -127,7 +127,7 @@ export type BrowserCommandErrorCodeV1 = z.infer<typeof BrowserCommandErrorCodeV1
 
 export const BrowserCommandDispatchErrorV1Schema = lazyZodSchema(() => z.strictObject({
     code: BrowserCommandErrorCodeV1Schema,
-    message: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+    message: z.string().check(z.trim(), z.minLength(1)),
     retryable: z.optional(z.boolean()),
   }));
 export type BrowserCommandDispatchErrorV1 = z.infer<typeof BrowserCommandDispatchErrorV1Schema>;
@@ -135,14 +135,14 @@ export type BrowserCommandDispatchErrorV1 = z.infer<typeof BrowserCommandDispatc
 export const BrowserCommandDispatchResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({
       v: z.literal(1),
-      commandId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+      commandId: z.string().check(z.trim(), z.minLength(1)),
       status: z.literal('dispatched'),
       adapterKind: BrowserSemanticAdapterKindV1Schema,
       events: z._default(z.array(BrowserEventV1Schema), []),
     }),
   z.strictObject({
       v: z.literal(1),
-      commandId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+      commandId: z.string().check(z.trim(), z.minLength(1)),
       status: z.literal('failed'),
       adapterKind: z.optional(BrowserSemanticAdapterKindV1Schema),
       /** Physical-effect settlement supplied by the executing adapter, not caller authority. */
@@ -172,7 +172,7 @@ export const BrowserWorkspaceOpenResultV1Schema = lazyZodSchema(() => z.discrimi
 ]));
 export type BrowserWorkspaceOpenResultV1 = z.infer<typeof BrowserWorkspaceOpenResultV1Schema>;
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 /**
  * Daemon machine-RPC envelope (W2-A-1): the single canonical UI→daemon transport for a

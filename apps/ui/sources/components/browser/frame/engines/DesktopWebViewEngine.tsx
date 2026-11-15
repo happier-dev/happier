@@ -10,6 +10,7 @@ import {
     buildInjectedBrowserDiagnosticsGetPropertiesCommandScript,
     buildInjectedBrowserDiagnosticsReleaseObjectGroupCommandScript,
     buildInjectedBrowserDiagnosticsScript,
+    createNativeWebViewLossDiagnosticEvent,
     createNativeWebViewPageInfoDiagnosticEvent,
     createNativeWebViewUnavailableDiagnosticEvent,
     parseInjectedBrowserDiagnosticsMessage,
@@ -260,7 +261,7 @@ export function DesktopWebViewEngine(props: Readonly<{
         const diagnostics = injectedDiagnosticsRef.current;
         if (!diagnostics) return;
         const result = await bridge.drainDiagnostics(commandTarget);
-        if (!result.ok || result.messages.length === 0) return;
+        if (!result.ok) return;
         const collectorIdentity = (config: BrowserDiagnosticsEngineBridgeConfig) => ({
             browserSessionId: config.browserSessionId,
             viewId: config.viewId,
@@ -297,7 +298,18 @@ export function DesktopWebViewEngine(props: Readonly<{
             if (parsed.releaseResult) { diagnostics.onReleaseObjectGroupResult?.(parsed.releaseResult); continue; }
             if (parsed.elementPickerResult) { diagnostics.onElementPickerResult?.(parsed.elementPickerResult); continue; }
         }
-    }, [bridge, commandTarget]);
+        if (result.droppedMessageCount) {
+            pageInfoSequenceRef.current += 1;
+            diagnostics.onEvents([createNativeWebViewLossDiagnosticEvent({
+                eventId: `${diagnostics.collectorId}:${diagnostics.navigationGeneration}:desktopDiagnosticsLoss:${pageInfoSequenceRef.current}`,
+                browserSessionId: diagnostics.browserSessionId,
+                viewId: diagnostics.viewId,
+                navigationGeneration: diagnostics.navigationGeneration,
+                capturedAtMs: props.nowMs?.() ?? Date.now(),
+                droppedMessageCount: result.droppedMessageCount,
+            })]);
+        }
+    }, [bridge, commandTarget, props.nowMs]);
     const drainInjectedDiagnosticsRef = React.useRef(drainInjectedDiagnostics);
     drainInjectedDiagnosticsRef.current = drainInjectedDiagnostics;
 

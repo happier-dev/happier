@@ -1,4 +1,4 @@
-import { BROWSER_CONTEXT_SELECTION_MAX_CHARS, BROWSER_CONTEXT_SUMMARY_MAX_CHARS, BrowserContextItemV1Schema, type BrowserContextItemV1, type BrowserContextKindV1 } from '@happier-dev/protocol/browser/context/v1';
+import { BrowserContextItemV1Schema, type BrowserContextItemV1, type BrowserContextKindV1 } from '@happier-dev/protocol/browser/context/v1';
 import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
 import { stripBrowserDiagnosticUrlValues } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
@@ -159,12 +159,6 @@ function normalizeOptionalString(value: string | null | undefined): string | und
     return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizeOptionalBoundedString(value: string | null | undefined, maxChars: number): string | undefined {
-    const normalized = normalizeOptionalString(value);
-    if (!normalized) return undefined;
-    return normalized.slice(0, Math.max(0, maxChars));
-}
-
 function stripUrlValues(value: string | undefined): string | undefined {
     return value ? stripBrowserDiagnosticUrlValues(value) || undefined : undefined;
 }
@@ -216,17 +210,6 @@ function resolveSummaryFidelity(
     }
 }
 
-function truncateForContext(
-    value: string,
-    maxChars: number,
-): Readonly<{ value: string; truncated: boolean }> {
-    const normalized = value.trim();
-    const boundedMax = Math.max(0, Math.floor(maxChars));
-    return {
-        value: normalized.slice(0, boundedMax),
-        truncated: normalized.length > boundedMax,
-    };
-}
 
 function buildPageReferenceItem(input: BrowserPageReferenceCaptureInput): BrowserContextItemV1 {
     const url = stripUrlValues(normalizeOptionalString(input.page.url));
@@ -365,10 +348,6 @@ export function captureBrowserTextSelection(
         };
     }
 
-    const truncated = truncateForContext(
-        input.text,
-        BROWSER_CONTEXT_SELECTION_MAX_CHARS,
-    );
     const item = BrowserContextItemV1Schema.parse({
         v: 1,
         contextId: buildContextIdFromParts({
@@ -386,8 +365,8 @@ export function captureBrowserTextSelection(
         navigationGeneration: input.navigationGeneration,
         lifecycleState: 'available',
         redactionLevel: 'summaryOnly',
-        text: truncated.value,
-        truncated: truncated.truncated,
+        text: input.text.trim(),
+        truncated: false,
     });
 
     return {
@@ -417,10 +396,6 @@ export function captureBrowserSummaryContext(
         };
     }
 
-    const truncated = truncateForContext(
-        input.summary,
-        BROWSER_CONTEXT_SUMMARY_MAX_CHARS,
-    );
     const item = BrowserContextItemV1Schema.parse({
         v: 1,
         contextId: buildContextIdFromParts({
@@ -438,8 +413,8 @@ export function captureBrowserSummaryContext(
         navigationGeneration: input.navigationGeneration,
         lifecycleState: 'available',
         redactionLevel: 'summaryOnly',
-        summary: truncated.value,
-        truncated: truncated.truncated,
+        summary: input.summary.trim(),
+        truncated: false,
     });
 
     return {
@@ -481,7 +456,7 @@ export function captureBrowserSelectedElement(
         };
     }
 
-    const selectorPath = normalizeOptionalString(input.pickerResult.selectorPath)?.slice(0, 1024);
+    const selectorPath = normalizeOptionalString(input.pickerResult.selectorPath);
     if (!selectorPath) {
         return {
             status: 'unavailable',

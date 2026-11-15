@@ -93,7 +93,7 @@ describe('cdp browser context source', () => {
         expect(calls.filter(call => call.method === 'Page.captureScreenshot')).toHaveLength(0);
     });
 
-    it.each([8192, 8193])('preserves the Protocol summary budget through capture for %i characters', async length => {
+    it.each([8192, 8193, 20_000])('preserves full eligible page text through capture for %i characters', async length => {
         const text = 'x'.repeat(length);
         const { transport } = fakeTransport((method) => method === 'Runtime.evaluate'
             ? { result: { type: 'string', value: text } }
@@ -103,7 +103,7 @@ describe('cdp browser context source', () => {
             resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
         });
         const result = await service.captureSummary({ ...VIEW, requesterAccountId: 'owner', contextId: 'summary', kind: 'browserPageTextSummary' });
-        expect(result).toMatchObject({ status: 'captured', item: { summary: text.slice(0, 8192), truncated: length > 8192 } });
+        expect(result).toMatchObject({ status: 'captured', item: { summary: text, truncated: false } });
     });
 
     it('drains a queued screenshot without persisting it and suppresses every held context read', async () => {

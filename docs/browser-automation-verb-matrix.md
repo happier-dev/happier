@@ -543,19 +543,20 @@ and private-mode admission still apply. This is an unreleased 0.3 development co
 
 Context capture checks Account ownership once at admission. The admitted finite capture
 does not replay feature or permission decisions; late page probes still exclude secrets.
-Protocol owns the text bounds: summaries contain at most 8,192 characters and selections
-at most 2,048 characters. Full snapshots have no subordinate text budget.
+Eligible selections, summaries and full snapshots preserve their complete safe text through
+capture, context items and attachments, without subordinate character budgets.
 
 Diagnostics apply destination policy through Protocol's egress classifier. Nonce-bound
 injected-page ingress validates and sanitizes external messages; the UI store and panels
 consume admitted events without another sanitizer or retention/detail limit. The daemon
-retains its 1,000-event per-view ring to bound long-lived memory; Protocol's existing
-batch and snapshot wire limits remain. Diagnostics continue to arrive through push.
+retains its 1,000-event per-view ring to bound long-lived memory; snapshots expose
+any owner-level omission without a second wire collection ceiling. Diagnostics continue
+to arrive through push.
 The view subscription returns retained history on bootstrap or reconnect; subsequent
 responses use its existing revision cursor and contain only events added or changed
 after that cursor. Repeated equal events do not advance it.
 Admitted owner-value capture preserves injected console, body, header, and storage text
-without a separate 4,096-character cutoff. Existing batch transport bounds and destination
+without a separate 4,096-character cutoff. Existing transport boundaries and destination
 redaction still apply. Reading a cloned response body does not delay the page's fetch response.
 
 The unreleased 0.3 CDP mapper correlates request, response, completion and ExtraInfo
@@ -577,6 +578,9 @@ connection marks its retained CDP data stale while independent local collectors 
 available. Iframe capability comes from actual collector installation/readiness and
 publishes typed pending, available or unavailable reasons instead of empty panels.
 Local filter, selection and copy APIs consume only this admitted projection.
+The desktop native queue reports omitted envelopes at drain, including an oversized post
+with no surviving messages. Its existing collector-degraded projection remains stale as
+partial content arrives and recovers when the collector publishes availability again.
 
 Owner-initiated eval and element picking have no automatic deadline or expression,
 preview, or expansion-depth cutoff. The person can cancel an eval. CDP cancellation

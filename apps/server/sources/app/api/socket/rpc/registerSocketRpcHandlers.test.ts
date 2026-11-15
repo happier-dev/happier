@@ -1218,6 +1218,7 @@ describe("registerSocketRpcHandlers", () => {
 
     it.each([
         uiBrowserAutomationDispatchMethod({ browserSessionId: 'visible-session', viewId: 'visible-view' }),
+        uiBrowserAutomationDispatchMethod({ browserSessionId: '\u0800'.repeat(1024), viewId: '\ud800'.repeat(1024) }),
         RPC_METHODS.UI_ACTION_EXECUTE,
         `${RPC_METHODS.UI_ACTION_EXECUTE}.session.${encodeURIComponent(JSON.stringify('viewed-session'))}`,
         RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
@@ -1349,11 +1350,11 @@ describe("registerSocketRpcHandlers", () => {
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it("advertises exact UI automation methods for maximum valid browser identity strings", async () => {
+    it("advertises exact UI automation methods for complete browser identity strings", async () => {
         const { io, addToRoom, createRoomAwareSocket } = createRoomAwareIo();
         const uiSocket = createRoomAwareSocket({ id: 'ui-view', data: { clientType: 'user-scoped' } });
         const daemonSocket = createRoomAwareSocket({ id: 'machine-view', data: { clientType: 'machine-scoped', machineId: 'machine-1' } });
-        const method = `machine-1:${uiBrowserAutomationDispatchMethod({ browserSessionId: '\u0800'.repeat(256), viewId: '\ud800'.repeat(256) })}`;
+        const method = `machine-1:${uiBrowserAutomationDispatchMethod({ browserSessionId: '\u0800'.repeat(1024), viewId: '\ud800'.repeat(1024) })}`;
         addToRoom('user:user-1', uiSocket);
         addToRoom('machine:machine-1:user-1', daemonSocket);
         registerSocketRpcHandlers({ userId: 'user-1', socket: uiSocket as unknown as Socket, io });

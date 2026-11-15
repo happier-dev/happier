@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BrowserFocusedCredentialTargetV1Schema } from '../context/v1.js';
 import { BrowserAutomationSecretFillRequestV1Schema } from './v1.js';
+import { redactDiagnosticsHeadersWithResult } from '../diagnostics/egress/headers.js';
 
 import {
   redactBrowserAutomationActionResultDetails,
@@ -124,12 +125,12 @@ describe('redactBrowserAutomationActionResultDetails — locator preservation st
       purpose: 'Fill the dummy login without submitting',
     }).origin).toBe(target.origin);
   });
-  it('reports timeline compaction even when the source result was complete', () => {
+  it('preserves complete safe timeline strings without claiming content was omitted', () => {
     const details = { note: 'visible '.repeat(100), truncated: false };
     expect(redactBrowserAutomationActionResultDetails(details)).toEqual(details);
-    expect(redactBrowserAutomationTimelineDetails(details)).toMatchObject({ truncated: true });
+    expect(redactBrowserAutomationTimelineDetails(details)).toEqual(details);
   });
-  it('preserves complete readable agent results while the timeline stays compact', () => {
+  it('preserves complete readable results while timeline text and locators remain metadata-only', () => {
     const selector = `[data-testid="${'long-selector-'.repeat(100)}"]`;
     const visibleText = 'Visible page content '.repeat(100);
     const details = { visibleText, text: visibleText, selector, elements: Array.from({ length: 40 }, (_, index) => ({ name: `Item ${index}`, selector })) };
@@ -141,7 +142,24 @@ describe('redactBrowserAutomationActionResultDetails — locator preservation st
     const timeline = redactBrowserAutomationTimelineDetails(details) as Record<string, unknown>;
     expect(timeline.textLength).toBe(visibleText.length);
     expect(timeline.selectorAvailable).toBe(true);
-    expect(timeline.elements).toHaveLength(25);
+    expect(timeline.elements).toHaveLength(40);
+  });
+
+  it('redacts secrets throughout deep timeline details without dropping safe nested content', () => {
+    let details: unknown = { note: 'safe '.repeat(80), href: SEEDED_URL, cookie: 'secret' };
+    for (let index = 0; index < 12; index++) details = { child: details };
+    let expected: unknown = { note: 'safe '.repeat(80), href: 'https://app.example.test/reset/:redacted' };
+    for (let index = 0; index < 12; index++) expected = { child: expected };
+    expect(redactBrowserAutomationTimelineDetails(details)).toEqual(expected);
+    expect(redactBrowserAutomationTimelineDetails(Array.from({ length: 30 }, () => details))).toEqual(
+      Array.from({ length: 30 }, () => expected),
+    );
+  });
+
+  it('preserves long safe telemetry headers while excluding credential-bearing headers', () => {
+    const safe = 'text/plain; profile=readable '.repeat(30);
+    expect(redactDiagnosticsHeadersWithResult({ 'content-type': safe, authorization: 'secret',
+      'sec-websocket-protocol': 'secret' })).toEqual({ headers: { 'content-type': safe }, truncated: false });
   });
 
   it('applies URL and secret-key floors even inside preserved agent locators and arrays', () => {

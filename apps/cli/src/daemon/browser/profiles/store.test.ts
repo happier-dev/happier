@@ -316,8 +316,9 @@ describe('browser profile store disk purge', () => {
     }
   });
 
-  it('fails closed when the profile directory cannot be removed', async () => {
+  it('fails closed and retains the full failure explanation when the profile directory cannot be removed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-browser-profiles-'));
+    const failureMessage = `EACCES: ${'Safe filesystem diagnostic. '.repeat(40)}Recovery detail.`;
     try {
       const partitionOwner = createBrowserStoragePartitionOwner({ storageRootDirectory: root });
       const auditRecords: Array<{ kind: string; profileId: string }> = [];
@@ -325,7 +326,7 @@ describe('browser profile store disk purge', () => {
         storageRootDirectory: root,
         partitionOwner,
         removeDirectory: async () => {
-          throw new Error('EACCES');
+          throw new Error(failureMessage);
         },
         emitAudit: (record) => auditRecords.push(record),
         now: () => 5_000,
@@ -342,8 +343,8 @@ describe('browser profile store disk purge', () => {
       expect(result.failedProfileIds).toEqual(['profile_locked']);
       const profile = store.getProfile('profile_locked');
       expect(profile?.lifecycleState).toBe('unusable');
-      expect(profile?.purgeFailure?.reasonCode).toBe('disk_purge_failed');
-      expect((profile?.disabledReasons?.length ?? 0)).toBeGreaterThan(0);
+      expect(profile?.purgeFailure).toEqual({ reasonCode: 'disk_purge_failed', message: failureMessage, occurredAt: 5_000 });
+      expect(profile?.disabledReasons).toEqual([`disk_purge_failed: ${failureMessage}`]);
       // The profile is no longer usable for new partitions: a fail-closed audit was emitted.
       expect(auditRecords.some((r) => r.kind === 'browser_profile_purge_failed' && r.profileId === 'profile_locked')).toBe(true);
     } finally {

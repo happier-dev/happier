@@ -91,7 +91,7 @@ describe('browser daemon control routes', () => {
 
   it.each([
     ['command_bad', 'command_bad'],
-    ['x'.repeat(300), 'unknown'],
+    ['x'.repeat(300), 'x'.repeat(300)],
   ])('returns a strict-schema failure for malformed input with command id %s', async (commandId, expectedId) => {
     const routes = createBrowserDaemonControlRoutes({ broker: createBrowserDaemonControlBroker() });
     const result = await routes.dispatchCommand({ kind: 'navigate', commandId, url: 'https://browser.example.test/' });

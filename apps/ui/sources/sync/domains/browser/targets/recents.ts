@@ -8,11 +8,9 @@ export type BrowserRecentTarget = Readonly<{
 export function rememberBrowserRecentTarget(
     recents: readonly BrowserRecentTarget[],
     input: BrowserRecentTarget,
-    maxEntries = 12,
 ): readonly BrowserRecentTarget[] {
-    const next = [
+    return [
         input,
         ...recents.filter((entry) => entry.target.targetId !== input.target.targetId),
     ];
-    return next.slice(0, Math.max(1, maxEntries));
 }

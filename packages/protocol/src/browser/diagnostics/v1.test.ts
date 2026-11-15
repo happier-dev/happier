@@ -1,6 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
 describe('browser diagnostics protocol contracts', () => {
+  it('preserves complete injected batches and owner snapshots without a second collection budget', async () => {
+    const { BrowserDiagnosticEventBatchV1Schema, BrowserDiagnosticsSnapshotV1Schema } = await import('./v1.js');
+    const collector = { collectorId: 'collector', nonce: 'nonce', version: '1' };
+    const event = {
+      v: 1, eventId: 'event', browserSessionId: 'browser', viewId: 'view', navigationGeneration: 1,
+      capturedAtMs: 1, family: 'console', kind: 'console.entry', fidelity: 'injectedPage',
+      trusted: false, collector, data: { level: 'log', argCount: 0, textAvailable: false },
+      redaction: { level: 'metadataOnly', queryRedacted: true, headersRedacted: true, truncated: false },
+    };
+    const events = Array.from({ length: 5_001 }, (_, index) => ({ ...event, eventId: `event-${index}` }));
+    const batch = { v: 1, kind: 'browser.diagnostics.events', browserSessionId: 'browser', viewId: 'view',
+      navigationGeneration: 1, collector, events: events.slice(0, 201) };
+    expect.soft(BrowserDiagnosticEventBatchV1Schema.safeParse(batch)).toEqual({ success: true, data: batch });
+    expect(BrowserDiagnosticEventBatchV1Schema.safeParse({ ...batch,
+      events: [...batch.events, { ...event, viewId: 'another-view' }],
+    }).success).toBe(false);
+    const snapshot = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events, diagnostics: [] };
+    expect(BrowserDiagnosticsSnapshotV1Schema.parse(snapshot)).toEqual(snapshot);
+  });
+
+  it('preserves opaque CDP object handles beyond the former generic identity width', async () => {
+    const { BrowserDiagnosticsGetPropertiesRequestV1Schema } = await import('./v1.js');
+    const request = { v: 1, propertyRequestId: 'request', viewId: 'view', navigationGeneration: 1,
+      tier: 'cdp', objectId: 'opaque-object-handle-'.repeat(40), objectGroupId: 'group',
+      diagnosticsInteractionEnabled: true };
+    expect(BrowserDiagnosticsGetPropertiesRequestV1Schema.parse(request)).toEqual(request);
+  });
   it('parses daemon browser diagnostics snapshot RPC payloads', async () => {
     const mod = await import('./v1.js').catch(() => null);
 
@@ -1228,8 +1255,8 @@ describe('browser diagnostics egress classifier + header SSOT', () => {
     const value = 'a'.repeat(257);
 
     expect(redactDiagnosticsHeadersWithResult({ Accept: value })).toEqual({
-      headers: { accept: `${'a'.repeat(253)}...` },
-      truncated: true,
+      headers: { accept: value },
+      truncated: false,
     });
     expect(redactDiagnosticsHeadersWithResult({ Accept: 'a'.repeat(256), Authorization: value })).toEqual({
       headers: { accept: 'a'.repeat(256) },

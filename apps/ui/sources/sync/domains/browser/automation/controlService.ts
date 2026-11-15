@@ -115,7 +115,7 @@ type ActiveAction = {
     controlEpochBefore: number;
     navigationGenerationBefore: number;
     settled: boolean;
-    /** Retirement outlives eviction from the recent-closed-view projection. */
+    /** The admitted action retains its close outcome until the engine settles. */
     viewClosed?: true;
     interruption?: BrowserAutomationResult;
     detachCallerAbort?: () => void;
@@ -145,8 +145,6 @@ export type BrowserAutomationControlService = Readonly<{
     subscribe: (listener: () => void) => () => void;
     getSnapshot: () => Readonly<Record<string, unknown>>;
 }>;
-
-const CLOSED_VIEW_KEY_LIMIT = 512;
 
 function isMutatingAction(actionKind: string): boolean {
     const parsed = BrowserAutomationActionKindV1Schema.safeParse(actionKind);
@@ -194,7 +192,6 @@ export function createBrowserAutomationControlService(
     const controllersByViewKey = new Map<string, BrowserAutomationControllerState>();
     const activeActionsByRequestId = new Map<string, ActiveAction>();
     const timelineByViewKey = new Map<string, BrowserAutomationTimelineEntry[]>();
-    const closedViewKeys = new Set<string>();
     const listeners = new Set<() => void>();
 
     function now(): number {
@@ -413,7 +410,6 @@ export function createBrowserAutomationControlService(
                 return { ok: false, reasonCode: 'owner_conflict' };
             }
             if (existing === owner) return { ok: true };
-            closedViewKeys.delete(viewKey);
             ownersByViewKey.set(viewKey, owner);
             ownerIdToViewKey.set(owner.ownerId, viewKey);
             controllerFor(viewKey);
@@ -432,27 +428,22 @@ export function createBrowserAutomationControlService(
 
         closeView(inputValue) {
             const viewKey = browserViewKey(inputValue);
-            if (closedViewKeys.has(viewKey)) return;
-            closedViewKeys.add(viewKey);
             const owner = ownersByViewKey.get(viewKey);
-            if (owner) {
-                ownerIdToViewKey.delete(owner.ownerId);
-            }
-            ownersByViewKey.delete(viewKey);
+            const controller = controllersByViewKey.get(viewKey);
+            let changed = Boolean(owner) || timelineByViewKey.has(viewKey)
+                || (controller !== undefined && !controller.activeAutomationRequestId);
             for (const active of activeActionsByRequestId.values()) {
-                if (browserViewKey(active.request) === viewKey) active.viewClosed = true;
-            }
-            cancelActiveActionsForView(viewKey, 'canceled', 'view_closed');
-            if (!controllerFor(viewKey).activeAutomationRequestId) controllersByViewKey.delete(viewKey);
-            timelineByViewKey.delete(viewKey);
-            while (closedViewKeys.size > CLOSED_VIEW_KEY_LIMIT) {
-                const oldest = closedViewKeys.values().next().value;
-                if (typeof oldest === 'string') {
-                    closedViewKeys.delete(oldest);
-                } else {
-                    break;
+                if (browserViewKey(active.request) === viewKey && !active.viewClosed) {
+                    active.viewClosed = true;
+                    changed = true;
                 }
             }
+            if (!changed) return;
+            if (owner) ownerIdToViewKey.delete(owner.ownerId);
+            ownersByViewKey.delete(viewKey);
+            cancelActiveActionsForView(viewKey, 'canceled', 'view_closed');
+            if (!controller?.activeAutomationRequestId) controllersByViewKey.delete(viewKey);
+            timelineByViewKey.delete(viewKey);
             emitChange();
         },
 
@@ -476,9 +467,6 @@ export function createBrowserAutomationControlService(
         executeAction(request, options) {
             const viewKey = browserViewKey(request);
             const owner = ownersByViewKey.get(viewKey) ?? null;
-            if (closedViewKeys.has(viewKey)) {
-                return Promise.resolve(rejectAndRecord(request, owner, 'canceled', 'view_closed'));
-            }
             if (!owner) {
                 return Promise.resolve(unavailableResult('canceled', 'owner_disconnected'));
             }

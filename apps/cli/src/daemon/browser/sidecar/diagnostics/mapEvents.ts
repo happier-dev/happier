@@ -1,5 +1,5 @@
-import { BrowserDiagnosticEventV1Schema, BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
-import type { BrowserDiagnosticEventV1, BrowserDiagnosticFamilyV1, BrowserDiagnosticUnavailableReasonV1, BrowserDiagnosticsEvalResultV1, BrowserDiagnosticsRemoteObjectPreviewPropertyV1 } from '@happier-dev/protocol';
+import { BrowserDiagnosticEventV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserDiagnosticEventV1, BrowserDiagnosticFamilyV1, BrowserDiagnosticUnavailableReasonV1 } from '@happier-dev/protocol';
 
 import {
     createSidecarPrivateReference,
@@ -128,11 +128,6 @@ export type SidecarNetworkEvent = Extract<SidecarCdpDiagnosticEventInput['event'
 
 function eventId(input: SidecarDiagnosticBaseInput): string {
     return `sidecar_diag_${input.viewId}_${input.navigationGeneration}_${input.eventOrdinal}`;
-}
-
-function truncateText(value: string | undefined, limit = 1024): string | undefined {
-    if (!value) return undefined;
-    return value.length > limit ? `${value.slice(0, limit)}...` : value;
 }
 
 function baseEvent(input: SidecarDiagnosticBaseInput): Pick<
@@ -277,34 +272,5 @@ export function mapSidecarCdpDiagnosticUnavailable(input: SidecarDiagnosticBaseI
             truncated: false,
         },
         unavailableReason: input.reason,
-    });
-}
-
-export type SidecarCdpEvalObjectResultInput = Readonly<{
-    evalRequestId: string;
-    viewId: string;
-    navigationGeneration: number;
-    rawCdpObjectId: string;
-    className?: string;
-    description?: string;
-    preview?: readonly BrowserDiagnosticsRemoteObjectPreviewPropertyV1[];
-}>;
-
-export function mapSidecarCdpEvalResult(input: SidecarCdpEvalObjectResultInput): BrowserDiagnosticsEvalResultV1 {
-    return BrowserDiagnosticsEvalResultV1Schema.parse({
-        v: 1,
-        evalRequestId: input.evalRequestId,
-        viewId: input.viewId,
-        navigationGeneration: input.navigationGeneration,
-        status: 'completed',
-        tier: 'cdp',
-        audited: true,
-        result: {
-            type: 'object',
-            objectId: createSidecarPrivateReference('object', input.rawCdpObjectId),
-            ...(input.className ? { className: truncateText(input.className, 256) } : {}),
-            ...(input.description ? { description: truncateText(input.description, 1024) } : {}),
-            preview: input.preview ?? [],
-        },
     });
 }

@@ -42,6 +42,19 @@ const ATTACHMENTS_UPLOADS_ENABLED = {
 };
 
 describe('createBrowserDaemonFeatureGate', () => {
+  it('resolves each refreshed decision once while event reads consume the current result', async () => {
+    let envReads = 0;
+    let snapshot = readySnapshot(ALL_BROWSER_ENABLED);
+    const env = new Proxy({}, { get: () => { envReads++; return undefined; } });
+    const gate = createBrowserDaemonFeatureGate({ env, resolveServerFeaturesSnapshot: () => snapshot });
+    await gate.refresh();
+    const afterRefresh = envReads;
+    for (let event = 0; event < 100; event++) expect(gate.isEnabled('browser.diagnostics')).toBe(true);
+    expect(envReads - afterRefresh).toBe(0);
+    snapshot = readySnapshot(ALL_BROWSER_DISABLED);
+    await gate.refresh();
+    expect(gate.isEnabled('browser.diagnostics')).toBe(false);
+  });
   it('is fail-closed with no server snapshot', () => {
     const gate = createBrowserDaemonFeatureGate({
       env: { HAPPIER_FEATURE_BROWSER_AUTOMATION__ENABLED: '1' },

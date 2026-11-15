@@ -17,6 +17,7 @@ export {
     type ParseInjectedBrowserDiagnosticsMessageResult,
 } from './injectedPage';
 export {
+    createNativeWebViewLossDiagnosticEvent,
     createNativeWebViewPageInfoDiagnosticEvent,
     createNativeWebViewUnavailableDiagnosticEvent,
 } from './nativeWebView';

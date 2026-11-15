@@ -8,7 +8,7 @@ export const INJECTED_OBJECT_INSPECTOR_RUNTIME = `
   var highlightedPickerOutline = '';
 
   function objectGroup(name) {
-    var groupName = String(name || 'default').slice(0, 256);
+    var groupName = String(name || 'default');
     objectGroups[groupName] = objectGroups[groupName] || {};
     return {
       name: groupName,

@@ -33,7 +33,7 @@ function readCommandId(input: unknown): string {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return 'unknown';
   const commandId = (input as Record<string, unknown>).commandId;
   const trimmedCommandId = typeof commandId === 'string' ? commandId.trim() : '';
-  return trimmedCommandId.length > 0 && trimmedCommandId.length <= 256 ? trimmedCommandId : 'unknown';
+  return trimmedCommandId.length > 0 ? trimmedCommandId : 'unknown';
 }
 
 export function createBrowserDaemonControlRoutes(input: Readonly<{

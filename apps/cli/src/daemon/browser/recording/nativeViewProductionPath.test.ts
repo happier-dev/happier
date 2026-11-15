@@ -25,10 +25,7 @@ const WORKING_DIRECTORY = '/tmp/happier-native-view-production-path';
 
 function buildRuntime(invokeRecordingFrameCapture: DesktopBrowserRecordingFrameCaptureInvoke) {
   const transport = createDesktopBrowserRecordingNativeViewCaptureTransport({
-    workingDirectory: WORKING_DIRECTORY,
-    outputDirectory: `${WORKING_DIRECTORY}/out`,
     randomId: () => 'capture_1',
-    ensureDirectory: async () => undefined,
     deleteFile: async () => undefined,
     invokeRecordingFrameCapture,
   });

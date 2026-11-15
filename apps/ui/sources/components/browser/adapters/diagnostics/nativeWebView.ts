@@ -64,3 +64,22 @@ export function createNativeWebViewUnavailableDiagnosticEvent(
         unavailableReason: input.unavailableReason,
     });
 }
+
+export function createNativeWebViewLossDiagnosticEvent(
+    input: NativeWebViewDiagnosticBaseInput & Readonly<{ droppedMessageCount: number }>,
+): BrowserDiagnosticEventV1 {
+    return BrowserDiagnosticEventV1Schema.parse({
+        v: 1,
+        eventId: input.eventId,
+        browserSessionId: input.browserSessionId,
+        viewId: input.viewId,
+        navigationGeneration: input.navigationGeneration,
+        capturedAtMs: input.capturedAtMs,
+        family: 'pageInfo',
+        kind: 'collector.degraded',
+        fidelity: 'nativeCallback',
+        trusted: true,
+        data: { reasonCode: 'native_buffer_overflow', droppedMessageCount: input.droppedMessageCount },
+        redaction: { level: 'metadataOnly' },
+    });
+}

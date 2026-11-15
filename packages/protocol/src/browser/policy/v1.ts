@@ -5,7 +5,7 @@ import { BrowserProfileStorageModeV1Schema } from '../profile/v1.js';
 import { BrowserViewTargetKindV1Schema } from '../target/v1.js';
 import { BrowserHttpOriginV1Schema, BrowserHttpUrlV1Schema } from '../url.js';
 
-const IdSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(256));
+const IdSchema = z.string().check(z.trim(), z.minLength(1));
 
 export const BrowserPolicyDecisionStateV1Schema = z.enum(['allowed', 'prompt', 'denied', 'unavailable']);
 export type BrowserPolicyDecisionStateV1 = z.infer<typeof BrowserPolicyDecisionStateV1Schema>;
@@ -77,7 +77,7 @@ export const BrowserTargetPolicyDecisionV1Schema = z.strictObject({
     origin: z.optional(BrowserHttpOriginV1Schema),
     security: z.optional(BrowserOriginSecuritySummaryV1Schema),
     permissions: z.optional(BrowserTargetPermissionPolicyV1Schema),
-    disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(256)))),
+    disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   }).check(z.superRefine((decision, context) => {
     if (decision.state !== 'allowed' && decision.reasonCode == null) {
       context.addIssue({

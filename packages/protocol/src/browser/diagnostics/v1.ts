@@ -8,7 +8,7 @@ import {
 import { isSafeTelemetryHeaderName } from './egress/headers.js';
 import { rejectUnsafeBrowserEgressKeys } from './egress/keyRejection.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 
 export const BrowserDiagnosticFamilyV1Schema = lazyZodSchema(() => z.enum([
@@ -53,8 +53,8 @@ export type BrowserDiagnosticRedactionV1 = z.infer<typeof BrowserDiagnosticRedac
 
 export const BrowserDiagnosticCollectorV1Schema = lazyZodSchema(() => z.strictObject({
     collectorId: IdSchema,
-    nonce: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
-    version: z.string().check(z.trim(), z.minLength(1), z.maxLength(64)),
+    nonce: z.string().check(z.trim(), z.minLength(1)),
+    version: z.string().check(z.trim(), z.minLength(1)),
   }));
 export type BrowserDiagnosticCollectorV1 = z.infer<typeof BrowserDiagnosticCollectorV1Schema>;
 
@@ -215,7 +215,7 @@ function refineInjectedStorageKeyInventory(
         return;
       }
       rejectUnknownInjectedDiagnosticKeys(entry, new Set(['key', 'value', 'valueTruncated']), context);
-      if (typeof entry.key !== 'string' || entry.key.length > 256) {
+      if (typeof entry.key !== 'string') {
         addInjectedDiagnosticDataIssue(context, ['entries', index, 'key']);
       }
       if (typeof entry.value !== 'string') {
@@ -422,7 +422,7 @@ export const BrowserDiagnosticEventBatchV1Schema = lazyZodSchema(() => z.strictO
     viewId: IdSchema,
     navigationGeneration: NonNegativeIntSchema,
     collector: BrowserDiagnosticCollectorV1Schema,
-    events: z.array(BrowserDiagnosticEventV1Schema).check(z.maxLength(200)),
+    events: z.array(BrowserDiagnosticEventV1Schema),
   }).check(z.superRefine((batch, context) => {
     batch.events.forEach((event, index) => {
       if (event.browserSessionId !== batch.browserSessionId) {
@@ -477,7 +477,7 @@ export const BrowserDiagnosticsSnapshotV1Schema = lazyZodSchema(() => z.strictOb
     machineId: IdSchema,
     generatedAt: NonNegativeIntSchema,
     refreshState: z.enum(['idle', 'refreshing', 'error']),
-    events: z.array(BrowserDiagnosticEventV1Schema).check(z.maxLength(5_000)),
+    events: z.array(BrowserDiagnosticEventV1Schema),
     diagnostics: z._default(z.array(z.record(z.string(), z.unknown())), []),
   }));
 export type BrowserDiagnosticsSnapshotV1 = z.infer<typeof BrowserDiagnosticsSnapshotV1Schema>;
@@ -913,7 +913,7 @@ export type BrowserDiagnosticsElementPickerRequestV1 = z.infer<
 >;
 
 export const BrowserDiagnosticsElementSourceLocationV1Schema = lazyZodSchema(() => z.strictObject({
-    file: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
+    file: z.string().check(z.trim(), z.minLength(1)),
     line: z.optional(z.number().check(z.int(), z.positive())),
     column: z.optional(z.number().check(z.int(), z.positive())),
   }));
@@ -930,15 +930,15 @@ export const BrowserDiagnosticsElementPickerResultV1Schema = lazyZodSchema(() =>
     status: z.enum(['selected', 'cancelled', 'blocked', 'failed', 'collectorDegraded']),
     audited: z.literal(true),
     backendNodeRef: z.optional(IdSchema),
-    selectorPath: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2048))),
+    selectorPath: z.optional(z.string().check(z.trim(), z.minLength(1))),
     rect: z.optional(BrowserDiagnosticsElementPickerRectV1Schema),
-    accessibleName: z.optional(z.string().check(z.maxLength(512))),
+    accessibleName: z.optional(z.string()),
     /**
      * UB-7. The component that rendered the picked node and the source file it came from, read
      * from the framework metadata the page already exposes (React fiber). Absent whenever the page
      * is not a dev-build React tree — a picked element is still fully usable without them.
      */
-    componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+    componentName: z.optional(z.string().check(z.trim(), z.minLength(1))),
     sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
     errorCode: z.optional(BrowserDiagnosticUnavailableReasonV1Schema),
   }));

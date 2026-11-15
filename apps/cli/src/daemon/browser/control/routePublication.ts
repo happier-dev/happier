@@ -696,7 +696,6 @@ setBrowserRecordingRoutesProvider?: (
         transport: createDesktopBrowserRecordingNativeViewCaptureTransport({
           invokeRecordingFrameCapture:
             desktopBrowserRecordingNativeViewCaptureInvoke,
-          workingDirectory: configuration.happyHomeDir,
         }),
       }),
     };

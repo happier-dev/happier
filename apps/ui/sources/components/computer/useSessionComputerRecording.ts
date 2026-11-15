@@ -5,7 +5,8 @@ import { ComputerRecordingSessionV1Schema, type ComputerRecordingSessionV1 } fro
 
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { buildRecordingMessageLocalId, presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
+import { presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
+import { randomUUID } from '@/platform/randomUUID';
 import type { ComputerActionExecute } from '@/sync/domains/computer/computerControlClient';
 
 /** The person's recorder for the shared source; the viewer's menu and capsule, and the pane's bar, read this one control. */
@@ -90,7 +91,7 @@ export function useSessionComputerRecording(input: Readonly<{
             const result = await execute.current(ids.start, {
                 machineId,
                 sourceId,
-                mediaTarget: { sessionId, messageLocalId: buildRecordingMessageLocalId(sourceId, Date.now()) },
+                mediaTarget: { sessionId, messageLocalId: randomUUID() },
             }, { signal, defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId } });
             if (signal.aborted) return;
             const recording = readRecording(result);

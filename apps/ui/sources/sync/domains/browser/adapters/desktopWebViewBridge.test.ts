@@ -12,6 +12,19 @@ vi.mock('@/utils/platform/desktopHost', () => ({
 }));
 
 describe('desktop WebView native bridge', () => {
+    it('preserves native diagnostics omissions through the drain boundary', async () => {
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({ ok: true, availability: {
+            available: true, platform: 'windows', primitive: 'windowsHwndWebView2', renderEngine: 'desktopWebView',
+            producer: 'tauriWryNativeChildView', privilegedIpc: false,
+            supports: { navigation: true, goBackForward: false, reload: false, stop: false,
+                pageInfoDiagnostics: true, nativeDevtools: false, capture: false, recording: false, automation: false },
+            disabledReasons: [],
+        }, messages: ['kept'], droppedMessageCount: 7 });
+        const { drainDesktopBrowserDiagnostics } = await import('./desktopWebViewBridge');
+        await expect(drainDesktopBrowserDiagnostics({ browserSessionId: 'session', viewId: 'view' }))
+            .resolves.toMatchObject({ ok: true, messages: ['kept'], droppedMessageCount: 7 });
+    });
     it('delivers guest shortcut events only to the exact view with validated keyboard data', async () => {
         listenDesktopHostEventMock.mockResolvedValue(() => {});
         const { subscribeDesktopBrowserView } = await import('./desktopWebViewBridge');

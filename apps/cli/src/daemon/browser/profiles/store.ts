@@ -43,6 +43,8 @@ export type BrowserProfileExtensionsResult =
   | Readonly<{ ok: true; extensions: readonly BrowserExtensionRecordV1[] }>
   | Readonly<{ ok: false; reason: 'profile_not_found' | 'profile_unavailable' | 'persistent_profile_required' }>;
 
+type BrowserProfileExtensionMutationResult = Readonly<{ ok: true }> | Extract<BrowserProfileExtensionsResult, { ok: false }>;
+
 export type BrowserProfileStore = Readonly<{
   register(registration: BrowserProfileRegistration): BrowserProfileV1;
   registerPersistentProfile(registration: BrowserPersistentProfileRegistration): Promise<BrowserProfileV1>;
@@ -52,10 +54,10 @@ export type BrowserProfileStore = Readonly<{
   listProfiles(): readonly BrowserProfileV1[];
   resolveProfileDirectory(profileId: string): string;
   listExtensions(profileId: string, extensionIds?: readonly string[]): Promise<BrowserProfileExtensionsResult>;
-  setExtension(profileId: string, extension: BrowserExtensionRecordV1): Promise<BrowserProfileExtensionsResult>;
+  setExtension(profileId: string, extension: BrowserExtensionRecordV1): Promise<BrowserProfileExtensionMutationResult>;
   recordExtensionUpstream(profileId: string, extensionId: string, expectedVersion: string,
-    upstream: NonNullable<BrowserExtensionRecordV1['upstream']>): Promise<Readonly<{ ok: true }> | Extract<BrowserProfileExtensionsResult, { ok: false }>>;
-  removeExtension(profileId: string, extensionId: string): Promise<BrowserProfileExtensionsResult>;
+    upstream: NonNullable<BrowserExtensionRecordV1['upstream']>): Promise<BrowserProfileExtensionMutationResult>;
+  removeExtension(profileId: string, extensionId: string): Promise<BrowserProfileExtensionMutationResult>;
   purgeForSessionDeleted(input: Readonly<{ sessionId: string }>): Promise<BrowserProfilePurgeOutcome>;
   purgeForLogout(): Promise<BrowserProfilePurgeOutcome>;
   /** Explicitly purges the named profiles, settling their native engines first. */
@@ -151,8 +153,8 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
     const unusable = BrowserProfileV1Schema.parse({
       ...profile,
       lifecycleState: 'unusable',
-      disabledReasons: [`${reasonCode}: ${message}`.slice(0, 128)],
-      purgeFailure: { reasonCode, message: message.slice(0, 512), occurredAt },
+      disabledReasons: [`${reasonCode}: ${message}`],
+      purgeFailure: { reasonCode, message, occurredAt },
       updatedAt: occurredAt,
     });
     profilesById.set(profile.profileId, unusable);
@@ -272,12 +274,11 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
       const storage = admitExtensionStorage(profileId);
       if (!storage.ok) return storage;
       const record = BrowserExtensionRecordV1Schema.parse(extension);
-      const previous = await readProfileExtensions(storage.directory);
       // Existing synchronous registrations also become discoverable after restart
       // once they own an installed extension.
       await writeJsonAtomic(join(storage.directory, 'profile.json'), storage.profile);
       await writeProfileExtension(storage.directory, record);
-      return { ok: true, extensions: [...previous.filter(item => item.id !== record.id), record].sort((left, right) => left.id.localeCompare(right.id)) };
+      return { ok: true };
     },
 
     async recordExtensionUpstream(profileId, extensionId, expectedVersion, upstream) {
@@ -297,9 +298,8 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
       const storage = admitExtensionStorage(profileId);
       if (!storage.ok) return storage;
       const id = BrowserExtensionIdV1Schema.parse(extensionId);
-      const previous = await readProfileExtensions(storage.directory);
       await removeProfileExtension(storage.directory, id);
-      return { ok: true, extensions: previous.filter(item => item.id !== id) };
+      return { ok: true };
     },
 
     getProfile(profileId) {

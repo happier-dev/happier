@@ -24,6 +24,7 @@ import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/doma
 import { browserViewLifecycleEvent, type BrowserViewLifecycleSignal } from '@/sync/domains/browser/control/lifecycle';
 import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
 import { storage } from '@/sync/domains/state/storage';
+import { applyBrowserDiagnosticEvents, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics/store';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -540,6 +541,32 @@ describe('DesktopWebViewEngine', () => {
         } finally {
             await screen.unmount();
             page.window.close();
+        }
+    });
+
+    it('reports native buffer loss even when no collector envelope survived', async () => {
+        const bridge = createBridge();
+        const onEvents = vi.fn();
+        bridge.drainDiagnostics.mockResolvedValue({ ok: true, availability: availableDesktopWebView,
+            messages: [], droppedMessageCount: 3 });
+        const screen = await renderScreen(<DesktopWebViewEngine view={createExternalDesktopView()}
+            profileId="profile_external_1" testID="native-buffer-loss" bridge={bridge}
+            diagnostics={{ browserSessionId: 'browser_session_1', viewId: 'view_external_1', navigationGeneration: 0,
+                collectorId: 'desktop_collector_1', nonce: 'desktop_nonce_1', collectorVersion: '1.0.0', onEvents }} />);
+        try {
+            await flushHookEffects({ cycles: 3, turns: 3 });
+            const events = onEvents.mock.calls.flatMap(([events]) => events);
+            expect(events).toContainEqual(expect.objectContaining({
+                kind: 'collector.degraded', fidelity: 'nativeCallback',
+                data: { reasonCode: 'native_buffer_overflow', droppedMessageCount: 3 },
+            }));
+            const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events });
+            const projection = selectBrowserDiagnosticsForView(state, createExternalDesktopView());
+            expect(projection.families.find(family => family.family === 'pageInfo')).toMatchObject({
+                status: 'stale', reasonCode: 'native_buffer_overflow',
+            });
+        } finally {
+            await screen.unmount();
         }
     });
 

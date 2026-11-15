@@ -1,12 +1,11 @@
 import type { BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
-import { BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
 
 import type { BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
 
 /**
  * Projects retained view diagnostics into value-free agent context. The diagnostics store owns
- * retention; this owner selects newest useful evidence under the context protocol's output budget
- * before presenting it chronologically. Raw event size does not constrain its safe projection.
+ * retention; this owner presents all eligible safe evidence chronologically.
+ * Raw event size does not constrain its safe projection.
  */
 export type BrowserContextDiagnosticsSummaryKind = 'browserNetworkSummary' | 'browserConsoleSummary';
 
@@ -112,28 +111,15 @@ export function createBrowserContextDiagnosticsSummarySource(
             }).events;
 
             const family = familyForKind(request.kind);
-            let truncated = false;
             const lines: string[] = [];
-            let chars = 0;
-            for (let index = retained.length - 1; index >= 0; index -= 1) {
-                const event = retained[index];
-                if (!event) continue;
+            for (const event of retained) {
                 if (event.family !== family) continue;
                 if (event.navigationGeneration !== request.navigationGeneration) continue;
                 const line = serialize(request.kind, event);
                 if (line === null) continue;
-                const required = line.length + (lines.length > 0 ? 1 : 0);
-                if (chars + required > BROWSER_CONTEXT_SUMMARY_MAX_CHARS) {
-                    truncated = true;
-                    // Even an oversized newest event retains useful evidence, with incompleteness
-                    // explicit in the wire result. Older events never displace newer material.
-                    if (lines.length === 0) lines.push(line.slice(0, BROWSER_CONTEXT_SUMMARY_MAX_CHARS));
-                    break;
-                }
                 lines.push(line);
-                chars += required;
             }
-            return { summary: lines.reverse().join('\n'), ...(truncated ? { truncated: true } : {}) };
+            return { summary: lines.join('\n') };
         },
     };
 }

@@ -7,6 +7,32 @@ import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserExtensionService } from './service';
 
 describe('persistent profile extension application', () => {
+  it('opens and mutates a selected extension without reading unrelated records', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-extension-selected-'));
+    const store = createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    try {
+      await store.registerPersistentProfile({ profileId: 'personal', storageMode: 'user', owner: { kind: 'user', id: 'person' } });
+      const extension = { id: 'a'.repeat(32), name: 'Selected', version: '1.0', enabled: true,
+        source: { kind: 'unpacked' as const, directory: join(root, 'selected') }, directory: join(root, 'installed'),
+        permissions: [], hostPermissions: [], actionPopup: 'popup.html' };
+      await store.setExtension('personal', extension);
+      // The filesystem boundary exposes an unreadable unrelated record. Exact operations must
+      // still work; only an actual collection listing needs this other manifest.
+      await writeFile(join(store.resolveProfileDirectory('personal'), 'extensions', 'records', `${'b'.repeat(32)}.json`), 'invalid json');
+      const service = createBrowserExtensionService({ profileStore: store, runtime: {
+        openView: async command => ({ v: 1, commandId: command.commandId, status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] }),
+      } });
+      const selected = { machineId: 'machine', profileId: 'personal', extensionId: extension.id };
+      expect(await service.execute('browser.extensions.openActionPopup', { ...selected, commandId: 'popup', browserSessionId: 'session', viewId: 'view' }))
+        .toMatchObject({ status: 'dispatched' });
+      expect(await service.execute('browser.extensions.disable', selected)).toMatchObject({ status: 'updated', entry: { extension: { enabled: false } } });
+      expect(await service.execute('browser.extensions.enable', selected)).toMatchObject({ status: 'updated', entry: { extension: { enabled: true } } });
+      expect(await service.execute('browser.extensions.remove', selected)).toMatchObject({ status: 'removed', extensionId: extension.id });
+      expect(await store.listExtensions('personal', [extension.id])).toEqual({ ok: true, extensions: [] });
+      await expect(store.listExtensions('personal')).rejects.toThrow();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('lists saved profiles before extensions exist, including after the store is recreated', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-extension-profile-inventory-'));
     const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,

@@ -22,4 +22,33 @@ describe('browser element description', () => {
     const result: unknown = new Function('document', `return ${buildBrowserElementAtPointExpression({ x: 0, y: 0 })}`)({ elementFromPoint: () => null });
     expect(result).toBeNull();
   });
+
+  it.each(['function', 'wrapped render', 'owner stack'])('retains complete element metadata from a %s component', (kind) => {
+    const tagName = `x-${'control'.repeat(320)}`;
+    const accessibleName = 'Checkout details '.repeat(60).trim();
+    const componentName = 'CheckoutComponent'.repeat(12);
+    const file = `http://localhost/${'nested/'.repeat(160)}Checkout.tsx`;
+    const component = Object.assign(function Component() {}, { displayName: componentName });
+    const fiber = {
+      type: kind === 'wrapped render' ? { render: component } : component,
+      ...(kind === 'owner stack'
+        ? { _debugStack: { stack: `Error\n    at jsxDEV (http://localhost/react.js:1:1)\n    at Checkout (${file}:12:4)` } }
+        : { _debugSource: { fileName: file, lineNumber: 12, columnNumber: 4 } }),
+    };
+    const node = {
+      nodeType: 1, tagName, previousElementSibling: null, parentElement: null,
+      getAttribute: (name: string) => name === 'aria-label' ? accessibleName : null,
+      getBoundingClientRect: () => ({ x: 0, y: 0, width: 80, height: 30 }),
+      '__reactFiber$test': fiber,
+    };
+    // DOM and React metadata are page-owned inputs to the exact shipped expression.
+    const result: unknown = new Function('document', `return ${buildBrowserElementAtPointExpression({ x: 1, y: 1 })}`)({
+      elementFromPoint: () => node,
+    });
+    expect(result).toEqual({
+      selectorPath: `${tagName}:nth-of-type(1)`, accessibleName, componentName,
+      rect: { x: 0, y: 0, width: 80, height: 30 },
+      sourceLocation: { file, line: 12, column: 4 },
+    });
+  });
 });

@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { BrowserHttpOriginV1Schema } from '../url.js';
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 export const BrowserPermissionKindV1Schema = lazyZodSchema(() => z.enum([
   'origin',

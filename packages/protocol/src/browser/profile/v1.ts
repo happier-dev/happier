@@ -8,7 +8,7 @@ export * from './extensionsV1.js';
 export const BrowserProfileStorageModeV1Schema = lazyZodSchema(() => z.enum(['ephemeral', 'session', 'user', 'plugin']));
 export type BrowserProfileStorageModeV1 = z.infer<typeof BrowserProfileStorageModeV1Schema>;
 
-const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 export const BrowserProfileLifecycleStateV1Schema = lazyZodSchema(() => z.enum(['active', 'purging', 'unusable']));
 export type BrowserProfileLifecycleStateV1 = z.infer<typeof BrowserProfileLifecycleStateV1Schema>;
@@ -26,7 +26,7 @@ export type BrowserProfilePurgeFailureReasonCodeV1 = z.infer<
 
 export const BrowserProfilePurgeFailureV1Schema = lazyZodSchema(() => z.strictObject({
     reasonCode: BrowserProfilePurgeFailureReasonCodeV1Schema,
-    message: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+    message: z.optional(z.string().check(z.trim(), z.minLength(1))),
     occurredAt: z.number().check(z.int(), z.nonnegative()),
   }));
 export type BrowserProfilePurgeFailureV1 = z.infer<typeof BrowserProfilePurgeFailureV1Schema>;
@@ -46,11 +46,11 @@ export const BrowserProfileV1Schema = lazyZodSchema(() => z.strictObject({
     profileId: IdSchema,
     storageMode: BrowserProfileStorageModeV1Schema,
     owner: BrowserProfileOwnerV1Schema,
-    displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+    displayName: z.optional(z.string().check(z.trim(), z.minLength(1))),
     createdAt: z.optional(z.number().check(z.int(), z.nonnegative())),
     updatedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
     lifecycleState: z.optional(BrowserProfileLifecycleStateV1Schema),
-    disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(128)))),
+    disabledReasons: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
     purgeFailure: z.optional(BrowserProfilePurgeFailureV1Schema),
     cleanupOnSessionClose: z._default(z.boolean(), true),
   }).check(z.superRefine((profile, context) => {
