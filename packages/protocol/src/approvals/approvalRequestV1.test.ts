@@ -409,13 +409,18 @@ it('retains a PAT Workflow Run root separately from its leaf approval request id
   ]) expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, ...patch }).success).toBe(false);
 });
 
-it.each(['machines.setup.apply', 'deployments.teardown'] as const)('retains signed Workflow Machine approval holds without admitting ordinary Agent host roots (%s)', actionId => {
+it.each((['machines.setup.apply', 'deployments.teardown'] as const).flatMap(actionId =>
+  (['host', 'workflowRun'] as const).map(callerKind => ({ actionId, callerKind }))))('retains signed Workflow Machine approval holds without admitting ordinary Agent host roots ($actionId, $callerKind)', ({ actionId, callerKind }) => {
   const target = { kind: 'machine' as const, machineId: 'receiver' };
   const binding = { accountId: 'requester', authentication: { kind: 'account' as const, tokenEpoch: 7 },
     serverIdentityId: 'srv_home', machineId: 'receiver', custodianAccountId: 'requester', installationId: 'installation',
     actionId, requestId: 'run/invocation/0', requestEnvelopeDigest: 'a'.repeat(43), target,
     workflowActionOrigin: { runId: 'run', requestId: 'run/invocation/0' } };
-  const origin = { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' }, serverId: 'profile',
+  const workflowCaller = { kind: 'workflowRun' as const, runId: 'run',
+    authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const },
+    authenticatedStarterV1: { requestRef: 'start', requester: { serverId: 'srv_home', accountId: 'requester' } } };
+  const caller = callerKind === 'workflowRun' ? workflowCaller : { kind: 'host' as const };
+  const origin = { v: 1, authority: 'account_automation', surface: 'agent', caller, serverId: 'profile',
     serverIdentityId: 'srv_home', accountId: 'requester', machineId: 'receiver', actionId: binding.actionId,
     requestId: binding.requestId, target, externalActionInputSignature: 'a'.repeat(86),
     externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding } };
@@ -430,17 +435,18 @@ it.each(['machines.setup.apply', 'deployments.teardown'] as const)('retains sign
       { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
       { kind: 'direct', setup: {} },
     ] }] }, targetSessionId: null,
-    context: { authority: 'account_automation', surface: 'agent', actionCaller: { kind: 'host' }, serverId: 'profile',
+    context: { authority: 'account_automation', surface: 'agent', actionCaller: caller, serverId: 'profile',
       serverIdentityId: 'srv_home', runtimeAccountId: 'requester', actionRequestId: binding.requestId,
       externalActionTarget: target, externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding },
       signExternalActionApprovalInput: ({ authorization, ...request }) => signExternalActionApprovalInputV1({
         ...request, authorizationToken: authorization.token, privateKey }) } });
-  expect(prepared).toMatchObject({ authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+  expect(prepared).toMatchObject({ authority: 'account_automation', surface: 'agent', caller,
     machineId: 'receiver', target, externalActionExecutionAuthorization: origin.externalActionExecutionAuthorization });
   expect(ApprovalExecutionOriginV1Schema.safeParse(prepared).success).toBe(true);
   const { workflowActionOrigin: _origin, ...ordinaryBinding } = binding;
   for (const patch of [
     { authority: 'present_user' }, { surface: 'ui' }, { caller: { kind: 'workflowRun', runId: 'run' } },
+    { caller: { ...workflowCaller, runId: 'other-run' } },
     { serverIdentityId: 'srv_other' }, { accountId: 'other' }, { requestId: 'other' }, { machineId: 'other' },
     { target: { kind: 'machine', machineId: 'other' } }, { sessionId: 'fabricated' },
     { externalActionExecutionAuthorization: { ...origin.externalActionExecutionAuthorization, binding: ordinaryBinding } },

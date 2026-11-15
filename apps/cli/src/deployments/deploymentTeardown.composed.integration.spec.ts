@@ -47,7 +47,7 @@ import { createAutomationClaimClient } from '@/daemon/automation/automationClaim
 import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
 import { materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
-    serializeWorkflowStoredContentEnvelopeV1, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows';
+    serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -738,13 +738,16 @@ describe('deployment teardown through the canonical Action front door', () => {
                         await runWithServerHttpBaseUrl(home.baseUrl, async () => {
                             // A selected Require profile must survive controller dispatch even
                             // when Account policy would otherwise waive the agent confirmation.
+                            const approvalProfileId = 'cleanup-require';
                             const policy = await updateAccountSettingsV2WithRetry({ credentials,
                                 mutation: { operations: [{ op: 'set', key: 'actionsSettingsV1', value: { v: 1, actions: {},
+                                    approvalProfiles: [{ id: approvalProfileId, name: 'Require cleanup review',
+                                        actions: { 'deployments.teardown': { approvalRequiredSurfaces: ['agent'] } } }],
                                     approvalWaivedSurfaces: { 'deployments.teardown': ['agent'] } } }] } });
                             expect(policy.status).toBe('applied');
                             const runId = randomUUID();
                             const materialized = await materializeWorkflowAcceptedSnapshotV1({
-                                definition: { version: 1, inputs: [], defaults: { approvalProfileId: 'builtin:read-propose' }, blocks: [{ kind: 'action', id: 'cleanup',
+                                definition: { version: 1, inputs: [], defaults: { approvalProfileId }, blocks: [{ kind: 'action', id: 'cleanup',
                                     actionId: 'deployments.teardown', input: Object.fromEntries(Object.entries(input)
                                         .map(([key, value]) => [key, { kind: 'literal' as const, value }])) }] },
                                 context: { source: { kind: 'inline' }, inputs: {}, machineId: home.machineId,
@@ -788,34 +791,34 @@ describe('deployment teardown through the canonical Action front door', () => {
                                 accountCurrentness: claim.accountCurrentness, acceptedEnvelope: claim.run.workflowAcceptedSnapshotEnvelope ?? undefined,
                                 signal: cleanupAbort.signal });
                             cleanupExecution = execution;
+                            let executionSettlement: { result: Awaited<typeof execution> } | { error: unknown } | undefined;
+                            void execution.then(result => { executionSettlement = { result }; }, error => { executionSettlement = { error }; });
                             // Normal Workflow provenance does not approve the irreversible native effect.
                             // Drive the real receiver's persisted Ask request through its public decision Action.
-                            expect(await execution).toMatchObject({ state: 'paused', reason: 'approval_required' });
-                            const page = await fixture.artifacts.list({ kinds: [APPROVAL_ARTIFACT_KINDS_V1.builtIn],
-                                approvalStates: ['open'] });
-                            const approvalArtifactId = page.items[0]?.artifactId;
-                            if (!approvalArtifactId) throw new Error('Cleanup Workflow must retain its Ask request');
+                            const approvalReady = await vi.waitFor(async () => {
+                                if (executionSettlement) return { kind: 'settled' as const, settlement: executionSettlement };
+                                const page = await fixture.artifacts.list({ kinds: [APPROVAL_ARTIFACT_KINDS_V1.builtIn],
+                                    approvalStates: ['open'] });
+                                const approvals = page.items.filter(item => item.header.workflowRunId === runId);
+                                expect(approvals).toHaveLength(1);
+                                return { kind: 'approval' as const, artifactId: approvals[0]!.artifactId };
+                            }, { timeout: 60_000 });
+                            if (approvalReady.kind === 'settled') throw new Error(`Workflow settled before Ask: ${JSON.stringify(approvalReady.settlement)}`);
+                            const approvalArtifactId = approvalReady.artifactId;
                             const artifact = await fixture.artifacts.read(approvalArtifactId);
                             const approval = artifact && typeof artifact.body === 'string'
                                 ? approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body) : null;
                             if (approval?.family !== 'built_in' || approval.request.v !== 2) throw new Error('Missing native cleanup approval');
+                            expect(approval.request.executionOriginV1.caller).toMatchObject({ kind: 'workflowRun', runId });
                             expect(approval.request.executionOriginV1.externalActionExecutionAuthorization?.binding)
                                 .toMatchObject({ actionId: 'deployments.teardown', machineId: home.machineId,
                                     workflowActionOrigin: { runId } });
+                            expect(approval.request.executionOriginV1.externalActionExecutionAuthorization?.requesterAccountContext)
+                                .toBeDefined();
                             expect((await docker.readInvocations()).some(call => call.args[0] === 'container' && call.args[1] === 'rm')).toBe(false);
                             const decided = await fixture.invoke('approval.request.decide', { artifactId: approvalArtifactId, decision: 'approve' });
                             expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed' } });
-                            const paused = await storage.execute({ operation: 'get', runId });
-                            if (typeof paused !== 'object' || paused === null || !('run' in paused)) throw new Error('Missing paused Workflow');
-                            const pausedRun = WorkflowRunSummaryV1Schema.parse(paused.run);
-                            await storage.execute({ operation: 'resume', runId, expectedRevision: pausedRun.revision });
-                            const resumed = await createAutomationClaimClient({ token: home.token }).claimRun({
-                                machineId: home.machineId, leaseDurationMs: 300_000, scope: 'workflow' });
-                            if (!resumed.run) throw new Error('Resumed cleanup Workflow not claimed');
-                            cleanupExecution = coordinate({ runId, attempt: resumed.run.attempt, expectedRevision: resumed.run.revision,
-                                accountCurrentness: resumed.accountCurrentness,
-                                acceptedEnvelope: resumed.run.workflowAcceptedSnapshotEnvelope ?? undefined, signal: cleanupAbort.signal });
-                            expect(await cleanupExecution).toMatchObject({ state: 'succeeded' });
+                            expect(await execution).toMatchObject({ state: 'succeeded' });
                             expect(receiver.readReceivedMethods()).toContain(`${home.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`);
                         });
                     } finally {

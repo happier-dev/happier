@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import nacl from 'tweetnacl';
 import { expect, it, vi } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -6,7 +7,13 @@ import { configuration } from '@/configuration';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
-import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { admitRequesterAccountActionContext, prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
@@ -14,7 +21,12 @@ import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalEx
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
-it('a stored Workflow root retains its own custody instead of borrowing the deciding Account credential box', async () => {
+it.each([
+  { sealed: false, mode: 'plain' as const, workflow: true },
+  { sealed: true, mode: 'plain' as const, workflow: true },
+  { sealed: true, mode: 'e2ee' as const, workflow: true },
+  { sealed: true, mode: 'plain' as const, workflow: false },
+])('a stored root retains original custody without borrowing the deciding Account ($mode, sealed=$sealed, workflow=$workflow)', async ({ sealed, mode, workflow }) => {
   await withConfiguredDaemonTestHome({ prefix: 'workflow-approval-custody-' }, async () => {
     const app = fastify();
     const requests: string[] = [];
@@ -25,10 +37,17 @@ it('a stored Workflow root retains its own custody instead of borrowing the deci
     const accountId = 'owner';
     const homeId = 'srv_workflow';
     const machineId = 'workflow-machine';
-    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
-    const features = registerAccountHomeHttp(app, { accountId, serverId: homeId, settings: {} });
+    const encryption = mode === 'plain' ? null : { type: 'legacy' as const, secret: nacl.randomBytes(32) };
+    const credentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption };
+    const features = registerAccountHomeHttp(app, { accountId, serverId: homeId, settings: {}, encryptionMode: mode });
+    if (encryption) {
+      const content = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+        material: encryption, payload: {}, randomBytes: nacl.randomBytes }) };
+      app.addHook('preSerialization', async (request, _reply, payload) => request.url === '/v2/account/settings'
+        ? { content, version: 1 } : payload);
+    }
     app.get('/v1/features', async () => ({ ...features, capabilities: { ...features.capabilities,
-      encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }));
+      encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: mode } } }));
     const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async resource => {
       const url = new URL(resource instanceof Request ? resource.url : String(resource));
       if (url.origin !== endpoint) throw new Error('Unexpected Home');
@@ -40,17 +59,19 @@ it('a stored Workflow root retains its own custody instead of borrowing the deci
     const envelope = { v: 1 as const, requestId: 'workflow-request', target, input: {} };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'workflow-root', binding: {
       serverIdentityId: homeId, accountId, custodianAccountId: accountId,
-      authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: mode,
       actionId: 'deployments.deploy', requestId: envelope.requestId, machineId,
       installationId: installation.installationId, target, admittedMachineRole: 'manage',
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-      workflowActionOrigin: { runId: 'workflow-run', requestId: envelope.requestId },
+      ...(workflow ? { workflowActionOrigin: { runId: 'workflow-run', requestId: envelope.requestId } } : {}),
     } });
     const binding = authorization.binding;
     if (!('authentication' in binding)) throw new Error('Expected an Account root');
     // HTTP and the installation filesystem are the only boundaries. The
     // requester admission, private projection and replay preparer stay real.
     let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> | undefined;
+    let workflowRequester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> | undefined;
+    let disposePrepared: (() => void | Promise<void>) | undefined;
     try {
       requester = await runWithServerHttpBaseUrl(endpoint, () => admitRequesterAccountActionContext({ authorization: {
         ...authorization, binding: { ...binding, workflowActionOrigin: undefined },
@@ -60,15 +81,40 @@ it('a stored Workflow root retains its own custody instead of borrowing the deci
         });
       expect(requester).not.toBeNull();
       if (!requester) throw new Error('Requester admission unavailable');
+      const carried = sealExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
+        credentials: { ...encodeStoredCredentials(credentials), token: credentials.token },
+        installationPublicKey: Buffer.from(installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes });
+      if (sealed) workflowRequester = await runWithServerHttpBaseUrl(endpoint, () => admitRequesterAccountActionContext({
+        authorization: carried, credentials, serverId: configuration.activeServerId, serverIdentityId: homeId,
+        serverHttpBaseUrl: endpoint, isCurrent: async () => true }));
+      if (sealed && !workflowRequester) throw new Error('Workflow requester admission unavailable');
+      // A persisted Ask retains only the original encrypted receiver box, never private ports or clear credentials.
+      const stored = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(workflowRequester?.authorization ?? authorization)));
+      if (sealed && workflow) expect(stored.requesterAccountContext).toEqual(carried.requesterAccountContext);
+      else expect(stored.requesterAccountContext).toBeUndefined();
+      expect(JSON.stringify(stored)).not.toContain(credentials.token);
+      const executor = createActionExecutor(createUnavailableActionTransportDeps());
       const prepare = createDaemonApprovalExecutionAuthorizationPreparer({ machineId,
         serverId: configuration.activeServerId, serverBaseUrl: endpoint,
         requesterAccountContext: requester, daemonWorkSignal: new AbortController().signal,
         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }),
+        prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+          purpose: { kind: 'external_action' }, machineId, installationId: installation.installationId,
+          installationPrivateKey: Buffer.from(installation.privateKey, 'base64url'), serverId: configuration.activeServerId,
+          serverIdentityId: homeId, serverHttpBaseUrl: endpoint, isCurrent: async () => true,
+          // The installed ingress has already admitted this receiver's custody.
+          isCustodyCurrent: async () => true,
+          ownCredentials: credentials,
+          createExecutor: () => executor }),
       });
-      const prepared = await prepare({ authorization });
-      expect(prepared?.authorization).toMatchObject({ token: authorization.token,
-        binding: { workflowActionOrigin: binding.workflowActionOrigin } });
-      expect(prepared?.authorization.requesterAccountContext).toBeUndefined();
+      const prepared = await prepare({ authorization: stored });
+      disposePrepared = prepared?.dispose;
+      expect(prepared?.authorization).toMatchObject({ token: authorization.token, binding });
+      if (sealed && workflow) expect(prepared?.authorization.requesterAccountContext).toEqual(carried.requesterAccountContext);
+      else expect(prepared?.authorization.requesterAccountContext).toBeUndefined();
+      if (sealed) {
+        expect(readRequesterAccountActionContext(prepared?.authorization)?.credentials).toMatchObject(credentials);
+      } else expect(readRequesterAccountActionContext(prepared?.authorization)).toBeNull();
       if (!prepared) throw new Error('Expected replay authorization');
       const action = { pluginId: 'acme.external', localId: 'upload' };
       // The durable root above has no private ports. Its real replay preparer
@@ -86,7 +132,6 @@ it('a stored Workflow root retains its own custody instead of borrowing the deci
           expect(isHostRequesterUnrestrictedOwner(identity)).toBe(true);
           return { ok: true, result: null };
         } });
-      await prepared?.dispose?.();
-    } finally { await requester?.dispose(); await channel.close(); fetchBoundary.mockRestore(); restore(); await app.close(); }
+    } finally { await disposePrepared?.(); await workflowRequester?.dispose(); await requester?.dispose(); await channel.close(); fetchBoundary.mockRestore(); restore(); await app.close(); }
   });
 });

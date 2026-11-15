@@ -377,7 +377,9 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
             && value.sessionInputSource.sourceTurnId === binding.sessionActionOrigin.sourceTurnId
             && value.sessionInputSource.via === 'action'
           : binding.workflowActionOrigin
-            ? value.authority === 'account_automation' && value.surface === 'agent' && value.caller.kind === 'host'
+            ? value.authority === 'account_automation' && value.surface === 'agent'
+              && (value.caller.kind === 'host' || value.caller.kind === 'workflowRun'
+                && value.caller.runId === binding.workflowActionOrigin.runId)
               && binding.target.kind === 'machine' && isExternalActionMachineWorkflowActionIdV1(binding.actionId)
               && value.sessionId === undefined && value.sessionInputSource == null
             : ((value.surface === 'ui' || value.surface === 'cli'

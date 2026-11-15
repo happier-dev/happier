@@ -1722,7 +1722,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             ? await readWorkflowActionPolicyContext({ admission, actionId, input, context }) : null;
           if (!policy || !admission) return { context,
             invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
-          // Keep the signed receiving caller; only the accepted Run owns its selected policy.
+          // The signed root admits the effect; its accepted Run owns caller provenance and selected policy.
           context = { ...context, ...policy };
         } catch {
           return { context, invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };

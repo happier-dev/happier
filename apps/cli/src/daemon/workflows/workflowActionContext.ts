@@ -67,13 +67,13 @@ export function buildWorkflowActionContext(execution: Readonly<{
   };
 }
 
-/** Restore selected policy at installed ingress from the same accepted invocation the coordinator used. */
+/** Restore caller and selected policy from the accepted invocation the coordinator used. */
 export async function readWorkflowActionPolicyContext(input: Readonly<{
   admission: WorkflowActionAdmission;
   context: ActionExecutorContext;
 }> & (Readonly<{ actionId: string; input: unknown; phase?: 'dispatch' }>
   | Readonly<{ phase: 'approval_replay'; resolveContext: ReturnType<typeof createWorkflowActionContextResolver> }>)
-): Promise<Pick<ActionExecutorContext, 'approvalProfileId' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'agentStartContext'> | null> {
+): Promise<Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestAttributionV1' | 'approvalProfileId' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'agentStartContext'> | null> {
   const { admission, context } = input;
   const invocation = await admission.readActionInvocation(input.phase ?? 'dispatch');
   const execution = invocation?.progress.execution;
@@ -100,7 +100,8 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
     ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }) };
   const policy = input.phase === 'approval_replay'
     ? await input.resolveContext(executionContext) : buildWorkflowActionContext(executionContext);
-  return { approvalProfileId: policy.approvalProfileId, approvalProfileChange: policy.approvalProfileChange,
+  return { actionCaller: policy.actionCaller, actionRequestAttributionV1: policy.actionRequestAttributionV1,
+    approvalProfileId: policy.approvalProfileId, approvalProfileChange: policy.approvalProfileChange,
     callerPermissionMode: policy.callerPermissionMode, workflowSessionInput: policy.workflowSessionInput,
     ...(policy.agentStartContext ? { agentStartContext: policy.agentStartContext } : {}) };
 }

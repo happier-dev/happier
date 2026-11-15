@@ -556,7 +556,11 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
       const { requesterAccountContext: _controllerSealed, ...facts } = managedFiniteWake;
       return facts;
     })() : undefined;
-    const wire = { ...root, ...(wakeFacts ? { managedFiniteWake: wakeFacts } : {}) };
+    // A Workflow Ask reopens this original receiver box after persistence;
+    // its signed origin cannot borrow the deciding Account's credential custody.
+    const wire = { ...root, ...(wakeFacts ? { managedFiniteWake: wakeFacts } : {}),
+      ...(root.binding.workflowActionOrigin && parsed.data.requesterAccountContext
+        ? { requesterAccountContext: parsed.data.requesterAccountContext } : {}) };
     phase = 'requester_account_projection';
     const authorization = await trace('requester.account_projection', () => projectAdmittedAccountCustody({ authorization: wire,
       ...(input.invocation ? { invocation: input.invocation } : {}),

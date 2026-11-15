@@ -8,7 +8,8 @@ import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORI
   type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedOriginV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { resolveApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { prepareWorkflowRunDataKeyV1, type WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
@@ -31,13 +32,14 @@ import { DeploymentTeardownInputV1Schema } from '@happier-dev/protocol/deploymen
 afterEach(() => vi.restoreAllMocks());
 
 async function pausedWorkflow(encrypted = false, dispatch = false, originalAuthorization?: ExternalActionExecutionAuthorizationV1,
-  preparedContent?: Readonly<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>) {
+  preparedContent?: Readonly<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>,
+  origin: WorkflowAcceptedOriginV1 = { kind: 'direct' }) {
   const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
   const accountId = 'owner';
   const invocationId = 'exact-child';
   const requestId = `${runId}/${invocationId}/0`;
   const actionId = 'deployments.teardown' as const;
-  const actionInput = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+  const actionInput = { serverId: 'identity', environmentId: 'environment', targetLinkId: 'target',
     expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'teardown', reason: 'manual' as const, ...preparedContent };
   const definition = { version: 1, inputs: [], defaults: {}, blocks: [
     { kind: 'action', id: 'teardown', actionId, input: {} },
@@ -48,7 +50,7 @@ async function pausedWorkflow(encrypted = false, dispatch = false, originalAutho
       actionContract: { inputSchema: { type: 'object' }, outputSchema: {} } }],
     frozenChildren: {}, workDepth: dispatch ? 3 : 0, metadata: null, inputs: {}, machineId: 'host', executionTarget: { kind: 'session' },
     workspaceTarget: { project: { machineId: 'host', directory: '/repo', checkoutRootPath: '/repo' } },
-    source: { kind: 'inline' }, origin: { kind: 'direct' },
+    source: { kind: 'inline' }, origin,
     authorization: { admittedPermissionCeiling: 'default', principal: originalAuthorization && 'credentialId' in originalAuthorization.binding
       ? { kind: 'api', accountId, principalId: originalAuthorization.binding.principalId,
         credentialId: originalAuthorization.binding.credentialId } : { kind: 'host' },
@@ -232,10 +234,27 @@ describe('accepted Workflow Action approval replay', () => {
     if (!admission) throw new Error('Expected admitted Workflow invocation');
     const policy = await readWorkflowActionPolicyContext({ admission, actionId: h.actionId,
       input: h.actionInput, context: h.context });
+    expect(policy).toMatchObject({ actionCaller: { kind: 'workflowRun', runId: h.runId,
+      authorization: admission.accepted.authorization } });
     expect(policy?.workflowSessionInput).toEqual({ purpose: 'invocation', runId: h.runId,
       invocationRecordId: 'exact-child', workDepth: 3 });
     expect(await readWorkflowActionPolicyContext({ admission, actionId: h.actionId,
       input: { ...h.actionInput, environmentId: 'other' }, context: h.context })).toBeNull();
+  });
+
+  it('retains the admitted agent requester when restoring a Machine-only Workflow Ask', async () => {
+    const attribution = { requestRef: 'origin-request', requester: { serverId: 'home', accountId: 'owner' },
+      persona: { serverId: 'home', sessionId: 'origin-session' }, origin: null };
+    const h = await pausedWorkflow(false, true, undefined, undefined, { kind: 'direct',
+      actionRequestAttributionV1: attribution });
+    const admission = await h.readAdmission({ runId: h.runId, context: h.context });
+    if (!admission) throw new Error('Expected admitted Workflow invocation');
+    const policy = await readWorkflowActionPolicyContext({ admission, actionId: h.actionId,
+      input: h.actionInput, context: h.context });
+    expect(policy).toMatchObject({ actionRequestAttributionV1: attribution });
+    expect(resolveApprovalRequesterConfirmationV1({ actionId: h.actionId, input: h.actionInput, required: false,
+      context: { ...h.context, ...policy, runtimeAccountId: h.accountId, serverIdentityId: 'home' } }))
+      .toEqual({ ok: true, requesterConfirmation: null });
   });
 
   it.each([false, true])('opens an exact paused invocation only for signed approval replay (encrypted=%s)', async encrypted => {
