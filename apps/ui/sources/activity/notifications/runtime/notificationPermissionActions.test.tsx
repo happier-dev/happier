@@ -958,7 +958,7 @@ describe('Native notification permission entry points', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('offers pending-request review only after foregrounding a legacy unknown recovery notice', async () => {
+    it.each([false, true])('offers pending-request review only after foregrounding a legacy unknown recovery notice (navigation failure: %s)', async (navigationFails) => {
         const emitter = createReactNativeAppStateEmitter('background');
         const restoreAppState = emitter.install(AppState);
         const { MMKV } = await import('react-native-mmkv');
@@ -976,8 +976,10 @@ describe('Native notification permission entry points', () => {
             const review = boundary.alert.mock.calls[0]?.[2]?.find((button) => button.onPress);
             expect(review?.onPress).toEqual(expect.any(Function));
             expect(boundary.push).not.toHaveBeenCalled();
+            if (navigationFails) boundary.push.mockImplementationOnce(() => { throw new Error('Inbox navigation unavailable'); });
             await act(async () => { review?.onPress?.(); });
             await vi.waitFor(() => expect(boundary.push).toHaveBeenCalledWith('/(app)/inbox'));
+            await vi.waitFor(() => expect(boundary.alert).toHaveBeenCalledTimes(navigationFails ? 2 : 1));
             expect(boundary.rpc).not.toHaveBeenCalled();
             expect(consumeNotificationPermissionRecoveryNeeded()).toBe(false);
         } finally { await hook.unmount(); restoreAppState(); }
@@ -1006,16 +1008,58 @@ describe('Native notification permission entry points', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('refuses known recovery after its saved Home credentials change Account before review', async () => {
+    it('keeps a newer Expo session click after an older recovery Review Home switch finishes', async () => {
         const target = await resolveNotificationPermissionTarget(serverUrl);
-        expect(target).not.toBeNull();
+        if (!target) throw new Error('Fixture recovery target unavailable');
+        markNotificationPermissionRecoveryNeeded(target);
+        const other = profiles.upsertServerProfile({ serverUrl: 'https://other.example.test', name: 'Other' });
+        profiles.setActiveServerId(other.id, { scope: 'device' });
+        await TokenStorage.setCredentials({ token: token('other-account') });
+        const refreshStarted = createDeferred<void>();
+        const releaseRefresh = createDeferred<void>();
+        const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true,
+            refreshAuth: async () => { refreshStarted.resolve(); await releaseRefresh.promise; },
+        }));
+        try {
+            await vi.waitFor(() => expect(boundary.alert).toHaveBeenCalledTimes(1));
+            const review = boundary.alert.mock.calls[0]?.[2]?.find((button) => button.onPress);
+            expect(review?.onPress).toEqual(expect.any(Function));
+            await act(async () => { review?.onPress?.(); });
+            await refreshStarted.promise;
+            const current = response('expo.modules.notifications.actions.DEFAULT', 'newer-after-recovery');
+            const newer = { ...current, notification: { request: { ...current.notification.request,
+                content: { data: { ...current.notification.request.content.data, accountId: target.accountId, sessionId: 'newer' } } } } };
+            await act(async () => { boundary.listener?.(newer); });
+            await vi.waitFor(() => expect(boundary.navigate).toHaveBeenCalledTimes(1));
+            expect(String(boundary.navigate.mock.calls[0]?.[0])).toContain('/session/newer?');
+            await act(async () => { releaseRefresh.resolve(); });
+            await flushHookEffects();
+            expect(boundary.push).not.toHaveBeenCalled();
+            expect(boundary.navigate).toHaveBeenCalledTimes(1);
+            expect(boundary.alert).toHaveBeenCalledTimes(1);
+            expect(boundary.rpc).not.toHaveBeenCalled();
+        } finally {
+            releaseRefresh.resolve();
+            await hook.unmount();
+        }
+    });
+
+    it.each(['Account', 'Home identity'] as const)('refuses known recovery after its saved %s changes before review', async (changedScope) => {
+        const target = await resolveNotificationPermissionTarget(serverUrl);
+        if (!target) throw new Error('Fixture recovery target unavailable');
         markNotificationPermissionRecoveryNeeded(target);
         const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }));
         try {
             await vi.waitFor(() => expect(boundary.alert).toHaveBeenCalledTimes(1));
             const review = boundary.alert.mock.calls[0]?.[2]?.find((button) => button.onPress);
             expect(review?.onPress).toEqual(expect.any(Function));
-            await TokenStorage.setCredentials({ token: token('replacement-account') });
+            if (changedScope === 'Account') {
+                await TokenStorage.setCredentials({ token: token('replacement-account') });
+            } else {
+                const changed = profiles.setServerProfileIdentityForUrl(serverUrl, 'srv_replacement_notification_identity');
+                expect(changed?.serverIdentityId).toBe('srv_replacement_notification_identity');
+                expect(profiles.getServerProfileById(target.serverId)?.serverUrl).toBe(serverUrl);
+            }
             await act(async () => { review?.onPress?.(); });
             await vi.waitFor(() => expect(boundary.alert).toHaveBeenCalledTimes(2));
             expect(boundary.push).not.toHaveBeenCalled();

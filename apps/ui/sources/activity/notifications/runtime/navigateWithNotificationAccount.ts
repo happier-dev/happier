@@ -1,7 +1,7 @@
 import { AppState } from 'react-native';
 
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { areServerProfileIdentifiersEquivalent, getActiveServerSnapshot, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { EXPO_NOTIFICATIONS_LOAD_TIMEOUT_MS } from '@/utils/platform/loadExpoNotifications';
@@ -13,6 +13,7 @@ export type NotificationAccountNavigationTarget = Readonly<{
     serverUrl: string | null;
     route: string;
     accountId?: string | null;
+    expectedScope?: ServerAccountScope;
 }>;
 
 let latestNavigationIntent: symbol | null = null;
@@ -39,15 +40,21 @@ export async function navigateWithNotificationAccount(params: Readonly<{
     // A newer click owns navigation while an earlier Home admission is pending.
     const isInactive = () => params.isDisposed() || !intent.isCurrent();
     if (isInactive()) return;
-    if (!target.accountId) {
-        navigate();
-        return;
-    }
+    const accountId = target.expectedScope?.accountId ?? target.accountId;
     try {
+        if (!target.expectedScope && !accountId) {
+            navigate();
+            return;
+        }
+        if (target.expectedScope && target.accountId && target.accountId !== accountId) {
+            throw new Error('Notification Account does not match');
+        }
         const scope = target.serverUrl
-            ? await resolveNotificationPermissionTarget(target.serverUrl, target.accountId)
+            ? await resolveNotificationPermissionTarget(target.serverUrl, accountId)
             : null;
-        if (!scope) throw new Error('Notification Account unavailable');
+        if (!scope || (target.expectedScope && !areServerAccountScopesEqual(scope, target.expectedScope))) {
+            throw new Error('Notification Account unavailable');
+        }
         const routeServerId = readSessionRouteServerId({
             serverId: new URL(target.route, 'https://happier.invalid').searchParams.get('serverId'),
         });
@@ -61,7 +68,7 @@ export async function navigateWithNotificationAccount(params: Readonly<{
         if (isInactive()) return;
         const currentProfile = getServerProfileById(scope.serverId);
         if (!currentProfile || !areServerAccountScopesEqual(
-            await resolveNotificationPermissionTarget(currentProfile.serverUrl, target.accountId), scope,
+            await resolveNotificationPermissionTarget(currentProfile.serverUrl, accountId), scope,
         ) || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, scope.serverId)) {
             throw new Error('Notification Account changed');
         }

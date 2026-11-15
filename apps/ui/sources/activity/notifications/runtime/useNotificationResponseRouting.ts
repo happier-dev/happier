@@ -3,8 +3,7 @@ import * as React from 'react';
 import { AppState, Platform } from 'react-native';
 
 import { normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { areServerProfileIdentifiersEquivalent, getActiveServerSnapshot, getActiveServerUrl, getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { getActiveServerUrl, getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 import {
@@ -18,7 +17,7 @@ import { readSessionIdFromPathname } from '@/components/sessions/shell/readSessi
 import { executeNotificationPermissionAction } from './notificationPermissionActions';
 import { markNotificationResponseHandled, wasNotificationResponseHandled } from './notificationResponseConsumption';
 import { consumeNotificationPermissionRecoveryNotice, markNotificationPermissionRecoveryNeeded } from './notificationPermissionRecovery';
-import { findSavedNotificationServerProfile as findSavedServerProfileForUrl, resolveNotificationPermissionTarget } from './resolveNotificationPermissionTarget';
+import { findSavedNotificationServerProfile as findSavedServerProfileForUrl } from './resolveNotificationPermissionTarget';
 
 import { isNotificationExecutionAction, isUnsafeNotificationServerUrl, parseNotificationTap } from '../notificationRouting';
 import { claimNotificationNavigationIntent, navigateWithNotificationAccount, type NotificationAccountNavigationTarget, type NotificationNavigationIntent } from './navigateWithNotificationAccount';
@@ -62,39 +61,17 @@ export function useNotificationResponseRouting(params: Readonly<{
                     {
                         text: t('notifications.actions.reviewPendingRequests'),
                         onPress: () => {
-                            fireAndForget((async () => {
-                                try {
-                                    if (AppState.currentState !== 'active') return;
-                                    if (notice.target) {
-                                        const target = notice.target;
-                                        const profile = getServerProfileById(target.serverId);
-                                        if (!profile || !areServerAccountScopesEqual(
-                                            await resolveNotificationPermissionTarget(profile.serverUrl, target.accountId), target,
-                                        )) throw new Error('Recovery target unavailable');
-                                        if (AppState.currentState !== 'active') return;
-                                        // Switching is an explicit presentation action. Recheck
-                                        // after it settles so changed credentials/Home cannot
-                                        // redirect the user into another Account's Inbox.
-                                        await setActiveServerAndSwitch({
-                                            serverId: profile.id,
-                                            scope: 'device',
-                                            refreshAuth: refreshAuthRef.current,
-                                        });
-                                        const currentProfile = getServerProfileById(target.serverId);
-                                        if (!currentProfile || !areServerAccountScopesEqual(
-                                            await resolveNotificationPermissionTarget(currentProfile.serverUrl, target.accountId), target,
-                                        ) || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, target.serverId)) {
-                                            throw new Error('Recovery target changed');
-                                        }
-                                    }
-                                    if (AppState.currentState === 'active') router.push('/(app)/inbox');
-                                } catch {
-                                    console.warn('[notifications] Permission action review target unavailable');
-                                    if (AppState.currentState === 'active') {
-                                        Modal.alert(t('common.error'), t('notifications.permissionActionReviewUnavailable'));
-                                    }
-                                }
-                            })(), { tag: 'notificationPermissionAction.review' });
+                            const profile = notice.target ? getServerProfileById(notice.target.serverId) : null;
+                            fireAndForget(navigateWithNotificationAccount({
+                                target: {
+                                    serverUrl: profile?.serverUrl ?? null,
+                                    route: '/(app)/inbox',
+                                    expectedScope: notice.target ?? undefined,
+                                },
+                                navigate: () => { router.push('/(app)/inbox'); },
+                                refreshAuth: refreshAuthRef.current,
+                                isDisposed: () => disposed || AppState.currentState !== 'active',
+                            }), { tag: 'notificationPermissionAction.review' });
                         },
                     },
                 ]);
