@@ -308,9 +308,9 @@ export interface ItemProps {
      */
     accessoryMaxWidth?: 'half' | 'row';
     /**
-     * The adaptive accessory is a page select field. In a narrow row (a pane column or a phone) where
-     * the label's column and the field's narrowest trigger still fit, the field drops to its content
-     * width and stays trailing its label instead of moving beneath it.
+     * The adaptive accessory is a page select field. In a narrow pane column where the label's column
+     * and the field's narrowest trigger still fit, the field drops to its content width and stays
+     * trailing its label instead of moving beneath it; on a phone it moves beneath (the phone rule).
      */
     fieldAccessory?: boolean;
     /** With `fieldAccessory`: width of sibling controls sharing the accessory slot (a glyph and its gap), kept out of the field's room. */

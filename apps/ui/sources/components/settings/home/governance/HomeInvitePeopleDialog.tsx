@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { resolveTeamsCreateGuidance } from '@/components/settings/teams/collection/teamsCreateGuidance';
@@ -9,9 +8,7 @@ import { TeamSection } from '@/components/settings/teams/TeamSection';
 import { teamsCreatePath } from '@/components/settings/teams/teamsRoutes';
 import { TeamInvitationForm } from '@/components/settings/teams/invitations/TeamInvitationCreateScreen';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { NavigationHeaderActions } from '@/components/ui/layout/NavigationHeaderActions';
-import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
+import type { PageHeaderPrimaryAction } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -273,27 +270,19 @@ export function canInvitePeople(context: HomeAdministrationContext): boolean {
     return context.projection.teamsEnabled && context.projection.capabilities.manageAllTeams;
 }
 
-/** The page action that opens the dialog (Overview and People; Teams makes it its primary). */
-export const HomeInvitePeopleButton = React.memo(function HomeInvitePeopleButton(props: Readonly<{
-    context: HomeAdministrationContext;
-    testID: string;
-}>) {
-    const { theme } = useUnistyles();
-    const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
-    if (!canInvitePeople(props.context)) return null;
-    const serverId = props.context.scope.serverId;
-    const open = () => { presentHomeInvitePeople({ serverId }); };
-    // On a phone the page's action goes to the navigation header, so the Home's name keeps the width.
-    if (chromeShowsTitle) {
-        return <NavigationHeaderActions primary={{ title: t('homeGovernance.invite.action'), onPress: open, testID: props.testID }} />;
-    }
-    return (
-        <RoundButton
-            testID={props.testID}
-            display="secondary"
-            title={t('homeGovernance.invite.action')}
-            leading={<Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.primary} />}
-            onPress={open}
-        />
-    );
-});
+/**
+ * Invite people as a page's primary action (Overview and People). Their labs draw it quietly beside the
+ * page's content on wide layouts; on a phone it is the navigation header's primary, so the Home's name
+ * keeps the width. Absent when this viewer cannot invite.
+ */
+export function homeInvitePeopleAction(context: HomeAdministrationContext, testID: string): PageHeaderPrimaryAction | undefined {
+    if (!canInvitePeople(context)) return undefined;
+    const serverId = context.scope.serverId;
+    return {
+        title: t('homeGovernance.invite.action'),
+        icon: 'plus',
+        presentation: 'secondary',
+        testID,
+        onPress: () => { presentHomeInvitePeople({ serverId }); },
+    };
+}

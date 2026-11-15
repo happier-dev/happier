@@ -236,6 +236,30 @@ describe('PageHeader primary action placement', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
     });
 
+    // TH-VISUAL-ACCEPT-7 D8: a page whose lab draws its main action quietly on wide layouts (a preset's
+    // "Create one", Home's "Invite people") put it in `actions`, so a phone folded it into "More actions".
+    // The page declares it as its primary with a secondary wide presentation instead.
+    it('draws a secondary primary quietly on wide layouts and keeps it the header primary on phones', async () => {
+        const quiet = (showsTitle: boolean) => (
+            <NavigationTitleChromeProvider showsTitle={showsTitle}>
+                <PageHeader title="Preset" primaryAction={{ title: 'Create one', icon: 'plus', presentation: 'secondary',
+                    onPress: () => {}, testID: 'preset-create' }} />
+            </NavigationTitleChromeProvider>
+        );
+        (router.state as { navigation: unknown }).navigation = { setOptions, getParent: () => ({ setOptions: parentSetOptions }) };
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const wide = await renderScreen(quiet(false));
+        const button = wide.findAllByType(RoundButton as never).find(node => node.props.testID === 'preset-create');
+        expect(button?.props.display).toBe('secondary');
+        await wide.unmount();
+        const phone = await renderScreen(quiet(true));
+        expect(phone.findHostByTestId('preset-create')).toBeNull();
+        // The header's own control, not an entry behind "More actions".
+        const inHeader = await renderScreen(lastHeaderRight() as unknown as React.ReactElement);
+        expect(inHeader.findHostByTestId('preset-create')).not.toBeNull();
+        expect(inHeader.findHostByTestId('page-header-actions.trigger')).toBeNull();
+    });
+
     it('hands the primary action to the native header on phones instead of stacking it under the purpose', async () => {
         const onPress = vi.fn();
         const screen = await renderScreen(header(true, onPress));

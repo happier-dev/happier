@@ -56,7 +56,14 @@ export type PageHeaderMetaFact = Readonly<{
 export type PageHeaderTextEditor = InlineTextEditor;
 
 /** The page's one primary action (Create, Save): in the page on wide layouts, in the native header on phones. */
-export type PageHeaderPrimaryAction = NavigationHeaderAction;
+export type PageHeaderPrimaryAction = NavigationHeaderAction & Readonly<{
+    /**
+     * `secondary`: a page whose lab keeps its main action quiet beside its content (a preset's "Create one",
+     * Home's "Invite people") draws it as a secondary button on wide layouts. It is the page's primary all the
+     * same, so a phone puts it in the navigation header rather than folding it into "More actions".
+     */
+    presentation?: 'secondary';
+}>;
 
 export type PageHeaderProps = Readonly<{
     title: string;
@@ -319,12 +326,13 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
 export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryAction; quiet?: boolean }>) {
     const { action } = props;
     const { theme } = useUnistyles();
+    const display = props.quiet ? 'inverted' : action.presentation === 'secondary' ? 'secondary' : undefined;
     return (
         <RoundButton
             testID={action.testID}
-            display={props.quiet ? 'inverted' : undefined}
+            display={display}
             leading={action.icon ? (
-                <Icon name={action.icon} size={ICON_SIZE.xs} color={props.quiet ? theme.colors.text.primary : theme.colors.button.primary.tint} />
+                <Icon name={action.icon} size={ICON_SIZE.xs} color={display ? theme.colors.text.primary : theme.colors.button.primary.tint} />
             ) : undefined}
             title={action.title}
             accessibilityLabel={action.title}

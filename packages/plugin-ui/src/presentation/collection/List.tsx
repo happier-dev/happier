@@ -1,7 +1,7 @@
 import { useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
-import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
+import { Dimensions, Platform, View, type TextStyle, type ViewStyle } from 'react-native';
 
 import {
   resolveHappierUiPalette,
@@ -23,6 +23,7 @@ import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../inter
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { HappierDivider } from '../content/Foundation.js';
 import { HAPPIER_PAGE_METRICS, isHappierPageRowAccessoryStacked, isHappierPageRowNarrow } from '../layout/pageMetrics.js';
+import { resolveHappierViewportClass } from '../layout/viewportClass.js';
 import type { HappierPageRowMetrics } from '../layout/pageRowMetrics.js';
 import { HappierPageRowFieldLayoutContext } from '../layout/pageRowField.js';
 import { resolveHappierPageRowDetailLayout } from '../layout/pageRowDetail.js';
@@ -576,8 +577,10 @@ export function HappierListSection({
 }
 
 /**
- * A field in a narrow row takes the space its row leaves beside the label, on a phone as on a pane;
- * it stacks beneath only when that space is below the field's narrowest trigger. The label keeps the
+ * A field in a narrow pane column takes the space its row leaves beside the label; it stacks beneath
+ * only when that space is below the field's narrowest trigger. On a phone it always stacks: DESIGN's
+ * phone rule lets only a switch, a short value or a chevron sit beside a label, and a select field is
+ * wider (the window is read here, once per row measure, so no row subscribes to it). The label keeps the
  * smaller of the shared column and what it really needs: the measured natural width of a short name,
  * plus its title accessory (a marker) and that accessory's gap. A short-named row is not held to 200px,
  * unless a description sits under the name: the description shares the label's column, so the shared
@@ -607,6 +610,8 @@ export function resolveHappierPageRowFieldMaxWidth(input: Readonly<{
 }>): number | null {
   const width = input.rowWidthPx;
   if (!isHappierPageRowNarrow(width) || width === null) return null;
+  const window = Dimensions?.get?.('window');
+  if (window && resolveHappierViewportClass(window) === 'compact') return null;
   const naturalLabelPx = input.titleNaturalWidthPx == null || input.titleAccessoryWidthPx === null
     ? null
     : input.titleNaturalWidthPx + (input.titleAccessoryWidthPx === undefined

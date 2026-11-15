@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -141,35 +140,23 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         description: model.description,
         leading: model.mark,
         meta: model.meta,
-        actions: (
-          <View style={styles.actions}>
-            {model.onCreateOne ? (
-              <RoundButton
-                testID={`${props.testID}.createOne`}
-                size="normal"
-                display="secondary"
-                title={t('machinePresets.createOne')}
-                leading={
-                  <Icon
-                    name="plus"
-                    size={14}
-                    color={theme.colors.text.primary}
-                  />
-                }
-                onPress={model.onCreateOne}
-              />
-            ) : null}
-            {model.onMore ? (
-              <IconButton
-                testID={`${props.testID}.more`}
-                iconName="dots-three"
-                accessibilityLabel={t('common.more')}
-                variant="plain"
-                onPress={model.onMore}
-              />
-            ) : null}
-          </View>
-        ),
+        // Create one is the page's primary: a phone keeps it in the navigation header, never in "More actions".
+        ...(model.onCreateOne ? { primaryAction: {
+          title: t('machinePresets.createOne'),
+          icon: 'plus' as const,
+          presentation: 'secondary' as const,
+          onPress: model.onCreateOne,
+          testID: `${props.testID}.createOne`,
+        } } : {}),
+        actions: model.onMore ? (
+          <IconButton
+            testID={`${props.testID}.more`}
+            iconName="dots-three"
+            accessibilityLabel={t('common.more')}
+            variant="plain"
+            onPress={model.onMore}
+          />
+        ) : undefined,
       }}
     >
       <MachineSetupContents
@@ -372,11 +359,3 @@ export function ManagedFieldRow(
     />
   );
 }
-
-const styles = StyleSheet.create(() => ({
-  actions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-}));

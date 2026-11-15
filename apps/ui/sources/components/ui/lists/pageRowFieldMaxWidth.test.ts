@@ -8,17 +8,20 @@ vi.mock('react-native', async () => {
 const { resolveHappierPageRowFieldMaxWidth } = await import('@happier-dev/plugin-ui/presentation');
 
 describe('resolveHappierPageRowFieldMaxWidth', () => {
-  it('keeps a short-named phone row inline: the measured name and the field fit one line', async () => {
+  // DESIGN "Phones recompose rather than shrink": only a switch, a short value or a chevron sits beside a
+  // label on a phone; a select field is wider, so it moves beneath (TH-VISUAL-ACCEPT-7 D11: "New accounts"
+  // kept "Using the Home defaults ⌄" beside it at 390). A pane column of the same width keeps it trailing.
+  it('moves a field beneath its label on a phone even when a short name leaves it room', async () => {
     const { Dimensions } = await import('react-native');
     const window = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
     try {
-      // A 358px phone row: 358 - 32 - 14 - 120 (name and "changed") leaves 192px for the field.
-      expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 120 })).toBe(192);
-      // The shared 200px column leaves 112px: below the field's narrowest trigger, so it stacks.
+      expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 120 })).toBeNull();
       expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16 })).toBeNull();
     } finally {
       window.mockRestore();
     }
+    // The same 358px row in a pane column on a wider window: 358 - 32 - 14 - 120 leaves 192px for the field.
+    expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 120 })).toBe(192);
   });
 
   // A 323px pane row (the Work pane at its 340px default) with the page sheet's 16px insets.
@@ -32,7 +35,7 @@ describe('resolveHappierPageRowFieldMaxWidth', () => {
   });
 
   it('moves a field beneath its label once its value fills the room beside it, so the value reads in full', () => {
-    // "Incoming messages" beside "All allowed messages" on a 358px phone row: 172px is above the
+    // "Incoming messages" beside "All allowed messages" on a 358px pane row: 172px is above the
     // narrowest trigger, but the value filled the box at 172px and was cut ("All allowed …").
     expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 140 })).toBe(172);
     expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 140, fieldSaturatedAtPx: 172 })).toBeNull();
@@ -41,7 +44,7 @@ describe('resolveHappierPageRowFieldMaxWidth', () => {
   });
 
   it('keeps the shared column for a short name with a description, so the description is not squeezed beside the field', () => {
-    // "MCP" over "Follow the product default for this surface." on a 358px phone row: the description
+    // "MCP" over "Follow the product default for this surface." on a 358px pane row: the description
     // shares the label's column, so the 200px column holds and the field moves beneath, as its siblings do.
     expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 34, described: true })).toBeNull();
     expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 34 })).toBe(278);

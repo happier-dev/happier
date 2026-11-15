@@ -21,7 +21,7 @@ import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountD
 import { t, usePreferredLanguage, type SupportedLanguage } from '@/text';
 
 import { HomeAdministrationSection } from './HomeAdministrationSection';
-import { HomeInvitePeopleButton } from './HomeInvitePeopleDialog';
+import { homeInvitePeopleAction } from './HomeInvitePeopleDialog';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { homeAdministrationAccountPath } from './homeAdministrationRoutes';
 import { HomeAccountStatusPill } from './HomeAccountStatusPill';
@@ -341,9 +341,7 @@ export const HomeAdministrationPeopleScreen = React.memo(function HomeAdministra
             title={t('homeGovernance.people')}
             description={t('homeGovernance.pages.people')}
             presentation="virtualized-list"
-            pageActions={(context) => ({
-                actions: <HomeInvitePeopleButton context={context} testID="home-people-invite" />,
-            })}
+            pageActions={(context) => ({ primaryAction: homeInvitePeopleAction(context, 'home-people-invite') })}
         >
             {/* A credential change here means a different roster and different
                 search answers; the shell discards this section for the previous

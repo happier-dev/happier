@@ -185,7 +185,7 @@ describe('DropdownMenu page field', () => {
         expect(inline.screen.findAllByType(HappierFieldBoxTrigger)[0]!.props.span).not.toBe('row');
     });
 
-    it('keeps a select trailing its label at its content width in a narrow column on a pane or a phone, and stacks it below the narrowest trigger', async () => {
+    it('keeps a select trailing its label at its content width in a narrow pane column, and stacks it below the narrowest trigger and on every phone', async () => {
         const fieldBox = (screen: Awaited<ReturnType<typeof renderField>>['screen']) => screen.findAllByType('View' as never)
             .map((node) => flattenTestStyle(node.props.style))
             .find((style) => typeof style.borderWidth === 'number' && style.borderWidth > 0 && typeof style.borderRadius === 'number')!;
@@ -209,12 +209,12 @@ describe('DropdownMenu page field', () => {
         expect(await layoutRow(pane.screen, 370)).toBe('column');
         standardCleanup();
 
-        // A phone is held to the same rule as a pane (`resolveHappierPageRowFieldMaxWidth`): the field
-        // takes the room beside the label, and moves beneath only when that room is below its narrowest trigger.
+        // DESIGN's phone rule (TH-VISUAL-ACCEPT-7 D11): only a switch, a short value or a chevron sits beside a
+        // label on a phone, so a select moves beneath even where a pane column of that width keeps it trailing.
         viewport.width = 430;
         viewport.height = 932;
         const phone = await renderField({ selectedId: 'round-robin' });
-        expect(await layoutRow(phone.screen, 398)).not.toBe('column');
+        expect(await layoutRow(phone.screen, 398)).toBe('column');
         expect(await layoutRow(phone.screen, 358)).toBe('column');
     });
 });

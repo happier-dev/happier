@@ -38,7 +38,7 @@ import { useHomeRuntimeExecutor } from '../runtime/homeRuntimeExecutor';
 import { HomeAdministrationSection } from './HomeAdministrationSection';
 import { HomeConsoleBackScope, useHomeConsoleNavigation } from './HomeConsoleNavigation';
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
-import { HomeInvitePeopleButton } from './HomeInvitePeopleDialog';
+import { homeInvitePeopleAction } from './HomeInvitePeopleDialog';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import {
     homeAdministrationEmailPath,
@@ -218,7 +218,7 @@ const HomeOverviewHeader = React.memo(function HomeOverviewHeader(props: Readonl
             alwaysShowTitle
             title={context.homeName || t('homeGovernance.title')}
             description={t('homeGovernance.overviewPage.description')}
-            actions={<HomeInvitePeopleButton context={context} testID="home-overview-invite" />}
+            primaryAction={homeInvitePeopleAction(context, 'home-overview-invite')}
             meta={showsRole ? [{
                 key: 'role',
                 testID: 'home-admin-viewer-role',
