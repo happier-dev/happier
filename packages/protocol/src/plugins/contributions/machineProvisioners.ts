@@ -107,6 +107,11 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   platforms: z.array(z.enum(['darwin', 'linux', 'win32'])).check(z.minLength(1), z.refine(values => new Set(values).size === values.length)),
   /** All required endpoints allow browser access and bootstrap needs no native SSH transport. */
   browserReachable: z.optional(z.boolean()),
+  sessionPlacement: z.optional(z.strictObject({
+    kind: z.enum(['controller-local', 'remote']),
+    when: z.optional(InputPredicateSchema),
+    supportsAgentNativeSandbox: z.optional(z.boolean()),
+  })),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
   actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), resize: z.optional(local()), snapshot: z.optional(local()), renew: z.optional(local()) }),
@@ -133,6 +138,10 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   reconciliation: z.optional(z.strictObject({ nativeOperationSchema: strictPortableSchema, action: local(), cleanup: z.optional(local()),
     continueAcquire: z.optional(z.literal(true)) })),
 }).check(z.superRefine((descriptor, context) => {
+  if (descriptor.sessionPlacement?.when && readInputPredicatePaths(descriptor.sessionPlacement.when)
+    .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
+    context.addIssue({ code: 'custom', path: ['sessionPlacement', 'when'], message: 'Session placement predicates require declared launch selector paths.' });
+  }
   if (Boolean(descriptor.actions.snapshot) !== Boolean(descriptor.snapshot)) {
     context.addIssue({ code: 'custom', path: ['snapshot'], message: 'A snapshot Action requires its coverage and cost declaration.' });
   }
@@ -162,6 +171,16 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   }
 })));
 export type MachineProvisionerContributionV1 = z.infer<typeof MachineProvisionerContributionV1Schema>;
+
+/** Placement is declared by the provider, independently of billing and transport. */
+export function readMachineProvisionerSessionPlacementV1(provisioner: MachineProvisionerContributionV1, launchInput: unknown): NonNullable<MachineProvisionerContributionV1['sessionPlacement']> | null {
+  const placement = provisioner.sessionPlacement;
+  return placement && (!placement.when || evaluateInputPredicate(placement.when, launchInput)) ? placement : null;
+}
+
+export function readMachineProvisionerAgentNativeSandboxSupportV1(provisioner: MachineProvisionerContributionV1, launchInput: unknown): boolean {
+  return readMachineProvisionerSessionPlacementV1(provisioner, launchInput)?.supportsAgentNativeSandbox === true;
+}
 
 /** Missing declarations explicitly mean unsupported, including older cloud adapters. */
 export function readMachineProvisionerResizeCapabilityV1(descriptor: Pick<MachineProvisionerContributionV1, 'resize'>, dimension: MachineProvisionerSizeDimensionV1) {

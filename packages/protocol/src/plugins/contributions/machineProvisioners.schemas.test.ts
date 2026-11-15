@@ -20,6 +20,31 @@ import { PluginContributesV2Schema } from './v2.js';
 import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
 
+it('resolves declared local launch variants independently of billing and native transport', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  const local = provisioners.MachineProvisionerContributionV1Schema.parse({ ...descriptor,
+    sessionPlacement: { kind: 'controller-local', when: { op: 'eq', path: 'timeoutMs', value: 60000 }, supportsAgentNativeSandbox: true },
+  });
+  expect(provisioners.readMachineProvisionerSessionPlacementV1(local, { timeoutMs: 60000 })?.kind).toBe('controller-local');
+  expect(provisioners.readMachineProvisionerAgentNativeSandboxSupportV1(local, { timeoutMs: 60000 })).toBe(true);
+  expect(provisioners.readMachineProvisionerSessionPlacementV1(local, { timeoutMs: 120000 })).toBeNull();
+  expect(provisioners.readMachineProvisionerAgentNativeSandboxSupportV1(local, { timeoutMs: 120000 })).toBe(false);
+  expect(provisioners.readMachineProvisionerSessionPlacementV1(descriptor, {})).toBeNull();
+  const remote = provisioners.MachineProvisionerContributionV1Schema.parse({ ...descriptor,
+    sessionPlacement: { kind: 'remote', supportsAgentNativeSandbox: true },
+  });
+  expect(provisioners.readMachineProvisionerSessionPlacementV1(remote, {})?.kind).toBe('remote');
+  expect(provisioners.readMachineProvisionerAgentNativeSandboxSupportV1(remote, {})).toBe(true);
+  expect(provisioners.readMachineProvisionerAgentNativeSandboxSupportV1(descriptor, {})).toBe(false);
+});
+
+it('rejects placement predicates referring to undeclared launch inputs at contribution admission', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor,
+    sessionPlacement: { kind: 'controller-local', when: { op: 'truthy', path: 'undeclared' } },
+  }).success).toBe(false);
+});
+
 it('admits an exact snapshot operand and preserves truthful root-disk coverage through the public role', () => {
   const native = defineProtocolObject({ id: defineProtocolNumber({ integer: true, minimum: 1 }) }, { policy: 'closed' });
   const roles = provisioners.defineMachineProvisionerSchemas({ launch: native, resource: native });
