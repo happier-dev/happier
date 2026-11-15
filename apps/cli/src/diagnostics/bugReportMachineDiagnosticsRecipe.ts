@@ -12,9 +12,10 @@ import { resolveAgentNativeSessionLogPathThroughCatalog } from '@/backends/catal
 import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 
 import type { BugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
+import { DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT } from '@/utils/logs/logRetention';
 
 export const BUG_REPORT_MACHINE_DIAGNOSTICS_RECIPE = {
-  daemonLogLimit: 5,
+  daemonLogLimit: DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT,
   stackLogLimit: 3,
   stackRuntimeMaxChars: 400_000,
 } as const;

@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises';
+import { lstat, readdir, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 export type PruneLogsByCountParams = Readonly<{
@@ -7,6 +7,8 @@ export type PruneLogsByCountParams = Readonly<{
   /** Entries matching this suffix are ignored entirely (not pruned, not counted against keepCount). */
   excludeSuffix?: string;
   keepCount: number;
+  /** Total bytes the matching logs, kept paths included, may use; the oldest others go first. */
+  maxTotalBytes?: number;
   keepPath?: string;
   keepPaths?: readonly string[];
 }>;
@@ -35,8 +37,31 @@ export async function pruneLogsByCount(params: PruneLogsByCountParams): Promise<
       .sort(sortNewestFirst);
 
     const keep = new Set(entries.slice(0, keepCount));
-    if (keepName !== null) keep.add(keepName);
-    for (const name of keepNames) keep.add(name);
+    const exempt = new Set(keepNames);
+    if (keepName !== null) exempt.add(keepName);
+    for (const name of exempt) keep.add(name);
+
+    if (params.maxTotalBytes !== undefined) {
+      // Keep the newest data: once the budget is spent, every older log goes, even a smaller one.
+      const sized: { name: string; size: number; mtimeMs: number }[] = [];
+      let totalBytes = 0;
+      for (const name of entries) {
+        if (!keep.has(name)) continue;
+        try {
+          const stat = await lstat(join(params.dir, name));
+          if (exempt.has(name)) totalBytes += stat.size;
+          else sized.push({ name, size: stat.size, mtimeMs: stat.mtimeMs });
+        } catch {
+          // A log removed concurrently uses no budget.
+        }
+      }
+      let overBudget = false;
+      for (const entry of sized.sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+        overBudget ||= totalBytes + entry.size > params.maxTotalBytes;
+        if (overBudget) keep.delete(entry.name);
+        else totalBytes += entry.size;
+      }
+    }
 
     let pruned = 0;
     for (const entry of entries) {

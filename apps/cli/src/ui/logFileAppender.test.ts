@@ -102,4 +102,23 @@ describe('BufferedFileAppender', () => {
       appender.flushSync();
     }).not.toThrow();
   });
+
+  it('keeps the newest whole lines within twice the tail window when writing far past it', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    appendFileMock.mockReset();
+    appendFileMock.mockImplementation(actual.appendFile);
+    const appender = new BufferedFileAppender({ filePath, flushIntervalMs: 60_000, maxBufferedBytes: 1, tailWindowBytes: 100 });
+    const lines = Array.from({ length: 200 }, (_, index) => `line ${String(index).padStart(3, '0')}\n`);
+
+    for (const line of lines) {
+      appender.append(line);
+      await waitFor(() => existsSync(filePath) && readFileSync(filePath, 'utf8').endsWith(line));
+    }
+
+    const content = readFileSync(filePath, 'utf8');
+    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(200);
+    expect(content.endsWith(lines.slice(-10).join(''))).toBe(true);
+    expect(lines.join('').endsWith(content)).toBe(true);
+    expect(content.startsWith('line ')).toBe(true);
+  });
 });

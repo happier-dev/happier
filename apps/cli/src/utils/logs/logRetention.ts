@@ -12,12 +12,32 @@
  * support/debugging scenarios.
  */
 
+import { DEFAULT_BUG_REPORTS_CAPABILITIES } from '@happier-dev/protocol';
+
 export const DAEMON_LOG_SUFFIX = '-daemon.log';
 export const LOG_FILE_SUFFIX = '.log';
 
 export const DEFAULT_DAEMON_LOG_KEEP_COUNT = 50;
 export const DEFAULT_SESSION_LOG_KEEP_COUNT = 200;
 export const DEFAULT_CRASHED_SESSION_LOG_KEEP_COUNT = 20;
+
+/** Recent log files the diagnostic surfaces name (doctor listing, bug-report machine diagnostics). */
+export const DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT = 5;
+export const DIAGNOSTIC_RECENT_SESSION_LOG_COUNT = 10;
+
+/**
+ * Newest bytes one log file keeps readable. A bug report reads at most this tail of the
+ * daemon and session logs: it is the default per-artifact upload limit, the most a user can share.
+ */
+export const LOG_FILE_TAIL_WINDOW_BYTES = DEFAULT_BUG_REPORTS_CAPABILITIES.maxArtifactBytes;
+
+/**
+ * Total bytes all logs in the logs directory may use: every file a diagnostic surface can name
+ * (recent daemon + session logs, preserved crashed-session logs) with its full shareable tail.
+ * Oldest logs go first; the current, live and crashed logs are never removed for it.
+ */
+export const LOG_TOTAL_BUDGET_BYTES = LOG_FILE_TAIL_WINDOW_BYTES
+  * (DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT + DIAGNOSTIC_RECENT_SESSION_LOG_COUNT + DEFAULT_CRASHED_SESSION_LOG_KEEP_COUNT);
 
 type EnvLike = Readonly<Record<string, string | undefined>>;
 

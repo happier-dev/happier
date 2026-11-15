@@ -7,6 +7,7 @@ import { listDaemonLogFiles } from '@/ui/logger';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot';
+import { DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT } from '@/utils/logs/logRetention';
 
 export type BugReportMachineDiagnosticsSnapshot = {
   daemonState: {
@@ -163,7 +164,7 @@ async function collectStackBugReportContext(input: {
 export async function collectBugReportMachineDiagnosticsSnapshot(
   options: CollectMachineDiagnosticsOptions = {},
 ): Promise<BugReportMachineDiagnosticsSnapshot> {
-  const daemonLogLimit = Number.isFinite(options.daemonLogLimit) ? Math.max(1, Math.floor(options.daemonLogLimit!)) : 5;
+  const daemonLogLimit = Number.isFinite(options.daemonLogLimit) ? Math.max(1, Math.floor(options.daemonLogLimit!)) : DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT;
   const stackLogLimit = Number.isFinite(options.stackLogLimit) ? Math.max(1, Math.floor(options.stackLogLimit!)) : 3;
   const stackRuntimeMaxChars = Number.isFinite(options.stackRuntimeMaxChars)
     ? Math.max(4_096, Math.floor(options.stackRuntimeMaxChars!))
