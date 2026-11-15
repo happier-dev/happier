@@ -441,6 +441,28 @@ describe('HubSetupSection on Home (tiles)', () => {
         expect(artifact.layout().hidden).toEqual([]);
     });
 
+    it('keeps the open machine setup through first-Machine arrival until the person closes it', async () => {
+        state.dismissed = true;
+        const screen = await renderSection();
+        await act(async () => { screen.pressByTestId('hub-setup.addMachine.action'); });
+        expect(screen.findByTestId('hub-setup.add-machine-panel')).toBeTruthy();
+
+        const machine = createMachineFixture({ id: 'first-machine', metadata: null });
+        const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
+        await act(async () => {
+            storage.setState({ machines: { [machine.id]: machine },
+                machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        });
+        await flushHookEffects({ cycles: 3 });
+
+        // Completion removes a closed invitation, but must not unmount the flow's success/next step.
+        expect(screen.findByTestId('hub-setup.add-machine-panel')).toBeTruthy();
+        await act(async () => { screen.pressByTestId('hub-setup.add-machine-panel.close'); });
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findByTestId('hub-setup.add-machine-panel')).toBeNull();
+        expect(screen.findByTestId('hub-setup.addMachine')).toBeNull();
+    });
+
     it('Another computer offers a Home pairing link first and keeps the terminal as an alternative', async () => {
         state.dismissed = true;
         const screen = await renderSection();

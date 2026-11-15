@@ -115,6 +115,7 @@ type SlotProps = Readonly<{
     onCustomize: () => void;
     placeholder: string;
     composerSuggestions: HubComposerSuggestionsPresentation;
+    onMachineSetupOpenChange: (open: boolean) => void;
     tracker: NearViewportTracker;
     homeSurface: WidgetSurfaceRefV1 | null;
     widgetDrag: Pick<SessionSurfaceEntityBinding, 'scope' | 'isCurrent' | 'admitWidgetMovement'> | null;
@@ -176,6 +177,7 @@ function HubBuiltinSlot(props: SlotProps & Readonly<{
     return (
         <View testID={`home-hub.section.${props.section.id}`} style={definition.card ? styles.card : undefined} {...hover.hoverProps}>
             {definition.render({ menu, placeholder: props.placeholder, frameStyle, composerSuggestions: props.composerSuggestions,
+                onMachineSetupOpenChange: props.onMachineSetupOpenChange,
                 ...(widgetPresentation ? { widgetPresentation } : {}) })}
         </View>
     );
@@ -438,10 +440,11 @@ export const HomeHub = React.memo(function HomeHub() {
 });
 
 const HomeHubContent = React.memo(function HomeHubContent() {
+    const [machineSetupOpen, setMachineSetupOpen] = React.useState(false);
     const observedGuidance = useSessionGettingStartedGuidanceBaseModel();
     const homeUnavailable = useActiveHomeUnavailable();
     const columnSaysHome = useAppShellColumn().columnVisible;
-    const guidance = { ...observedGuidance, kind: useHomeHubGuidanceKind(observedGuidance.kind, homeUnavailable) };
+    const guidance = { ...observedGuidance, kind: useHomeHubGuidanceKind(observedGuidance.kind, homeUnavailable, machineSetupOpen) };
     const greeting = useReturningGreeting();
     const title = useHomeGreeting();
     const layout = useHomeHubLayout();
@@ -611,7 +614,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const wallpaper = atmosphere.source === 'picture' && atmosphere.picture.layout === 'wallpaper';
     const atmosphereSuggestions = firstRun ? 'none' as const : wallpaper || (planetSource && placement === 'rise') ? 'pills' as const : 'links' as const;
     const composerSuggestions = heroActive || firstRun ? atmosphereSuggestions : 'tiles' as const;
-    const slotProps = { layout, topLevelIds, onCustomize: openCustomize, placeholder: greeting.subtitle, composerSuggestions, tracker, widgetDrag,
+    const slotProps = { layout, topLevelIds, onCustomize: openCustomize, placeholder: greeting.subtitle, composerSuggestions, onMachineSetupOpenChange: setMachineSetupOpen, tracker, widgetDrag,
         customizing: customizeOpen, showGrips: customizeOpen, groupOperations, movementSourceItem: movement.sourceItem, homeSurface: surface };
     // Only the acknowledged Account layout can place the composer in the hero.
     const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;

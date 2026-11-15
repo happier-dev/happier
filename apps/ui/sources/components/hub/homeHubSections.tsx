@@ -32,6 +32,7 @@ export type HomeHubBuiltinSection = HomeHubBuiltinDefinition & Readonly<{
         frameStyle: WidgetFrameStyle;
         /** How the composer's suggestions stand here: Home decides it once, for the hero and for a moved composer. */
         composerSuggestions: HubComposerSuggestionsPresentation;
+        onMachineSetupOpenChange?: (open: boolean) => void;
         /** A card's declared size where it landed (`resolveHomeHubCardPresentation`). */
         widgetPresentation?: HubSectionProps['widgetPresentation'];
     }>) => React.ReactNode;
@@ -67,7 +68,7 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         icon: 'check-circle',
         description: () => t('homeIndex.builtIn'),
         title: () => t('settingsOverview.setupTitle'),
-        render: ({ menu }) => <HubSetupSection menu={menu} />,
+        render: ({ menu, onMachineSetupOpenChange }) => <HubSetupSection menu={menu} onMachineSetupOpenChange={onMachineSetupOpenChange} />,
     },
     {
         ...builtin('automations'),

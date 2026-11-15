@@ -15,6 +15,20 @@ afterEach(async () => {
     home = undefined;
 });
 
+it('keeps first-Machine setup on Home while open and releases offline guidance when closed', async () => {
+    type Input = { kind: SessionGettingStartedDecisionKind; machineSetupOpen: boolean };
+    const hook = await renderHook<ReturnType<typeof useHomeHubGuidanceKind>, Input>(
+        ({ kind, machineSetupOpen }) => useHomeHubGuidanceKind(kind, false, machineSetupOpen),
+        { initialProps: { kind: 'connect_machine', machineSetupOpen: false } satisfies Input },
+    );
+    expect(hook.getCurrent()).toBe('connect_machine');
+    await hook.rerender({ kind: 'connect_machine', machineSetupOpen: true });
+    await hook.rerender({ kind: 'start_daemon', machineSetupOpen: true });
+    expect(hook.getCurrent()).toBe('connect_machine');
+    await hook.rerender({ kind: 'start_daemon', machineSetupOpen: false });
+    expect(hook.getCurrent()).toBe('start_daemon');
+});
+
 it('retains only this Account lifetime’s committed hub during a reach failure and preserves fresh setup', async () => {
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://home-continuity.test', accountId: 'account-a' }], route: () => undefined });
     const server = home.homes.a!;

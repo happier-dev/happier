@@ -93,14 +93,15 @@ const PROGRESS_METER_WIDTH = 72;
  */
 export const HubSetupSection = React.memo(function HubSetupSection(props: HubSectionProps & Readonly<{
     presentation?: SetupPresentation;
+    onMachineSetupOpenChange?: (open: boolean) => void;
 }>) {
     return props.presentation === 'checklist'
         ? <HubSetupChecklist menu={props.menu} />
-        : <HubSetupTiles menu={props.menu} />;
+        : <HubSetupTiles menu={props.menu} onMachineSetupOpenChange={props.onMachineSetupOpenChange} />;
 });
 
 /** The entries this device shows, from the canonical owners of each step's truth. */
-function useSetupEntries(presentation: SetupPresentation) {
+function useSetupEntries(presentation: SetupPresentation, openPanelId: string | null = null) {
     const router = useRouter();
     const auth = useAuth();
     const { hidden, dismiss } = useHomeSetupDismissals();
@@ -127,9 +128,10 @@ function useSetupEntries(presentation: SetupPresentation) {
     ];
     const open = new Set(steps.filter((step) => !step.done).map((step) => step.id));
 
-    // The first-machine step leaves both surfaces once the canonical machine list confirms it.
-    // Home keeps the affordance while that list is still unknown, without claiming completion.
-    const addMachine: SetupEntry | null = !machinesWidgetCarriesSetup && ((tiles && !machineListSettled) || open.has('addMachine')) ? {
+    // The closed first-machine invitation leaves once the list confirms it. Its open flow stays
+    // mounted through arrival so the person can use the success card's next step, then close it.
+    const addMachine: SetupEntry | null = (tiles && openPanelId === 'addMachine')
+        || (!machinesWidgetCarriesSetup && ((tiles && !machineListSettled) || open.has('addMachine'))) ? {
         id: 'addMachine',
         testID: 'hub-setup.addMachine',
         icon: 'hard-drives',
@@ -262,8 +264,15 @@ function useKeyedLatestCallbacks(): (key: string, run: () => void) => () => void
 }
 
 /** Home's Get set up: tiles on a computer, rows on a phone; each grows in place when it can. */
-function HubSetupTiles(props: HubSectionProps) {
-    const { entries, runAction, tileLayout, hidden, dismiss } = useSetupEntries('tiles');
+function HubSetupTiles(props: HubSectionProps & Readonly<{ onMachineSetupOpenChange?: (open: boolean) => void }>) {
+    const [openPanelId, setOpenPanelId] = React.useState<string | null>(null);
+    const onMachineSetupOpenChange = props.onMachineSetupOpenChange;
+    const handleOpenChange = React.useCallback((id: string | null) => {
+        setOpenPanelId(id);
+        onMachineSetupOpenChange?.(id === 'addMachine');
+    }, [onMachineSetupOpenChange]);
+    React.useEffect(() => () => onMachineSetupOpenChange?.(false), [onMachineSetupOpenChange]);
+    const { entries, runAction, tileLayout, hidden, dismiss } = useSetupEntries('tiles', openPanelId);
     const stable = useKeyedLatestCallbacks();
     const phone = tileLayout === 'row';
     // The Homes journeys' steps lead the row (lab order: J6 laptop nudge, J2 reconcile, K1 "Already
@@ -325,7 +334,7 @@ function HubSetupTiles(props: HubSectionProps) {
         ...(askHappierItem ? [askHappierItem] : []),
     ];
     if (allItems.length === 0) return null;
-    return <HubSetupGridView items={allItems} phone={phone} menu={props.menu} />;
+    return <HubSetupGridView items={allItems} phone={phone} menu={props.menu} onOpenChange={handleOpenChange} />;
 }
 
 /** "Get set up" as drawn: the title, ⋯, and the set-up blocks (the `/dev/home` fixture draws it too). */
@@ -335,10 +344,11 @@ export function HubSetupGridView(props: Readonly<{
     menu?: React.ReactNode;
     /** Dev fixtures only: a block drawn already open (the live Home lets the grid own opening). */
     openId?: string | null;
+    onOpenChange?: (id: string | null) => void;
 }>) {
     return (
         <ItemGroup title={t('settingsOverview.setupTitle')} surface="none" action={props.menu}>
-            <SetupBlockGrid testID="hub-setup.grid" items={props.items} columns={props.phone ? 1 : 3} openId={props.openId} />
+            <SetupBlockGrid testID="hub-setup.grid" items={props.items} columns={props.phone ? 1 : 3} openId={props.openId} onOpenChange={props.onOpenChange} />
         </ItemGroup>
     );
 }
