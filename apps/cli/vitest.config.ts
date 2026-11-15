@@ -80,7 +80,7 @@ export default defineConfig({
         // CLI "unit" tests include real filesystem/process work; 5s default is too tight under fork pools.
         testTimeout: 30_000,
         hookTimeout: 30_000,
-        setupFiles: [resolve('../../scripts/testing/vitestAgentSetup.mjs'), './src/vitestSetup.ts'],
+        setupFiles: [resolve('../../scripts/testing/vitestAgentSetup.mjs'), resolve('./src/vitestSetup.ts')],
         sequence: { setupFiles: 'list' },
         include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
         exclude: [

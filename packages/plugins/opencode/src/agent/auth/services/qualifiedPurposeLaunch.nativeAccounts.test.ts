@@ -9,6 +9,8 @@ import { createKimiConnectedAccountRuntime } from '../../../../../kimi/src/conne
 import { xaiConnectedAccountRuntime } from '../../../../../grok/src/connectedAccounts/runtime.js';
 import { museAccountRuntimeDefinition } from '../../../../../muse/src/connectedAccounts/museAccountRuntime.js';
 import { geminiConnectedAccountRuntime } from '../../../../../gemini/src/connectedAccounts/runtime.js';
+import { openAiConnectedAccountRuntime } from '../../../../../openai/src/auth/connectedAccountRuntime.js';
+import { OPENAI_CONNECTED_ACCOUNT_SERVICE } from '../../../../../openai/src/auth/service.js';
 import { materializeGithubCredential } from '../../../../../scm-github/src/auth/credentialMaterialization.js';
 import { prepareOpenCodeQualifiedConnectedAccounts } from './qualifiedPurposeLaunch.js';
 import { createOpenCodeAgentRuntime } from '../../runtime/nativeRuntime.js';
@@ -36,6 +38,9 @@ const cases = [
     context: producerContext({ apiKey: 'fake-google-selected' }), key: 'fake-google-selected' },
   { purpose: 'github-copilot', service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, provider: 'github-copilot', model: 'gpt-4o',
     materialize: materializeGithubCredential, context: producerContext({ token: 'gho_fake_selected' }), key: 'gho_fake_selected' },
+  { purpose: 'openai-api-key', service: OPENAI_CONNECTED_ACCOUNT_SERVICE, provider: 'openai', model: 'gpt-4.1-mini',
+    materialize: openAiConnectedAccountRuntime.materialize,
+    context: producerContext({ token: 'fake-openai-selected' }), key: 'fake-openai-selected' },
 ] as const;
 const serviceAccountJson = JSON.stringify({ type: 'service_account', client_id: '123', client_email: 'fake@example.iam.gserviceaccount.com',
   project_id: 'fake-project', private_key: 'fake-private-key' });
@@ -181,8 +186,12 @@ describe('OpenCode selected native accounts', () => {
     } finally { await session.dispose(); }
     if (adcFile) await expect(stat(adcFile)).rejects.toMatchObject({ code: 'ENOENT' });
   });
-  it.each([null, 'openai/gpt-5'])('requires a selected-account model before acquiring secrets (%s)', async modelId => {
-    const f = launchFixture(cases[1]);
+  it.each([
+    { account: cases[1], modelId: null },
+    { account: cases[1], modelId: 'openai/gpt-5' },
+    { account: cases[4], modelId: 'gpt-4.1-mini' },
+  ])('requires a qualified selected-account model before acquiring secrets ($modelId)', async ({ account, modelId }) => {
+    const f = launchFixture(account);
     const launch = request('openai', 'gpt-5');
     await expect(prepareOpenCodeQualifiedConnectedAccounts({ ...launch, configuration: {
       ...launch.configuration, model: { value: modelId, updatedAtMs: 1 },

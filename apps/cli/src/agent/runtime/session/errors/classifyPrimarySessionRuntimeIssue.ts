@@ -587,6 +587,12 @@ export function classifyPrimarySessionRuntimeIssue(
   const declaredSource = input.cause === 'session_error'
     ? readDeclaredRuntimeIssueSource(input.error)
     : null;
+  const unclassifiedFailureCause = !failureCause.success
+    || failureCause.data.failureReason === 'unknown'
+    || failureCause.data.failureReason === 'unclassified_provider_error';
+  // Native adapters decode codes; authentication semantics stay with this classifier.
+  const diagnosticAuthenticationFailure = typedDiagnostic !== null && unclassifiedFailureCause
+    && classifyProviderOutputFailure(typedDiagnostic.code).authenticationError;
   const brokerCode = errorCode.kind === 'string'
     ? ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(errorCode.value) : null;
   const brokerStartupCode = brokerCode?.success && declaredSource === 'team_credential' ? brokerCode.data : null;
@@ -657,6 +663,8 @@ export function classifyPrimarySessionRuntimeIssue(
     ? declaredSource
     : input.cause === 'process_exit' && agentProcessExitAfterSwitch
     ? 'agent_process_exit_after_switch'
+    : diagnosticAuthenticationFailure
+    ? 'auth_error' as const
     : input.cause === 'status_error'
     ? refineProviderFailureSource(input, input.fallbackSource ?? causeSourceMap[input.cause])
     : causeSourceMap[input.cause ?? 'unknown'] ?? 'unknown';
@@ -674,7 +682,8 @@ export function classifyPrimarySessionRuntimeIssue(
     : catalogUnavailable ? DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE
     : metadataPrivacyUpgradeRequired ? 'metadata_privacy_upgrade_required'
     : promptPreparationCode ?? startupFailureCode ?? sessionPreparationFailureCode ?? providerFailure?.code ?? (temporaryThrottle ? 'provider_temporary_throttle'
-      : source === 'agent_session_error' ? typedDiagnostic?.code ?? source : source);
+      : source === 'agent_session_error' || (source === 'auth_error' && diagnosticAuthenticationFailure)
+        ? typedDiagnostic?.code ?? source : source);
   const nativeAuthAgentId = readSessionRuntimeIssueNativeAuthAgentId({ code, source, ...(agentId ? { agentId } : {}) });
   const nativeAuthAgentTitle = nativeAuthAgentId ? resolveAgentDisplayTitle(nativeAuthAgentId) : null;
   const nativeAuthPreview = nativeAuthAgentId
@@ -718,8 +727,9 @@ export function classifyPrimarySessionRuntimeIssue(
       ...(failureCause.success ? failureCause.data : {}),
       failureReason: nativeConstructionFailure.failureReason,
       ...(nativeFailureMessage === undefined ? {} : { providerErrorMessage: nativeFailureMessage }) } }
-      : input.cause === 'status_error' && source === 'auth_error' && (!failureCause.success || failureCause.data.failureReason === 'unclassified_provider_error') ? {
-      failureCause: { ...readNativeStartupFailureDetail(input.error),
+      : (input.cause === 'status_error' || diagnosticAuthenticationFailure) && source === 'auth_error'
+        && unclassifiedFailureCause ? {
+      failureCause: { ...(input.cause === 'status_error' ? readNativeStartupFailureDetail(input.error) : { providerErrorCode: typedDiagnostic?.code }),
         ...(failureCause.success ? failureCause.data : {}),
         phase: 'authentication', failureReason: 'authentication_required' },
     } : failureCause.success ? { failureCause: {

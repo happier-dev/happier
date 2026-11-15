@@ -808,7 +808,8 @@ function createRuntimeOperations(params: Readonly<{
       ? {
         diagnostic: providerFailureDiagnostic,
         evidence: buildPiProviderFailureLogEvidence(record),
-        failureCause: projectSessionRuntimeFailureCause(record, 'turn', 'agent.turn'),
+        failureCause: providerFailureDiagnostic.failureCause
+          ?? projectSessionRuntimeFailureCause(record, 'turn', 'agent.turn'),
       }
       : null;
     if (
@@ -1362,7 +1363,8 @@ function createPiConversationRuntime(params: Readonly<{
           });
         }
         const reason = providerFailure
-          ? diagnostic(providerFailure.code, providerFailure.sanitizedPreview, error)
+          ? diagnostic(providerFailure.code, providerFailure.sanitizedPreview,
+            providerFailure.failureCause ? { failureCause: providerFailure.failureCause } : error)
           : diagnostic(
             outcomeUnknown ? 'pi_input_outcome_unknown' : 'pi_input_rejected',
             error instanceof Error ? error.message : String(error),

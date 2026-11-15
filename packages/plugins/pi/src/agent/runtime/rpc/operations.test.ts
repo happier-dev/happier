@@ -20,6 +20,8 @@ import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol
 import { InteractionTransientAuthorRequestV1Schema } from '@happier-dev/plugin-sdk/interactions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
 import { createAgentSessionTurnInvariant } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
@@ -3027,6 +3029,81 @@ describe('createPiRuntimeOperations', () => {
     }));
     expect(JSON.stringify(failed)).not.toContain('First attempt overloaded');
     await runtime.dispose();
+  });
+
+  it.each([
+    { disposition: 'admitted', providerCode: 'API_KEY_INVALID', knownCause: false, source: 'auth_error', failureReason: 'authentication_required' },
+    { disposition: 'rejected', providerCode: 'API_KEY_INVALID', knownCause: false, source: 'auth_error', failureReason: 'authentication_required' },
+    { disposition: 'admitted', providerCode: 'SERVICE_DISABLED', knownCause: false, source: 'agent_session_error', failureReason: 'unknown' },
+    { disposition: 'admitted', providerCode: 'API_KEY_INVALID', knownCause: true, source: 'agent_session_error', failureReason: 'permission_denied' },
+  ] as const)('preserves a Gemini invalid-key cause through a $disposition Pi prompt ($providerCode, known=$knownCause) and recovers', async ({ disposition, providerCode, knownCause, source, failureReason }) => {
+    const privateText = 'PI_PRIVATE_PROVIDER_ECHO_SENTINEL';
+    // Recorded r1115b Google error shape; only the external Pi process is substituted.
+    const providerError = JSON.stringify({ error: {
+      code: 400,
+      message: privateText,
+      status: 'INVALID_ARGUMENT',
+      details: [
+        { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: providerCode,
+          domain: 'googleapis.com', metadata: { service: 'generativelanguage.googleapis.com' } },
+        { '@type': 'type.googleapis.com/google.rpc.LocalizedMessage', locale: 'en-US', message: privateText },
+      ],
+    } });
+    const capture: Capture = { specs: [], written: [], warnings: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    try {
+      const prompt = sendPrompt(runtime, 'hello');
+      await waitForWrittenCount(capture, 1);
+      if (disposition === 'admitted') {
+        await ackLastCommand(capture);
+        await expect(prompt).resolves.toEqual({ status: 'admitted' });
+        await emit(capture, { type: 'message_end',
+          ...(knownCause ? { failureCause: { phase: 'turn', failureReason: 'permission_denied', providerErrorCode: 'known_denial' } } : {}),
+          message: {
+          role: 'assistant', provider: 'google', content: [], stopReason: 'error', errorMessage: providerError,
+        } });
+        await emit(capture, { type: 'agent_end', willRetry: false });
+      } else {
+        await failLastCommand(capture, providerError);
+        await expect(prompt).resolves.toMatchObject({ status: 'rejected', retryable: false });
+      }
+      const failure = events.find(event => event.kind === (disposition === 'admitted' ? 'turn-failed' : 'input-rejected'));
+      if (!failure || (failure.kind !== 'turn-failed' && failure.kind !== 'input-rejected')) throw new Error('Missing Pi failure');
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'pi', error: failure.diagnostic });
+      expect(issue).toMatchObject({ source, failureCause: {
+        phase: source === 'auth_error' ? 'authentication' : 'turn', failureReason,
+        ...(knownCause ? { providerErrorCode: 'known_denial' } : source === 'auth_error' ? { providerErrorCode: providerCode } : {}),
+        ...(knownCause ? {} : { httpStatus: 400 }),
+      } });
+      if (source !== 'auth_error' && !knownCause) expect(issue.failureCause).not.toHaveProperty('providerErrorCode');
+      expect(JSON.stringify(issue.failureCause)).not.toContain(privateText);
+      expect(JSON.stringify(capture.warnings)).not.toContain(privateText);
+      expect(events.some(event => event.kind === 'turn-complete')).toBe(false);
+      const writes: unknown[] = [];
+      const project = createRuntimeFailureTranscriptProjector({ provider: 'pi', providerName: 'Pi',
+        session: { sessionId: 'happier-session-1', enqueueAgentMessageCommitted: async (_provider, body, options) => {
+          writes.push({ body, meta: options.meta });
+          return { persisted: true, delivered: true, committedSequence: writes.length };
+        } },
+      });
+      await project(failure);
+      expect(writes).toContainEqual(expect.objectContaining({ meta: expect.objectContaining({ runtimeIssueV1:
+        expect.objectContaining({ source, failureCause: issue.failureCause }),
+      }) }));
+
+      const next = sendPrompt(runtime, 'try the corrected credential');
+      await waitForWrittenCount(capture, 2);
+      await ackLastCommand(capture);
+      await expect(next).resolves.toEqual({ status: 'admitted' });
+      await emit(capture, { type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', delta: 'recovered' },
+        message: { role: 'assistant', content: [{ type: 'text', text: 'recovered' }] },
+      });
+      await emit(capture, { type: 'agent_end', willRetry: false });
+      expect(events.some(event => event.kind === 'turn-complete')).toBe(true);
+    } finally { await runtime.dispose(); }
   });
 
   it('publishes and logs only the normalized safe fields from a structured Provider failure', async () => {

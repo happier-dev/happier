@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,
@@ -15,6 +16,7 @@ export type PiProviderFailureDiagnostic = Readonly<{
   code: string;
   sanitizedPreview: string;
   piRetryable: boolean;
+  failureCause?: ReturnType<typeof projectSessionRuntimeFailureCause>;
 }>;
 
 export type PiProviderFailureLogEvidence = Readonly<{
@@ -169,10 +171,16 @@ function readProviderFailureFields(
   ].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
   const parsed = raw ? parseProviderError(raw) : null;
   const parsedError = isRecord(parsed?.error) ? parsed.error : null;
+  const errorInfoReasons = Array.isArray(parsedError?.details)
+    ? parsedError.details.flatMap(detail => isRecord(detail)
+      && detail['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' ? [detail.reason] : [])
+    : [];
+  const nativeStatus = parsedError?.code;
   const nestedError = isRecord(record.error) ? record.error : null;
   const nestedData = isRecord(record.data) ? record.data : null;
   return Object.freeze({
     code: [
+      ...errorInfoReasons,
       parsedError?.code,
       parsed?.code,
       record.code,
@@ -193,8 +201,24 @@ function readProviderFailureFields(
       raw,
     ].map(sanitizeText).find((value): value is string => value !== null) ?? null,
     parsed,
-    httpStatus: raw ? readLeadingHttpStatus(raw) : null,
+    httpStatus: (raw ? readLeadingHttpStatus(raw) : null)
+      ?? (typeof nativeStatus === 'number' && Number.isInteger(nativeStatus)
+        && nativeStatus >= 100 && nativeStatus <= 599 ? nativeStatus : null),
   });
+}
+
+function projectDecodedProviderFailureCause(
+  record: Readonly<Record<string, unknown>>,
+  fields: ReturnType<typeof readProviderFailureFields>,
+  phase: 'turn' | 'turn_start',
+) {
+  if (!fields.code) return undefined;
+  // Project the decoded code/status, never the provider body or prompt echo.
+  return projectSessionRuntimeFailureCause({
+    ...record,
+    code: fields.code,
+    ...(fields.httpStatus === null ? {} : { status: fields.httpStatus }),
+  }, phase, 'agent.turn');
 }
 
 export function readPiProviderFailureDiagnostic(
@@ -220,6 +244,7 @@ export function readPiProviderFailureDiagnostic(
     classification: 'pi_provider_failure',
     code,
     sanitizedPreview,
+    failureCause: projectDecodedProviderFailureCause(record, fields, 'turn'),
     piRetryable: isRetryablePiProviderFailure({
       code,
       message: fields.message,
@@ -232,21 +257,21 @@ export function readPiPromptRejectionDiagnostic(
   value: unknown,
 ): PiProviderFailureDiagnostic {
   const raw = value instanceof Error ? value.message : typeof value === 'string' ? value : '';
-  const parsed = parseProviderError(raw);
+  const fields = readProviderFailureFields({ errorMessage: raw }, null);
+  const parsed = fields.parsed;
   const parsedError = isRecord(parsed?.error) ? parsed.error : null;
-  const code = normalizeCode(parsedError?.code)
-    ?? normalizeCode(parsed?.code)
-    ?? 'pi_provider_session_error';
+  const code = fields.code ?? 'pi_provider_session_error';
   const parsedMessage = sanitizeText(parsedError?.message ?? parsed?.message);
   const rawMessage = /^provider session failed$/iu.test(raw.trim()) ? null : sanitizeText(raw);
   const message = parsedMessage ?? rawMessage;
-  const httpStatus = readLeadingHttpStatus(raw);
+  const httpStatus = fields.httpStatus;
   const retryEvidence = parsed
     ? { ...parsed, ...(httpStatus === null ? {} : { status: httpStatus }) }
     : { ...(httpStatus === null ? {} : { status: httpStatus }), message: raw };
   return Object.freeze({
     classification: 'pi_provider_failure',
     code,
+    failureCause: projectDecodedProviderFailureCause(isRecord(value) ? value : {}, fields, 'turn_start'),
     sanitizedPreview: message
       ? `Pi provider rejected the prompt before acceptance: ${message}`
       : 'Pi provider rejected the prompt before acceptance without details',
