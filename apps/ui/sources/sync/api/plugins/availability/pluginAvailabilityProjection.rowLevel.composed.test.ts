@@ -6,6 +6,7 @@ import {
     PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionInputV1Schema,
     PluginAvailabilityMaterializationsReadActionInputV1Schema,
+    PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
     type PluginMachineMaterializationV1,
 } from '@happier-dev/protocol/plugins/availability';
 import {
@@ -68,6 +69,14 @@ function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) 
         }
         if (path === paths.intentsList) {
             const parsed = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
+            if (parsed.pluginIds) {
+                // An exact named read: only these plugins, one request.
+                served.intentReads += 1;
+                const named = [...parsed.pluginIds].sort();
+                return respond({ availabilityCursor: cursor, failedPluginIds: [],
+                    pluginIds: named.filter(pluginId => pluginIds.includes(pluginId)),
+                    intentReads: named.map(pluginId => ({ pluginId, response: intentResponse(pluginId) })) });
+            }
             served.intentListReads += 1;
             const ids = [...new Set([...pluginIds, ...(parsed.knownPluginIds ?? [])])].sort();
             return respond({ availabilityCursor: cursor, pluginIds: ids, nextCursor: null, failedPluginIds: [],
@@ -160,6 +169,27 @@ describe('row-level Account Availability refresh', () => {
         expect(merged).toEqual(publishedFacts());
     });
 
+    it.each([1, 5, 90, 201])('reads %i hint-named plugins\' intents in one request per Availability page', async (named) => {
+        // Workload: 2 Machines × 250 plugins; one materialization report names `named` plugins.
+        const home = createFakeHome({ machines: 2, plugins: 250 });
+        const hydrator = createHydrator(home);
+        await refreshPluginAccountAvailabilityProjection(hydrator);
+        home.resetCounts();
+
+        const changes = home.pluginIds.slice(0, named)
+            .map(pluginId => home.changePlugin(pluginId, home.machineIds[0]!, home.machineIds[1]!));
+        expect(hydrator.invalidate(changes)).toHaveLength(named);
+        await refreshPluginAccountAvailabilityProjection(hydrator);
+
+        expect({ fullMaterializationReads: home.served.fullMaterializationReads, intentListReads: home.served.intentListReads,
+            intentReads: home.served.intentReads }).toEqual({ fullMaterializationReads: 0, intentListReads: 0,
+            intentReads: Math.ceil(named / PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) });
+        const merged = publishedFacts();
+        clearPluginAccountAvailabilityProjection();
+        await refreshPluginAccountAvailabilityProjection(createHydrator(home));
+        expect(merged).toEqual(publishedFacts());
+    });
+
     it('keeps a superseded row-level read\'s plugins for the trailing refresh', async () => {
         const home = createFakeHome({ machines: 3, plugins: 4 });
         const hydrator = createHydrator(home);
@@ -172,7 +202,8 @@ describe('row-level Account Availability refresh', () => {
         await inFlight;
         home.resetCounts();
         await refreshPluginAccountAvailabilityProjection(hydrator);
-        expect(home.served).toMatchObject({ fullMaterializationReads: 0, intentListReads: 0, intentReads: 2, materializationRows: 4 });
+        // Both named plugins' intents in one exact request.
+        expect(home.served).toMatchObject({ fullMaterializationReads: 0, intentListReads: 0, intentReads: 1, materializationRows: 4 });
         const merged = publishedFacts();
         clearPluginAccountAvailabilityProjection();
         await refreshPluginAccountAvailabilityProjection(createHydrator(home));

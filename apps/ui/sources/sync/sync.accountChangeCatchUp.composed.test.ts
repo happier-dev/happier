@@ -2852,11 +2852,8 @@ describe('sync AccountChange catch-up projection', () => {
                 return availabilityMaterializationsResponse();
             }
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+                // A named Availability change reads only that plugin's intent (an exact named read).
                 return availabilityIntentDiscoveryResponse();
-            }
-            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
-                // A named Availability change reads only that plugin's intent.
-                return jsonResponse(availabilityIntentValue(AVAILABILITY_PLUGIN_ID));
             }
             return jsonResponse({});
         });
@@ -3034,13 +3031,12 @@ describe('sync AccountChange catch-up projection', () => {
             status: 'ready',
             rows: [{ fields: { title: 'after AccountChange' } }],
         });
-        // The named change is read row-level: X's materializations and intent only, no census.
-        const catchUpPaths = domainHttp.mock.calls.map(([params]) => new URL(params.url).pathname);
-        expect(catchUpPaths).toEqual(expect.arrayContaining([
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
-        ]));
-        expect(catchUpPaths).not.toContain(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']);
+        // The named change is read row-level: X's materializations and exact intent only, no census.
+        const intentReadBodies = domainHttp.mock.calls.flatMap(([params]) => new URL(params.url).pathname
+            === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'] ? [JSON.parse(String(params.init?.body))] : []);
+        expect(domainHttp.mock.calls.map(([params]) => new URL(params.url).pathname)).toContain(
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']);
+        expect(intentReadBodies).toEqual([{ pluginIds: [AVAILABILITY_PLUGIN_ID] }]);
 
         accountEncryptionModeInvalidation();
         settingsWatch.dispose();

@@ -84,6 +84,11 @@ export type ActivePluginAccountAvailabilityProjectionHydrator = Readonly<{
     readDeclarationBodies: (pluginId: string, digests: readonly string[]) => Promise<readonly PluginAccountDeclarationBodyV1[]>;
 }>;
 
+type NamedIntentRead = Readonly<{
+    pluginId: string;
+    response: ReturnType<typeof PluginAvailabilityIntentReadActionOutputV1Schema.parse>;
+}>;
+
 function scopesEqual(left: ServerAccountScope | null, right: ServerAccountScope): boolean {
     return left?.serverId === right.serverId && left.accountId === right.accountId;
 }
@@ -237,20 +242,43 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         return Object.freeze([...affectedPluginIds]);
     };
 
-    const readNamedIntents = (
+    /**
+     * Exact intent reads for the named plugins: one request per Availability
+     * page. Each plugin settles on its own; a failed page fails its plugins.
+     */
+    const readNamedIntents = async (
         authority: ProjectionRequestAuthority,
         pluginIds: readonly string[],
         scope: ServerAccountScope,
         signal: AbortSignal,
-    ) => Promise.allSettled(pluginIds.map(async (pluginId) => {
-        const response = parsePluginAvailabilityResponse(PluginAvailabilityIntentReadActionOutputV1Schema, await postJson(
-            authority,
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
-            { pluginId }, signal, 'intent_census', scope,
-        ), 'intent_census', scope);
-        assertIntentResponseIdentity({ pluginId, response }, scope);
-        return Object.freeze({ pluginId, response });
-    }));
+    ): Promise<readonly PromiseSettledResult<NamedIntentRead>[]> => {
+        const pages: (readonly string[])[] = [];
+        for (let start = 0; start < pluginIds.length; start += PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) {
+            pages.push(pluginIds.slice(start, start + PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE));
+        }
+        const pageReads = await Promise.allSettled(pages.map(async page => parsePluginAvailabilityResponse(
+            PluginAvailabilityIntentsListActionOutputV1Schema,
+            await postJson(authority, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
+                { pluginIds: page }, signal, 'intent_census', scope),
+            'intent_census', scope,
+        )));
+        return pages.flatMap((page, index): PromiseSettledResult<NamedIntentRead>[] => {
+            const pageRead = pageReads[index]!;
+            if (pageRead.status === 'rejected') return page.map(() => ({ status: 'rejected', reason: pageRead.reason }));
+            const responses = new Map(pageRead.value.intentReads.map(entry => [entry.pluginId, entry.response]));
+            return page.map((pluginId): PromiseSettledResult<NamedIntentRead> => {
+                const response = responses.get(pluginId);
+                // The Home reports a plugin it could not read as failed (or omits it).
+                if (!response) return { status: 'rejected', reason: undefined };
+                try {
+                    assertIntentResponseIdentity({ pluginId, response }, scope);
+                } catch (error) {
+                    return { status: 'rejected', reason: error };
+                }
+                return { status: 'fulfilled', value: Object.freeze({ pluginId, response }) };
+            });
+        });
+    };
 
     /**
      * Row-level read for plugins named by Availability hints: their
@@ -426,8 +454,8 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
                 cursor = page.nextCursor ?? undefined;
             } while (cursor);
             // Structural recovery may require a full census even for an exact
-            // demand. Its list has Machine envelopes only: acquire the named
-            // bodies through the same exact reader. Healthy Machine
+            // demand. The named exact read started before the census settles
+            // those plugins even when a census page fails: healthy Machine
             // Event setup must still work when another Machine is unreadable.
             if (namedIntentOutcomes) {
                 const outcomes = await namedIntentOutcomes;

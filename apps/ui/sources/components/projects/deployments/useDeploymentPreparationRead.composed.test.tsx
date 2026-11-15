@@ -108,13 +108,16 @@ const claimed = new Map(manifests.map(manifest => [manifest.id,
     } }).intent] as const));
 const intentRead = (pluginId: string) => PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
     hostingCapability: { enabled: false }, intent: claimed.get(pluginId) ?? null, release: null, uiArtifacts: [], packageAssets: [] });
-const intentList = (knownPluginIds: readonly string[] = []) => {
-    const pluginIds = [...new Set([...claimed.keys(), ...knownPluginIds])].sort();
-    return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1, pluginIds,
-        failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: intentRead(pluginId) })) });
+const intentList = (input: Readonly<{ knownPluginIds?: readonly string[]; pluginIds?: readonly string[] }>) => {
+    // An exact named read answers only its plugins; a census page also lists every claimed intent.
+    const readIds = input.pluginIds ? [...new Set(input.pluginIds)].sort()
+        : [...new Set([...claimed.keys(), ...(input.knownPluginIds ?? [])])].sort();
+    return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+        pluginIds: input.pluginIds ? readIds.filter(pluginId => claimed.has(pluginId)) : readIds,
+        failedPluginIds: [], intentReads: readIds.map(pluginId => ({ pluginId, response: intentRead(pluginId) })) });
 };
 // Validate authored HTTP responses before Sync can retry a malformed fixture.
-intentList();
+intentList({});
 let cursor = 1;
 let collectionReads = 0;
 const boundaryFailures: string[] = [];
@@ -143,7 +146,7 @@ const runtime = installSessionPaneRuntimeTestHarness({ features: () => {
         return Response.json(intentRead(PluginAvailabilityIntentReadActionInputV1Schema.parse(body).pluginId));
     }
     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-        return Response.json(intentList(PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds));
+        return Response.json(intentList(PluginAvailabilityIntentsListActionInputV1Schema.parse(body)));
     }
     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
         return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 1,

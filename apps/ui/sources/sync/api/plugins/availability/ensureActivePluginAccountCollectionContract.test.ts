@@ -46,9 +46,12 @@ describe('bundled Account Collection contract bootstrap', () => {
             const intentRead = { availabilityCursor: 1, hostingCapability: { enabled: false },
                     intent: { pluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [ref], revision: '1' },
                     release: null, uiArtifacts: [], packageAssets: [] };
-            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
+            const named = (JSON.parse(String(init?.body ?? '{}')) as { pluginIds?: string[] }).pluginIds;
+            if (named) {
+                // The exact named read of the claimed plugin.
                 exactCount += 1;
-                return response(intentRead);
+                return response({ availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
+                    intentReads: named.map(id => ({ pluginId: id, response: intentRead })) });
             }
             listCount += 1;
             return response({ availabilityCursor: 1, pluginIds: claimed ? [pluginId] : [], failedPluginIds: [],

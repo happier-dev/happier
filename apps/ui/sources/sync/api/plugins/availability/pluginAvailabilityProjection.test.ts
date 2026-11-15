@@ -365,11 +365,11 @@ describe('active Plugin Account Availability projection hydrator', () => {
 
         const result = await hydrator.refresh();
         expect(request.mock.calls.map(([path]) => path)).toEqual([
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
         ]);
-        expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ pluginId: removedPluginId });
+        expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ pluginIds: [removedPluginId] });
         expect(JSON.parse(String(request.mock.calls[2]?.[1]?.body))).toEqual({ knownPluginIds: [pluginId, removedPluginId].sort() });
         expect(result).toMatchObject({
             failedPluginIds: [], snapshot: { intentReads: expect.arrayContaining(reads),
