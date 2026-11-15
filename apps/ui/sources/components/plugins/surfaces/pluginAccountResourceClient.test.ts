@@ -142,20 +142,24 @@ it('selects committed Account Resource custody from a targeted daemon declaratio
         const after = readPluginUiAccountExecutableOrigin(publish()?.resourcesById[key]);
         expect(after).toEqual(before);
         expect(account.readCurrentAccountExecution(pluginId).kind).toBe('available');
-        for (const accountMounted of [true, false]) {
+        // A cold Session remount can retain its daemon origin with no daemon
+        // Resource census; the committed Account declaration still owns reads.
+        for (const placement of ['account', 'daemon', 'offline'] as const) {
+            const accountMounted = placement === 'account';
+            const offline = placement === 'offline';
             controller = createBoundPluginSurfaceController({ facts: {
                 pluginId, contributionId: 'scm-pull-request', surfaceId: 'session-pr54', placement: 'sessionPane',
                 platform: 'web', channel: 'internal', sessionId: status.sessionId, machineId,
                 serverId: lifetime.scope.serverId, accountLifetime: lifetime,
                 ...(accountMounted ? { occurrenceId: declaration.occurrenceId, accountExecutionOrigin: before! }
                     : { occurrenceId: daemonResource.occurrenceId, executionOrigin: origin,
-                        resourceDeclarations: targeted.resourcesById }),
-                pluginUiProjection: targeted, resourceCapability: { readable: false, dynamic: false },
-                interactionEnabled: true, daemonInteractionEnabled: true,
+                        ...(offline ? {} : { resourceDeclarations: targeted.resourcesById }) }),
+                pluginUiProjection: offline ? widgetProjectionOf([]) : targeted, resourceCapability: { readable: false, dynamic: false },
+                interactionEnabled: true, daemonInteractionEnabled: !offline,
             } });
             const result = await controller.hostApi.handleRequest({ version: 1, requestId: 'session-pr54-read',
                 surface: controller.surfaceContext, method: 'readResource', payload: { resource: resourceId } });
-            expect(result).toMatchObject({ contentType: 'application/json', bytesBase64: expect.any(String) });
+            expect(result, placement).toMatchObject({ contentType: 'application/json', bytesBase64: expect.any(String) });
             if (!result || typeof result !== 'object' || !('bytesBase64' in result) || typeof result.bytesBase64 !== 'string') {
                 throw new Error('Mounted PR Resource returned no bytes');
             }

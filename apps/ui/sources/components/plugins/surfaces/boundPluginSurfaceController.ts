@@ -1080,13 +1080,15 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     };
     const readCompleteResourceDeclarations = () => {
         const facts = readActionInputFacts();
+        // Account Resources keep their own custody even in a daemon-origin mount.
         // A complete Account namespace retains custody, including known-empty.
         // Unknown Account coverage must not hide the selected Machine's census.
-        if (facts.accountExecutionOrigin && accountLifetime) {
+        if (accountLifetime) {
+            const accountProjection = readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection();
             const accountDeclarations = readCompletePluginUiResourceDeclarations(
-                readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection(),
+                accountProjection,
                 input.facts.pluginId,
-                facts.accountExecutionOrigin.custodyId,
+                accountProjection?.installedPackagesById[input.facts.pluginId]?.occurrenceId,
             );
             if (accountDeclarations !== undefined) return accountDeclarations;
         }
