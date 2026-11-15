@@ -7,6 +7,7 @@ import type { resolveSessionHandoffSourceAuthority } from '@/session/handoff/res
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionHandoffTargetReplacementApprovalPreflight' | 'sessionHandoffStart'
   | 'sessionHandoffStatusGet' | 'sessionHandoffPrepareTargetResume'>;
@@ -82,7 +83,8 @@ export function createCliSessionHandoffActionDeps(
           ...(signal ? { signal } : {}),
         }));
       } catch (error) {
-        const errorCode = readRpcErrorCode(error) ?? 'target_unavailable';
+        // A same-Machine preflight throws the target owner's typed code in-process.
+        const errorCode = readRpcErrorCode(error) ?? readActionErrorCodeV1(error) ?? 'target_unavailable';
         return { type: 'error' as const, result: { ok: false, errorCode, error: errorCode } };
       }
     },

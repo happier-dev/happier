@@ -2910,8 +2910,9 @@ export function createWorkspaceSyncTargetAuthority(
       // Home never routes a daemon's signed call back to its own socket: a
       // same-Machine destination keeps the original requester context here and
       // consumes the role Home admitted on this Machine for the same Manage rule.
-      if (wireRequest.machineId === localMachineId) {
-        if (context?.callerInputAuthorization && source && context.machineAdmission?.role !== 'manage') {
+      if (wireRequest.machineId === localMachineId && context?.callerInputAuthorization && source
+        && isWorkspaceSyncRelationshipWriteActionId(context.callerInputAuthorization.binding.actionId)) {
+        if (context.machineAdmission?.role !== 'manage') {
           throw authorityError('machine_manage_required', 'Replacing a destination folder needs Manage access to this Machine');
         }
         return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
@@ -2928,6 +2929,9 @@ export function createWorkspaceSyncTargetAuthority(
             accountServerId: localServerId, targetMachineId: wireRequest.machineId, targetRootPath: wireRequest.targetPath },
           ...(request.signal ? { signal: request.signal } : {}),
         }, context));
+      }
+      if (wireRequest.machineId === localMachineId) {
+        return await authority.preflightHandoffTargetReplacementHere(wireRequest, request.signal, context);
       }
       const target = await readReplacementTarget(wireRequest.machineId, wireRequest.targetPath, request.signal);
       if (target.machineId === localMachineId) {

@@ -402,10 +402,29 @@ it.skipIf(process.platform !== 'linux')('preserves the encrypted original Action
 });
 
 
+// Owner ruling 2026-11-14: Can use reaches only its own member folder through Project
+// Open; a same-Machine worker copy through relationship.create needs Manage.
+it.skipIf(process.platform !== 'linux')('refuses a Can use same-Machine worker copy through relationship.create with the typed Manage cause', async () => {
+  executionBoundary.member = true;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', socketIo, remoteTarget: false,
+    targetCustodianAccountId: 'member-a', workerCleanCopy: true, originalActionHomeHttp: true });
+  await setup.prepareActionIngress();
+  const target = setup.envelope.target;
+  if (!target) throw new Error('Native relationship envelope has no target');
+  const result = await dispatchOriginalAccountAction({ actionId: 'workspace.sync.relationship.create',
+    input: setup.request.actionInput, requestId: setup.request.operationId, target, credentials: setup.credentials,
+    serverHttpBaseUrl: setup.installed.serverHttpBaseUrl, serverIdentityId: setup.installed.homeServerIdentityId,
+    authority: 'present_user', invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
+    onRequesterSessionCredentialDisclosure: () => true });
+  expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics }))
+    .toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
+  expect(setup.approvalArtifacts.size).toBe(0);
+  expect(await readdir(setup.targetPath).catch(() => [])).not.toContain('payload.txt');
+});
+
 it.skipIf(process.platform !== 'linux').each([
   { role: 'manage' as const, remoteTarget: false },
   { role: 'manage' as const, remoteTarget: true },
-  { role: 'use' as const, remoteTarget: false },
   { role: 'use' as const, remoteTarget: true },
 ])('executes native exact-copy review through SOURCE and TARGET without creating an approval Artifact ($role, remote $remoteTarget)', async ({ role, remoteTarget }) => {
   executionBoundary.member = role === 'use';

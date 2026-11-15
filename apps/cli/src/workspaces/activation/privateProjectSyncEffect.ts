@@ -200,7 +200,12 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     }),
     resolveLocalRoot: rootPath => call(async () => {
       assertLocalRoot(rootPath);
-      const canonicalRoot = await realpath(rootPath);
+      // A target not yet materialized resolves to its admitted path, as the
+      // installed controller's own resolution does; bootstrap creates it.
+      const canonicalRoot = await realpath(rootPath).catch((error: unknown) => {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return rootPath;
+        throw error;
+      });
       if (canonicalRoot !== rootPath) throw privateProjectCheckoutRefusal();
       return canonicalRoot;
     }),

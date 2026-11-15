@@ -905,10 +905,19 @@ describe('Project Open RPC', () => {
     nativeBoundary.accountLookups.set(JSON.stringify(['--service=files', 'group', 'happier']), 'happier:x:1001:\n');
     if (!coldMember) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
     const root = join(member.workspaceRoot, 'bob-checkout');
+    // Test-only sidecar: the member worker's own frames carry the inner refusal that
+    // Project Open's settlement diagnostic deliberately withholds.
+    const workerFrames: string[] = [];
     nativeBoundary.launch = async (input, output) => {
       const frame = await readAgentLaunchFrame(input);
       expect(frame.nativeIdentity).toEqual({ username: member.username, agentUid: 2401, agentGid: 2401, home: member.home });
       expect(frame.args).toEqual(['workspace-effect']);
+      const write = output.write.bind(output) as (...args: unknown[]) => boolean;
+      output.write = ((...args: unknown[]) => {
+        const text = String(args[0]);
+        if (/ENOENT|"ok":false|error/i.test(text)) workerFrames.push(text.slice(0, 600));
+        return write(...args);
+      }) as typeof output.write;
       await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal,
         currentDirectory: () => member.workspaceRoot });
     };
@@ -1252,7 +1261,7 @@ describe('Project Open RPC', () => {
         return;
       }
       if (fault === 'remote_source_ack') {
-        expect(remoteTargetPrepared, JSON.stringify(admissionDiagnostics?.mock.calls)).toBe(true);
+        expect(remoteTargetPrepared, JSON.stringify({ diagnostics: admissionDiagnostics?.mock.calls, workerFrames: workerFrames.slice(-4) })).toBe(true);
         expect(opened).toEqual({ kind: 'outcomeUnknown' });
         const captures = productionSync?.handoffAdapter.listPrivateExecutions?.();
         expect(captures).toHaveLength(1);
@@ -1277,7 +1286,7 @@ describe('Project Open RPC', () => {
         outcome: opened,
         requestPaths: post.mock.calls.map(([url]) => new URL(url).pathname),
         settlement: admissionDiagnostics?.mock.calls.filter(([message]) => message === '[Project Open] Settlement failed').map(([, details]) => details),
-        nativePhases: nativeBoundary.phases })).toMatchObject({ kind: 'opened', directory: targetRoot, setup: 'approvalRequired',
+        nativePhases: nativeBoundary.phases, workerFrames: workerFrames.slice(-4) })).toMatchObject({ kind: 'opened', directory: targetRoot, setup: 'approvalRequired',
         workspace: { serverId: homeId, machineId: 'machine', rootPath: targetRoot }, facts: { source: { sourceId: source.id, revision: 1 } } });
       if (syncing) expect(machineReads() - initialMachineReads).toBe(0);
       expect(nativeBoundary.childFailure).toBeUndefined();
