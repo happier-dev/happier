@@ -8,7 +8,8 @@ import {
     TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
     type TriageEntryRefV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as triageProtocol from '@happier-dev/triage-protocol/v1';
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 import { GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1, GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } from '../../../../scm-github/src/triage/contribution.js';
 import { decodeGithubSearchItem, projectGithubEntry } from '../../../../scm-github/src/triage/mapping/entry.js';
@@ -16,6 +17,7 @@ import { GITHUB_FIXTURE_REPOSITORY_ID, GITHUB_SEARCH_ISSUE_ITEM, GITHUB_SEARCH_P
 import { readTriageEntryGlyphV1 } from '../window/entryDisplay.js';
 
 import {
+    projectTriageSourceDescriptorsV1,
     resolveTriageSourceDescriptorV1,
     resolveTriageSourceDetailContributionV1,
     readTriageSourceDescriptorV1,
@@ -95,6 +97,22 @@ const VALID_DESCRIPTOR = Object.freeze({
 });
 
 describe('the source detail contribution lookup', () => {
+    it('admits declarations once, reads rows without admission, and replaces changed or withdrawn declarations', () => {
+        const admission = vi.spyOn(triageProtocol, 'admitTriageSourceDescriptorV1');
+        try {
+            const read = projectTriageSourceDescriptorsV1(snapshot({ descriptor: VALID_DESCRIPTOR }));
+            expect(admission).toHaveBeenCalledTimes(1);
+            for (let row = 0; row < 200; row++) expect(read(SOURCE)?.displayName).toBe('Example forge');
+            expect(admission).toHaveBeenCalledTimes(1);
+            expect(read({ ...SOURCE, localId: 'another-source' })).toBeNull();
+            const changed = projectTriageSourceDescriptorsV1(snapshot({ descriptor: { ...VALID_DESCRIPTOR, displayName: 'Renamed forge' } }));
+            expect(changed(SOURCE)?.displayName).toBe('Renamed forge');
+            expect(admission).toHaveBeenCalledTimes(2);
+            expect(projectTriageSourceDescriptorsV1(undefined)(SOURCE)).toBeNull();
+            expect(projectTriageSourceDescriptorsV1(snapshot({ protocolVersion: PROTOCOL.version + 1 }))(SOURCE)).toBeNull();
+            expect(projectTriageSourceDescriptorsV1(snapshot({ descriptor: { ...VALID_DESCRIPTOR, displayName: 42 } }))(SOURCE)).toBeNull();
+        } finally { admission.mockRestore(); }
+    });
     it('matches real GitHub source kinds to their declared issue and pull-request glyphs', () => {
         const source = { pluginId: 'happier.scm.forge.github', localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 };
         const targeted = snapshot({ source, descriptor: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 });

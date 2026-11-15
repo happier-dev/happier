@@ -53,7 +53,7 @@ async function mountSourceRow(descriptor: TriageSourceDescriptorV1, kindId: stri
   await act(async () => {
     fixture = await createTaskActionControlTestkit({ identity: { instanceId: 'source-task-row', mountNonce: `row-${mounted.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-      surface: defineUiSurface(() => <TriageTaskRowStatusControl task={item.task!} onApplied={async () => undefined}
+      surface: defineUiSurface(() => <TriageTaskRowStatusControl task={item.task!} sourceName={descriptor.displayName} onApplied={async () => undefined}
         address={{ entryRef, sourceInstanceId: selected.sourceInstanceId, lastKnownLocator: selected.observation.locator }} />),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targeted }),
       adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit },

@@ -196,6 +196,7 @@ export function TriageTaskStatusLabel(props: Readonly<{ entryRef: TriageEntryRef
  * answer); while it runs the glyph is the spinner, and an outcome other than applied is said by the host notice.
  */
 export function TriageTaskRowStatusControl(props: Readonly<{
+  sourceName: string | undefined;
   /** The selected connection's address the list row carries (its entry, connection and locator). */
   address: Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: TriageSourceInstanceIdV1; lastKnownLocator: TriageEntryLocatorV1 }>;
   task: TriageListTaskFactsV1;
@@ -206,8 +207,7 @@ export function TriageTaskRowStatusControl(props: Readonly<{
   const unavailable = useTriageTaskExecutionUnavailable();
   const write = useTriageTaskCommit(props.onApplied, props.address);
   const [open, setOpen] = React.useState(false);
-  const { task, address } = props;
-  const sourceName = resolveTriageSourceDescriptorV1(context.targetedContributions, address.entryRef.source)?.displayName;
+  const { task, address, sourceName } = props;
   const disabled = unavailable || write.busy || write.checking || write.result?.kind === 'uncertain';
   const workflow = useTaskTransitionFields(write, address, disabled, sourceName);
   const declared = resolveTriageSourceTaskOperationV1(context.targetedContributions, address.entryRef.source, 'transition') !== undefined;

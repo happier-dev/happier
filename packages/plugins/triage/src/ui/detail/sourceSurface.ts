@@ -21,6 +21,7 @@ import {
   type TriageSourceKindGlyphV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
+import { renderSourceQualifiedId } from '../../corpus/identity/components.js';
 
 /**
  * The optional source-owned local materialization role of the V1 contract
@@ -108,6 +109,25 @@ export function resolveTriageSourceDescriptorV1(
   if (contribution === undefined) return null;
   const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
   return admitted.ok ? admitted.descriptor : null;
+}
+
+export type TriageSourceDescriptorReaderV1 = (
+  source: TriageEntryRefV1['source'],
+) => TriageSourceDescriptorV1 | null;
+
+/** Admit the current source vocabulary once; row projections consume its typed result. */
+export function projectTriageSourceDescriptorsV1(
+  targetedContributions: SurfaceContext['targetedContributions'],
+): TriageSourceDescriptorReaderV1 {
+  const descriptors = new Map<string, TriageSourceDescriptorV1 | null>();
+  const point = targetedContributions?.points.find(candidate => candidate.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1);
+  const protocol = point?.protocols.find(candidate => candidate.protocol.id === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1
+    && candidate.protocol.version === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1);
+  for (const contribution of protocol?.contributions ?? []) {
+    const source = { pluginId: contribution.contributor.pluginId, localId: contribution.contributor.contributionId };
+    descriptors.set(renderSourceQualifiedId(source), resolveTriageSourceDescriptorV1(targetedContributions, source));
+  }
+  return source => descriptors.get(renderSourceQualifiedId(source)) ?? null;
 }
 
 export function resolveTriageSourceDetailContributionV1(

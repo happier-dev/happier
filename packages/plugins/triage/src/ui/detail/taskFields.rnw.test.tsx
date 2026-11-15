@@ -1170,7 +1170,7 @@ async function mountRowStatus(task: React.ComponentProps<typeof TriageTaskRowSta
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-row', mountNonce: `row-${mounted.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-      surface: defineUiSurface(() => <TriageTaskRowStatusControl task={task} onApplied={async () => { rereads++; }}
+      surface: defineUiSurface(() => <TriageTaskRowStatusControl task={task} sourceName={undefined} onApplied={async () => { rereads++; }}
         address={{ entryRef, sourceInstanceId: selected.sourceInstanceId, lastKnownLocator: selected.observation.locator }} />),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targetedTaskSource(entryRef.source, entryRef.kindId, 'edit', false, ['title'], transitions) }),
       adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),

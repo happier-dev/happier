@@ -38,6 +38,7 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuratio
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
 import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './root.js';
 import * as listSections from '../list/sections.js';
+import * as triageProtocol from '@happier-dev/triage-protocol/v1';
 import { reduceTriageSurfaceV1, TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import { buildTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
@@ -549,6 +550,17 @@ describe('the selected entry once the window stops holding it', () => {
                 input.dispatchEvent(new InputEvent('input', { bubbles: true }));
             }); };
             const readsBeforeQuery = listReads;
+            renderProbe.reset();
+            const descriptorAdmissions = vi.spyOn(triageProtocol, 'admitTriageSourceDescriptorV1');
+            try {
+                await editQuery('Task');
+                // Query-dependent row destinations change, but the virtualizer renders only mounted rows.
+                const visibleRows = document.querySelectorAll('[data-testid^="triage-entry-row:"]').length;
+                expect(visibleRows).toBeGreaterThan(0);
+                expect(visibleRows).toBeLessThan(count);
+                expect(renderProbe.collect().components.CollectionRow?.renders ?? 0).toBeLessThanOrEqual(visibleRows);
+                expect(descriptorAdmissions).not.toHaveBeenCalled();
+            } finally { descriptorAdmissions.mockRestore(); }
             await editQuery('001');
             expect(store.getSnapshot().window?.rows).toHaveLength(1);
             const row = store.getRow(triageEntryRowKey(refs[0]!))!;
@@ -559,7 +571,14 @@ describe('the selected entry once the window stops holding it', () => {
                 await act(async () => { store.publishObservation({ ...observation, entryRef: row.entryRef,
                     outcome: { ...observation.outcome, snapshot: { ...observation.outcome.snapshot, state } } }, false, { reconcileMembership: true }); });
             }
-            await editQuery('');
+            const clearAdmissions = vi.spyOn(triageProtocol, 'admitTriageSourceDescriptorV1');
+            try {
+                renderProbe.reset();
+                await editQuery('');
+                const visibleRows = document.querySelectorAll('[data-testid^="triage-entry-row:"]').length;
+                expect(renderProbe.collect().components.CollectionRow?.renders ?? 0).toBeLessThanOrEqual(visibleRows);
+                expect(clearAdmissions).not.toHaveBeenCalled();
+            } finally { clearAdmissions.mockRestore(); }
             expect(store.getSnapshot().window?.rows).toHaveLength(200);
             expect(document.querySelector('[role="grid"][aria-label="Tasks"]')?.getAttribute('aria-rowcount')).toBe('201');
             expect(listReads).toBe(readsBeforeQuery);

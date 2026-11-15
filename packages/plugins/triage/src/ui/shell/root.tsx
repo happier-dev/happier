@@ -84,9 +84,8 @@ import {
 } from '../detail/region.js';
 import {
   resolveTriageSourcePrepareReviewWorkspaceOperationV1,
-  resolveTriageSourceWorkflowSubjectV1,
-  resolveTriageSourceDescriptorV1,
-  readTriageSourceDescriptorV1,
+  projectTriageSourceDescriptorsV1,
+  projectTriageSourceWorkflowSubjectV1,
 } from '../detail/sourceSurface.js';
 import {
   readTriageFilterDoneLabelV1, readTriageOrderChoicesV1, readTriageOrderOptionsV1, TriageFilterRail, TriageFilterSheet,
@@ -469,9 +468,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * wrong fix `core/SURFACE.md` §4.3 names.
    */
   const durableStateReachable = marks.unavailableReason === null;
+  const readSourceDescriptor = React.useMemo(() => projectTriageSourceDescriptorsV1(surfaceContext.targetedContributions),
+    [surfaceContext.targetedContributions]);
   const viewInventory = React.useMemo(() => surface.filters.tasks === undefined ? TRIAGE_PR_VIEW_INVENTORY_V1
-    : planTriageTaskViewInventoryV1(source => resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions, source)?.kinds),
-  [surfaceContext.targetedContributions, surface.filters.tasks]);
+    : planTriageTaskViewInventoryV1(source => readSourceDescriptor(source)?.kinds),
+  [readSourceDescriptor, surface.filters.tasks]);
   const state = React.useMemo(
     () => resolveTriageListShellState(window.snapshot, { durableStateReachable, tasks: surface.filters.tasks !== undefined,
       filters: surface.filters, inventory: viewInventory }),
@@ -619,10 +620,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           ],
           lens: { query: windowLens.query, filters: windowLens.filters, sort: windowLens.sort },
           locale: surfaceContext.locale,
-          workflowSubjectOf: (entryRef) => resolveTriageSourceWorkflowSubjectV1(
-            surfaceContext.targetedContributions,
-            entryRef,
-          ),
+          workflowSubjectOf: (entryRef) => projectTriageSourceWorkflowSubjectV1(readSourceDescriptor(entryRef.source), entryRef.kindId),
           agentStatesOf: (key) => sessionActivity.agentStates.get(key) ?? [],
           // One freshness owner, stated per row. `text` is the reader's own catalog for the words this plugin
           // authors; the window's `stale` claim is the same one the page's freshness line reads.
@@ -633,12 +631,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             ...(incremental || personalTaskOrder.value === null ? {} : { personalOrder: personalTaskOrder.value.undoneOrder,
               personalAccountId: personalTaskOrder.value.scope.accountId }),
             isTask: viewInventory.includesKind,
-            capabilitiesOf: (entryRef) => resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions, entryRef.source)
+            capabilitiesOf: (entryRef) => readSourceDescriptor(entryRef.source)
               ?.kinds.find((kind) => kind.id === entryRef.kindId)?.taskCapabilities,
             hasSessions: (key) => (sessionActivity.linkedSessions.get(key)?.length ?? 0) > 0,
           } }),
     }, previous),
-    [completedSinceMs, exactPinReads, listedStale, staleCompletedAtMs, marks.pins, pinsByEntry, personalTaskOrder.value, sessionActivity.agentStates, sessionActivity.linkedSessions, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience, text, viewInventory, window.readOwner, windowLens.filters, windowLens.query, windowLens.sort]
+    [completedSinceMs, exactPinReads, listedStale, staleCompletedAtMs, marks.pins, pinsByEntry, personalTaskOrder.value, readSourceDescriptor, sessionActivity.agentStates, sessionActivity.linkedSessions, surfaceContext.locale, taskAudience, text, viewInventory, window.readOwner, windowLens.filters, windowLens.query, windowLens.sort]
   );
   listPublication.setPlanner(planItems);
   const items = listsItems ? listPublication.getItems() : NO_LIST_ITEMS;
@@ -1142,11 +1140,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         ? {}
         : { facetCensus: window.snapshot.window.facetCensus }),
       filters: surface.filters,
-      readSourceName: (source) => readTriageSourceDescriptorV1(surfaceContext, source)?.displayName,
-      readKindName: (source, kindId) => readTriageSourceDescriptorV1(surfaceContext, source)
+      readSourceName: (source) => readSourceDescriptor(source)?.displayName,
+      readKindName: (source, kindId) => readSourceDescriptor(source)
         ?.kinds.find((kind) => kind.id === kindId)?.displayName,
     }, text),
-    [surface.filters, surfaceContext, text, window.snapshot.configuredSources, window.snapshot.window, viewInventory],
+    [surface.filters, readSourceDescriptor, text, window.snapshot.configuredSources, window.snapshot.window, viewInventory],
   );
 
   /**
@@ -1413,14 +1411,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   ): readonly TriageSourceWorkflowSubjectV1[] => {
     const subjects: TriageSourceWorkflowSubjectV1[] = [];
     for (const entry of readSelectedBulkEntries(keys).entries) {
-      const subject = resolveTriageSourceWorkflowSubjectV1(
-        surfaceContext.targetedContributions,
-        entry.entryRef,
-      );
+      const subject = projectTriageSourceWorkflowSubjectV1(readSourceDescriptor(entry.entryRef.source), entry.entryRef.kindId);
       if (subject !== null && !subjects.includes(subject)) subjects.push(subject);
     }
     return subjects;
-  }, [readSelectedBulkEntries, surfaceContext.targetedContributions]);
+  }, [readSelectedBulkEntries, readSourceDescriptor]);
 
   const runBulkAction = React.useCallback((input: Readonly<{
     action: TriageActionV1;
@@ -1447,10 +1442,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           );
           return {
             ...entry,
-            workflowSubject: resolveTriageSourceWorkflowSubjectV1(
-              surfaceContext.targetedContributions,
-              entry.entryRef,
-            ),
+            workflowSubject: projectTriageSourceWorkflowSubjectV1(readSourceDescriptor(entry.entryRef.source), entry.entryRef.kindId),
             ...(configured === undefined
               || operation === undefined
               || entry.reviewWorkspacePreparation === undefined
@@ -1474,6 +1466,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     configuredActions,
     configuredSources.sources,
     readSelectedBulkEntries,
+    readSourceDescriptor,
     selectedBulkWorkflowSubjects,
     surfaceContext.targetedContributions,
   ]);
@@ -1487,9 +1480,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     destination: input.destination,
     entries: readSelectedBulkEntries(input.keys).entries.map((entry) => ({
       ...entry,
-      workflowSubject: resolveTriageSourceWorkflowSubjectV1(surfaceContext.targetedContributions, entry.entryRef),
+      workflowSubject: projectTriageSourceWorkflowSubjectV1(readSourceDescriptor(entry.entryRef.source), entry.entryRef.kindId),
     })),
-  }), [readSelectedBulkEntries, surfaceContext.targetedContributions]);
+  }), [readSelectedBulkEntries, readSourceDescriptor]);
 
   const dismissBulkSelection = React.useCallback(() => {
     bulkSessions.reset();
@@ -1690,7 +1683,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         const action = readEntryActivation(operation.entryRef);
         if (action === null || action.kind === 'none') return { status: 'unavailable' };
         if (operation.tab !== undefined) {
-          const descriptor = readTriageSourceDescriptorV1(surfaceContext, operation.entryRef.source);
+          const descriptor = readSourceDescriptor(operation.entryRef.source);
           const kind = descriptor?.kinds.find((candidate) => candidate.id === operation.entryRef.kindId);
           const composition = planTriageDetailTabsV1({ workflowSubject: kind?.workflowSubject ?? null, entryTabs: kind?.detailTabs, fixPullRequest: null });
           if (composition.kind !== 'tabs' || !composition.tabs.some((tab) => tab.frameId === operation.tab)) return { status: 'unavailable' };
@@ -1795,7 +1788,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       }
     }
     return { status: 'applied' };
-  }, [creatingTask, taskDraftWrite.busy, closeTaskDraft, bulkActionChoices, addSourceOffers, configureOffers, editingSources, launchActionEditor, openConfigureSource, sourceHealthRows, retryConfiguredSources, sourcesUnreachable, bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, chooseDoneExpanded, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailOriginComposer, detailTabs, detailSessions, detailFixRetry, hostApi, loadMoreEntries, loadMorePins, marks.retry, pinsUnreachable, props.tasksPage, readEntryActivation, refreshPage, refreshState.kind, savedViews.retry, selectView, selectedKey, sessionActivity.retry, sessionActivityUnavailable, settleLensEditBeforeDurable, surface, taskAudience, viewsUnreachable, visibleOrder]);
+  }, [creatingTask, taskDraftWrite.busy, closeTaskDraft, bulkActionChoices, addSourceOffers, configureOffers, editingSources, launchActionEditor, openConfigureSource, sourceHealthRows, retryConfiguredSources, sourcesUnreachable, bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, chooseDoneExpanded, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailOriginComposer, detailTabs, detailSessions, detailFixRetry, hostApi, loadMoreEntries, loadMorePins, marks.retry, pinsUnreachable, props.tasksPage, readEntryActivation, readSourceDescriptor, refreshPage, refreshState.kind, savedViews.retry, selectView, selectedKey, sessionActivity.retry, sessionActivityUnavailable, settleLensEditBeforeDurable, surface, taskAudience, viewsUnreachable, visibleOrder]);
   const mountedOperationRef = React.useRef(runMountedOperation);
   React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
   React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
@@ -1966,6 +1959,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     [onCollectionOpenChange, pinHandlers],
   );
   const itemAnatomy = useTriageListAnatomyV1({
+    readSourceDescriptor,
     ...readTriageDataColumnsV1({ tasks: taskAudience !== undefined, items, sharedGroupReasons }),
     organizing,
     sortFields,
@@ -2526,7 +2520,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     row: selectedRow,
     lanes: listWindow?.window.lanes ?? [],
     connectionLabel: selectedConnectionLabel,
-    sourceDescriptor: readTriageSourceDescriptorV1(surfaceContext, selectedRow.entryRef.source),
+    sourceDescriptor: readSourceDescriptor(selectedRow.entryRef.source),
     linkedSessions: [],
     linkedSessionsHasMore: false,
     text,
@@ -2558,7 +2552,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       const header = projectTriageDetailHeaderV1({ row: detail,
         lanes: window.readOwner?.getSnapshot().window?.lanes ?? listWindow?.window.lanes ?? [],
         connectionLabel: selectedConnectionLabel,
-        sourceDescriptor: readTriageSourceDescriptorV1(surfaceContext, detail.entryRef.source),
+        sourceDescriptor: readSourceDescriptor(detail.entryRef.source),
         linkedSessions: [], linkedSessionsHasMore: false, text,
       });
       return renderTriageDetailHeaderV1({ header, text, locale: surfaceContext.locale, nowMs: Date.now(),
@@ -2569,7 +2563,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     loadedCount: rowCount,
     window: listWindow?.window ?? null,
     configuredSources: window.snapshot.configuredSources,
-    readSourceName: (source) => readTriageSourceDescriptorV1(surfaceContext, source)?.displayName,
+    readSourceName: (source) => readSourceDescriptor(source)?.displayName,
     entries: planTriageListContinuationV1({ section: 'entries', state: windowLoadMore, text }),
     pins: marks.more || pinsLoadMore?.kind === 'failed' || pinsLoadMore?.kind === 'unresumable'
       ? planTriageListContinuationV1({ section: 'pins', state: pinsLoadMore, text })
@@ -2837,8 +2831,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 )) : (
                   configuredSources.sources.map((source) => {
                     // A bare account name ("leeroybrun") does not say what it is: the source's own name does.
-                    const sourceName = resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions,
-                      source.configured.instance.source)?.displayName;
+                    const sourceName = readSourceDescriptor(source.configured.instance.source)?.displayName;
                     // The connection's own handle tells two accounts of one source apart.
                     const subtitle = sourceName !== undefined && source.displayPath !== undefined && source.displayPath !== source.displayLabel
                       ? `${sourceName} · ${source.displayPath}` : source.displayPath ?? sourceName;

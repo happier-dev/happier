@@ -29,7 +29,7 @@ import { formatTriageCompactAgeV1, formatTriageTimestampV1, resolveTriageRowFact
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import type { TriageSourceDescriptorV1, TriageSourceKindGlyphV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
-import { readTriageSourceDescriptorV1, resolveTriageSourceDescriptorV1, resolveTriageSourceKindGlyphV1, resolveTriageSourceWorkflowSubjectV1 } from '../detail/sourceSurface.js';
+import { projectTriageSourceDescriptorsV1, projectTriageSourceWorkflowSubjectV1, type TriageSourceDescriptorReaderV1 } from '../detail/sourceSurface.js';
 import {
   readTriageEntryRowAnnouncementV1,
   readTriageEntryRowContextV1,
@@ -343,15 +343,13 @@ export function useTriageListRowActions(item: TriageListItemV1): CollectionRowAc
 }
 
 /** The peek: the source's own summary, what the row already knows, and what a reader does next. */
-function TriageListPeek(props: Readonly<{ item: TriageListItemV1 }>): React.ReactElement {
+function TriageListPeek(props: Readonly<{ item: TriageListItemV1; descriptor: TriageSourceDescriptorV1 | null }>): React.ReactElement {
   const { row, summary } = props.item;
   const { handlers, onOpen } = useTriageListRowEnvironment();
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
   const webUrl = props.item.locator?.webUrl ?? null;
-  const surfaceContext = useSurfaceContext();
-  const descriptor = readTriageSourceDescriptorV1(surfaceContext, row.entryRef.source);
-  const context = readTriageEntryRowContextV1(row, descriptor, row.entryRef.source);
+  const context = readTriageEntryRowContextV1(row, props.descriptor, row.entryRef.source);
   return (
     <Stack gap="small">
       <Text variant="micro" tone="secondary" value={context.label} numberOfLines={1} />
@@ -545,6 +543,7 @@ export function readTriageDataColumnsV1(input: Readonly<{
  */
 export function useTriageListAnatomyV1(input: Readonly<{
   withSignal: boolean;
+  readSourceDescriptor?: TriageSourceDescriptorReaderV1;
   sortFields?: readonly TriageListSortFieldV1[];
   withAgent?: boolean;
   /** Whether any row says why it is here (`readTriageRowSaysReasonV1`); otherwise the column is not drawn. */
@@ -580,9 +579,10 @@ export function useTriageListAnatomyV1(input: Readonly<{
   const { withAgent = true, organizing = false, sharedGroupReasons = NO_SHARED_GROUP_REASONS, tasks = false, onTaskApplied = NO_TASK_REREAD, pinMarks = false } = input;
   const withSignal = input.withSignal && !tasks;
   const withReason = (input.withReason ?? true) && !tasks;
-  const { sortFields, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
+  const { sortFields, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome, readSourceDescriptor, taskAudience = 'mine' } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
-    const descriptorOf = (item: TriageListItemV1) => resolveTriageSourceDescriptorV1(targetedContributions, item.row.entryRef.source);
+    const readDescriptor = readSourceDescriptor ?? projectTriageSourceDescriptorsV1(targetedContributions);
+    const descriptorOf = (item: TriageListItemV1) => readDescriptor(item.row.entryRef.source);
     const agent = (item: TriageListItemV1) => {
       if (item.agent === null) return null;
       const mark = readTriageAgentCellMarkV1(item.agent);
@@ -645,8 +645,8 @@ export function useTriageListAnatomyV1(input: Readonly<{
         if (category !== null) return <TaskStatusGlyph category={category} />;
         const mark = readTriageRowMarkV1(
           item.row,
-          resolveTriageSourceWorkflowSubjectV1(targetedContributions, item.row.entryRef),
-          resolveTriageSourceKindGlyphV1(targetedContributions, item.row.entryRef),
+          projectTriageSourceWorkflowSubjectV1(descriptorOf(item), item.row.entryRef.kindId),
+          descriptorOf(item)?.kinds.find(kind => kind.id === item.row.entryRef.kindId)?.glyph ?? null,
         );
         return <Icon name={mark.name} size="small" tone={mark.tone} />;
       },
@@ -671,7 +671,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
         // A stale row is last-known content: its glyph stays a mark until the source answers again.
         if (task === null || task.category === null || (task.transitions?.length ?? 0) === 0
           || row.stale || row.sourceInstanceId === null || locator == null) return null;
-        return <TriageTaskRowStatusControl task={task} onApplied={onTaskApplied}
+        return <TriageTaskRowStatusControl task={task} onApplied={onTaskApplied} sourceName={descriptorOf(item)?.displayName}
           address={{ entryRef: row.entryRef, sourceInstanceId: row.sourceInstanceId, lastKnownLocator: locator }} />;
       } } : {}),
       title: (item) => item.row.title,
@@ -743,7 +743,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
       age: (item) => (item.row.activityAtMs === null
         ? null
         : formatTriageCompactAgeV1(locale, item.row.activityAtMs, Date.now())),
-      peek: (item) => <TriageListPeek item={item} />,
+      peek: (item) => <TriageListPeek item={item} descriptor={descriptorOf(item)} />,
       accessibilityLabel: (item) => item.row.title,
       accessibilityHint: (item) => triageListRowItemProps(item.row, false, {
         nowMs: Date.now(),
@@ -766,5 +766,5 @@ export function useTriageListAnatomyV1(input: Readonly<{
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };
-  }, [sortFields, contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome]);
+  }, [sortFields, contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome, readSourceDescriptor]);
 }
