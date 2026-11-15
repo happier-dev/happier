@@ -183,4 +183,31 @@ describe('subscribeExpoPushTokenChanges', () => {
         unsubscribe?.();
         expect(remove).toHaveBeenCalledTimes(1);
     });
+
+    it('signals once per device token, not once per token read', async () => {
+        // The native module re-emits the device token on every token read (iOS
+        // didRegister → onDevicePushToken; Android getDevicePushTokenAsync → onNewToken),
+        // so a reader that reconciles on the signal must not be re-woken by its own read.
+        let deviceToken = 'device-token-1';
+        let nativeListener: ((token: { type: string; data: string }) => void) | null = null;
+        const loadModule = moduleWith({
+            addPushTokenListener: (nextListener: (token: { type: string; data: string }) => void) => {
+                nativeListener = nextListener;
+                return { remove: vi.fn() };
+            },
+            getExpoPushTokenAsync: async () => {
+                nativeListener?.({ type: 'ios', data: deviceToken });
+                return { data: 'ExponentPushToken[abc]' };
+            },
+        });
+        const listener = vi.fn();
+        await subscribeExpoPushTokenChanges(listener, { loadModule });
+
+        for (let read = 0; read < 4; read += 1) await readExpoPushToken({ loadModule });
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        deviceToken = 'device-token-2';
+        await readExpoPushToken({ loadModule });
+        expect(listener).toHaveBeenCalledTimes(2);
+    });
 });

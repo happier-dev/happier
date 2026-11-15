@@ -205,7 +205,16 @@ export async function subscribeExpoPushTokenChanges(
         'expo-notifications addPushTokenListener',
         async (notifications) => {
             if (typeof notifications.addPushTokenListener !== 'function') return null;
-            const subscription = notifications.addPushTokenListener(() => listener());
+            // The native module re-emits the device token on every token read (iOS
+            // didRegister, Android getDevicePushTokenAsync → onNewToken), including the
+            // caller's own canonical read. Only a different device token is a change.
+            let lastDeviceToken: string | undefined;
+            const subscription = notifications.addPushTokenListener((token) => {
+                const deviceToken = typeof token?.data === 'string' ? token.data : undefined;
+                if (deviceToken !== undefined && deviceToken === lastDeviceToken) return;
+                lastDeviceToken = deviceToken;
+                listener();
+            });
             return () => subscription.remove();
         },
     );
