@@ -26,7 +26,7 @@ import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coa
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ProjectAccountRowChangeHintV1Schema, PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1, buildProjectAccountRowPhysicalKeyV1, parseProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { SessionDraftChangeHintV1Schema, type SessionDraftChangeHintV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
-import { SessionDraftChangeHintV2Schema, canonicalSessionDraftAddressV2, type SessionDraftAddressV2, type SessionDraftChangeHintV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { SessionDraftChangeHintV2Schema, canonicalSessionDraftAddressV2, readSessionDraftAccountChangeEntityIdV2, type SessionDraftAddressV2, type SessionDraftChangeHintV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
@@ -633,6 +633,9 @@ export function planSyncActionsFromChanges(
             }
             continue;
         }
+        // A content-free wake names only the draft row (each composer keystroke writes one);
+        // its feed row carries the hint above. It changes neither Settings nor the profile.
+        if (kind === 'account' && readSessionDraftAccountChangeEntityIdV2(change.entityId) !== null) continue;
 
         if (isSessionSystemRecordChangeKind(kind)) {
             if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {

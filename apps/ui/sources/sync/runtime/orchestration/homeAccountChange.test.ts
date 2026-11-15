@@ -5,6 +5,7 @@ import * as changePlanner from './changesPlanner';
 import { log } from '@/log';
 import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { buildSessionDraftAccountChangeEntityIdV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import {
     getHomeAccountChangeDemandedServerIds,
     isHomeAdministrationAccountChange,
@@ -105,6 +106,16 @@ describe('Home Account change subscriptions', () => {
             .toMatchObject({ accountSettingsAffects: true, workflowTriggersAffect: true });
         expect(publishHomeAccountChangeForRouting('session-home', ['unknown-plugin'], {
             source: 'socket', changeKinds: ['pluginDomain'] }).workflowTriggersAffect).toBe(true);
+    });
+    it.each(['socket', 'catch-up-pending'] as const)('routes a draft row wake on %s without a coarse Settings/Profile refresh', source => {
+        // Every composer keystroke writes a draft row; its content-free wake names only the row id.
+        const draft = buildSessionDraftAccountChangeEntityIdV2({ kind: 'newSession', draftId: '5d1f5c3e-2b7a-4c55-9a39-1a6f0f6f2d11' });
+        const event = publishHomeAccountChangeWake('draft-home', { t: 'account-change', changeKinds: ['account'], entityIds: [draft] }, source);
+        expect(event).toMatchObject({ changeKinds: ['account'], entityIds: [draft], accountSettingsAffects: false,
+            publicProfileAffects: false, profileCatalogAffects: false });
+        // An unknown Account row keeps the conservative coarse recovery.
+        expect(publishHomeAccountChangeWake('draft-home', { t: 'account-change', changeKinds: ['account'], entityIds: ['unknown-row'] }, source))
+            .toMatchObject({ accountSettingsAffects: true });
     });
     it('retains exact saved Workflow candidates with the definition owner identity vocabulary', () => {
         const observer = vi.fn();

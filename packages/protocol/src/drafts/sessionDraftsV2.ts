@@ -160,6 +160,18 @@ export function parseCanonicalSessionDraftAddressV2(value: string): SessionDraft
   return parsed.success && canonicalSessionDraftAddressV2(parsed.data) === value ? parsed.data : null;
 }
 
+const SESSION_DRAFT_ACCOUNT_CHANGE_ENTITY_PREFIX_V2 = 'session-draft:';
+
+/** The AccountChange row of one draft. Content-free wakes name only this id; the feed row's hint carries address and revision. */
+export function buildSessionDraftAccountChangeEntityIdV2(address: SessionDraftAddressV2): string {
+  return `${SESSION_DRAFT_ACCOUNT_CHANGE_ENTITY_PREFIX_V2}${canonicalSessionDraftAddressV2(address)}`;
+}
+
+export function readSessionDraftAccountChangeEntityIdV2(entityId: string): SessionDraftAddressV2 | null {
+  return entityId.startsWith(SESSION_DRAFT_ACCOUNT_CHANGE_ENTITY_PREFIX_V2)
+    ? parseCanonicalSessionDraftAddressV2(entityId.slice(SESSION_DRAFT_ACCOUNT_CHANGE_ENTITY_PREFIX_V2.length)) : null;
+}
+
 export const CanonicalSessionDraftAddressV2Schema = z.string().check(z.minLength(1), z.refine((value) => parseCanonicalSessionDraftAddressV2(value) !== null, 'Expected a canonical session draft address'));
 export type CanonicalSessionDraftAddressV2 = z.infer<typeof CanonicalSessionDraftAddressV2Schema>;
 

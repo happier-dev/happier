@@ -1,5 +1,5 @@
 import { SESSION_DRAFT_SOCKET_EVENT, canonicalSessionDraftAddressV1, type SessionDraftExpectedRevisionV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
-import { SESSION_DRAFT_V2_SOCKET_EVENT, SessionDraftStoredContentEnvelopeV2StoredSchema, canonicalSessionDraftAddressV2, isSessionDraftAddressV1, isSessionDraftContentV1, isAccountOwnedDraftAddressV2, type SessionDraftAddressKindV2, type SessionDraftAddressV2, type SessionDraftListResponseV2, type SessionDraftMutateResponseV2, type SessionDraftReadResponseV2, type SessionDraftRecordV2, type SessionDraftStoredContentEnvelopeV2, type AccountOwnedDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { SESSION_DRAFT_V2_SOCKET_EVENT, SessionDraftStoredContentEnvelopeV2StoredSchema, buildSessionDraftAccountChangeEntityIdV2, canonicalSessionDraftAddressV2, isSessionDraftAddressV1, isSessionDraftContentV1, isAccountOwnedDraftAddressV2, type SessionDraftAddressKindV2, type SessionDraftAddressV2, type SessionDraftListResponseV2, type SessionDraftMutateResponseV2, type SessionDraftReadResponseV2, type SessionDraftRecordV2, type SessionDraftStoredContentEnvelopeV2, type AccountOwnedDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { type AccountEncryptionMigrateSessionDraftsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
 import * as privacyKit from "privacy-kit";
@@ -49,7 +49,6 @@ export type SessionDraftAccountMigrationPostStateResult =
     | Readonly<{ status: "matched"; records: readonly SessionDraftRecordV2[] }>
     | Readonly<{ status: "requires_upgrade" | "mismatch" }>;
 
-export const SESSION_DRAFT_ACCOUNT_CHANGE_ENTITY_PREFIX = "session-draft:";
 
 const SESSION_DRAFT_ROW_SELECT = {
     key: true,
@@ -192,7 +191,7 @@ export async function publishDraftMutationInTx(
     await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "account",
-        entityId: `${SESSION_DRAFT_ACCOUNT_CHANGE_ENTITY_PREFIX}${canonicalSessionDraftAddressV2(params.address)}`,
+        entityId: buildSessionDraftAccountChangeEntityIdV2(params.address),
         hint,
     });
     afterTx(tx, () => {
