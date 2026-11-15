@@ -4,7 +4,8 @@ import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { createProjectSessionRuntimeFixture } from '../testkit/projectSessionRuntimeFixture';
 import { readHostAccountExecutionIdentity } from '../agentIsolation/agentIsolationAccountCustody';
 import { createRequesterSessionCredentialCustody } from './requesterSessionCredentials';
-import { readOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountOperationContextForHost } from './ordinaryRequesterSessionAccountCustody';
+import { captureOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountOperationContextForHost } from './ordinaryRequesterSessionAccountCustody';
+import { writeStoredCredentialsForServerId } from '@/persistence';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
@@ -46,6 +47,13 @@ it.each(['owner', 'guestUse', 'foreignSession', 'foreignAccount', 'foreignHome',
     if (ordinaryOwner) expect(custody?.attribution).toEqual(attribution);
     else expect(custody).toBeNull();
     expect(vi.mocked(axios.get).mock.calls.length - reads).toBe(0);
+    if (scenario === 'owner') {
+      await writeStoredCredentialsForServerId(attribution.serverId, credentials);
+      const admitted = await captureOrdinaryRequesterSessionAccountCustodyForHost(input);
+      expect(admitted).not.toBeNull();
+      await writeStoredCredentialsForServerId(attribution.serverId, { ...credentials, token: `${credentials.token}-renewed` });
+      expect(await admitted!.isCurrent()).toBe(true);
+    }
     const snapshot = fixture.bootstrap.accountSettingsContext;
     setActiveAccountSettingsSnapshot({ ...snapshot, ...(scenario === 'ambientOtherAccount' ? { scopeKey: 'another-account' } : {}) });
     const settingsReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) => /\/v[12]\/account\/settings$/u.test(String(url))).length;

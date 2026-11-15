@@ -90,7 +90,7 @@ function readString(value: unknown, label: string): string {
 function assertChannelsCoreCaller(context: PluginInvocationContext): void {
   assertConversationChannelsCoreCallerV1(context, {
     code: 'github_channels_core_caller_required',
-    message: 'GitHub Channel setup must be invoked by the Channels core plugin.',
+    message: 'GitHub Channel setup requires a host-stamped plugin caller.',
   });
 }
 

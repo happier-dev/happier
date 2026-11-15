@@ -77,7 +77,7 @@ const storedDiscordConnectionConfigSchema = createProtocolStoredReadSchema(defin
 export function assertDiscordChannelsCoreCaller(context: PluginInvocationContext): void {
   assertConversationChannelsCoreCallerV1(context, {
     code: 'discord_channels_core_caller_required',
-    message: 'Discord Channel provider operations must be invoked by the Channels core plugin.',
+    message: 'Discord Channel provider operations require a host-stamped plugin caller.',
   });
 }
 

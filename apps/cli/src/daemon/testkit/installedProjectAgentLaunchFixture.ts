@@ -13,7 +13,7 @@ import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgen
 import { createProjectSetupTrustClient } from '@/workspaces/projectSetup/projectSetupTrust';
 import type { ProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createInstalledProjectFiniteRuntime } from '@/daemon/startup/createInstalledProjectFiniteRuntime';
-import { readStoredCredentialsForServerId, sameStoredCredentials, writeCredentialsTokenOnly, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
+import { readStoredCredentialsForServerId, writeCredentialsTokenOnly, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { verifyMachineInstallationProof, MachineInstallationProofV1Schema, RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -172,8 +172,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
     finiteServerId: serverId, finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
     admission,
     nativeIo: { commandIo: { resolveTool }, environmentIo },
-    successHomeDir: join(f.directory, 'success'), isCurrent: async () => !accountActionCredentials
-      || sameStoredCredentials(accountActionCredentials, await readStoredCredentialsForServerId(serverId)),
+    successHomeDir: join(f.directory, 'success'), isCurrent: async () => true,
     prepareBetween: async () => { throw new Error('No worker routing expected'); },
     resolveCurrentMachineExecutionOriginContext: options.resolveCurrentMachineExecutionOriginContext ?? (async () => null) });
   const machine = new ApiMachineClient(accountActionCredentials?.token ?? 'custodian-token', { id: 'machine', encryptionMode: 'plain',

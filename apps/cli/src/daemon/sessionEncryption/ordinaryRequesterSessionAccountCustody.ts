@@ -1,6 +1,6 @@
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isDeepStrictEqual } from 'node:util';
-import { hasStoredSessionCredentialProvenance, readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, readStoredCredentialsForServerId } from '@/persistence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { selectHostAccountExecutionIdentityForSession } from '../agentIsolation/agentIsolationAccountCustody';
@@ -27,10 +27,7 @@ export async function captureOrdinaryRequesterSessionAccountCustodyForHost(
   const credentials = await readStoredCredentialsForServerId(input.serverId);
   const accountId = input.sessionCustodianAccountId ?? readAccountIdFromToken(input.credentials.token);
   if (!credentials || !accountId || readAccountIdFromToken(credentials.token) !== accountId) return null;
-  const custody = await readOrdinaryRequesterSessionAccountCustodyForHost({ ...input, credentials,
-    isCurrent: async () => await input.isCurrent()
-      && sameStoredCredentials(credentials, await readStoredCredentialsForServerId(input.serverId)),
-  });
+  const custody = await readOrdinaryRequesterSessionAccountCustodyForHost({ ...input, credentials });
   return custody?.attribution.accountId === accountId ? custody : null;
 }
 

@@ -90,7 +90,7 @@ async function readyConnection(context: PluginInvocationContext, input: Connecti
   return { api, identity };
 }
 function assertCore(context: PluginInvocationContext): void {
-  assertConversationChannelsCoreCallerV1(context, { code: 'slack_channels_core_caller_required', message: 'Slack provider operations require the Channels core caller.' });
+  assertConversationChannelsCoreCallerV1(context, { code: 'slack_channels_core_caller_required', message: 'Slack provider operations require a host-stamped plugin caller.' });
 }
 function endpointFor(identity: SlackIdentity, channel: SlackChannel, threadTs?: string): ConversationResolvedEndpointV1 {
   const endpoint = createSlackEndpointIdentity(identity, channel, threadTs);

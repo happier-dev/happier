@@ -47,10 +47,10 @@ describe('email provider principal admission', () => {
 
 describe('email provider caller authority', () => {
   it.each([setupEmailChannels, testEmailConnection, resolveEmailEndpoint, resolveEmailPrincipal,
-    pollEmailObservations, deliverEmailMessage, reconcileEmailDelivery, fetchEmailAttachment])('refuses a non-core caller before parsing or I/O (%s)', async role => {
+    pollEmailObservations, deliverEmailMessage, reconcileEmailDelivery, fetchEmailAttachment])('refuses callers without a host-stamped plugin surface before parsing or I/O (%s)', async role => {
     await expect(role({}, { ...context, surface: 'cli', caller: undefined }))
       .rejects.toMatchObject({ code: 'channels_core_caller_required' });
-    await expect(role({}, { ...context, caller: { kind: 'plugin', pluginId: 'acme.transport' } as PluginInvocationContext['caller'] }))
+    await expect(role({}, { ...context, caller: undefined }))
       .rejects.toMatchObject({ code: 'channels_core_caller_required' });
   });
 });

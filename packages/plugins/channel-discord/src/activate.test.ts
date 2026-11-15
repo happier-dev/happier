@@ -188,7 +188,7 @@ describe('Discord Channel plugin activation', () => {
     }
   });
 
-  it('rejects a wrong host-stamped plugin caller before credential materialization or Discord I/O while accepting Channels', async () => {
+  it('requires a host-stamped plugin caller before credential materialization or Discord I/O', async () => {
     const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
       const setup = testkit.registration('actions', DISCORD_CHANNEL_ACTION_IDS.setup);
@@ -196,11 +196,11 @@ describe('Discord Channel plugin activation', () => {
 
       const deniedMaterialize = vi.fn();
       const deniedRequest = vi.fn();
-      await expect(setup(discordSetupInput, providerActionContext({
+      await expect(setup(discordSetupInput, { ...providerActionContext({
         callerPluginId: 'happier.channel.other',
         materialize: deniedMaterialize,
         request: deniedRequest,
-      }))).rejects.toMatchObject({ code: 'discord_channels_core_caller_required' });
+      }), caller: undefined })).rejects.toMatchObject({ code: 'discord_channels_core_caller_required' });
       expect(deniedMaterialize).not.toHaveBeenCalled();
       expect(deniedRequest).not.toHaveBeenCalled();
 

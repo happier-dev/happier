@@ -5,6 +5,6 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 export function assertTelegramChannelsCoreCaller(context: PluginInvocationContext): void {
   assertConversationChannelsCoreCallerV1(context, {
     code: 'telegram_channels_core_caller_required',
-    message: 'Telegram Channel provider operations must be invoked by the Channels core plugin.',
+    message: 'Telegram Channel provider operations require a host-stamped plugin caller.',
   });
 }

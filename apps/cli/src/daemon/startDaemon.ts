@@ -4092,12 +4092,6 @@ export async function startDaemon(
               };
               if (admissionDrain.isFinalShutdown()) return refuse('daemon_shutdown');
               if (configuration.activeServerId !== finiteServerId) return refuse('installed_home_changed');
-              const stored = await readStoredCredentialsForServerId(finiteServerId).catch(() => null);
-              if (!stored) return refuse('stored_credentials_unavailable');
-              if (!sameStoredCredentials(credentials, stored)) {
-                return refuse(credentials.requesterSessionCredentialScope && !stored.requesterSessionCredentialScope
-                  ? 'installed_credentials_scoped_by_requester' : 'installed_credentials_changed');
-              }
               return true;
             };
             const policyClient = await createAccountServerMachineFinitePolicyClient({

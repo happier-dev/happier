@@ -663,7 +663,6 @@ export function createDaemonMachineBootstrapRuntime(
         ? async (claim: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0], requester?: Readonly<{
           credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
         }>) => {
-          const { readStoredCredentialsForServerId, sameStoredCredentials } = await import('@/persistence');
           // Each claim owns its requester lifetime, including parallel leaves.
           // Ordinary local controls remain unprivileged; only this captured
           // Workflow transport carries the admitted Run's captured Account custody.
@@ -672,8 +671,6 @@ export function createDaemonMachineBootstrapRuntime(
           const isCurrent = async () => Boolean(selectedAttribution
             && connectedApiMachine === automationApiMachine && !params.isShuttingDown()
             && configuration.activeServerId === automationHomeId
-            && readInstallationIdentityIfExistsSync()?.installationId === automationInstallationId
-            && sameStoredCredentials(params.credentials, await readStoredCredentialsForServerId(automationHomeId))
             && !claim.signal?.aborted);
           const requesterTransport = createWorkflowRunMachineTransport({ runId: claim.runId,
             machineAdmissionBoundary: workflowMachineAdmissionBoundary,
@@ -728,8 +725,7 @@ export function createDaemonMachineBootstrapRuntime(
             machineAdmissionBoundary: workflowMachineAdmissionBoundary,
             requesterWorkAttributionV1: requester.attribution,
             isCurrent: async () => connectedApiMachine === automationApiMachine && !params.isShuttingDown()
-              && configuration.activeServerId === automationHomeId
-              && readInstallationIdentityIfExistsSync()?.installationId === automationInstallationId,
+              && configuration.activeServerId === automationHomeId,
             boundary: { serverId: automationHomeId, serverHttpBaseUrl: readMachineSkillHomeUrl(),
               happyHomeDir: configuration.happyHomeDir,
               getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null },

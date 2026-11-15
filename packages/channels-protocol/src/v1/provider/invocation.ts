@@ -1,6 +1,5 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 
-import { CONVERSATION_CORE_PLUGIN_ID_V1 } from '../bounds.js';
 import type { ConversationProviderFailureV1 } from '../diagnostics.js';
 
 /** The two host-stamped invocation facts the caller check reads. */
@@ -9,19 +8,18 @@ export type ConversationInvocationCallerFactsV1 = Readonly<{
   caller?: Readonly<{ kind: string; pluginId?: string }>;
 }>;
 
-/** Provider roles accept only the host-stamped Channels core caller. */
+/** Provider roles require a host-stamped plugin caller. */
 export function assertConversationChannelsCoreCallerV1(
   context: ConversationInvocationCallerFactsV1,
   refusal: Readonly<{ code: string; message: string }> = {
     code: 'channels_core_caller_required',
     message:
-      'Channel provider operations must be invoked by the Channels core plugin.',
+      'Channel provider operations require a host-stamped plugin caller.',
   },
 ): void {
   if (
     context.surface !== 'plugin' ||
-    context.caller?.kind !== 'plugin' ||
-    context.caller.pluginId !== CONVERSATION_CORE_PLUGIN_ID_V1
+    context.caller?.kind !== 'plugin'
   ) {
     throw new PluginError(refusal);
   }

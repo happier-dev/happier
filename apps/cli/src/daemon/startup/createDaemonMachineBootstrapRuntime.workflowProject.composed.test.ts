@@ -15,13 +15,14 @@ import { materializeWorkflowAcceptedSnapshotV1, serializeWorkflowStoredContentEn
   FeaturesResponseSchema, WorkflowDefinitionV1Schema, WorkflowProgressEnvelopeV1Schema, openWorkflowProgressStoredEnvelopeV1,
   parseWorkflowStoredContentEnvelopeV1, DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { AutomationV3WorkerClaimResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import { writeDaemonState } from '@/persistence';
+import { writeDaemonState, writeStoredCredentialsForServerId } from '@/persistence';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 
@@ -35,12 +36,12 @@ afterEach(async () => {
   vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
 });
 
-it.each(['kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries the claimed Workflow %s Account through installed dispatch into Project launch', async scenario => {
+it.each(['renewal', 'kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries the claimed Workflow %s Account through installed dispatch into Project launch', async scenario => {
   const configuredAcp = scenario === 'acp' || scenario === 'acp-failure';
   const accountId = scenario === 'foreign' ? 'foreign' : 'requester';
   const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId,
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
-  const homeServerIdentityId = 'workflow-project-home';
+  const homeServerIdentityId = 'srv_workflow-project-home';
   const h = await createInstalledProjectAgentLaunchFixture({ accountActionCredentials: { token, encryption: null }, homeServerIdentityId });
   const credentials = h.installedCredentials!;
   // Never invoke an ambient vendor binary or borrow a developer's login.
@@ -295,7 +296,23 @@ it.each(['kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries
           inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
         execution: { credentials, serverId: 'session-home', machineAdmissionTransport: input.machineAdmissionTransport,
           resolveExistingSessionConversation: async () => null, detachedRun: { actionExecutor: executor, buildActionContext: context } } });
-      return async claim => { try { const pending = coordinate(claim); coordinating = pending; const completed = await pending; result = completed; return completed; }
+      return async claim => { try {
+        if (scenario === 'renewal') {
+          const readChildOperation = () => input.machineActionDirectTargetTransport!.invoke(ACTION_OPERATION_RPC_METHODS_V2.get,
+            { operationId: 'workflow-renewal-probe' });
+          expect(await readChildOperation()).toMatchObject({ kind: 'not_found' });
+          const installed = await h.machine.resolveProjectFiniteRuntime({ signal: h.signal, requesterSessionBootstrap: h.f.bootstrap });
+          expect(installed).not.toBeNull();
+          // Renewing this Account's sign-in must not retire the admitted Run's next child.
+          await writeStoredCredentialsForServerId('session-home', { ...credentials, token: `${credentials.token}-renewed` });
+          expect(await readChildOperation()).toMatchObject({ kind: 'not_found' });
+          expect(await installed!.isCurrent!()).toBe(true);
+          worker?.stop();
+          expect(await readChildOperation()).toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+          result = { state: 'succeeded' };
+          return { state: 'succeeded' as const };
+        }
+        const pending = coordinate(claim); coordinating = pending; const completed = await pending; result = completed; return completed; }
         catch (error) { failure = error; throw error; } };
     } });
   await bootstrap.createConnectedApiMachine({ id: machineId, encryptionMode: 'plain', metadata: null, metadataVersion: 0,
@@ -306,7 +323,13 @@ it.each(['kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries
   worker?.handleServerUpdate({ id: 'workflow-project-wake', seq: 1, createdAt: Date.now(), body: {
     t: 'automation-run-updated', runId, automationId: 'automation-project', state: 'queued', scheduledAt: Date.now(), startedAt: null,
     finishedAt: null, updatedAt: Date.now(), machineId: null, targetMachineId: machineId } });
-  if (accountId === 'requester') {
+  if (scenario === 'renewal') {
+    await vi.waitFor(() => {
+      expect(claimed).toBe(true);
+      expect(failure).toBeUndefined();
+      expect(result).toEqual({ state: 'succeeded' });
+    }, { timeout: 30_000 });
+  } else if (accountId === 'requester') {
     await vi.waitFor(() => {
       expect(claimed).toBe(true);
       expect(projectRequester, JSON.stringify({ result, failure, calls })).toBe('requester');

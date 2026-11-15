@@ -38,28 +38,17 @@ const GITHUB_CHANNEL_PROVIDER_CONFIG = Object.freeze({
 const ARBITRARY_PROVIDER_ACTION_ID = 'unrelated-targeted-role';
 
 describe('headerless GitHub Channel cadence', () => {
-  it.each(['budget', 'malformed', 'denied'] as const)('settles the real provider Action using the account overview: %s', async scenario => {
-    const nowMs = Date.parse('2026-08-10T12:00:00Z');
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+  // Coordination's 2026-11-12 12:30 UTC ruling: no budget-derived interval or overview read.
+  it('uses the approved 60-second fallback through the real provider Action without acquiring an account budget', async () => {
     const reads: string[] = [];
     const http = createPluginHttpFixture({ request: async request => {
-      const path = new URL(request.url).pathname;
-      reads.push(path);
-      return {
-        status: path === '/rate_limit' && scenario === 'denied' ? 403 : 200,
-        finalUrl: request.url, headers: {},
-        body: new TextEncoder().encode(JSON.stringify(path !== '/rate_limit' ? []
-          : scenario === 'budget' ? { resources: { core: { remaining: 10, reset: nowMs / 1_000 + 600 } } } : {})),
-      };
+      reads.push(new URL(request.url).pathname);
+      return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode('[]') };
     } });
-    try {
-      const result = await pollGithubChannelObservations({ ...githubChannelConnectionInput(), checkpoint: null, limit: 10, waitMs: 0 },
-        coreContext({ connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture' } }) }, http }));
-      expect(result).toMatchObject(scenario === 'budget'
-        ? { kind: 'checkpointOnly', retryHint: { retryAfterMs: 60_000 } }
-        : { kind: 'notReady', reason: scenario === 'denied' ? 'permissionMissing' : 'invalidConfiguration' });
-      expect(reads).toEqual(['/repos/acme/widgets/issues/comments', '/rate_limit']);
-    } finally { clock.mockRestore(); }
+    const result = await pollGithubChannelObservations({ ...githubChannelConnectionInput(), checkpoint: null, limit: 10, waitMs: 0 },
+      coreContext({ connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture' } }) }, http }));
+    expect(result).toMatchObject({ kind: 'checkpointOnly', retryHint: { retryAfterMs: 60_000 } });
+    expect(reads).toEqual(['/repos/acme/widgets/issues/comments']);
   });
 });
 
@@ -411,7 +400,7 @@ describe('GitHub Channel Actions', () => {
     expect(http.request).not.toHaveBeenCalled();
   });
 
-  it('keeps authorization tied to the host-stamped Channels caller, not a conventional provider Action ID', async () => {
+  it('requires a host-stamped plugin caller before credential access', async () => {
     const connectedAccounts = {
       materialize: vi.fn(async () => ({
         kind: 'httpHeaders' as const,
@@ -425,21 +414,7 @@ describe('GitHub Channel Actions', () => {
     };
     const context: PluginInvocationContext = {
       ...coreContext({ connectedAccounts, http }),
-      caller: {
-        kind: 'plugin',
-        pluginId: 'happier.other-plugin',
-        contribution: {
-          id: 'unrelated-caller-role',
-          qualifiedId: 'happier.other-plugin/actions/unrelated-caller-role',
-        },
-        occurrenceId: 'github-channel-actions-unrelated-fixture-generation',
-        sourceCustody: { kind: 'managed', immutableGenerationId: 'github-channel-actions-unrelated-fixture-generation', installSource: 'npm' },
-        materialization: {
-          machineId: 'github-channel-actions-fixture-machine',
-          materializationId: 'github-channel-actions-fixture-materialization',
-          pluginId: 'happier.other-plugin',
-        },
-      },
+      caller: undefined,
     };
 
     await expect(setupGithubChannels({
