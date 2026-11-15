@@ -56,7 +56,11 @@ type CandidateIdentity =
 export function projectDiscussionInviteCandidatesV1<T extends CandidateIdentity>(input: Readonly<{
   scope: Readonly<{ serverId: string; accountId: string }>;
   candidates: readonly T[];
-  roster?: DiscussionParticipantsListResponseV1 | null;
+  roster?: Readonly<{
+    ownerAccountId: DiscussionParticipantsListResponseV1['ownerAccountId'];
+    grants: readonly DiscussionParticipantsListResponseV1['grants'][number][];
+    participants: readonly DiscussionParticipantsListResponseV1['participants'][number][];
+  }> | null;
   sessionAccess?: ReadonlyMap<string, Pick<SessionEffectiveAccessV1, 'capabilities'> | null>;
   /** Local Home aliases are resolved by the existing host profile owner. */
   isSameHome?: (serverId: string) => boolean;

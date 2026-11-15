@@ -3,7 +3,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
-import type { DiscussionAccessGrantsListResponseV1 } from '@happier-dev/protocol/discussions/access';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
@@ -59,9 +58,11 @@ type Mutation =
     }>
   | Readonly<{ kind: 'remove'; principal: PrincipalRefV1 }>;
 
+type DiscussionAccessRoster = Omit<DiscussionParticipantRoster, 'participants'>;
+
 type State = Readonly<{
   phase: 'initial' | 'ready' | 'error';
-  response: DiscussionAccessGrantsListResponseV1 | null;
+  response: DiscussionAccessRoster | null;
   issue?: ShareUiError;
   operations: Readonly<Record<string, ShareOperationModel>>;
 }>;
@@ -134,7 +135,7 @@ function useDiscussionInviteController(
   }>,
 ) {
   const { scope, discussionId } = input;
-  const seed = React.useMemo<DiscussionAccessGrantsListResponseV1 | null>(() => {
+  const seed = React.useMemo<DiscussionAccessRoster | null>(() => {
     if (!input.roster || input.roster.discussionId !== discussionId) return null;
     const { participants: _participants, ...grants } = input.roster;
     return grants;
