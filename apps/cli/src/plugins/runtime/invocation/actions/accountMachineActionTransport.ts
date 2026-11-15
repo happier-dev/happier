@@ -98,8 +98,9 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
             // press. Automation still lowers its credential at this boundary;
             // Home remains the authority producer for the receiving daemon.
             ...(input.request.presentUserIntent === 'confirmed' ? {} : { authorityCeiling: 'account_automation' as const }),
-            requireCurrentMachine: true, timeoutMs: null,
-            waitForResultOnCancel: true, signal: input.request.signal,
+            // The daemon owns the eventual effect; this caller owns only its
+            // observation. Cancellation must release the per-call RPC socket.
+            requireCurrentMachine: true, timeoutMs: null, signal: input.request.signal,
         }));
         return result.ok ? { status: 'executed', value: result.result }
             : { status: 'failed', code: result.code, message: result.message ?? result.code, data: new PluginError(result).data,

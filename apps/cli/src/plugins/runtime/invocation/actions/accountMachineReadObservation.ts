@@ -47,7 +47,7 @@ export async function observeAccountMachineActionRead(input: Readonly<{
         const opened = DaemonPluginUiResourceWatchOpenResponseSchema.parse(await callExactMachineRpc({ ...transport,
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
             request: DaemonPluginUiResourceWatchOpenRequestSchema.parse({ ...watch, resource: { actionRead: input.request } }),
-            timeoutMs: null, waitForResultOnCancel: true, signal }));
+            timeoutMs: null, signal }));
         if (!opened.ok) { await dispose(); return unavailable(opened.code); }
         if (opened.subscriptionId !== subscriptionId) {
             await dispose(); return unavailable('plugin_action_read_observation_unavailable');

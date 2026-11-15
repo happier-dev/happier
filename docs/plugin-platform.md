@@ -2161,6 +2161,8 @@ The CLI executor separately owns the caller's wait, including prepared Action
 invocations. Its local cancellation returns `cancelled` with
 `details.outcome: 'unknown'` even when a trusted plugin ignores its signal. The
 Action may still be running; its owner retains eventual effect settlement.
+Account-to-Machine calls release their per-call RPC connection on cancellation;
+they do not retain an acknowledgement that would keep an abandoned CLI alive.
 This does not terminate plugin code or promise that an outward effect stopped.
 
 `options.observeAction(ref, input, invalidate, { signal })` installs dependencies
@@ -8381,8 +8383,8 @@ Bar charts also accept caller-selected `bucketShading` by semantic bucket id and
 In 0.3 development, byte readouts share
 [`formatHappierDataBytes` / `formatHappierDataBytesParts`](../packages/plugin-ui/src/presentation/data/dataModel.ts).
 Callers must declare the quantity kind: file, disk and transfer sizes use decimal
-`storage`; RAM, process memory and swap use binary `memory`, labelled GB rather
-than GiB. Values at or above one unit retain three significant figures, with
+`storage`; RAM, process memory and swap use binary `memory`, labelled with IEC units
+(KiB, MiB, GiB, TiB and PiB). Values at or above one unit retain three significant figures, with
 trailing zeroes omitted. Consumer-specific sentences compose these readouts;
 they do not implement another byte formatter.
 
