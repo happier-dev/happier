@@ -19,6 +19,7 @@ import {
     SOCKET_RPC_EVENTS,
     SocketRpcCancellationPayloadSchema,
     SocketRpcRequestIdSchema,
+    SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES,
     SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
     type SocketRpcTransportAcknowledgementV1,
 } from '@happier-dev/protocol/socketRpc';
@@ -28,6 +29,7 @@ import {
     isDelegatedSessionApprovalRpcMethod,
 } from '@happier-dev/protocol/rpc';
 import { isPublicRpcHandlerError, readRpcErrorCode, toSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 
 export type RpcHandlerRegistrationReadiness =
     | Readonly<{ status: 'ready' }>
@@ -56,6 +58,7 @@ export class RpcHandlerManager {
     private readonly encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     private readonly encryptionMode: 'e2ee' | 'plain';
     private readonly logger: (message: string, data?: any) => void;
+    private readonly responseMaxBytes: number;
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
     private readonly onRegistrationAcknowledged: RpcHandlerConfig['onRegistrationAcknowledged'];
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
@@ -80,6 +83,7 @@ export class RpcHandlerManager {
         this.encryptionVariant = config.encryptionVariant;
         this.encryptionMode = config.encryptionMode ?? (config.encryptionVariant === 'plain' ? 'plain' : 'e2ee');
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
+        this.responseMaxBytes = config.responseMaxBytes ?? SOCKET_RPC_DEFAULT_RESPONSE_MAX_BYTES;
         this.onRegistrationError = config.onRegistrationError;
         this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
         this.authorizeRequest = config.authorizeRequest;
@@ -495,6 +499,67 @@ export class RpcHandlerManager {
         acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null,
     ): unknown {
         const encodedResult = this.encodeResponse(result);
+        const measuredBytes = this.measureReplyPayloadBytes(encodedResult, acknowledgement);
+        if (measuredBytes > this.responseMaxBytes) {
+            return this.refuseOversizedResponse(request, measuredBytes);
+        }
+        return this.wrapTransportResponse(request, encodedResult, acknowledgement);
+    }
+
+    /**
+     * Bytes the reply adds to its socket packet beyond the fixed framing
+     * (SOCKET_RPC_RESPONSE_PACKET_FRAMING_MAX_BYTES, already subtracted from the ceiling).
+     * Encrypted replies are base64 strings, so their length is their wire size. Plaintext
+     * objects use the bounded estimator so ordinary replies stay cheap, and are measured
+     * exactly only when the estimate exceeds the ceiling.
+     */
+    private measureReplyPayloadBytes(
+        encodedResult: unknown,
+        acknowledgement: SocketRpcTransportAcknowledgementV1 | null,
+    ): number {
+        const acknowledgementBytes = acknowledgement ? JSON.stringify({ acknowledgement }).length : 0;
+        if (typeof encodedResult === 'string') {
+            return encodedResult.length + acknowledgementBytes;
+        }
+        const estimatedBytes = estimateJsonUtf8BytesBounded(encodedResult, this.responseMaxBytes);
+        if (estimatedBytes <= this.responseMaxBytes) {
+            return estimatedBytes + acknowledgementBytes;
+        }
+        try {
+            return Buffer.byteLength(JSON.stringify(encodedResult) ?? '', 'utf8') + acknowledgementBytes;
+        } catch {
+            return estimatedBytes + acknowledgementBytes;
+        }
+    }
+
+    /**
+     * Replaces a reply the relay socket would drop the whole connection for (Socket.IO closes a
+     * connection on a packet above its maxHttpBufferSize) with a typed error, logged at warn.
+     * The error reply is small and fixed-shape, so it is wrapped without being measured again.
+     */
+    private refuseOversizedResponse(request: RpcRequest, measuredBytes: number): unknown {
+        const method = this.readUnprefixedMethod(request.method);
+        const limitBytes = this.responseMaxBytes;
+        defaultLogger.warn('[RPC] Refusing a reply larger than the relay socket accepts', {
+            reason: 'rpc_response_too_large',
+            method,
+            measuredBytes,
+            limitBytes,
+        });
+        return this.wrapTransportResponse(request, this.encodeResponse({
+            error: `${RPC_ERROR_MESSAGES.RESPONSE_TOO_LARGE} for method '${method}': ${measuredBytes} bytes exceeds limit ${limitBytes} bytes`,
+            errorCode: RPC_ERROR_CODES.RESPONSE_TOO_LARGE,
+            method,
+            measuredBytes,
+            limitBytes,
+        }), null);
+    }
+
+    private wrapTransportResponse(
+        request: RpcRequest,
+        encodedResult: unknown,
+        acknowledgement: SocketRpcTransportAcknowledgementV1 | null,
+    ): unknown {
         if (
             request.transportResponseEnvelopeVersion
             !== SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1

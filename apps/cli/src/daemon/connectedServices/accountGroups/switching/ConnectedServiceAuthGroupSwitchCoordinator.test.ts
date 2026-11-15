@@ -34,6 +34,38 @@ class TestGenerationConflictError extends Error {
 }
 
 describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
+  it('restores a recovered higher-priority member before a turn while the first member remains exhausted', async () => {
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      ...state('fallback', 3),
+      lastSwitchReason: 'usage_limit',
+      lastSwitchAt: 400,
+      policy: { ...state('fallback', 3).policy, autoRestorePrimaryWhenReset: true, softSwitchRemainingPercent: 0, cooldownMs: 100 },
+      members: [...state('fallback', 3).members, { profileId: 'fallback', priority: 3, createdAtMs: 3, enabled: true }],
+      memberStatesByProfileId: new Map([
+        ['primary', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 0, exhausted: true } }],
+        ['backup', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 42 } }],
+        ['fallback', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 5 } }],
+      ]),
+    };
+    const applied: string[] = [];
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000,
+      // Group persistence and provider application are the system boundaries.
+      loadState: async () => current,
+      commitSwitch: async ({ toProfileId, reason }) => (current = {
+        ...current, activeProfileId: toProfileId, generation: current.generation + 1, lastSwitchReason: reason, lastSwitchAt: 1_000,
+      }),
+      applyGeneration: async ({ activeProfileId }) => { if (activeProfileId) applied.push(activeProfileId); },
+    });
+    await expect(coordinator.switchBeforeTurn({
+      sessionId: 'session-1', serviceId: 'openai-codex', groupId: 'main', reason: 'soft_threshold',
+    })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'backup', generation: 4 });
+    expect(current.activeProfileId).toBe('backup');
+    expect(applied).toEqual(['backup']);
+  });
+
   it.each([['classified_failure', 'priority'], ['observation', 'priority'], ['classified_failure', 'manual'], ['observation', 'manual']] as const)('continues a user-selected healthy pool member while probes are offline (%s, %s)', async (entry, strategy) => {
     let current: ConnectedServiceAuthGroupSwitchState = { ...state('backup', 2), lastSwitchReason: 'manual', policy: { ...state('backup', 2).policy, strategy },
       memberStatesByProfileId: new Map([['backup', { quotaSnapshot: { capturedAtMs: 1, effectiveRemainingPercent: 100 } }]]) };

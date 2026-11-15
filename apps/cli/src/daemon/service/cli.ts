@@ -1062,6 +1062,21 @@ export async function recordDesktopDaemonServiceUse(bundleId: string): Promise<v
   }
 }
 
+async function resolveExpectedDaemonServiceRuntimeTarget(runtime: DaemonServiceCliRuntime) {
+  // Inspection and lifecycle refresh use install's launcher policy without acquiring a runtime.
+  // With no stable launcher installed, keep the already-resolved runtime target.
+  return await resolveDaemonServiceInstallRuntimeTarget({
+    allowBootstrap: false,
+    currentExecPath: runtime.nodePath,
+    targetMode: runtime.targetMode,
+    channel: runtime.channel,
+    processEnv: {
+      ...process.env,
+      HAPPIER_HOME_DIR: runtime.happierHomeDir,
+    },
+  }).catch(() => ({ nodePath: runtime.nodePath, entryPath: runtime.entryPath }));
+}
+
 export async function resolveDaemonServiceListEntries(
   runtime: DaemonServiceCliRuntime,
   options: Readonly<{ mode?: DaemonServiceMode; includeAllModes?: boolean; systemUser?: string }> = {},
@@ -1100,18 +1115,10 @@ export async function resolveDaemonServiceListEntries(
     return resolvedEntries;
   }
 
-  const expectedDefaultRuntimeTarget = await resolveDaemonServiceInstallRuntimeTarget({
-    allowBootstrap: false,
-    currentExecPath: runtime.nodePath,
+  const expectedDefaultRuntimeTarget = await resolveExpectedDaemonServiceRuntimeTarget({
+    ...runtime,
     targetMode: 'default-following',
-    processEnv: {
-      ...process.env,
-      HAPPIER_HOME_DIR: runtime.happierHomeDir,
-    },
-  }).catch(() => ({
-    nodePath: runtime.nodePath,
-    entryPath: runtime.entryPath,
-  }));
+  });
 
   return resolvedEntries.map((entry) => {
     if (
@@ -2096,6 +2103,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     let serviceDefinitionReloadCommands: DaemonServicePlannedCommand[] = [];
     if (action === 'start' || action === 'restart') {
       try {
+        const expectedRuntimeTarget = await resolveExpectedDaemonServiceRuntimeTarget(runtime);
         const expectedPlan = planDaemonServiceInstall({
           platform: runtime.platform,
           mode,
@@ -2114,8 +2122,8 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
           serverUrl: runtime.serverUrl,
           webappUrl: runtime.webappUrl,
           publicServerUrl: runtime.publicServerUrl,
-          nodePath: runtime.nodePath,
-          entryPath: runtime.entryPath,
+          nodePath: expectedRuntimeTarget.nodePath,
+          entryPath: expectedRuntimeTarget.entryPath,
         });
         const expectedFile = expectedPlan.files[0];
         if (expectedFile) {

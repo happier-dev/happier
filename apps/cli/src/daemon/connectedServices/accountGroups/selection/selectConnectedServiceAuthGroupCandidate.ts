@@ -507,9 +507,9 @@ function resolveCurrentCandidate(
  * reset because it hit a limit, and that reset time is now in the past. Paired with an existing
  * limiter-context marker so a never-limited member (whose `providerResetsAtMs` is merely a future
  * scheduled window, or absent) is never treated as "recovered from a limit". This is the
- * "we are off the primary BECAUSE it was limited AND its limit has since reset" precondition.
+ * "we left this member BECAUSE it was limited AND its limit has since reset" precondition.
  */
-function primaryLeftForLimitAndResetLanded(
+function memberLeftForLimitAndResetLanded(
   state: ConnectedServiceAuthGroupMemberRuntimeState | null,
   nowMs: number,
 ): boolean {
@@ -526,12 +526,12 @@ function primaryLeftForLimitAndResetLanded(
 }
 
 /**
- * Restore an eligible priority primary on fresh healthy quota after an automatic limit fallback.
+ * Restore the highest-priority eligible member ahead of the active member after an automatic limit fallback.
  * Group switch provenance survives member failure-state reconciliation and also distinguishes a
  * deliberate manual selection. Older groups without provenance retain their landed-reset proof.
  * Eligibility and fresh headroom remain owned by the normal candidate path.
  */
-function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
+function resolvePriorityRestorePreferredCandidate(params: Readonly<{
   members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
   candidates: ReadonlyArray<ConnectedServiceAuthGroupCandidate>;
   activeProfileId: string | null;
@@ -544,25 +544,21 @@ function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
   if (!params.policy.autoRestorePrimaryWhenReset) return null;
   if (params.policy.strategy !== 'priority') return null;
   if (!params.activeProfileId) return null;
-  const primaryProfileId = resolveConnectedServiceAuthGroupPriorityPrimaryProfileId(params.members);
-  if (!primaryProfileId || primaryProfileId === params.activeProfileId) return null;
-  const primaryCandidate = params.candidates.find((candidate) => candidate.profileId === primaryProfileId) ?? null;
-  if (!primaryCandidate) return null;
-  const primaryState = params.memberStatesByProfileId.get(primaryProfileId) ?? null;
-  if (params.lastSwitchReason) {
-    if (!['usage_limit', 'rate_limit', 'capacity', 'soft_threshold', 'same_provider_account_exhausted'].includes(params.lastSwitchReason)) return null;
-    const capturedAtMs = numberOrNull(primaryState?.quotaSnapshot?.capturedAtMs);
-    const lastSwitchAt = numberOrNull(params.lastSwitchAt);
-    if (lastSwitchAt !== null && (capturedAtMs === null || capturedAtMs <= lastSwitchAt)) return null;
-  } else if (!primaryLeftForLimitAndResetLanded(primaryState, params.nowMs)) {
-    return null;
-  }
-  if (primaryCandidate.leastLimitedScore === null) return null;
+  const activeMember = params.members.find((member) => member.profileId === params.activeProfileId);
+  if (!activeMember) return null;
+  if (params.lastSwitchReason
+    && !['usage_limit', 'rate_limit', 'capacity', 'soft_threshold', 'same_provider_account_exhausted'].includes(params.lastSwitchReason)) return null;
   const threshold = resolveSoftSwitchRemainingPercent(params.policy);
-  if (threshold !== null && primaryCandidate.leastLimitedScore <= threshold) {
-    return null;
-  }
-  return primaryCandidate;
+  return params.candidates
+    .find((candidate) => {
+      if (comparePriority(candidate, activeMember) >= 0) return false;
+      if (candidate.leastLimitedScore === null || (threshold !== null && candidate.leastLimitedScore <= threshold)) return false;
+      const state = params.memberStatesByProfileId.get(candidate.profileId) ?? null;
+      if (!params.lastSwitchReason) return memberLeftForLimitAndResetLanded(state, params.nowMs);
+      const capturedAtMs = numberOrNull(state?.quotaSnapshot?.capturedAtMs);
+      const lastSwitchAt = numberOrNull(params.lastSwitchAt);
+      return lastSwitchAt === null || (capturedAtMs !== null && capturedAtMs > lastSwitchAt);
+    }) ?? null;
 }
 
 function resolveSoftSwitchPreferredCandidate(params: Readonly<{
@@ -893,7 +889,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   // Credits are the fallback for every strategy: a stable partition keeps each tier's strategy order.
   candidates.sort((left, right) => Number(left.creditsOnly === true) - Number(right.creditsOnly === true));
 
-  const primaryRestorePreferred = resolvePrimaryRestorePreferredCandidate({
+  const priorityRestorePreferred = resolvePriorityRestorePreferredCandidate({
     members: params.members,
     candidates,
     activeProfileId: params.activeProfileId,
@@ -911,7 +907,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     allowCurrentProfileRetry: params.allowCurrentProfileRetry,
   });
 
-  const selected = primaryRestorePreferred ?? softSwitchPreferred ?? candidates[0] ?? null;
+  const selected = priorityRestorePreferred ?? softSwitchPreferred ?? candidates[0] ?? null;
   const reason = selected ? 'selected' : 'no_eligible_members';
   if (selected) {
     const selectedTraceCandidate = decisionTraceCandidates.find((candidate) => candidate.profileId === selected.profileId);

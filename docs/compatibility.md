@@ -501,9 +501,11 @@ omit a cause, replace an automatic cause with `manual`; removing or disabling
 the active member does the same when it selects a replacement.
 
 With priority strategy and `autoRestorePrimaryWhenReset` enabled, the canonical
-candidate selector can restore an eligible primary from fresh healthy quota
-observed after an automatic limit fallback, even without a provider reset time
-or surviving member failure marker. Explicit manual provenance prevents this
+candidate selector can restore the highest-priority eligible member ahead of
+the active member from fresh healthy quota observed after an automatic limit
+fallback, even while the first member remains exhausted and without a provider
+reset time or surviving member failure marker. Restoration requires headroom
+above the soft-switch threshold. Explicit manual provenance prevents this
 override. Older persisted groups without provenance retain the landed-reset
 proof; missing evidence is not treated as an automatic fallback.
 

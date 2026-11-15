@@ -1162,6 +1162,7 @@ describe('AgentInput (send button accessibility)', () => {
         screen.pressByTestId('session-composer-send');
 
         expect(multiTextInputHandleMocks.blur).toHaveBeenCalledTimes(1);
+        expect(multiTextInputHandleMocks.focus).not.toHaveBeenCalled();
 
         await screen.unmount();
     });
@@ -1183,6 +1184,7 @@ describe('AgentInput (send button accessibility)', () => {
         screen.pressByTestId('session-composer-send');
 
         expect(multiTextInputHandleMocks.blur).not.toHaveBeenCalled();
+        expect(multiTextInputHandleMocks.focus).toHaveBeenCalled();
         await screen.unmount();
     });
 

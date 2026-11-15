@@ -112,16 +112,23 @@ function createMultiLimitSnapshot(profileId: string): ProviderAccountUsageSnapsh
 }
 
 describe('buildConnectedServiceAuthGroupSwitchStateFromAccountUsage', () => {
-  it.each(['usage_limit', 'manual'])('selects recovered priority quota from the persisted %s selection provenance', (lastSwitchReason) => {
+  it.each(['usage_limit', 'manual'])('selects recovered priority quota while the first member is exhausted from persisted %s provenance', (lastSwitchReason) => {
     const group = createGroup();
-    group.activeProfileId = 'fresh';
+    group.members.push({ ...group.members[1]!, profileId: 'fallback', priority: 3 });
+    group.activeProfileId = 'fallback';
     group.state = { lastSwitchReason, lastSwitchAt: 400 };
     group.policy = { ...group.policy, strategy: 'priority', autoRestorePrimaryWhenReset: true, softSwitchRemainingPercent: 0 };
+    const store = createProviderAccountUsageStore();
+    for (const [profileId, remainingPct] of [['exhausted', 0], ['fresh', 37], ['fallback', 9]] as const) {
+      store.recordSnapshot(createSnapshot(profileId, remainingPct), { sources: [{
+        serviceId: group.serviceId, profileId, bindingKind: 'group_member', groupId: group.groupId, groupGeneration: group.generation,
+      }] });
+    }
     const { state } = buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
-      group, accountUsageStore: { resolveBySource: (source) => createSnapshot(source.profileId, source.profileId === 'exhausted' ? 37 : 9) },
+      group, accountUsageStore: store,
     });
     expect(selectConnectedServiceAuthGroupCandidate({ ...state, nowMs: 1_000, quotaFreshnessMs: 300_000,
-      allowCurrentProfileRetry: true }).selected?.profileId).toBe(lastSwitchReason === 'usage_limit' ? 'exhausted' : 'fresh');
+      allowCurrentProfileRetry: true }).selected?.profileId).toBe(lastSwitchReason === 'usage_limit' ? 'fresh' : 'fallback');
   });
 
   it.each([

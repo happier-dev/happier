@@ -184,6 +184,28 @@ describe('useSessionAgentInputComposerPersistence', () => {
         standardCleanup();
     });
 
+    it('does not schedule a second render pass per keystroke while there are no persisted mentions', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        let hookRenders = 0;
+        const hook = await renderHook(
+            (props: { sessionId: string; text: string }) => {
+                hookRenders += 1;
+                return useSessionAgentInputComposerPersistence(props);
+            },
+            { initialProps: { sessionId: 'session-a', text: '' } },
+        );
+
+        // Let mount effects settle before counting keystroke passes.
+        await act(async () => {});
+        const baseline = hookRenders;
+
+        await hook.rerender({ sessionId: 'session-a', text: 'h' });
+        await hook.rerender({ sessionId: 'session-a', text: 'he' });
+
+        // One render per keystroke: a store re-read that derives nothing new must not set state again.
+        expect(hookRenders - baseline).toBe(2);
+    });
+
     it('persists expansion per session owner and restores it after session switches', async () => {
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();
@@ -604,6 +626,43 @@ describe('useSessionAgentInputComposerPersistence', () => {
         expect(hook.getCurrent().inputPersistence.restoreToken).toBe(adoptedToken);
 
         vi.useRealTimers();
+    });
+
+    it('delivers the persisted selection and scroll on the same render that flips restoreToken', async () => {
+        // The restore consumer re-applies selection/scroll only when restoreToken changes, so the
+        // render that flips the token must already carry the payload read against the live text.
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const localUiStateStore = await importLocalUiStateStore();
+        const owner = { kind: 'session' as const, sessionId: 'session-a' };
+
+        localUiStateStore.patchAgentInputLocalUiState(activeScopeState.value, owner, {
+            scrollY: 88,
+            selection: { start: 30, end: 30 },
+            textLength: 42,
+            fontScale: 1,
+        });
+
+        const renders: Array<ReturnType<typeof useSessionAgentInputComposerPersistence>['inputPersistence']> = [];
+        const hook = await renderHook(
+            (params: Readonly<{ textLength: number }>) => {
+                const result = useSessionAgentInputComposerPersistence({
+                    sessionId: 'session-a',
+                    textLength: params.textLength,
+                    fontScale: 1,
+                });
+                renders.push(result.inputPersistence);
+                return result;
+            },
+            { initialProps: { textLength: 0 } },
+        );
+        await act(async () => {});
+        const pendingToken = hook.getCurrent().inputPersistence.restoreToken;
+
+        await hook.rerender({ textLength: 42 });
+
+        const flipRender = renders.find((render) => render.restoreToken !== pendingToken);
+        expect(flipRender?.initialSelection).toEqual({ start: 30, end: 30 });
+        expect(flipRender?.initialScrollY).toBe(88);
     });
 
     it('changes restoreToken when the session owner changes and after an explicit transient-state restore', async () => {

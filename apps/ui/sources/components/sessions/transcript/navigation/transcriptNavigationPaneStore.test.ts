@@ -6,8 +6,21 @@ import {
     createTranscriptNavigationPaneStore,
     transcriptNavigationPaneStore,
 } from './transcriptNavigationPaneStore';
+import { TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS } from '../paint/transcriptWarmPaintCache';
 
 describe('transcript navigation pane store', () => {
+    it('bounds the empty-snapshot identity cache instead of retaining every session ever opened', () => {
+        const first = createEmptyTranscriptNavigationPaneSnapshot('empty-cache-s0');
+        for (let index = 1; index <= TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS; index += 1) {
+            createEmptyTranscriptNavigationPaneSnapshot(`empty-cache-s${index}`);
+        }
+
+        const recentId = `empty-cache-s${TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS}`;
+        expect(createEmptyTranscriptNavigationPaneSnapshot(recentId)).toBe(createEmptyTranscriptNavigationPaneSnapshot(recentId));
+        // The earliest snapshot was evicted; re-requesting it mints a fresh identity.
+        expect(createEmptyTranscriptNavigationPaneSnapshot('empty-cache-s0')).not.toBe(first);
+    });
+
     it('starts with an empty per-session snapshot', () => {
         const store = createTranscriptNavigationPaneStore();
 

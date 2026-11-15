@@ -5,6 +5,7 @@ import { getReleaseRingPublicLabel, type PublicReleaseRingId } from '@happier-de
 import { configuration } from '@/configuration';
 import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
+import { readDoctorRelays } from '@/doctor/inv/relays';
 
 export async function maybeRunDoctorRepair(params: Readonly<{
   migrationRan: boolean;
@@ -23,7 +24,9 @@ export async function maybeRunDoctorRepair(params: Readonly<{
     systemUser: '',
   });
   if (repairState.plan.actions.length === 0 && repairState.plan.manualWarnings.length === 0) {
-    return false;
+    // Relay updates are diagnosed by repair, even when background services need no repair.
+    const inventory = await readDoctorRelays();
+    if (!inventory.relays.some((relay) => relay.installed)) return false;
   }
 
   // Activation changes the installed CLI, not the code/version already loaded

@@ -620,6 +620,12 @@ through the default file logger, and requires its existing distinct running iden
 
 ### One CLI update transaction (plan R13 f)
 
+In development source, the post-update repair handoff also runs when the canonical doctor relay
+inventory finds an installed local relay, even if background services need no repair. The newly
+activated CLI owns the diagnosis: repair displays installed relay versions, checks the matching
+channel against the published server release, and asks before updating. Relay update commands
+preserve the installed channel and user/system scope; CLI activation itself does not update relays.
+
 `runManagedCliUpdate` (`packages/cli-common/src/firstPartyRuntime/runManagedCliUpdate.ts`) is the
 only way a managed first-party CLI is updated in place. `happier self update`, the desktop's
 bootstrap `cli.update.v1` and the daemon-hosted remote `cli.update.v1` all run it, always from the
@@ -707,6 +713,14 @@ daemon is not. The
 desktop's `cli.update.v1` does not pass that step: it relies on the launcher move-aside and does
 not end sessions, but it is unverified on a real Windows host. Remote update is disabled on Windows
 (below).
+
+In current development source (not yet released), self-update and direct `self __install-payload` CLI promotion reject
+invocations below a Happier daemon or daemon-started session before downloads, locks, launcher
+capture or service shutdown. The update owner uses the daemon's Windows process inspection and
+shared session-command classification to walk the calling process's ancestors. Run the update
+from an independent terminal after saving work. Failure to inspect ancestry also refuses the
+update without modifying the installation. `self update --help` and `-h` print help before update
+dispatch. This prevents self-termination during quiescing; the recovery limits above still apply.
 
 **Rolling back across a migration.** The previous version must read whatever the new one wrote
 before it failed. CLI self-update callers are ≥ 0.2.13; current desktop hsetup can also replace
@@ -806,6 +820,13 @@ layout boundary (`isManagedCliDaemonServiceLauncher`: a managed shim or a payloa
 install root) either way — leaves the definition as it is and starts what is installed, so the
 desktop's quiet start of a stopped service (D6) runs the CLI the service already runs and any switch
 goes through the install dry-run's consent and the strict install.
+
+In development source, status and start/restart resolve their expected launcher through
+`resolveDaemonServiceInstallRuntimeTarget`, the installer's canonical launcher policy, without
+acquiring a JavaScript runtime. Once a managed shim is available, start/restart refresh an older
+version-pinned managed bootstrap launcher to that shim. With no stable launcher available they
+retain the already-resolved runtime target. The installed autostart mode and desktop attribution
+are preserved; the managed/user-installed CLI consent boundary above still applies.
 
 **One CLI per computer (plan R12).** That consent is asked at most once per decision: when the
 executor has asked "Let Happier manage it / Keep my own" (prompt `setup.cliChoice`, before any write;
@@ -1015,7 +1036,7 @@ platform opens its menu, built by one native builder (`src-tauri/src/tray/model.
   template (`Sessions: {count}`), including zero; absent/null makes no session-count claim;
 - Open Happier (⌘O), the Updates item when there is one, Settings… (⌘,), the **Start at login** check
   item (the same login-start setting, through `daemon.service.autostart.set.v1`), then **Quit Happier**
-  (⌘Q) and **Stop background services and quit**.
+  (⌘Q) and **Quit Happier (close background services)**.
   Tray Quit, service mutations and the login toggle are disabled while a native service action runs.
 
 The web UI pushes its localized labels (U14), its rows, the setting and the status task's params
@@ -1052,7 +1073,7 @@ from its `tauri.conf.json` entry (`"create": false`: the app creates it at start
 implicit exit request, which menu-bar mode holds; only an explicit Quit ends the tray process, and it
 follows the one login-start setting (D11-1): **on**, it leaves every service running — they and the
 tray come back at the next login; **off**, it stops every desktop-managed service first, through the
-same confirmed path as **Stop background services and quit**, and a stop that fails keeps the tray
+same confirmed path as **Quit Happier (close background services)**, and a stop that fails keeps the tray
 alive with the failure shown so it can be retried; **unknown**, it leaves every service as it is. Once
 the setting is known the item says which it will do (*Quit Happier (keep background services
 running)* / *Quit Happier and stop background services*); unknown, it is the plain *Quit Happier*.

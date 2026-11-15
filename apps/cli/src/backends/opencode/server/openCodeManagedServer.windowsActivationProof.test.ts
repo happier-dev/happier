@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
+import type { ExecFileOptions } from 'node:child_process';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SharedManagedOpenCodeServerState } from './sharedManagedServer';
 
-const { execFileSyncMock } = vi.hoisted(() => ({
+const { execFileMock, execFileSyncMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
   execFileSyncMock: vi.fn(),
 }));
 
@@ -12,6 +14,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
     ...actual,
+    execFile: execFileMock,
     execFileSync: execFileSyncMock,
   };
 });
@@ -21,6 +24,7 @@ describe('managed OpenCode Windows activation proof', () => {
 
   beforeEach(() => {
     vi.resetModules();
+    execFileMock.mockReset();
     execFileSyncMock.mockReset();
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
@@ -39,6 +43,21 @@ describe('managed OpenCode Windows activation proof', () => {
     const baseUrl = 'http://127.0.0.1:43111';
     const commandLine = '"C:\\tools\\opencode.exe" serve --hostname=127.0.0.1 --port=43111';
     const processInstanceFingerprint = 'win32-cim:2026-08-14T10:00:00.0000000Z';
+
+    // Doctor uses asynchronous OS inspection; keep its parsing and process classification real.
+    execFileMock.mockImplementation((
+      _command: string,
+      _args: readonly string[],
+      _options: ExecFileOptions,
+      callback: (error: Error | null, stdout: string) => void,
+    ) => {
+      queueMicrotask(() => callback(null, JSON.stringify({
+        ProcessId: listenerPid,
+        ParentProcessId: 47_000,
+        Name: 'opencode.exe',
+        CommandLine: commandLine,
+      })));
+    });
 
     execFileSyncMock.mockImplementation((command: string, args: readonly string[]) => {
       if (command === 'netstat') {
@@ -59,13 +78,6 @@ describe('managed OpenCode Windows activation proof', () => {
           { ProcessId: listenerPid, ParentProcessId: 47_000 },
           { ProcessId: 47_000, ParentProcessId: spawnPid },
         ]);
-      }
-      if (script.includes('CommandLine')) {
-        return JSON.stringify({
-          ProcessId: listenerPid,
-          Name: 'opencode.exe',
-          CommandLine: commandLine,
-        });
       }
       throw new Error(`Unexpected PowerShell script: ${script}`);
     });
