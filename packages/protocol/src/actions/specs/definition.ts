@@ -152,6 +152,8 @@ export const ActionServerTransportSchema = lazyZodSchema(() => z.strictObject({
   path: z.string().check(z.startsWith('/'), z.refine((path) => !path.startsWith('//'), {
     message: 'Action transport must be a relative Home path',
   })),
+  /** Host-prepared content may have a distinct closed HTTP grammar. Never serialized. */
+  inputSchema: z.optional(ZodSchemaLike),
 }));
 export type ActionServerTransport = z.infer<typeof ActionServerTransportSchema>;
 

@@ -5,6 +5,7 @@ import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema }
 import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema } from '../../projects/projectVisibilityV1.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../projects/projectOrganizationV1.js';
 import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema, ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } from '../../projects/projectWorkspaceActionsV1.js';
+import { ProjectServicesPinInputV1Schema, ProjectServicesPinOutputV1Schema } from '../../projects/projectServicesActionsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
@@ -133,6 +134,20 @@ function createProjectContextActionSpecs() {
       { path: 'label', title: 'Label', widget: 'text' },
       { path: 'pinned', title: 'Pinned', widget: 'boolean' },
       { path: 'projectKey', title: 'Group with Project (key), or "self" to separate', widget: 'text' },
+    ] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'projects.services.pin', approval: {result: 'required'}, title: 'Pin or unpin a service',
+    description: 'Pin an Environment to the top of the person\'s Services column on a Home, or unpin it. Personal and private to the Account; the Environment, its deploys and other people\'s pins are unchanged. Returns the Home\'s pinned Environment ids, newest first.',
+    sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_services_pin', voiceClientToolName: 'projects_services_pin' },
+    cli: { acceptsServerId: true, requiresServerId: true, commands: [{ path: ['projects', 'services', 'pin'], visibility: 'canonical' }] },
+    inputSchema: ProjectServicesPinInputV1Schema, outputSchema: ProjectServicesPinOutputV1Schema,
+    inputHints: { fields: [
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'environmentId', title: 'Environment id', prompt: 'Which service?', widget: 'text', required: true },
+      { path: 'pinned', title: 'Pinned', widget: 'boolean', required: true },
     ] },
   } satisfies PreNormalizedActionSpec,
   {
