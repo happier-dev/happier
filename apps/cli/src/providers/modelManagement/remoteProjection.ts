@@ -34,7 +34,8 @@ function createAccountScopedProviderReader<TRequest extends Readonly<{ machineId
   input: AccountScopedProviderReadInput,
   operation: Readonly<{
     method: string;
-    context(request: TRequest): Readonly<{ machineId: string; connectionId?: string }>;
+    context(request: TRequest): Readonly<{ machineId: string; connectionId?: string;
+      connectedAccountTarget?: ProviderErrorV1['connectedAccountTarget'] }>;
     parse(value: unknown, request: TRequest): TResponse | null;
   }>,
 ): (request: TRequest, signal: AbortSignal) => Promise<TResponse | Readonly<{ status: 'error'; error: ProviderErrorV1 }>> {
@@ -91,7 +92,8 @@ function createAccountScopedProviderReader<TRequest extends Readonly<{ machineId
         return { status: 'error', error: createProviderErrorV1('provider_rpc_response_invalid', context) };
       }
       record(parsed.status === 'error' ? 'failed' : 'completed', parsed.error?.code);
-      return parsed;
+      return parsed.status === 'error' && parsed.error
+        ? { ...parsed, error: providerErrorFromRpcFailure(parsed.error, context) } : parsed;
     } catch (error) {
       const refusal = providerErrorFromRpcFailure(error, context);
       record('failed', signal.aborted ? 'cancelled' : refusal.code);
@@ -105,7 +107,8 @@ export function createAccountScopedProviderModelProjectionReader(input: AccountS
   return createAccountScopedProviderReader<DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1>(input, {
     method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
     context: request => ({ machineId: request.machineId,
-      ...(request.providerConnection ? { connectionId: request.providerConnection.connectionId } : {}) }),
+      ...(request.providerConnection ? { connectionId: request.providerConnection.connectionId } : {}),
+      ...(request.connectedAccountTarget ? { connectedAccountTarget: request.connectedAccountTarget } : {}) }),
     parse: (value, request) => {
       const parsed = DaemonProviderModelProjectionResponseV1Schema.safeParse(value);
       return parsed.success && (parsed.data.status !== 'success' || parsed.data.agentTargetKey === request.agentTargetKey)

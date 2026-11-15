@@ -6,6 +6,15 @@ import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
 import { RPC_ERROR_CODES, RpcError } from '../rpc/errors.js';
 
 describe('provider stable errors and compatibility envelopes', () => {
+  it('retains the exact Connected Account target and connection context through failure normalization', () => {
+    const target = { kind: 'account' as const,
+      account: { service: { pluginId: 'acme.native', localId: 'login' }, accountId: 'account-a' } };
+    const error = { ...createProviderErrorV1('agent_error'), connectedAccountTarget: target };
+    expect(ProviderErrorV1Schema.parse(error)).toEqual(error);
+    expect(providerErrorFromRpcFailure(error)).toEqual(error);
+    expect(providerErrorFromRpcFailure(createProviderErrorV1('agent_error', { sourceProfileId: 'launch-profile' }), { connectionId: 'pc_actual' }))
+      .toMatchObject({ connectionId: 'pc_actual', sourceProfileId: 'launch-profile' });
+  });
   it('preserves a required model choice and its existing recovery through the wire reader', () => {
     const error = { v: 1, code: 'model_selection_required', retryable: false, action: 'choose_model' };
     expect(ProviderErrorV1Schema.parse(error)).toEqual(error);

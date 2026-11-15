@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Native firewall recovery commands (unreleased 0.3)
+
+`MachineFirewallRecoveryV1` optionally carries closed `restore: { capturedAt,
+commands }` material. The native firewall owner derives the ordered restoration
+program once from its captured snapshot; native undo executes it and the recovery
+card displays its POSIX commands with a translated capture-time basis. Existing
+foreign-effect checks and restoration verification stay at the native owner.
+Historical records without `restore` remain readable and are not backfilled or
+interpreted by the UI. Matching Protocol, native CLI and UI reload together under
+the unpublished 0.3 direct cut: older strict development readers reject the new
+field. No wire epoch, compatibility adapter or database migration is added.
+
 ## Home guest CLI source (unreleased 0.3)
 
 `/v1/features` advertises optional `capabilities.guestCli` with the closed identity
@@ -304,6 +316,13 @@ sanitized original, including an uncoded error class. Native recovery fields
 and older causes without `actionCause` remain valid. The synchronized 0.3 reload
 also covers Session runtime issue producers and readers; earlier strict
 development cause readers reject the added field.
+
+Provider errors also accept optional `connectedAccountTarget`, reusing the
+canonical qualified Account/Pool selector for exact source recovery. Missing
+targets remain valid; matching 0.3 daemon/UI readers load together because older
+strict development readers reject this field. The scoped `../0.2` frontier
+`008450323b` has no `providers/errors.ts` seam. This changes no stored format,
+wire epoch, or released compatibility adapter.
 
 The CLI's strict Runner/daemon service refusal envelope also accepts optional
 `error.failureCause` with `ActionFailureCauseV1`. Provider model-transition,

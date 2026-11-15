@@ -21,6 +21,7 @@ export type ProviderErrorPresentation = Readonly<{
         requestId?: string;
         failureCause?: ProviderErrorV1['failureCause'];
         connectionId?: string;
+        connectedAccountTarget?: ProviderErrorV1['connectedAccountTarget'];
         machineId?: string;
         sourceProfileId?: string;
         retryAfterMs?: number;
@@ -293,6 +294,7 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
         ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(error.failureCause ? { failureCause: error.failureCause } : {}),
         ...(error.connectionId ? { connectionId: error.connectionId } : {}),
+        ...(error.connectedAccountTarget ? { connectedAccountTarget: error.connectedAccountTarget } : {}),
         ...(error.machineId ? { machineId: error.machineId } : {}),
         ...(error.sourceProfileId ? { sourceProfileId: error.sourceProfileId } : {}),
         ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),

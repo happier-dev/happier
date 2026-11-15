@@ -5,6 +5,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { logger } from '@/ui/logger';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 const transport = vi.hoisted(() => ({ call: vi.fn() }));
 // The authenticated Machine RPC transport is the genuine network boundary.
@@ -26,6 +27,17 @@ const snapshot: ActiveAccountSettingsSnapshot = {
 };
 
 describe('Account-scoped remote Provider projection transport', () => {
+  it('retains the requested saved connection when the source daemon returns an identityless failure', async () => {
+    transport.call.mockReset().mockResolvedValue({ status: 'error', error: createProviderErrorV1('agent_error') });
+    const read = createAccountScopedProviderModelProjectionReader({ serverUrl: 'https://home.example.test',
+      readCredentials: async () => credentials, readAccountSettingsSnapshot: async () => snapshot, isCurrent: () => true });
+    await expect(read({ ...request, providerConnection: { connectionId: 'pc_actual',
+      expectedConnectionSecurityFingerprint: 'connection-security:v1:source' } }, new AbortController().signal))
+      .resolves.toMatchObject({ status: 'error', error: {
+        code: 'agent_error', connectionId: 'pc_actual', machineId: request.machineId,
+      } });
+  });
+
   it('validates explicit hub catalog responses without falling back to another connection or Machine', async () => {
     transport.call.mockReset().mockResolvedValue({ status: 'success', connectionId: 'other-connection',
       connectionRevision: 1, manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models: [] });

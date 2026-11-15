@@ -717,6 +717,12 @@ cause and optional request ID. A daemon cause without a Provider recovery code
 remains in `failureCause`, including across a subsequent Action wrapper; raw
 exception prose is excluded. Stale Account and Machine grant repairs expose
 their respective scope through the Provider error presenter.
+Connected Account catalog failures retain their exact qualified Account or Pool
+in `ProviderErrorV1.connectedAccountTarget`; saved-connection failures retain
+`connectionId`. The existing `review_connection` recovery opens that source's
+settings through its route owner, never through a synthetic model-group id.
+Connected Account settings currently use the active Home; cross-Home routing
+is a separate existing limitation.
 Launch and turn wrappers use the same Action cause projector, including causes
 carried by `PluginError.data`; Provider errors retain those facts alongside their
 recovery code. Broker refusals keep the existing closed reason and optional

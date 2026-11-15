@@ -22,7 +22,8 @@ import { observedConnectedAccountDescriptors, type ObserveConnectedAccountModels
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderSourceModelCatalog } from './sourceCatalog';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, providerErrorFromRpcFailure, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ProviderOperationAbandonedError } from '@/providers/operationLifetime';
 
 export type ResolveManagedProviderPurposeBindingIntentSelection = ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
 
@@ -97,7 +98,7 @@ type ConnectedAccountSourceGroup = Omit<DaemonProviderModelProjectionGroupV1, 'r
   rows: ProviderSourceModelCatalog['rows'];
 }>;
 
-export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAccountCatalogInput, 'support' | 'adapterVersion' | 'providerSettings'>): Promise<Readonly<{
+async function readConnectedAccountModelCatalogFromSource(input: Omit<ConnectedAccountCatalogInput, 'support' | 'adapterVersion' | 'providerSettings'>): Promise<Readonly<{
   groups: ConnectedAccountSourceGroup[];
   error?: ProviderErrorV1;
   isCurrent(): Promise<boolean>;
@@ -156,7 +157,9 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
         }
         if (signal.aborted || !await selection.isCurrent(signal)) continue;
         if (!observed && family.catalogObservation) return { groups: [],
-          error: createProviderErrorV1('provider_catalog_unavailable', { machineId: input.request.machineId, connectionId }),
+          error: createProviderErrorV1('provider_catalog_unavailable', {
+            machineId: input.request.machineId, connectedAccountTarget: target,
+          }),
           isCurrent: async () => !signal.aborted };
         observations.set(selection, observed);
       }
@@ -205,6 +208,20 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
   return { groups, isCurrent: async () => !signal.aborted
     && (await Promise.all([...selections].map(selection => selection.isCurrent(signal)))).every(Boolean)
     && !signal.aborted };
+}
+
+/** Catalog failures retain the actual Account or Pool, never a synthetic model-group id. */
+export async function readConnectedAccountModelCatalog(
+  input: Parameters<typeof readConnectedAccountModelCatalogFromSource>[0],
+): ReturnType<typeof readConnectedAccountModelCatalogFromSource> {
+  const context = { machineId: input.request.machineId, connectedAccountTarget: input.request.connectedAccountTarget };
+  try {
+    const result = await readConnectedAccountModelCatalogFromSource(input);
+    return result.error ? { ...result, error: providerErrorFromRpcFailure(result.error, context) } : result;
+  } catch (error) {
+    if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
+    throw providerErrorFromRpcFailure(error, context);
+  }
 }
 
 /** Worker presentation wraps the same source observation with its exact ref. */
@@ -256,7 +273,7 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
       && group.rows.some(row => row.ref.modelId === current.modelId || row.descriptor.id === current.modelId
         || row.descriptor.aliases?.includes(current.modelId)))) {
     return { ...source, groups, error: createProviderErrorV1('provider_model_not_found', {
-      machineId: input.request.machineId, connectionId: current.providerConnectionId,
+      machineId: input.request.machineId, connectedAccountTarget: input.request.connectedAccountTarget,
     }) };
   }
   if (!input.agentPurpose) return { ...source, groups };

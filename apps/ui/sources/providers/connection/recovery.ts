@@ -1,5 +1,6 @@
 import { ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 
 type RecoveryRouter = Readonly<Pick<ReturnType<typeof useRouter>, 'push'>>;
 
@@ -56,12 +57,13 @@ export function canDispatchProviderRecoveryAction(
         case 'review_machine_grant':
         case 'review_compatibility':
         case 'review_credential_transport':
-        case 'choose_model':
             return Boolean(error.connectionId);
+        case 'choose_model':
+            return Boolean(error.connectedAccountTarget) || Boolean(error.connectionId);
         case 'enable_on_machine':
             return availability.enableOnMachine === true || Boolean(error.connectionId);
         case 'review_connection':
-            return availability.reviewConnection === true || Boolean(error.connectionId);
+            return availability.reviewConnection === true || Boolean(error.connectedAccountTarget) || Boolean(error.connectionId);
         case 'add_secret':
         case 'replace_secret':
             return availability.configureSecret === true || Boolean(error.connectionId);
@@ -99,6 +101,12 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
     const connectionPath = error.connectionId
         ? `/(app)/settings/providers/${encodeURIComponent(error.connectionId)}` as const
         : null;
+    const target = error.connectedAccountTarget;
+    const connectionRoute = target
+        ? target.kind === 'account'
+            ? buildConnectedAccountSettingsRoute(target.account.service, { kind: 'account', accountId: target.account.accountId })
+            : buildConnectedAccountSettingsRoute(target.service, { kind: 'group', groupId: target.groupId })
+        : connectionPath;
     switch (error.action) {
         case 'retry':
         case 'restart_probe':
@@ -113,10 +121,12 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
             if (!input.loadModel) return false;
             await input.loadModel();
             return true;
-        case 'choose_model':
-            if (!connectionPath) return false;
-            input.router.push(`${connectionPath}/models`);
+        case 'choose_model': {
+            const path = target ? connectionRoute : connectionPath ? `${connectionPath}/models` as const : null;
+            if (!path) return false;
+            input.router.push(path);
             return true;
+        }
         case 'review_profile_migration':
             if (!error.sourceProfileId) return false;
             input.router.push('/(app)/settings/profiles');
@@ -154,14 +164,15 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
             if (!connectionPath) return false;
             input.router.push(connectionPath);
             return true;
-        case 'review_connection':
+        case 'review_connection': {
             if (input.reviewConnection) {
                 await input.reviewConnection();
                 return true;
             }
-            if (!connectionPath) return false;
-            input.router.push(connectionPath);
+            if (!connectionRoute) return false;
+            input.router.push(connectionRoute);
             return true;
+        }
         case 'replace_secret':
         case 'add_secret':
             if (input.configureSecret) {

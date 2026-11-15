@@ -4,6 +4,18 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { dispatchProviderRecoveryAction } from './recovery';
 
 describe('dispatchProviderRecoveryAction', () => {
+    it.each([
+        [{ kind: 'account' as const, account: { service: { pluginId: 'acme.native', localId: 'login' }, accountId: 'account-a' } },
+            { pluginId: 'acme.native', localId: 'login', accountId: 'account-a' }],
+        [{ kind: 'group' as const, service: { pluginId: 'acme.native', localId: 'login' }, groupId: 'pool-a' },
+            { pluginId: 'acme.native', localId: 'login', groupId: 'pool-a' }],
+    ])('opens the actual Connected Account or Pool behind a native catalog failure', async (connectedAccountTarget, params) => {
+        const push = vi.fn();
+        const error = { ...createProviderErrorV1('agent_error'), connectedAccountTarget };
+        expect(await dispatchProviderRecoveryAction({ error, router: { push } })).toBe(true);
+        expect(push).toHaveBeenCalledWith({ pathname: '/(app)/settings/connected-services/account', params });
+    });
+
     it('routes exact connection and model recovery without guessing ids', async () => {
         const push = vi.fn();
         expect(await dispatchProviderRecoveryAction({
@@ -11,6 +23,21 @@ describe('dispatchProviderRecoveryAction', () => {
             router: { push },
         })).toBe(true);
         expect(push).toHaveBeenCalledWith('/(app)/settings/providers/pc_work/models');
+        expect(await dispatchProviderRecoveryAction({
+            error: createProviderErrorV1('agent_error', { connectionId: 'pc_work' }), router: { push },
+        })).toBe(true);
+        expect(push).toHaveBeenLastCalledWith('/(app)/settings/providers/pc_work');
+    });
+
+    it('opens the exact native Account when its selected model is no longer available', async () => {
+        const push = vi.fn();
+        const connectedAccountTarget = { kind: 'account' as const,
+            account: { service: { pluginId: 'acme.native', localId: 'login' }, accountId: 'account-a' } };
+        expect(await dispatchProviderRecoveryAction({
+            error: createProviderErrorV1('provider_model_not_found', { connectedAccountTarget }), router: { push },
+        })).toBe(true);
+        expect(push).toHaveBeenCalledWith({ pathname: '/(app)/settings/connected-services/account',
+            params: { pluginId: 'acme.native', localId: 'login', accountId: 'account-a' } });
     });
 
     it('refuses context-dependent recovery when the typed error has no connection id', async () => {

@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { selectTeamCredentialSourcesForApproval } from '../teamCredentialApproval.js';
 import { projectSessionSpawnNewActionInputV2 } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../../../sessions/creation/sessionSpawnNewResultV1.js';
-import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
+import type { ActionSpecProjectionMetadata, ActionSpecSurfaceBindings, ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
 import { actionInputServerId } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
@@ -679,7 +679,25 @@ export const SESSION_LIFECYCLE_ACTION_SPECS: ReturnType<typeof createSessionLife
 
 
 
-function createSessionSpawnActionSpecs() {
+// Preserve concrete public schemas without serializing their full inferred trees
+// again in the factory's declaration return type.
+type SessionSpawnActionSpec = ActionSpecProjectionMetadata & Readonly<{
+  id: 'session.spawn_new';
+  approval: Readonly<{ result: 'optional'; flow: 'deferred' }>;
+  inputSchema: typeof SessionSpawnNewInputSchema;
+  outputSchema: typeof SessionSpawnNewActionResultV1Schema;
+  surfaceBindings: ActionSpecSurfaceBindings & Readonly<{
+    voice: NonNullable<ActionSpecSurfaceBindings['voice']> & Readonly<{ inputSchema: typeof SessionSpawnNewActionVoiceInputV2Schema }>;
+    mcp: NonNullable<ActionSpecSurfaceBindings['mcp']> & Readonly<{ inputSchema: typeof SessionSpawnNewTerminalInputSchema }>;
+    api: NonNullable<ActionSpecSurfaceBindings['api']> & Readonly<{ inputSchema: typeof SessionSpawnNewApiInputSchema }>;
+    rpc: NonNullable<ActionSpecSurfaceBindings['rpc']> & Readonly<{
+      inputSchema: typeof SessionSpawnNewRpcInputSchema;
+      outputSchema: typeof SessionSpawnNewResultV1Schema;
+    }>;
+  }>;
+}>;
+
+function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
   return Object.freeze([
   {
     id: 'session.spawn_new', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' }, approval: {result: 'optional',flow: 'deferred'},

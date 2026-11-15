@@ -1,3 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
+import { prepareKiloConnectedAccount } from '../../../../../packages/plugins/kilo/src/agent/runtime/connectedAccounts';
 import { PLUGIN_MANIFEST as KILO_MANIFEST } from '../../../../../packages/plugins/kilo/src/manifest';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema } from '@happier-dev/protocol';
@@ -41,9 +46,11 @@ it('replaces static membership with one exact current account observation across
   let nativeReads = 0;
   let models = [{ id: 'gpt-6.1-sol', name: 'Sol' }];
   let refreshError = false;
+  let nativeFailure: Error | null = null;
   // Only the installed Machine capability transport is replaced; declared source
   // resolution and native observation admission remain real.
   const observeModels = createConnectedAccountModelObserver({ registry, invoke: async request => {
+    if (nativeFailure) throw nativeFailure;
     nativeReads++;
     expect(request.params).toMatchObject({ connectedServices: { v: 2, bindingsByServiceId: {
       [`${service.pluginId}/${service.localId}`]: { source: 'connected', profileId: account.accountId },
@@ -61,6 +68,14 @@ it('replaces static membership with one exact current account observation across
     && group.rows[0].confidence === 'probe' && group.rows[0].sources.probe && !group.rows[0].sources.static)).toBe(true);
   expect(nativeReads).toBe(1);
   expect(await observed.isCurrent()).toBe(true);
+
+  nativeFailure = new Error('private native account failure');
+  await expect(projectConnectedAccountCatalog(input)).rejects.toMatchObject({
+    code: 'agent_error', machineId: 'broker', connectedAccountTarget: { kind: 'account', account },
+  });
+  nativeFailure = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+  await expect(projectConnectedAccountCatalog(input)).rejects.toBe(nativeFailure);
+  nativeFailure = null;
 
   const { agentTargetKey: _workerTarget, ...sourceRequest } = request;
   const source = await readConnectedAccountModelCatalog({ registry, resolveSelection: purposes.resolveBindingIntentSelection,
@@ -83,9 +98,12 @@ it('replaces static membership with one exact current account observation across
   expect(nativeReads).toBe(3);
   expect(direct.groups.every(group => group.catalogObserved === true)).toBe(true);
   models = [{ id: 'gpt-6.1-terra', name: 'Terra' }];
-  const changed = await projectConnectedAccountCatalog(input);
+  const changed = await projectConnectedAccountCatalog({ ...input, request: { ...request,
+    currentSelection: observed.groups[0]!.rows[0]!.ref } });
   expect(changed.groups[0]?.rows.map(row => row.descriptor.id)).toEqual(['gpt-6.1-terra']);
   expect(changed.groups[0]?.sourceRevision).not.toBe(observed.groups[0]?.sourceRevision);
+  expect(changed.error).toMatchObject({ code: 'provider_model_not_found', connectedAccountTarget: request.connectedAccountTarget });
+  expect(changed.error).not.toHaveProperty('connectionId');
   refreshError = true;
   const stale = await projectConnectedAccountCatalog(input);
   expect(stale.groups.every(group => group.rows.every(row => row.catalog.stale))).toBe(true);
@@ -123,15 +141,26 @@ it('replaces static membership with one exact current account observation across
   expect(namespaced.groups.flatMap(group => group.rows).map(row => ({ ref: row.ref, id: row.descriptor.id }))).toEqual([
     { ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'vendor/source-model' }, id: 'source-model' },
   ]);
-  const kiloPurpose = KILO_MANIFEST.contributes.agents?.[0]?.connectedAccounts?.find(purpose => purpose.purpose === 'openai-codex-model-request');
-  if (!kiloPurpose) throw new Error('Missing declared Kilo subscription purpose');
-  const kiloTarget = 'agent:happier.agent.kilo/kilo';
-  const kilo = await projectConnectedAccountCatalog({ ...input,
-    request: { ...request, agentTargetKey: kiloTarget, sourceCatalog: undefined }, agentPurpose: kiloPurpose,
-  });
-  expect(kilo.groups.flatMap(group => group.rows).map(row => ({ ref: row.ref, id: row.descriptor.id }))).toEqual([
-    { ref: { agentTargetKey: kiloTarget, providerConnectionId: null, modelId: 'openai/source-model' }, id: 'source-model' },
-  ]);
+  // Exercise the retained declaration consumed by source launches as well as
+  // the authored manifest: a source-only assertion missed the stale publication.
+  const publishedKilo = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
+    new URL('../../../assets/bundled-plugin-manifests/kilo.json', import.meta.url), 'utf8')));
+  models = [{ id: 'gpt-6-luna', name: 'Luna' }];
+  for (const manifest of [KILO_MANIFEST, publishedKilo]) {
+    const kiloPurpose = manifest.contributes.agents?.[0]?.connectedAccounts?.find(purpose => purpose.purpose === 'openai-codex-model-request');
+    if (!kiloPurpose) throw new Error('Missing declared Kilo subscription purpose');
+    const kiloTarget = 'agent:happier.agent.kilo/kilo';
+    const kilo = await projectConnectedAccountCatalog({ ...input,
+      request: { ...request, agentTargetKey: kiloTarget, sourceCatalog: undefined }, agentPurpose: kiloPurpose,
+    });
+    const row = kilo.groups[0]?.rows[0];
+    expect(row?.ref).toEqual({ agentTargetKey: kiloTarget, providerConnectionId: null, modelId: 'openai/gpt-6-luna' });
+    if (!row) throw new Error('Missing Kilo subscription model');
+    const prepared = await prepareKiloConnectedAccount({ modelId: row.ref.modelId,
+      launchEnvironment: { values: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(fixture.happyHomeDir, 'capability.json') }, unset: [] },
+    });
+    expect(prepared.models?.resolveModelUpdate?.({ modelId: row.ref.modelId, modelState: null })).toEqual({ modelId: 'openai/gpt-6-luna' });
+  }
   } finally { await fixture.cleanup(); }
 });
 

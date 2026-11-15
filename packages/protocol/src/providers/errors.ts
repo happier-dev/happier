@@ -5,6 +5,7 @@ import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
 import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
+import { QualifiedConnectedAccountPurposeBindingTargetV1Schema, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '../connect/connectedAccountPurposeBindings.js';
 import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import {
   SavedSecretOperationAdmissionFailureReasonV1Schema,
@@ -115,6 +116,7 @@ export const ProviderErrorV1Schema = lazyZodSchema(() => z.strictObject({
   requestId: z.optional(z.string().check(z.minLength(1))),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   connectionId: z.optional(ProviderConnectionIdSchema),
+  connectedAccountTarget: z.optional(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
   machineId: z.optional(ProviderMachineIdSchema),
   sourceProfileId: z.optional(ProfileRecordIdV1Schema),
   retryable: z.boolean(),
@@ -151,6 +153,7 @@ export function createProviderErrorV1(
   code: ProviderErrorCodeV1,
   context: Readonly<{
     connectionId?: string;
+    connectedAccountTarget?: QualifiedConnectedAccountPurposeBindingTargetV1;
     requestId?: string;
     failureCause?: ActionFailureCauseV1;
     machineId?: string;
@@ -174,7 +177,7 @@ export function createProviderErrorV1(
 /** Classify Provider transport/Account mutation failures without disclosing raw failure prose. */
 export function providerErrorFromRpcFailure(
   caught: unknown,
-  context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
+  context: Readonly<{ connectionId?: string; connectedAccountTarget?: QualifiedConnectedAccountPurposeBindingTargetV1; machineId?: string; sourceProfileId?: string }> = {},
 ): ProviderErrorV1 {
   const failure = parseActionExecuteFailure(caught);
   const requestId = failure?.requestId ?? (caught && typeof caught === 'object' && 'requestId' in caught
@@ -182,8 +185,8 @@ export function providerErrorFromRpcFailure(
   const failureCause = failure?.failureCause ?? projectActionFailureCauseV1(caught);
   const errorContext = { ...context, ...(requestId ? { requestId } : {}), failureCause };
   const typed = ProviderErrorV1Schema.safeParse(failure?.details ?? caught);
-  if (typed.success) return { ...typed.data, ...(requestId ? { requestId } : {}),
-    ...(!typed.data.failureCause && failure?.failureCause ? { failureCause: failure.failureCause } : {}) };
+  if (typed.success) return ProviderErrorV1Schema.parse({ ...context, ...typed.data, ...(requestId ? { requestId } : {}),
+    ...(!typed.data.failureCause && failure?.failureCause ? { failureCause: failure.failureCause } : {}) });
 
   const transportCode = failure?.failureCause?.errorCode ?? failure?.errorCode ?? (caught && typeof caught === 'object' && 'code' in caught
     ? (typeof caught.code === 'string' ? caught.code : undefined)
