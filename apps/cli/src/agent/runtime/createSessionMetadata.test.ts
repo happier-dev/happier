@@ -1,4 +1,6 @@
 import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
+import { join } from 'node:path';
+import { runAddedHostedSession } from './lifecycle/hostedSessionScope';
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
@@ -30,6 +32,16 @@ function createMetadata(
 }
 
 describe('createSessionMetadata', () => {
+    it('publishes each hosted Session home alongside its own expanded workspace', async () => {
+        await Promise.all(['first', 'second'].map(name => {
+            const home = process.platform === 'win32' ? `C:\\Users\\${name}` : `/home/${name}`;
+            return runAddedHostedSession({ environment: { HOME: home, USERPROFILE: home }, workingDirectory: home, end: () => undefined }, async () => {
+                await Promise.resolve();
+                const { metadata } = createMetadata({ flavor: 'claude', directory: '~/project' });
+                expect(metadata).toMatchObject({ homeDir: home, path: join(home, 'project') });
+            });
+        }));
+    });
     it('uses only admitted face birth facts and never inherits a replay source face', () => {
         const source = createTestMetadata({ bot: { kind: 'bot' }, botFace: { seed: 'source-face' }, createdAsBot: true });
         expect(applyInitialSessionCreationFactsToMetadata(source, {})).not.toHaveProperty('botFace');

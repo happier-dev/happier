@@ -9,6 +9,7 @@
 
 import os from 'node:os';
 import { sessionProcessEnvironment } from './lifecycle/hostedSessionScope';
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { resolve } from 'node:path';
 import { z } from 'zod/mini';
 
@@ -275,7 +276,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         os: os.platform(),
         ...(opts.terminalRuntime ? { terminal: buildTerminalMetadataFromRuntimeFlags(opts.terminalRuntime) } : {}),
         ...('profileId' in launchControlMetadata ? { profileId: launchControlMetadata.profileId } : {}),
-        homeDir: os.homedir(),
+        homeDir: resolveHomeDirFromEnvironment(),
         happyHomeDir: configuration.happyHomeDir,
         happyLibDir: projectPath(),
         happyToolsDir: resolve(projectPath(), 'tools', 'unpacked'),
