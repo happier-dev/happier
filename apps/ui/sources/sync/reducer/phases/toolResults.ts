@@ -26,6 +26,13 @@ export function resolveSidechainPermissionMirror(state: ReducerState, toolUseId:
     return message?.realID == null && message?.tool?.permission ? messageId ?? null : null;
 }
 
+/** Transcript descendants belong to the nested call rather than its permission mirror. */
+export function resolveSidechainParentMessageId(state: ReducerState, sidechainId: string): string | null {
+    return state.sidechainToolIdToMessageId.get(sidechainId)
+        ?? state.toolIdToMessageId.get(sidechainId)
+        ?? null;
+}
+
 /** Explicit scope selects its child; an unscoped result requires one current sidechain owner. */
 export function resolveSidechainToolMessage(state: ReducerState, toolUseId: string, explicitSidechainId?: string): Readonly<{ messageId: string; sidechainId: string }> | null {
     const candidate = state.sidechainToolIdToMessageId.get(toolUseId);
@@ -93,10 +100,6 @@ export function runToolResultsPhase(params: Readonly<{
                         meta: resultMeta,
                         changed,
                     });
-                    if (sidechain) {
-                        const parentId = state.toolIdToMessageId.get(sidechain.sidechainId);
-                        if (parentId) changed.add(parentId);
-                    }
                 }
             }
         }

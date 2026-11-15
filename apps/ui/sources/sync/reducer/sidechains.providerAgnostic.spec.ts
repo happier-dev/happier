@@ -3,7 +3,11 @@ import { createReducer, reducer } from './reducer';
 import type { NormalizedMessage } from '../typesRaw';
 
 describe('sidechains (provider-agnostic)', () => {
-  it.each([false, true])('publishes the root when a nested sidechain tool finishes (permission mirror: %s)', (withPermissionMirror) => {
+  it.each([
+    { withPermissionMirror: false, sidechainId: 'inner' },
+    { withPermissionMirror: true, sidechainId: 'inner' },
+    { withPermissionMirror: true, sidechainId: undefined },
+  ])('publishes the root when a nested sidechain tool finishes (permission mirror: $withPermissionMirror, scope: $sidechainId)', ({ withPermissionMirror, sidechainId }) => {
     const state = createReducer();
     const input = { prompt: 'Review synthetic files' };
     if (withPermissionMirror) {
@@ -23,8 +27,8 @@ describe('sidechains (provider-agnostic)', () => {
 
     const result = { output: 'synthetic result' };
     const updated = reducer(state, [{
-      id: 'leaf_result', localId: null, createdAt: 2000, role: 'agent', isSidechain: true, sidechainId: 'inner',
-      content: [{ type: 'tool-result', tool_use_id: 'leaf', content: result, is_error: false, uuid: 'leaf_result', parentUUID: 'leaf' }],
+      id: 'leaf_result', localId: null, createdAt: 2000, role: 'agent', isSidechain: Boolean(sidechainId), sidechainId,
+      content: [{ type: 'tool-result', tool_use_id: 'leaf', content: result, is_error: false, uuid: 'leaf_result', parentUUID: sidechainId ? 'leaf' : null }],
     }]);
     const nextRoot = updated.messages.find((message) => message.id === root.id);
     expect(nextRoot).toMatchObject({

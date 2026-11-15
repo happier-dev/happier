@@ -10,7 +10,7 @@ import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegme
 import { restoreSubagentToolFromSyntheticInterruption } from '../helpers/subagentSyntheticInterruption';
 import { normalizeTranscriptSeq } from '../../domains/messages/transcriptOrdering';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
-import { resolveSidechainToolMessage, resolveSidechainPermissionMirror } from './toolResults';
+import { resolveSidechainToolMessage, resolveSidechainPermissionMirror, resolveSidechainParentMessageId } from './toolResults';
 
 export function runSidechainsPhase(params: Readonly<{
     state: ReducerState;
@@ -44,10 +44,7 @@ export function runSidechainsPhase(params: Readonly<{
 
         // Get or create the sidechain array for this Task
         const existingSidechain = state.sidechains.get(sidechainId) || [];
-        // Descendants belong to the actual nested tool, not its root permission mirror.
-        const parentMessageId = state.sidechainToolIdToMessageId.get(sidechainId)
-            ?? state.toolIdToMessageId.get(sidechainId)
-            ?? null;
+        const parentMessageId = resolveSidechainParentMessageId(state, sidechainId);
 
         // Process and add new sidechain messages
         if (msg.role === 'agent' && msg.content[0]?.type === 'sidechain') {
@@ -335,8 +332,6 @@ export function runSidechainsPhase(params: Readonly<{
         const sidechain = resolveSidechainToolMessage(state, toolUseId);
         if (!sidechain) continue;
         drainAndApplyOrphanToolResultsToMessage({ state, toolUseId, messageId: sidechain.messageId, changed });
-        const parentId = state.toolIdToMessageId.get(sidechain.sidechainId);
-        if (parentId) changed.add(parentId);
         stateChanged = true;
     }
     return stateChanged;
