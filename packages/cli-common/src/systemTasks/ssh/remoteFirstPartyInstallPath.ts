@@ -102,7 +102,7 @@ export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
   layout: RemoteFirstPartyInstallLayout;
   payloadRootExpression: string;
   /** CLI payloads carry their existing canonical installer; other components retain shell promotion. */
-  cliInstall?: Readonly<{ componentId: 'happier-cli' | 'happier-daemon'; channel: PublicReleaseRingId; versionId: string }>;
+  cliInstall?: Readonly<{ componentId: 'happier-cli' | 'happier-daemon'; channel: PublicReleaseRingId; versionId: string; managedGuest?: boolean }>;
 }>): string {
   const payloadRootExpression = String(params.payloadRootExpression ?? '').trim();
   if (!payloadRootExpression) {
@@ -116,7 +116,7 @@ export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
       'set -eu',
       `test -f ${binary}`,
       `chmod +x ${binary}`,
-      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}`,
+      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}${params.cliInstall.managedGuest ? ' --managed-guest' : ''}`,
     ].join('; ');
   }
   const versionsDir = quoteRemotePathWithHomeExpansion(layout.versionsDir);

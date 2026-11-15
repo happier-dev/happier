@@ -198,6 +198,9 @@ test('guest payload and daemon retain the same captured source after live edits 
   assert.ok(ordinary.guestPayload, 'an unconfigured source runtime produces its native guest payload');
   assert.equal((await import(pathToFileURL(join(ordinary.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured');
   assert.equal(ordinary.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, ordinary.guestPayload.root);
+  assert.deepEqual(JSON.parse(ordinary.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA), {
+    root: ordinary.guestPayload.root, identity: ordinary.guestPayload.identity,
+  });
   const configuredPayload = fixture.path('configured-payload');
   await mkdir(join(configuredPayload, 'tools/unpacked'), { recursive: true });
   await writeFile(join(configuredPayload, 'tools/unpacked/.happier-tools-manifest.json'), JSON.stringify({platformDir:resolveCliToolsPlatformDir(target),tools:{}}));
@@ -234,6 +237,9 @@ test('guest payload and daemon retain the same captured source after live edits 
   const collectionEnv = { ...env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: collection };
   const collectionBuilt = await build({ ...options, env: collectionEnv });
   assert.match(collectionBuilt.guestPayload.targetIdentities[targetId], /^[a-f0-9]{64}$/);
+  assert.deepEqual(JSON.parse(collectionBuilt.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA), {
+    root: collectionBuilt.guestPayload.root, identity: collectionBuilt.guestPayload.identity, targetIdentities: collectionBuilt.guestPayload.targetIdentities,
+  });
   assert.equal((await import(pathToFileURL(join(collectionBuilt.guestPayload.root, targetId, 'package-dist/index.mjs')))).snapshot, 'captured');
   if (process.platform === 'linux' && process.arch === 'x64') {
     const crossTarget = CLI_BINARY_TARGETS.find(candidate => candidate.os === 'linux' && candidate.arch === 'arm64');

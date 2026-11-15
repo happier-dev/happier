@@ -1,19 +1,20 @@
 import { execFile, spawn } from 'node:child_process';
 import { chmod, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { copyFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { installRemoteFirstPartyComponent, installRemoteFirstPartyComponentPayload, normalizeRemoteReleaseArch } from './remoteFirstPartyPayloadInstaller.js';
+import { installRemoteFirstPartyComponent, installRemoteFirstPartyComponentPayload, normalizeRemoteReleaseArch, prepareManagedGuestCliLocalBuildPayload } from './remoteFirstPartyPayloadInstaller.js';
 import { buildRemoteSelfDownloadFirstPartyInstallCommand, resolveRemoteSelfDownloadFirstPartyInstallPlan } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { createCliPayloadFixture as createPayloadRootFixture } from '../testkit/createCliPayloadFixture.js';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
+import { prepareManagedGuestCliBuildInput } from '../ssh/managedGuestCliSupplier.js';
 
 // Filesystem IO is the system boundary; all payload/archive logic stays real.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -44,6 +45,46 @@ async function extractTarFixture(params: Readonly<{ archivePath: string }>): Pro
 
 describe('installRemoteFirstPartyComponent', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it.skipIf(process.platform === 'win32')('prepares the source producer identity and actual payload archive without exporting the environment', async () => {
+    const fixture = await createPayloadRootFixture();
+    try {
+      // The external staged CLI must receive managed admission; its real
+      // admission behavior is covered by self.installPayloadManaged.test.ts.
+      const executable = join(fixture.payloadRoot, 'happier');
+      const binaryText = await readFile(executable, 'utf8');
+      await writeFile(executable, binaryText.replace('#!/bin/sh\n', '#!/bin/sh\ncase " $* " in *" --managed-guest "*) ;; *) echo managed_guest_flag_missing >&2; exit 61;; esac\n'));
+      await writeFile(join(fixture.payloadRoot, 'package.json'), JSON.stringify({ version: '0.3.0' }));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: fixture.payloadRoot, identity: 'a'.repeat(64) }));
+      vi.stubEnv('HAPPIER_TOKEN', 'never-in-build-input');
+      const payload = await prepareManagedGuestCliLocalBuildPayload({ os: 'linux', arch: 'x64' });
+      expect(payload).toMatchObject({ identity: 'a'.repeat(64), versionId: '0.3.0', target: { os: 'linux', arch: 'x64' } });
+      const archivePath = join(fixture.payloadRoot, '..', 'delivered.tar.gz');
+      await writeFile(archivePath, Buffer.from(payload.archive.contentsBase64, 'base64'));
+      const unpacked = await extractTarFixture({ archivePath });
+      try {
+        expect(await readFile(join(unpacked.extractRoot, payload.archive.rootDirectory, 'happier'), 'utf8'))
+          .toBe(await readFile(join(fixture.payloadRoot, 'happier'), 'utf8'));
+        expect(JSON.stringify(payload)).not.toContain('never-in-build-input');
+      } finally { await unpacked.cleanup(); }
+      const prepared = await prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target: payload.target,
+        prepareLocalPayload: prepareManagedGuestCliLocalBuildPayload, fetchImpl: async () => Response.json({ capabilities: {
+          guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' },
+        } }),
+      });
+      const buildRoot = join(fixture.payloadRoot, '..');
+      const imageHome = join(buildRoot, 'image-home');
+      await mkdir(imageHome);
+      for (const file of prepared.files) await writeFile(join(buildRoot, file.path), Buffer.from(file.contentsBase64, 'base64'));
+      await execFileAsync('/bin/sh', ['-c', prepared.installScript], { cwd: buildRoot, env: { ...process.env, HOME: imageHome } });
+      const installedBinary = prepared.binaryPath.replace('$HOME', imageHome);
+      expect(await readFile(join(dirname(dirname(installedBinary)), 'current.version'), 'utf8')).toBe(`local-${payload.identity}\n`);
+      expect(await readFile(installedBinary, 'utf8')).toBe(await readFile(join(fixture.payloadRoot, 'happier'), 'utf8'));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: `${fixture.payloadRoot}-other`, identity: 'a'.repeat(64) }));
+      await expect(prepareManagedGuestCliLocalBuildPayload({ os: 'linux', arch: 'x64' })).rejects.toMatchObject({ code: 'guest_cli_identity_unavailable' });
+    } finally { await fixture.cleanup(); }
+  });
 
   it.each([false, true])('refuses managed delivery without its selected Home URL (local payload: %s)', async localPayloadAvailable => {
     const fixture = await createPayloadRootFixture();

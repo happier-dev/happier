@@ -38,7 +38,7 @@ import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 import { buildRemoteFirstPartyStagingCleanupCommand } from '../ssh/remoteFirstPartyStagingCleanup.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
-import { resolveManagedGuestCliSource } from '../ssh/managedGuestCliSupplier.js';
+import { resolveManagedGuestCliSource, type ManagedGuestCliBuildTarget, type ManagedGuestCliLocalBuildPayload } from '../ssh/managedGuestCliSupplier.js';
 
 export {
   normalizeRemoteReleaseArch,
@@ -86,7 +86,7 @@ export interface RemoteFirstPartyInstallDeps {
     arch: 'x64' | 'arm64';
     remoteHomeDir?: string;
     versionId?: string;
-    runRemoteText: Parameters<typeof resolveRemoteSelfDownloadFirstPartyInstallPlan>[0]['runRemoteText'];
+    runRemoteText: NonNullable<Parameters<typeof resolveRemoteSelfDownloadFirstPartyInstallPlan>[0]['runRemoteText']>;
   }>) => Promise<RemoteSelfDownloadFirstPartyInstallPlan>;
   now?: () => number;
 }
@@ -169,6 +169,41 @@ async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: '
     throw new SystemTaskExecutionError('guest_architecture_unsupported', `The local CLI executable does not support ${targetId}. Prepare a matching guest payload and retry setup.`);
   }
   return payloadRoot;
+}
+
+/** Filesystem adapter for the portable image supplier; the source producer owns identity. */
+export async function prepareManagedGuestCliLocalBuildPayload(target: ManagedGuestCliBuildTarget): Promise<ManagedGuestCliLocalBuildPayload> {
+  const root = String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
+  let metadata: unknown;
+  try { metadata = JSON.parse(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA ?? ''); }
+  catch { throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'The source runtime has no finalized guest CLI payload identity.'); }
+  if (!root || !metadata || typeof metadata !== 'object' || !('root' in metadata) || metadata.root !== root
+    || !('identity' in metadata) || typeof metadata.identity !== 'string' || !/^[a-f0-9]{64}$/u.test(metadata.identity)) {
+    throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'The source runtime guest CLI payload and identity do not match.');
+  }
+  const targetId = `${target.os}-${target.arch}`;
+  let identity = metadata.identity;
+  if ('targetIdentities' in metadata) {
+    const identities = metadata.targetIdentities;
+    if (!identities || typeof identities !== 'object' || !(targetId in identities)) {
+      throw new SystemTaskExecutionError('guest_payload_missing', 'The source runtime has no guest CLI payload for this image target.');
+    }
+    const selected = Reflect.get(identities, targetId);
+    if (typeof selected !== 'string' || !/^[a-f0-9]{64}$/u.test(selected)) {
+      throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'The source runtime image target has no finalized CLI payload identity.');
+    }
+    identity = selected;
+  }
+  const payloadRoot = await resolveLocalCliPayloadRoot(root, target);
+  const versionId = await readLocalCliPayloadVersion(payloadRoot);
+  if (!versionId) throw new SystemTaskExecutionError('guest_cli_version_unavailable', 'The source runtime CLI payload version is unavailable.');
+  const archive = await createScpReadyPayloadArchive(payloadRoot);
+  try {
+    return { identity, versionId, target, archive: {
+      contentsBase64: (await readFile(join(archive.archiveStageRoot, archive.archiveFileName))).toString('base64'),
+      rootDirectory: archive.extractedPayloadDirName,
+    } };
+  } finally { await archive.cleanup(); }
 }
 
 export type RemoteFirstPartyPayloadInstallDeps = Readonly<{

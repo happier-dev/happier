@@ -114,6 +114,7 @@ export {
 } from './relayAccessKinds.js';
 export {
   installRemoteFirstPartyComponent,
+  prepareManagedGuestCliLocalBuildPayload,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
   resolveRemoteInstalledFirstPartyBinaryPath,

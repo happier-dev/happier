@@ -139,6 +139,7 @@ describe('resolveDaemonLaunchSpec', () => {
         sourceRuntimeLaunch: { entrypoint: selected, cliDir: join(root, 'next'), env: {
           HAPPIER_STACK_CLI_ROOT_DIR: join(root, 'next'),
           HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(root, 'next', 'guest-cli'),
+          HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: 'selected-payload-metadata',
           ...(exposesCommand ? { PATH: join(root, 'stack', 'cli', 'source-runtime', 'bin'), PATHEXT: '.EXE;.CMD' } : {}),
           UNRELATED_SOURCE_VALUE: 'do-not-forward',
         } },
@@ -157,6 +158,7 @@ describe('resolveDaemonLaunchSpec', () => {
       expect(result.env?.HAPPIER_CLI_ROOT_DIR).toBe(join(root, 'next'));
       expect(result.env?.HAPPIER_STACK_CLI_ROOT_DIR).toBe(join(root, 'next'));
       expect(result.env?.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT).toBe(join(root, 'next', 'guest-cli'));
+      expect(result.env?.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA).toBe('selected-payload-metadata');
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_PREFER_TSX).toBe('0');
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK).toBe('0');
       expect(result.env?.PATH).toBe(exposesCommand ? join(root, 'stack', 'cli', 'source-runtime', 'bin') : undefined);

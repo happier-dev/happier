@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveManagedGuestCliSource } from './managedGuestCliSupplier.js';
+import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliSource } from './managedGuestCliSupplier.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 const exec = promisify(execFile);
@@ -20,6 +20,55 @@ describe('managed guest CLI source supplier', () => {
     };
     return { boundary, urls };
   };
+  it('retains the actual development payload identity and projects only installation material', async () => {
+    const prepare = (identity: string) => prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example',
+      target: { os: 'linux', arch: 'x64' }, fetchImpl: homeFetch('home-payload').boundary,
+      prepareLocalPayload: async () => ({ identity, target: { os: 'linux', arch: 'x64' }, versionId: '0.3.0',
+        archive: { contentsBase64: 'cGF5bG9hZA==', rootDirectory: 'payload' },
+        ...{ accountToken: 'must-not-enter-image', homeUrl: 'https://private-home.example' } }),
+    });
+    const first = await prepare('a'.repeat(64));
+    const next = await prepare('b'.repeat(64));
+    expect(first.identity).not.toBe(next.identity);
+    expect(first.files).toEqual([{ path: 'happier-cli-payload.tar.gz', contentsBase64: 'cGF5bG9hZA==' }]);
+    expect(JSON.stringify(first)).not.toContain('must-not-enter-image');
+    expect(JSON.stringify(first)).not.toContain('private-home');
+    expect(JSON.stringify(first)).not.toContain('home.example');
+  });
+  it.each([undefined, { os: 'windows', arch: 'x64' }])('requires an explicit supported image target before source lookup: %j', async target => {
+    const http = homeFetch('public-release');
+    await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target, fetchImpl: http.boundary }))
+      .rejects.toMatchObject({ code: 'guest_architecture_unsupported' });
+    expect(http.urls).toEqual([]);
+  });
+  it('refuses a Home payload for another image target', async () => {
+    await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'arm64' },
+      fetchImpl: homeFetch('home-payload').boundary,
+      prepareLocalPayload: async () => ({ identity: 'a'.repeat(64), versionId: '0.3.0', target: { os: 'linux', arch: 'x64' },
+        archive: { contentsBase64: 'cGF5bG9hZA==', rootDirectory: 'payload' } }),
+    })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+  });
+  it('selects the Home public channel and exact version, then refuses unsigned image input', async () => {
+    const urls: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input); urls.push(url);
+      if (url.endsWith('/v1/features')) return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'preview' } } });
+      if (new URL(url).pathname.endsWith('/releases')) return Response.json(['0.3.9', '0.3.10-preview.1', '0.4.0-preview.1'].map(version => ({ tag_name: `cli-v${version}`, draft: false, prerelease: true })));
+      if (url.includes('/releases/tags/')) return Response.json({ assets: [
+        { name: 'checksums-happier-v0.3.10-preview.1.txt', browser_download_url: 'https://downloads.example/checksums.txt' },
+        { name: 'checksums-happier-v0.3.10-preview.1.txt.minisig', browser_download_url: 'https://downloads.example/checksums.txt.minisig' },
+        { name: 'happier-v0.3.10-preview.1-linux-x64.tar.gz', browser_download_url: 'https://downloads.example/cli.tar.gz' },
+      ] });
+      expect(init?.credentials).toBe('omit');
+      return new Response(url.endsWith('.minisig') ? 'invalid signature' : `${'a'.repeat(64)}  happier-v0.3.10-preview.1-linux-x64.tar.gz\n`);
+    };
+    await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'x64' }, fetchImpl,
+      prepareLocalPayload: async () => { throw new Error('Public release preparation must not read controller payload files'); },
+    }))
+      .rejects.toThrow(/signature verification failed/u);
+    expect(urls).toContain('https://api.github.com/repos/happier-dev/happier/releases/tags/cli-v0.3.10-preview.1');
+    expect(urls).not.toContain('https://downloads.example/cli.tar.gz');
+  });
   it('requires the dev payload before guest mutation or public release lookup', async () => {
     const http = homeFetch('home-payload'); let guestCommands = 0;
     await expect(resolveManagedGuestCliSource({ homeUrl: 'https://home.example', binaryPath: '$HOME/.happier/cli/current/happier', fetchImpl: http.boundary,

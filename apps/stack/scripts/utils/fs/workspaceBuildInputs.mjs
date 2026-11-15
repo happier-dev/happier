@@ -194,7 +194,7 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
       sourceRoots: component === 'daemon' && path === 'apps/ui' ? ['scripts'] : SOURCE_ROOTS,
       additionalInputPaths: root === repoDir ? ['apps/cli/scripts/buildPublication.mjs',
         // The guest CLI's SEA compiler reads the pin from its captured repo.
-        ...(component === 'daemon' ? ['.node-version'] : []),
+        ...(component === 'daemon' ? ['.node-version', 'apps/stack/scripts/build/build_source_runtime.mjs'] : []),
         // Captured Stack tooling imports this shared CLI admission policy.
         'apps/cli/scripts/vitestPreparation.mjs',
         'apps/cli/scripts/build-owned/bundledPluginMembership.ts',

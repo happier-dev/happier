@@ -4497,6 +4497,13 @@ test('remote daemon launch carries the operator guest CLI payload root only when
     };
     assert.ok(render({ HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '/srv/qa/payload' })
       .includes('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT=/srv/qa/payload'));
+    const metadata = JSON.stringify({ root: '/srv/qa/payload', identity: 'a'.repeat(64) });
+    assert.deepEqual(commandPolicy.projectRemoteGuestCliPayloadEnvironment({
+      HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '/srv/qa/payload',
+      HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata, UNRELATED_TOKEN: 'never-forward',
+    }), { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '/srv/qa/payload', HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata });
+    assert.ok(render({ HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '/srv/qa/payload',
+      HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata }).includes('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA'));
     assert.doesNotMatch(render({}), /HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT/);
   }
 });

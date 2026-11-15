@@ -1,7 +1,7 @@
 import { resolveGitHubReleaseToken as resolveBinaryUpdateToken } from '@happier-dev/release-runtime/github';
 import { usage } from './self/help';
 import chalk from 'chalk';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import packageJson from '../../../package.json';
@@ -10,6 +10,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import {
   FIRST_PARTY_COMPONENT_IDS,
   ManagedCliUpdateError,
+  assertManagedGuestCliVersion,
   installVersionedPayload,
   prepareFirstPartyComponentPayloadFromGitHubRelease,
   resolveFirstPartyComponentRelease,
@@ -19,6 +20,7 @@ import {
   runManagedCliUpdate,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
+import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { cmd, createStepPrinter, fail } from '@happier-dev/cli-common/output';
 import {
   compareVersions,
@@ -395,6 +397,32 @@ async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly strin
   }
   if (!versionId) {
     throw new Error('--version is required');
+  }
+
+  if (argv.includes('--managed-guest')) {
+    if (componentId !== 'happier-cli') {
+      throw new Error('--managed-guest requires --component happier-cli');
+    }
+    const installedPaths = resolveInstalledFirstPartyComponentPaths({ componentId, channel, processEnv: process.env });
+    const binaryPath = installedPaths.resolvedBinaryPath ?? installedPaths.binaryPath;
+    let installedVersion: string | undefined;
+    try {
+      // lstat also sees dangling binaries/current pointers: they are unreadable installs, not absence.
+      const installed = lstatSync(binaryPath, { throwIfNoEntry: false })
+        ?? lstatSync(installedPaths.currentPath, { throwIfNoEntry: false });
+      if (installed) {
+        installedVersion = resolveCliVersionFromBinary({
+          binaryPath,
+          platform: process.platform,
+          timeoutMs: resolvePayloadOwnerStopTimeoutMs(process.env),
+        }) ?? undefined;
+        if (!installedVersion) throw new Error('The installed CLI did not report a version.');
+      }
+    } catch (error) {
+      throw new SystemTaskExecutionError('guest_cli_version_unavailable',
+        'The installed guest CLI version could not be read; installation was not changed.', { cause: error });
+    }
+    assertManagedGuestCliVersion({ candidateVersion: packageJson.version, installedVersion });
   }
 
   // The Windows quiesce stops every service daemon of the payload; each one observed running before

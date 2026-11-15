@@ -211,7 +211,8 @@ async function resolveSelectedStackSourceLaunch(
   const commandEnv: Record<string, string> = {};
   if ('env' in launch && launch.env !== null && typeof launch.env === 'object') {
     for (const [name, value] of Object.entries(launch.env)) {
-      if ((/^(PATH|PATHEXT)$/i.test(name) || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT')
+      if ((/^(PATH|PATHEXT)$/i.test(name) || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT'
+        || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA')
         && typeof value === 'string') commandEnv[name] = value;
     }
   }

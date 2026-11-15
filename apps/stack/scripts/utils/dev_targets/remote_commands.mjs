@@ -1198,7 +1198,9 @@ export async function resolveCommandPublisherPolicy(commandArgs, options = {}) {
 export function projectRemoteGuestCliPayloadEnvironment(env = process.env) {
   const root = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
   return root && !/[\0\r\n]/.test(root)
-    ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root }
+    ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root,
+      ...(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA
+        ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA } : {}) }
     : {};
 }
 

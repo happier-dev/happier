@@ -183,6 +183,19 @@ test('source component tooling captures and watches the CLI test preparation pol
   }
 });
 
+test('daemon input identity includes the source producer that supplies its guest CLI metadata', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-guest-metadata-input-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  const producer = 'apps/stack/scripts/build/build_source_runtime.mjs';
+  await mkdir(dirname(fixture.path(producer)), { recursive: true });
+  await writeFile(fixture.path(producer), 'export const metadata = "first";');
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'daemon' });
+  const before = await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files });
+  await writeFile(fixture.path(producer), 'export const metadata = "next";');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files }), before);
+  assert.ok(inputs.watchPaths.includes(fixture.path(producer)));
+});
+
 test('workspace observation retains manifest corrections while build input admission rejects malformed JSON', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-malformed-watch-inputs-' });
   await mkdir(fixture.path('src'));

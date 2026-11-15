@@ -1346,7 +1346,10 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
     if (guestPayloadTargets) {
       built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, runtimeDir,
         targets: guestPayloadTargets, sourceCapture, env, signal });
-      built.env = { ...built.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: built.guestPayload.root };
+      built.env = { ...built.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: built.guestPayload.root,
+        HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: built.guestPayload.root,
+          identity: built.guestPayload.identity,
+          ...(built.guestPayload.targetIdentities ? { targetIdentities: built.guestPayload.targetIdentities } : {}) }) };
     }
     const identityStarted = performance.now();
     const inputIdentity = await sourceBundleFingerprint({ repoDir, identityRepoDir: sourceRepoDir,

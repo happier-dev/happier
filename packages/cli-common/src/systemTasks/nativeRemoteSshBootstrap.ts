@@ -53,4 +53,6 @@ export { MANAGED_SUDOERS_PATH, buildManagedSudoersSteps, recognizeManagedSudoers
 export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps, buildAgentIsolationToolsRootStep } from '../machineSetup/agentIsolationBootstrap.js';
 export { buildUserManagerGroupRefreshStep } from '../machineSetup/userManagerGroups.js';
 
-export { resolveManagedGuestCliSource, installManagedGuestCliViaRemoteDownload, type ManagedGuestCliSourceRequest } from './ssh/managedGuestCliSupplier.js';
+export { resolveManagedGuestCliSource, installManagedGuestCliViaRemoteDownload, prepareManagedGuestCliBuildInput,
+  type ManagedGuestCliSourceRequest, type ManagedGuestCliBuildInput, type ManagedGuestCliBuildTarget,
+  type ManagedGuestCliLocalBuildPayload } from './ssh/managedGuestCliSupplier.js';

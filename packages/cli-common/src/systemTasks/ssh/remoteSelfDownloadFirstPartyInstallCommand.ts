@@ -86,6 +86,7 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
   archive: RemoteInstallAsset;
   expectedSha256: string;
   remoteHomeDir?: string;
+  managedGuest?: boolean;
 }>): string {
   const channel = normalizeChannel(params.channel);
   const layout = resolveRemoteFirstPartyInstallLayout({
@@ -125,7 +126,7 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
       layout,
       payloadRootExpression: '"$payload_root"',
       ...(params.componentId === 'happier-cli' || params.componentId === 'happier-daemon'
-        ? { cliInstall: { componentId: params.componentId, channel, versionId: params.versionId } }
+        ? { cliInstall: { componentId: params.componentId, channel, versionId: params.versionId, managedGuest: params.managedGuest } }
         : {}),
     }),
   ].join('; ');
@@ -143,10 +144,13 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
   userAgent?: string;
   minisignPublicKey?: string;
   remoteHomeDir?: string;
+  managedGuest?: boolean;
   fetchImpl?: FetchImpl;
   verifyMinisign?: VerifyMinisignImpl;
-  runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
-}>): Promise<RemoteSelfDownloadFirstPartyInstallPlan> {
+} & (
+  | { readReleaseTextAsset: (url: string) => Promise<string>; runRemoteText?: (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>> }
+  | { readReleaseTextAsset?: undefined; runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>> }
+)>): Promise<RemoteSelfDownloadFirstPartyInstallPlan> {
   const channel = normalizeChannel(params.channel);
   const component = getFirstPartyComponentCatalogEntry(params.componentId);
   const variant = resolveFirstPartyComponentPublicReleaseVariant({
@@ -179,14 +183,11 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
   if (params.versionId && bundle.version !== params.versionId) {
     throw new SystemTaskExecutionError('guest_payload_missing', 'The selected guest CLI release does not contain the exact requested version.');
   }
-  const checksumsText = await readRemoteReleaseTextAsset({
-    url: bundle.checksums.url,
-    runRemoteText: params.runRemoteText,
-  });
-  const checksumsSig = await readRemoteReleaseTextAsset({
-    url: bundle.checksumsSig.url,
-    runRemoteText: params.runRemoteText,
-  });
+  const readTextAsset = params.readReleaseTextAsset ?? ((url: string) => readRemoteReleaseTextAsset({
+    url, runRemoteText: params.runRemoteText!, // The input union requires exactly this boundary when no reader is supplied.
+  }));
+  const checksumsText = await readTextAsset(bundle.checksums.url);
+  const checksumsSig = await readTextAsset(bundle.checksumsSig.url);
   const verify = params.verifyMinisign ?? verifyMinisign;
   const minisignPublicKey = String(params.minisignPublicKey ?? '').trim() || DEFAULT_MINISIGN_PUBLIC_KEY;
   if (!verify({
@@ -206,6 +207,7 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
     versionId: bundle.version,
     archive: bundle.archive,
     expectedSha256,
+    managedGuest: params.managedGuest,
     ...(params.remoteHomeDir ? { remoteHomeDir: params.remoteHomeDir } : {}),
   });
 
