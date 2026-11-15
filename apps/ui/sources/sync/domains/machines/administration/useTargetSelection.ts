@@ -44,6 +44,7 @@ import {
 import {
     buildMachineAdministrationCandidateInventoryRowsFromSnapshots,
     buildMachineAdministrationTargetPickerRows,
+    MACHINE_ADMINISTRATION_AUTOMATIC_CHOICE_DEMAND,
     readMachineAdministrationTargetFacts,
     type MachineAdministrationCandidateInventoryRowV1,
 } from './targetState';
@@ -142,6 +143,14 @@ export type MachineAdministrationTargetSelectionOptions = Readonly<{
      * initialization still takes only live online candidates.
      */
     explicitSelection?: MachineAdministrationExplicitSelectionPolicy;
+    /**
+     * Which inventory rows this consumer reads (default `choices`). A consumer that only acts on
+     * the stored choice passes `selected`: once a target is stored, only that Machine's labels and
+     * eligibility are read, so the rest of the fleet does no work here. Its `candidates` and
+     * `pickerRows` then hold that one row and `selectTarget` cannot name another Machine; the
+     * chooser that renders the choices mounts its own `choices` selection.
+     */
+    rows?: 'choices' | 'selected';
 }>;
 
 /** Consume the existing choice without mounting a picker or demanding its inventory. */
@@ -181,8 +190,11 @@ export function useMachineAdministrationTargetRows(options?: Readonly<{
     return React.useMemo(() => ({ inventoryRows, pickerRows }), [inventoryRows, pickerRows]);
 }
 
+const NO_PRESENCE_TARGETS: readonly Readonly<{ serverId: string; machineIds: readonly string[] }>[] = Object.freeze([]);
+
 /** Inventory owns content; the shared presence owner advances only changed availability facts. */
-function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachineInventorySnapshotV1[], managedInventoryDemand = true): readonly MachineAdministrationTargetPickerRowV1[] {
+function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachineInventorySnapshotV1[], managedInventoryDemand = true,
+    livePresence = true): readonly MachineAdministrationTargetPickerRowV1[] {
     // Keep the resource receipt demanded even when its last choice disappears.
     // The shared list borrows this same loader; it does not issue another census.
     const managedHomes = React.useMemo(() => managedInventoryDemand
@@ -201,10 +213,12 @@ function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachine
         retainedProjection.current = current;
         return current;
     }, [snapshots, machinesByEnrolledMachineIdByServerId]);
-    const targets = React.useMemo(() => snapshots.flatMap(snapshot => snapshot.kind === 'resolved'
-        ? [{ serverId: snapshot.profileId, machineIds: snapshot.machines.map(machine => machine.id) }] : []), [snapshots]);
-    const readMachines = React.useCallback(() => projection.rows.map(row => row.machine), [projection]);
+    const targets = React.useMemo(() => livePresence ? snapshots.flatMap(snapshot => snapshot.kind === 'resolved'
+        ? [{ serverId: snapshot.profileId, machineIds: snapshot.machines.map(machine => machine.id) }] : []) : NO_PRESENCE_TARGETS,
+    [livePresence, snapshots]);
+    const readMachines = React.useCallback(() => livePresence ? projection.rows.map(row => row.machine) : [], [livePresence, projection]);
     const readSnapshot = React.useMemo(() => {
+        if (!livePresence) return () => projection.rows;
         const scopes = new Map(snapshots.flatMap(snapshot => snapshot.kind === 'resolved'
             ? [[snapshot.profileId, createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId)] as const] : []));
         return (nowMs: number) => {
@@ -221,7 +235,7 @@ function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachine
             if (changed) projection.rows = Object.freeze(next);
             return projection.rows;
         };
-    }, [projection, snapshots]);
+    }, [livePresence, projection, snapshots]);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
 }
 
@@ -277,10 +291,16 @@ export function useMachineAdministrationTargetSelection(
         activeAccountServerId: activeAccountScope?.serverId,
     });
     const accountScope = options.accountScope;
-    const inventorySelection = React.useMemo(() => accountScope ? { scope: accountScope, machineId: null } : undefined,
-        [accountScope?.serverId, accountScope?.accountId]);
+    // A selected-row reader reads its stored Machine's row; until one is stored, only every candidate's eligibility to initialize one.
+    const selectedRow = options.rows === 'selected' ? storedTarget : null;
+    const inventorySelection = React.useMemo(() => selectedRow
+        ? { scope: { serverId: selectedRow.serverIdentityId }, machineId: selectedRow.machineId }
+        : accountScope ? { scope: accountScope, machineId: null } : undefined,
+    [selectedRow?.serverIdentityId, selectedRow?.machineId, accountScope?.serverId, accountScope?.accountId]);
     const inventorySnapshots = useAllProfileMachineInventorySnapshots(enabled, inventorySelection,
-        selectionKey === MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers ? readMachineAdministrationTargetFacts : undefined);
+        options.rows === 'selected' && !storedTarget ? MACHINE_ADMINISTRATION_AUTOMATIC_CHOICE_DEMAND
+            : selectionKey === MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers || options.rows === 'selected'
+                ? readMachineAdministrationTargetFacts : undefined);
     const snapshots = React.useMemo(() => accountScope ? inventorySnapshots.filter(snapshot => snapshot.kind === 'resolved'
         && snapshot.accountId === accountScope.accountId
         && areServerProfileIdentifiersEquivalent(snapshot.profileId, accountScope.serverId)) : inventorySnapshots,
@@ -293,7 +313,8 @@ export function useMachineAdministrationTargetSelection(
                 && areServerProfileIdentifiersEquivalent(value.scope.serverId, accountScope.serverId)));
         return resolveFreshMachineAdministrationExecutionTarget(target, { ...options, accountScope: binding?.scope ?? null });
     }, [bindings, accountScope?.serverId, accountScope?.accountId]);
-    const inventoryRows = useMachineAdministrationInventoryRows(snapshots);
+    // A selected-row reader's snapshot already re-reads its demanded presence; per-row presence is the chooser's.
+    const inventoryRows = useMachineAdministrationInventoryRows(snapshots, true, options.rows !== 'selected');
     const pickerRows = React.useMemo(() => buildMachineAdministrationTargetPickerRows(inventoryRows), [inventoryRows]);
     const candidates = React.useMemo(
         () => Object.freeze(inventoryRows.map((row) => row.candidate)),

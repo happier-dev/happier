@@ -10,7 +10,7 @@ import type {
 } from '@/sync/domains/machines/machineInventorySnapshots';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
-import type { MachineInventoryFactsSelector } from '@/sync/domains/machines/useMachineInventorySnapshots';
+import type { MachineInventoryFactsDemand, MachineInventoryFactsSelector } from '@/sync/domains/machines/useMachineInventorySnapshots';
 
 import type { MachineAdministrationCandidateV1 } from './targetSelection';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -28,6 +28,19 @@ export const readMachineAdministrationTargetFacts: MachineInventoryFactsSelector
         readMachineInventoryRowReadiness(machine), availability, machine.replacedByMachineId,
         availability === 'online' ? null : machine.updatedAt];
 };
+
+/**
+ * Before any choice is stored, only what automatic selection reads: whether a Home has none, one or
+ * several online Machines, and which one when it is the only one. Labels, content and a flip that
+ * keeps two or more online are not inputs.
+ */
+export const MACHINE_ADMINISTRATION_AUTOMATIC_CHOICE_DEMAND: MachineInventoryFactsDemand = Object.freeze({
+    select: (machine, scope, nowMs) => resolveFleetMachineAvailability(scope, machine, nowMs) === 'online' ? [machine.id] : [],
+    summarize: (machineFacts) => {
+        const online = machineFacts.flat();
+        return [Math.min(online.length, 2), online.length === 1 ? online[0] : null];
+    },
+});
 
 /**
  * One Administration candidate together with the device-local routing row

@@ -19,11 +19,17 @@ import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structura
 
 const EMPTY_MACHINE_INVENTORY_SNAPSHOTS: readonly ServerMachineInventorySnapshotV1[] = Object.freeze([]);
 const EMPTY_MACHINES: readonly Machine[] = Object.freeze([]);
-type InventorySelection = Readonly<{ scope: ServerAccountScope; machineId: string | null }>;
+type InventorySelection = Readonly<{ scope: Pick<ServerAccountScope, 'serverId'>; machineId: string | null }>;
 
 export type MachineInventoryFactsSelector = (
     machine: Machine, scope: ServerAccountScope | null, nowMs: number,
 ) => readonly unknown[];
+
+/** A consumer that reads one summary of a Home's Machines, not each Machine's facts. */
+export type MachineInventoryFactsDemand = MachineInventoryFactsSelector | Readonly<{
+    select: MachineInventoryFactsSelector;
+    summarize: (machineFacts: readonly (readonly unknown[])[]) => readonly unknown[];
+}>;
 
 /**
  * The one React projection over the all-profile raw inventory and its
@@ -33,7 +39,7 @@ export type MachineInventoryFactsSelector = (
  * omitted selection retains the fleet view and its profile-conflict census.
  */
 export function useAllProfileMachineInventorySnapshots(enabled = true, selection?: InventorySelection,
-    selectFacts?: MachineInventoryFactsSelector): readonly ServerMachineInventorySnapshotV1[] {
+    demand?: MachineInventoryFactsDemand): readonly ServerMachineInventorySnapshotV1[] {
     const activeServer = useActiveServerSnapshot();
     const serverProfilesGeneration = useServerProfilesGeneration();
     const profiles = React.useMemo(() => listServerProfiles(), [serverProfilesGeneration]);
@@ -67,11 +73,17 @@ export function useAllProfileMachineInventorySnapshots(enabled = true, selection
     }, [readInputs, selectedProfiles, machineId]);
     const readMachines = React.useCallback(() => readInventories().flatMap(inventory => inventory.machines ?? EMPTY_MACHINES), [readInventories]);
     // Select source facts before display conversion. Raw consumers omit this selector.
-    const readDemandedInputs = React.useMemo(() => selectFacts ? (nowMs: number) => readInventories().flatMap(inventory => [
-        inventory.profile.id, inventory.status, inventory.scoped, inventory.machines !== null,
-        ...(inventory.machines ?? []).flatMap(machine => selectFacts(machine,
-            accountScopesByServerId.get(inventory.profile.serverIdentityId ?? '') ?? null, nowMs)),
-    ]) : undefined, [selectFacts, readInventories, accountScopesByServerId]);
+    const readDemandedInputs = React.useMemo(() => {
+        if (!demand) return undefined;
+        const select = typeof demand === 'function' ? demand : demand.select;
+        const summarize = typeof demand === 'function' ? undefined : demand.summarize;
+        return (nowMs: number) => readInventories().flatMap(inventory => {
+            const scope = accountScopesByServerId.get(inventory.profile.serverIdentityId ?? '') ?? null;
+            const machineFacts = (inventory.machines ?? []).map(machine => select(machine, scope, nowMs));
+            return [inventory.profile.id, inventory.status, inventory.scoped, inventory.machines !== null,
+                ...(summarize ? summarize(machineFacts) : machineFacts.flat())];
+        });
+    }, [demand, readInventories, accountScopesByServerId]);
     const readSnapshot = React.useCallback((nowMs: number) => enabled ? resolveAllProfileMachineInventorySnapshots({
         ...readInputs(),
         profiles,
