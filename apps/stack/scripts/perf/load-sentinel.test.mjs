@@ -75,6 +75,30 @@ test('HEAD boot reports a missing producer member once and does not boot an unch
   assert.equal(posts.length, 1, 'a successful revision does not publish an alarm');
 });
 
+test('a slow HEAD boot does not delay the source graphs behind it', async t => {
+  const { fixture, graph } = await fixtureGraph(t);
+  const git = (...args) => execFileSync('git', args, { cwd: fixture.root, stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  git('add', '.');
+  git('commit', '-qm', 'test: initial revision');
+  const results = [];
+  const boot = Promise.withResolvers();
+  const head = { id: 'head-daemon-boot', entry: 'apps/cli/scripts/importCycleGuard.mjs', cwd: '.', args: [] };
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [head, graph], signal: t.signal,
+    post: async () => {}, onResult: result => results.push(result),
+    // The HEAD worker process is the system boundary; it stays running until released.
+    runHeadBootCommand: async () => { await boot.promise; return { status: 'passed' }; },
+    waitForQuiet: async () => {} });
+  const completed = sentinel.request();
+  for (let n = 0; n < 200 && !results.some(result => result.graph === graph.id); n++) await delay(10);
+  assert.deepEqual(results.map(result => result.graph), [graph.id], 'the source graph reports while HEAD still boots');
+  boot.resolve();
+  await completed;
+  assert.equal(results.length, 2, 'the HEAD verdict still lands');
+});
+
 test('HEAD commits with unchanged source trigger the boot graph through Git notifications', async t => {
   const { fixture, entry } = await fixtureGraph(t);
   const git = (...args) => execFileSync('git', args, { cwd: fixture.root, stdio: 'pipe' });

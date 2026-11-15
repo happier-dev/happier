@@ -91,6 +91,10 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
   waitForQuiet = () => delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal }) }) {
   const failures = new Map();
   const checkedHeads = new Set();
+  // A HEAD boot can take many minutes under load; it runs beside the source
+  // cycle so per-lane post-write gates never wait behind it.
+  let headRunning;
+  let headPending = false;
   const announcedOverruns = new Map();
   let admissionPending = false;
   let admissionRunning;
@@ -146,6 +150,23 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
       return false;
     }
   }
+  async function checkHead(graph) {
+    while (headPending && !signal?.aborted) {
+      headPending = false;
+      const { revision } = await resolveSourceRevisionIdentity({ repoDir, rev: 'HEAD' });
+      if (checkedHeads.has(revision)) continue;
+      checkedHeads.add(revision);
+      const startedAt = new Date().toISOString();
+      const result = { ...await loadHeadDaemonBoot({ repoDir, revision, env, signal, runCommand: runHeadBootCommand }),
+        startedAt, endedAt: new Date().toISOString() };
+      await onResult(result);
+      if (result.status !== 'passed') {
+        const message = String(result.loadError?.message ?? 'HEAD boot failed').split('\n')[0];
+        const details = `graph=${graph.id}; revision=${revision}; file=${sourcePath(repoDir, result.firstFailingModule) ?? graph.entry}; error=${isPublicRuntimeImportDiagnostic(message) ? message : 'private diagnostic withheld'}`;
+        await announce(graph.id, 'broken', details);
+      }
+    }
+  }
   async function run() {
     do {
       pending = false;
@@ -153,18 +174,8 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
       for (const graph of graphs) {
         signal?.throwIfAborted();
         if (graph.id === HEAD_DAEMON_BOOT_GRAPH.id) {
-          const { revision } = await resolveSourceRevisionIdentity({ repoDir, rev: 'HEAD' });
-          if (checkedHeads.has(revision)) continue;
-          checkedHeads.add(revision);
-          const startedAt = new Date().toISOString();
-          const result = { ...await loadHeadDaemonBoot({ repoDir, revision, env, signal, runCommand: runHeadBootCommand }),
-            startedAt, endedAt: new Date().toISOString() };
-          await onResult(result);
-          if (result.status !== 'passed') {
-            const message = String(result.loadError?.message ?? 'HEAD boot failed').split('\n')[0];
-            const details = `graph=${graph.id}; revision=${revision}; file=${sourcePath(repoDir, result.firstFailingModule) ?? graph.entry}; error=${isPublicRuntimeImportDiagnostic(message) ? message : 'private diagnostic withheld'}`;
-            await announce(graph.id, 'broken', details);
-          }
+          headPending = true;
+          if (!headRunning) headRunning = checkHead(graph).finally(() => { headRunning = undefined; });
           continue;
         }
         let result = await load(graph);
@@ -214,9 +225,10 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
     request() {
       pending = true;
       if (!running) running = run().finally(() => { running = undefined; });
-      return running;
+      // Callers settle once the source cycle and any HEAD boot it started are done.
+      return running.then(() => headRunning);
     },
-    async idle() { await Promise.all([running, admissionRunning]); },
+    async idle() { await Promise.all([running, admissionRunning, headRunning]); },
   };
 }
 
