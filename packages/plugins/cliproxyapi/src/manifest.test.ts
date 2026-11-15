@@ -18,6 +18,12 @@ const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', i
 const PACKAGED_UI_TRANSLATION_BUNDLES = Object.entries(PACKAGED_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages }));
 
 describe('CLIProxyAPI plugin manifest', () => {
+  it('declares its managed gateway as part of the Credential broker Machine role', () => {
+    expect(PluginManifestV2Schema.parse(PLUGIN_MANIFEST).contributes?.machineRoles).toEqual([
+      expect.objectContaining({ id: 'gateway', partOf: 'broker' }),
+    ]);
+  });
+
   it('discloses the managed gateway environment without granting host resources', async () => {
     await expect(import('./manifest.js').then((module) =>
       PluginManifestV2Schema.parse(module.PLUGIN_MANIFEST))).resolves.toMatchObject({

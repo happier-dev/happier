@@ -30,6 +30,8 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  // Machine roles (OWNER-RULINGS 2026-11-12): the managed gateway is part of the Credential broker role.
+  machineRoles: { gateway: { title: 'CLIProxyAPI gateway', description: 'Serves CLIProxyAPI models through the credential broker.', partOf: 'broker' } },
   hostAccess: {
     required: [{
       id: 'managed-gateway-environment',

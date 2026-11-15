@@ -78,7 +78,7 @@ export const CLIPROXYAPI_MANAGED_SERVICE = Object.freeze({
  */
 const SDK_REGISTRATION_UNAVAILABLE_REASON = Object.freeze({
   key: 'managedPurpose.unavailable.sdkRegistration',
-  fallback: 'This account family needs upstream SDK support.',
+  fallback: 'The gateway can’t use these accounts yet. Use them with their own agent instead.',
 });
 
 export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
@@ -219,7 +219,7 @@ export const CLIPROXYAPI_MANAGED_FAMILIES = Object.freeze([
       headerNames: Object.freeze(['authorization']),
     }) }),
     sdk: {
-      catalog: { getter: 'GetAntigravityModels', staticOnly: true },
+      catalog: { getter: 'GetAntigravityModels', staticOnly: true as const },
       stripHeaderNames: ['authorization', 'x-api-key'],
       seed: { attributes: { websockets: 'false' }, metadata: { access_token: 'happier-registration-sentinel', expires_at: '9999-12-31T23:59:59Z' } },
       factMetadata: { projectId: 'project_id' },
