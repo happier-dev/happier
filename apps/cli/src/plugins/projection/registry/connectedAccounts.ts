@@ -3,6 +3,9 @@ import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescr
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { ResolvedContributionRegistry } from './types';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { resolveConnectedAccountNativeLoginConstraintsV1 } from '@happier-dev/protocol/teams';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { hasUnusablePluginDeclarationDiagnostic } from '@/plugins/validation/diagnostics/declarationUsability';
@@ -33,6 +36,16 @@ export function projectConnectedAccountDescriptors(
   pluginDiagnosticsByPluginId?: ResolvedContributionRegistry['pluginDiagnosticsByPluginId'],
 ): Readonly<Record<string, ConnectedAccountUiProjectionEntryV1>> {
     const diagnosticsByPluginId = pluginDiagnosticsByPluginId ?? registry.pluginDiagnosticsByPluginId;
+    const agents = (registry.agents ?? []).flatMap(agent => {
+        const definition = agent.richDefinition?.definition;
+        const identity = agent.identity;
+        return identity && definition ? [{ identity, title: resolvePluginLocalizedStringV2Text(definition.title),
+            providerRequirements: definition.providerRequirements,
+            connectedAccounts: definition.connectedAccounts?.map(purpose => ({
+                service: qualifyPluginContributionReferenceV1(purpose.service, identity.pluginId),
+            })),
+        }] : [];
+    });
     return Object.fromEntries((registry.connectedAccountDescriptors ?? []).flatMap((contribution) => {
         const descriptor = contribution.definition;
         const hostingProvider = (registry.scmHostingProviders ?? []).find((provider) => referencesConnectedAccountDescriptor({
@@ -51,6 +64,7 @@ export function projectConnectedAccountDescriptors(
         const entry = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
           descriptor, serviceId, ...(pluginId ? { pluginId } : {}),
           provenance: contribution.provenance, sourceKind: contribution.source.kind,
+          ...(pluginId ? { nativeLoginRequiredBy: resolveConnectedAccountNativeLoginConstraintsV1({ pluginId, localId: descriptor.id }, agents) } : {}),
           // UI-T28: Connected Account setup is host-rendered from the STATIC
           // descriptor, so it is blocked only when that declaration is itself
           // unusable (missing/invalid manifest or unapproved trust). A runtime

@@ -2566,6 +2566,15 @@ credential acquisition; reconnecting does not enable native sharing.
 Brokered-only Muse selections still follow the existing early native Agent
 compatibility refusal.
 
+Team-share explanations use the same Agent declaration fact as the brokered
+source picker: a resolved Agent without Provider requirements needs its own
+native login. Connected Account projections carry the affected Agents' qualified
+identities and declared display names in `nativeLoginRequiredBy`, derived by the
+canonical Team credential demand owner. Both Machine and Account declaration
+publication supply this presentation fact for bundled and installed plugins;
+missing Agent declarations remain unknown. The UI does not maintain a service
+identity exception or a separate roster of compatible Agents.
+
 Withdrawal clears delivered credential files from retained daemon materialization
 homes at the next existing Team reconciliation. The materialization manifest
 records the admitted Team resource and exact secret paths; replacing the source

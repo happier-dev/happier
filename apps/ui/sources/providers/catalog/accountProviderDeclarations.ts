@@ -12,7 +12,9 @@ import {
     readProjectedAgentDeclarationV1,
     readProjectedProviderDeclarationsV1,
     resolveAgentTeamCredentialDemandV1,
+    resolveAgentTeamCredentialBrokeredUseV1,
     type AgentTeamCredentialDemandV1,
+    type AgentTeamCredentialBrokeredUseV1,
 } from '@happier-dev/protocol/teams';
 import { getBundledAgentDeclaration } from '@/agents/registry/registryCore';
 import {
@@ -135,6 +137,13 @@ function readExactAccountAgentDeclaration(agentTargetKey: string, context: Provi
 
 export function readAccountAgentProviderRequirements(agentTargetKey: string, context: ProviderDeclarationContext): AgentProviderRequirementsV1 | null {
     return readExactAccountAgentDeclaration(agentTargetKey, context)?.declaration.providerRequirements ?? null;
+}
+
+/** The same declaration-owned fact used by Team credential application admission. */
+export function readAccountAgentBrokeredUse(agentTargetKey: string, context: ProviderDeclarationContext): AgentTeamCredentialBrokeredUseV1 {
+    const resolved = readExactAccountAgentDeclaration(agentTargetKey, context);
+    return resolveAgentTeamCredentialBrokeredUseV1({ declarationResolved: resolved !== null,
+        requirements: resolved?.declaration.providerRequirements });
 }
 
 export function readAccountAgentQualifiedConnectedAccounts(agentTargetKey: string, context: ProviderDeclarationContext) {

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 
 import { teamCredentialDisplayNameFixture, teamCredentialResourceFixture } from '@/dev/testkit';
 import { t } from '@/text';
 import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
-import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema, resolveConnectedAccountNativeLoginConstraintsV1 } from '@happier-dev/protocol/teams';
 
 import {
     audienceSummary,
@@ -24,11 +25,25 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
-    it('explains shared Muse use without promising native Muse access', () => {
+    it('explains the declared native-login constraint without a hardcoded compatible Agent roster', () => {
         const message = credentialBrokeredSourceUseMessage({ pluginId: 'happier.agent.muse', localId: 'muse-account' });
-        expect(message).toMatch(/Pi.*OpenCode.*Codex/);
-        expect(message).toMatch(/Muse Agent.*own Muse login/);
+        expect(message).toContain('Muse');
         expect(credentialBrokeredSourceUseMessage({ pluginId: 'acme', localId: 'muse-account' })).toBeUndefined();
+    });
+    it('explains an installed plugin constraint and does not borrow its same-local-id neighbor', () => {
+        const service = { pluginId: 'acme.login', localId: 'subscription' };
+        const descriptor = projectConnectedAccountDescriptorV1({ descriptor: { id: service.localId, title: 'Acme Login',
+            authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] }] } },
+            serviceId: service.localId, pluginId: service.pluginId, provenance: 'external', sourceKind: 'installed',
+            availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+            nativeLoginRequiredBy: resolveConnectedAccountNativeLoginConstraintsV1(service, [{ identity: { pluginId: 'acme.agent', localId: 'native' }, title: 'Acme Native',
+                connectedAccounts: [{ service }] }]),
+        });
+        const registry = { entries: [{ serviceId: service.localId, service, connectCommand: '', supportsOauth: false, projectedDescriptor: descriptor }] };
+        expect(credentialBrokeredSourceUseMessage(service, registry))
+            .toBe(t('teams.credentials.edit.brokeredNativeLoginUse', { agentNames: 'Acme Native' }));
+        expect(credentialBrokeredSourceUseMessage({ ...service, pluginId: 'other.login' }, registry)).toBeUndefined();
+        expect(credentialBrokeredSourceUseMessage(service, { entries: [] })).toBeUndefined();
     });
     it('names a saved broker from the same Home-qualified machine presentation as its editor', () => {
         const picker = createMachineAdministrationTargetSelectionFixture({

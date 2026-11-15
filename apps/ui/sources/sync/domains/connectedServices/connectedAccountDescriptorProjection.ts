@@ -129,6 +129,9 @@ function prepareDescriptor(entry: ConnectedAccountUiProjectionEntryV1, descripti
   if (bundled) entry = {
     ...projectConnectedAccountDescriptorV1({ descriptor: bundled,
       serviceId: bundled.id, pluginId: entry.pluginId,
+      // This fact describes all admitted Agent consumers, including installed
+      // plugins that use a bundled Account service, rather than the descriptor.
+      nativeLoginRequiredBy: entry.nativeLoginRequiredBy,
       provenance: entry.provenance, sourceKind: entry.sourceKind,
       availability: entry.availability, diagnostics: entry.diagnostics }),
     ...(entry.occurrenceId === undefined ? {} : { occurrenceId: entry.occurrenceId }),

@@ -13,6 +13,7 @@ import {
   readConnectedAccountDescriptorProjection,
 } from './connectedAccountDescriptorProjection';
 import { getConnectedAccountAuthentication, projectConnectedServiceRegistryEntries } from './connectedServiceRegistry';
+import { credentialBrokeredSourceUseMessage } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { resolveConnectedAccountPurposeTargetEligibility } from './connectedAccountPurposeTargetEligibility';
 
 function descriptor(overrides: Partial<ConnectedAccountUiProjectionEntryV1> = {}): ConnectedAccountUiProjectionEntryV1 {
@@ -44,6 +45,20 @@ function descriptor(overrides: Partial<ConnectedAccountUiProjectionEntryV1> = {}
     ...overrides,
   };
 }
+
+it('retains an installed native Agent constraint when its Account service is bundled', () => {
+  const declaration = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.codex/openai-codex']!;
+  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+  const published = projectConnectedAccountDescriptorV1({ descriptor: declaration.descriptor,
+    serviceId: service.localId, pluginId: service.pluginId, provenance: 'first_party', sourceKind: 'bundled',
+    availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+    nativeLoginRequiredBy: [{ identity: { pluginId: 'acme.agent', localId: 'native' }, title: 'Acme Native' }],
+  });
+  const resolved = mergeConnectedAccountDescriptorProjections([{ kind: 'ready', descriptors: [published] }]);
+  const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'scope', status: 'ready', descriptors: resolved.descriptors ?? [],
+    conflicts: [], errorReason: null });
+  expect(credentialBrokeredSourceUseMessage(service, { entries })).toContain('Acme Native');
+});
 
 function projection(entries: Record<string, Readonly<{ id: string }> & Record<string, unknown>>): DaemonContributionRegistryProjection {
   const fixture = {

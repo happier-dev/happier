@@ -578,8 +578,9 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     >(undefined);
     const accountConnectedAccountDescriptors = availabilityInputs?.accountUiProjection?.connectedAccountDescriptorsById;
     const accountConnectedAccountMetadata = React.useMemo(() => Object.freeze(
-        Object.values(accountConnectedAccountDescriptors ?? {}).map(({ pluginId, definition, hostAccountOrigin }) =>
+        Object.values(accountConnectedAccountDescriptors ?? {}).map(({ pluginId, definition, hostAccountOrigin, nativeLoginRequiredBy }) =>
             projectConnectedAccountDescriptorV1({ descriptor: definition, pluginId, serviceId: definition.id,
+                nativeLoginRequiredBy,
                 provenance: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'first_party' : 'external',
                 sourceKind: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'bundled' : 'account_release',
                 availability: { state: 'available', reason: 'account_declaration' }, diagnostics: [] })),

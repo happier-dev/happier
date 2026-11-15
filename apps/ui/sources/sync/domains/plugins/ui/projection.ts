@@ -4,9 +4,9 @@ import type {
 import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginActionContributionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import type { PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginCollectionListExtensionV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import type { PluginContributionIntrospectionPresentationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
@@ -422,12 +422,11 @@ export type PluginUiConnectedAccountDescriptorProjection = Readonly<{
     pluginId: string;
     occurrenceId: string;
     definition: PluginConnectedAccountDescriptorContributionV2;
+    nativeLoginRequiredBy?: ConnectedAccountUiProjectionEntryV1['nativeLoginRequiredBy'];
     hostAccountOrigin: NonNullable<ReturnType<typeof readPluginUiAccountExecutableOrigin>>;
 }>;
 
 export type PluginUiProjectionModel = Readonly<{
-    /** Host-private initial describe facts; these never admit an execution origin. */
-    establishingExecutionTargetsByPluginId?: Readonly<Record<string, readonly MachineAdministrationTargetV1[]>>;
     /** Current daemon diagnostics remain scoped to their reporting Machine. */
     diagnostics?: Readonly<DaemonContributionRegistryProjection['diagnostics']>;
     generation: number | null;

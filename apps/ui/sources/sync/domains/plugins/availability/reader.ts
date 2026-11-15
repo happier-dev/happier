@@ -23,7 +23,8 @@ import { derivePluginAccountExecutionArtifactSlots, derivePluginContributionRegi
 import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiExecutableArtifactHostCompatibleV1, PLUGIN_UI_HOST_API_VERSION_V1,
     type PluginUiArtifactsManifestEntryV2, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveConnectedAccountNativeLoginConstraintsV1 } from '@happier-dev/protocol/teams';
 import { projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -2036,6 +2037,13 @@ function deriveAccountUiProjection(input: Readonly<{
     const dragSources: Record<string, PluginUiProjectionModel['dragSourcesById'][string]> = {};
     const dropTargets: Record<string, PluginUiProjectionModel['dropTargetsById'][string]> = {};
     const connectedAccountDescriptors: Record<string, NonNullable<PluginUiProjectionModel['connectedAccountDescriptorsById']>[string]> = {};
+    const accountAgents = selections.flatMap(({ manifest }) => (manifest.contributes.agents ?? []).map(agent => ({
+        identity: { pluginId: manifest.id, localId: agent.id }, title: resolvePluginLocalizedStringV2Text(agent.title),
+        providerRequirements: agent.providerRequirements,
+        connectedAccounts: agent.connectedAccounts?.map(purpose => ({
+            service: qualifyPluginContributionReferenceV1(purpose.service, manifest.id),
+        })),
+    })));
     for (const selected of selections) {
         const { manifest, custodyId } = selected;
         const hostAccountOrigin = accountUiOrigins.get(manifest.id)!;
@@ -2069,6 +2077,7 @@ function deriveAccountUiProjection(input: Readonly<{
             }
             connectedAccountDescriptors[buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: definition.id })] = Object.freeze({
                 id: definition.id, pluginId: manifest.id, occurrenceId: custodyId, definition, hostAccountOrigin,
+                nativeLoginRequiredBy: resolveConnectedAccountNativeLoginConstraintsV1({ pluginId: manifest.id, localId: definition.id }, accountAgents),
             });
         }
         const packageAssetsById = new Map(selected.release?.packageAssetArchive?.resources.map(resource => [resource.resourceId, resource]));

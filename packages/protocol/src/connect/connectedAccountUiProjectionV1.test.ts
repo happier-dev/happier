@@ -2,8 +2,30 @@ import { describe, expect, it } from 'vitest';
 
 import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from './connectedAccountUiProjectionV1.js';
 import { PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
+import { resolveConnectedAccountNativeLoginConstraintsV1 } from '../teams/credentials/teamCredentialModelCatalogV1.js';
+import { AgentProviderRequirementsV1Schema } from '../providers/compatibility/v1.js';
 
 describe('ConnectedAccountUiProjectionEntryV1', () => {
+  it('projects native-login constraints from qualified Agent declarations without treating missing Agents as constraints', () => {
+    const service = { pluginId: 'acme.login', localId: 'subscription' };
+    const providerRequirements = AgentProviderRequirementsV1Schema.parse({ acceptsProtocols: ['openai-responses'], required: {},
+      credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] }, authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
+      materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: false });
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: service.localId, title: 'Acme',
+      authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] }] } });
+    const projected = projectConnectedAccountDescriptorV1({ descriptor, pluginId: service.pluginId, serviceId: service.localId,
+      provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+      nativeLoginRequiredBy: resolveConnectedAccountNativeLoginConstraintsV1(service, [{ identity: { pluginId: 'acme.agent', localId: 'native' }, title: 'Acme Native', connectedAccounts: [{ service }] },
+        { identity: { pluginId: 'acme.agent', localId: 'brokerable' }, title: 'Acme Brokerable', providerRequirements, connectedAccounts: [{ service }] },
+        { identity: { pluginId: 'foreign.agent', localId: 'native' }, title: 'Foreign Native',
+          connectedAccounts: [{ service: { ...service, pluginId: 'foreign.login' } }] }]),
+    });
+    expect(ConnectedAccountUiProjectionEntryV1Schema.parse(projected).nativeLoginRequiredBy)
+      .toEqual([{ identity: { pluginId: 'acme.agent', localId: 'native' }, title: 'Acme Native' }]);
+    expect(projectConnectedAccountDescriptorV1({ descriptor, pluginId: service.pluginId, serviceId: service.localId,
+      provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }).nativeLoginRequiredBy)
+      .toBeUndefined();
+  });
   it('projects a dynamic service brand and setup presentation without borrowing built-in identity', () => {
     const ui = { iconResourceId: 'service-mark', shortName: 'Acme', setup: {
       order: 9, firstRun: true, catalogDescription: { key: 'acme.catalog', fallback: 'Use your Acme subscription' },

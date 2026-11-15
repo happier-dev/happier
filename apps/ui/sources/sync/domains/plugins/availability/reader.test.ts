@@ -1215,7 +1215,10 @@ describe('Plugin Account Availability reader', () => {
         });
         const manifest = PluginPortableReleaseManifestV1Schema.parse({
             ...intentRead().release!.normalizedManifest,
-            contributes: { connectedAccountDescriptors: [{ id: 'subscription', title: 'Subscription', authentication: {
+            contributes: { agents: [{ id: 'native', title: 'Acme Native', runtime: { kind: 'custom' }, primary: 'sessions',
+                capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+                connectedAccounts: [{ purpose: 'login', service: 'subscription', materializationKinds: ['environment'] }] }],
+                connectedAccountDescriptors: [{ id: 'subscription', title: 'Subscription', authentication: {
                 account: { artifactId: graph.artifactId, exportName: 'authenticate' },
                 defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
             } }] },
@@ -1234,6 +1237,7 @@ describe('Plugin Account Availability reader', () => {
         const descriptor = first?.connectedAccountDescriptorsById?.[key];
         expect(descriptor).toMatchObject({ id: 'subscription', pluginId: manifest.id,
             occurrenceId: selected.custodyId, definition: manifest.contributes.connectedAccountDescriptors![0],
+            nativeLoginRequiredBy: [{ identity: { pluginId: manifest.id, localId: 'native' }, title: 'Acme Native' }],
             hostAccountOrigin: { ...scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody } });
         expect(first?.installedPackagesById[manifest.id]).toMatchObject({ enabled: true, occurrenceId: selected.custodyId });
         expect(first?.reactNativeBundlesById[`reactNativeBundle:${manifest.id}:connectedAccountDescriptors/subscription`])

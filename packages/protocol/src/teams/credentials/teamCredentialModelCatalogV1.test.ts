@@ -1,8 +1,16 @@
 import { expect, it } from 'vitest';
 import { TeamCredentialResourceCatalogEntryV1Schema } from './resourceV1.js';
-import { mergeTeamCredentialCatalogResourcesV1 } from './teamCredentialModelCatalogV1.js';
+import { mergeTeamCredentialCatalogResourcesV1, resolveAgentTeamCredentialBrokeredUseV1 } from './teamCredentialModelCatalogV1.js';
 
-const generic = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared', teamId: 'team', displayName: 'Shared',
+it('distinguishes a declared native-only Agent from an unresolved Agent for brokered use', () => {
+  expect(resolveAgentTeamCredentialBrokeredUseV1({ declarationResolved: true, requirements: null }))
+    .toEqual({ kind: 'native_login_required' });
+  expect(resolveAgentTeamCredentialBrokeredUseV1({ declarationResolved: false, requirements: null }))
+    .toEqual({ kind: 'unknown' });
+});
+
+const generic = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared', teamId: 'team',
+  displayName: { content: { t: 'plain', v: 'Shared' }, recipientEnvelope: null, legacyPlaintext: true },
   resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
   directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [], sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } },
 });

@@ -1,6 +1,7 @@
 import { parseBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import type { PluginProjectionV2 } from '../../daemon/contributionRegistryProjection.js';
 import { buildQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
+import type { PluginContributionIdentityV1 } from '../../plugins/contributionIdentity.js';
 import type { ProviderBrokerApplicationBindingV1 } from '../../providers/brokerRouteGrantV1.js';
 import type { AgentProviderRequirementsV1 } from '../../providers/compatibility/v1.js';
 import type { AccountProviderDeclarationV1 } from '../../providers/catalog/accountModelProjectionV1.js';
@@ -53,6 +54,38 @@ export type AgentTeamCredentialDemandV1 = Readonly<{
 
 const UNKNOWN_DEMAND: AgentTeamCredentialDemandV1 = Object.freeze({ requirements: null, applications: Object.freeze([]), connectedServiceKeys: null });
 
+export type AgentTeamCredentialBrokeredUseV1 =
+  | Readonly<{ kind: 'supported'; requirements: AgentProviderRequirementsV1 }>
+  | Readonly<{ kind: 'native_login_required' | 'unknown' }>;
+
+/** Agent declarations own brokered application support; an unresolved declaration is not native-only. */
+export function resolveAgentTeamCredentialBrokeredUseV1(input: Readonly<{
+  declarationResolved: boolean;
+  requirements: AgentProviderRequirementsV1 | null | undefined;
+}>): AgentTeamCredentialBrokeredUseV1 {
+  if (!input.declarationResolved) return { kind: 'unknown' };
+  return input.requirements ? { kind: 'supported', requirements: input.requirements } : { kind: 'native_login_required' };
+}
+
+export type ConnectedAccountAgentDeclarationV1 = Readonly<{
+  identity: PluginContributionIdentityV1;
+  title: string;
+  providerRequirements?: AgentProviderRequirementsV1 | null;
+  connectedAccounts?: ReadonlyArray<Readonly<{ service: PluginContributionIdentityV1 }>>;
+}>;
+
+/** Presentation of the same brokered-use fact, scoped to the exact Connected Account service. */
+export function resolveConnectedAccountNativeLoginConstraintsV1(
+  service: PluginContributionIdentityV1,
+  agents: readonly ConnectedAccountAgentDeclarationV1[],
+): readonly Readonly<{ identity: PluginContributionIdentityV1; title: string }>[] {
+  const serviceKey = buildQualifiedPluginContributionKey(service);
+  return agents.flatMap(agent => resolveAgentTeamCredentialBrokeredUseV1({ declarationResolved: true,
+    requirements: agent.providerRequirements }).kind === 'native_login_required'
+    && agent.connectedAccounts?.some(purpose => buildQualifiedPluginContributionKey(purpose.service) === serviceKey)
+    ? [{ identity: agent.identity, title: agent.title }] : []);
+}
+
 /**
  * The one derivation of which Team credential applications an Agent can use:
  * the admitted Provider declarations narrowed to the protocols the Agent's own
@@ -67,15 +100,17 @@ export function resolveAgentTeamCredentialDemandV1(input: Readonly<{
   providers: readonly AccountProviderDeclarationV1[];
 }>): AgentTeamCredentialDemandV1 {
   const connectedServiceKeys = input.connectedAccounts === null ? null : readAgentConnectedAccountServiceKeysV1(input.connectedAccounts);
-  if (!input.requirements) return { requirements: null, applications: [], connectedServiceKeys };
+  const brokeredUse = resolveAgentTeamCredentialBrokeredUseV1({ declarationResolved: input.connectedAccounts !== null || input.requirements != null,
+    requirements: input.requirements });
+  if (brokeredUse.kind !== 'supported') return { requirements: null, applications: [], connectedServiceKeys };
   const providers = input.providers.flatMap(declaration => {
     const parsed = parseProviderContributionIdentityV1(declaration.contributionKey);
     return parsed ? [{ identity: parsed.identity, definition: declaration.definition }] : [];
   });
   return {
-    requirements: input.requirements,
+    requirements: brokeredUse.requirements,
     applications: projectAgentProviderBrokerApplications({ providers, agentTargetKey: input.agentTargetKey,
-      acceptedProtocols: input.requirements.acceptsProtocols }),
+      acceptedProtocols: brokeredUse.requirements.acceptsProtocols }),
     connectedServiceKeys,
   };
 }

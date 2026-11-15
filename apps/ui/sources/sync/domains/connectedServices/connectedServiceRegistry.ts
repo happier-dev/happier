@@ -13,6 +13,8 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 import { isAccountDirectConnectedAccountModeV1, resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
+import { readBundledAccountNativeLoginConstraints } from './bundledAccountNativeLoginConstraints';
 
 export type ConnectedServiceDisplayNameKey =
   | 'connectedServices.serviceNames.claudeSubscription'
@@ -308,12 +310,13 @@ export function projectConnectedServiceRegistryEntries(
     if (!service) continue;
     const descriptor = projectConnectedAccountDescriptorV1({ descriptor: declaration.descriptor,
       serviceId: service.localId, pluginId: service.pluginId, provenance: 'first_party', sourceKind: 'bundled',
+      nativeLoginRequiredBy: readBundledAccountNativeLoginConstraints(service),
       availability: { state: 'available', reason: 'account_direct_declaration' }, diagnostics: [] });
     descriptorsByQualifiedService.set(key, [descriptor]);
     answeredIdentities.add(descriptorIdentity(descriptor));
   }
 
-  const projected = Object.freeze([...descriptorsByQualifiedService.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, candidates]) => {
+  const projected = Object.freeze([...descriptorsByQualifiedService.entries()].sort(([left], [right]) => compareCodeUnits(left, right)).map(([key, candidates]) => {
     const descriptor = candidates[0]!;
     const service = resolveProjectedService(descriptor);
     const legacyServiceId = resolveLegacyServiceId(service);
@@ -463,6 +466,18 @@ export function getQualifiedConnectedServiceRegistryEntry(
     entry.service
       && buildQualifiedPluginContributionKey(entry.service) === key
   )) ?? null;
+}
+
+/** Sharing copy consumes a declaration-derived constraint, never a service identity allowlist. */
+export function getConnectedAccountNativeLoginConstraints(
+  service: PluginContributionIdentityV1,
+  snapshot: Pick<ConnectedServiceRegistrySnapshot, 'entries'> = getConnectedServiceRegistrySnapshot(),
+): NonNullable<ConnectedAccountUiProjectionEntryV1['nativeLoginRequiredBy']> {
+  const entry = snapshot.entries.find(candidate => candidate.service && sameService(candidate.service, service));
+  if (entry?.projectionStatus === 'conflict' || (entry?.projectedDescriptorCandidates?.length ?? 0) > 1) return [];
+  return entry?.projectedDescriptor
+    ? entry.projectedDescriptor.nativeLoginRequiredBy ?? []
+    : readBundledAccountNativeLoginConstraints(service);
 }
 
 /** Usage context comes from the same plugin declaration as authentication. */

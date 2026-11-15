@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit';
 import { buildSessionModelPickerSections } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import {
     readAccountAgentCatalogConnectedServices,
     readAccountAgentProviderDeclarations,
     readAccountAgentProviderRequirements,
+    readAccountAgentBrokeredUse,
     readAccountAgentConnectedAccountServiceKeys,
     readAccountProviderDeclarations,
     readProviderConnectionPickerKind,
@@ -15,6 +17,20 @@ import {
 } from './accountProviderDeclarations';
 
 describe('admitted Provider declarations', () => {
+    it('derives installed native-login constraints from the same exact declaration as brokered selection', () => {
+        const service = { pluginId: 'acme.login', localId: 'subscription' };
+        const requirements = readAccountAgentProviderRequirements('agent:happier.agent.codex/codex', { kind: 'account' })!;
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {
+            native: { id: 'native', identity: { pluginId: 'acme.agent', localId: 'native' }, title: 'Acme Native',
+                connectedAccounts: [{ purpose: 'login', service, materializationKinds: ['environment'] }] },
+            provider: { id: 'provider', identity: { pluginId: 'acme.agent', localId: 'provider' }, title: 'Acme Provider',
+                providerRequirements: requirements, connectedAccounts: [{ purpose: 'login', service, materializationKinds: ['environment'] }] },
+        } });
+        const context: ProviderDeclarationContext = { kind: 'machine', projection };
+        expect(readAccountAgentBrokeredUse('agent:acme.agent/native', context)).toEqual({ kind: 'native_login_required' });
+        expect(readAccountAgentBrokeredUse('agent:acme.agent/provider', context)).toEqual({ kind: 'supported', requirements });
+        expect(readAccountAgentBrokeredUse('agent:missing.plugin/native', context)).toEqual({ kind: 'unknown' });
+    });
     it('requests selected custom-upstream account catalogs only for the exact Agent declarations', () => {
         const connected = { source: 'connected' as const, selection: 'profile' as const, profileId: 'selected-account' };
         const selected = readAccountAgentCatalogConnectedServices('agent:happier.agent.copilot/copilot', { kind: 'account' }, {
@@ -141,7 +157,7 @@ describe('admitted Provider declarations', () => {
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey: 'agent:acme.missing/agent', nativeModels: [], providerGroups: [],
             hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
-            teamCredentialResources: [TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: 'Models', resourceRevision: 1,
+            teamCredentialResources: [TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: teamCredentialDisplayNameFixture('Models'), resourceRevision: 1,
                 readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
                 directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
                 connectedServiceSelections: [], sourcePresentation: { kind: 'provider', provider: {
@@ -159,7 +175,7 @@ describe('admitted Provider declarations', () => {
     it('keeps recovery inert when a retained Team selection has unknown Agent requirements', () => {
         const agentTargetKey = 'agent:acme.missing/agent';
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'resource', teamId: 'team', displayName: 'Models', resourceRevision: 1,
+            id: 'resource', teamId: 'team', displayName: teamCredentialDisplayNameFixture('Models'), resourceRevision: 1,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
             sourcePresentation: { kind: 'provider', provider: {

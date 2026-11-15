@@ -1,5 +1,68 @@
 # Compatibility and version skew
 
+## Managed guest Home network context (unreleased 0.3)
+
+Local provisioner `guestHome` input optionally carries closed `hostIdentity`
+facts (Home and controller machine hosts). Devcontainer realization retains
+optional `homeOnControllerHost: true` in resources and uncertain-acquisition
+references. Native bootstrap carriers can carry the diagnostic hint
+`homeNetworkHint: 'authored_network'`; confirmed Home reachability failures
+retain it as optional typed `reason` without changing their failure code.
+Existing inputs and resources that omit these facts remain readable and keep
+their previous network default. Protocol, SDK, provisioner declarations and CLI
+reload together under the unpublished development direct cut: earlier strict
+development readers reject the added fields. No migration, wire epoch,
+compatibility adapter or released format changes.
+
+## Managed Machine creation provenance (unreleased 0.3)
+
+Provider-authored bound acquire results carry optional `resource.origin: 'created'`
+through the existing retained resource, including opaque preset content. Creation
+enrollment seeds Machine metadata `isolationV1: { environment: 'managed-guest',
+provisionerId }` only while the field is absent, in the same metadata CAS as default
+roles. `provisionerId` is the qualified plugin contribution identity. Created Lume
+VMs receive the fact even with personal/existing-user enrollment; adopted hosts and
+Account-native or SSH enrollment of existing hosts carry no origin and gain no fact.
+
+`readMachineIsolationV1` in Protocol `machines/metadataUpdate` reads opened Machine
+metadata and returns the fact or `null` for missing/unreadable provenance. Missing
+provenance retains the host sandbox default. Matching Protocol, SDK projections,
+provisioners and daemon Action hosts reload together under the unreleased 0.3 direct
+cut. The optional field reuses existing resource/metadata persistence; it adds no
+table, migration, settings key or compatibility epoch.
+
+## Home guest CLI source (unreleased 0.3)
+
+`/v1/features` advertises optional `capabilities.guestCli` with the closed identity
+`{ source: 'home-payload' | 'public-release', line: 'major.minor' }`. This selects
+installation artifacts; it is independent of feature enablement and the server's
+diagnostic package version. The current program line is explicitly `0.3`.
+Development source builds select Home payloads; released server binaries and
+Docker images select public releases. Updated managed installers require this
+identity, choose the newest published CLI on its line through exact signed
+acquisition, and refuse an installed-version downgrade. Missing or malformed
+identity refuses with `guest_cli_identity_unavailable`, including on an older
+Home that has not gained the producer; no version-based fallback is inferred.
+
+The capability root is additive: released 0.2 readers discard the unknown family.
+The new identity itself is closed because its source and line select executable
+artifacts. Matching 0.3 server and controller/app consumers must reload together;
+this adds no persisted state, migration, endpoint or SDK epoch.
+
+## Connected Account Team-share constraints (unreleased 0.3)
+
+Connected Account UI projections may carry `nativeLoginRequiredBy`, a closed
+list of qualified Agent identities and declared display names. The Team
+credential demand owner derives it from existing Agent Provider requirements
+and qualified Connected Account purposes; it is presentation metadata and
+grants no broker, credential or execution authority. Older projections omit the
+field and remain readable. Matching Protocol, CLI and UI source deploy together
+under the development direct cut because earlier strict development readers
+reject the added field. No persisted record, authored plugin declaration,
+release wire epoch, migration or compatibility adapter changes. The inspected
+0.2 frontier `008450323b7baf3a499de4d80042046cd7d89bd3` has no
+`connect/connectedAccountUiProjectionV1.ts` counterpart.
+
 ## Session authoring open (unreleased 0.3)
 
 `session.authoring.open` remains the admission owner for first-party, agent and
@@ -3698,10 +3761,10 @@ retain names newly excluded by reserved-name or configurable claim policy.
 Explicit release clears the Account name and public disclosure without reserving
 the name. Another Account, the former holder or provider fill may claim it
 immediately under the same policy and unique constraint. The response keeps
-`reservedUntilMs` for existing readers and returns null. Retained
-`ReleasedUsername` name/expiry records remain readable and untouched, but are no
-longer admission facts; this behavior change does not remove their table or edit
-an applied migration. Renaming preserves the publication at the new current
+`reservedUntilMs` for existing readers and returns null. The unread
+`ReleasedUsername` table (0.3 development only, never released) is dropped by
+migration `20261115210000_drop_dead_share_access_log_and_released_username`,
+together with the never-written direct-share `SessionShareAccessLog`. Renaming preserves the publication at the new current
 handle, including paused state and independent operator restriction. Release,
 reclaim, automatic identity unlink, erasure and reset still withdraw disclosure.
 Recovery transfers the actual current name and intent bit, but never disclosure;

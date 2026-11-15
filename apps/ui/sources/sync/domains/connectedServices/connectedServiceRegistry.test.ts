@@ -3,6 +3,7 @@ import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connecte
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
   getGeneratedLegacyConnectedServiceRegistryFallback,
@@ -18,6 +19,7 @@ import {
   getConnectedServiceRegistryIdentityFallback,
   isConnectedServiceUsageCapable,
   getConnectedAccountAuthentication,
+  getConnectedAccountNativeLoginConstraints,
   projectConnectedServiceRegistryEntries,
 } from './connectedServiceRegistry';
 import { buildConnectedAccountPurposeTargetChoices } from './connectedAccountPurposeTargetChoices';
@@ -44,6 +46,18 @@ function manualAuthentication(fields: Array<Readonly<{
 }
 
 describe('connectedServiceRegistry', () => {
+  it('keeps a current publisher with no native-login constraints authoritative over bundled fallback', () => {
+    const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+    expect(getConnectedAccountNativeLoginConstraints(service, { entries: [] }).length).toBeGreaterThan(0);
+    const declaration = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.agent.muse/muse-account']!;
+    const descriptor = projectConnectedAccountDescriptorV1({ descriptor: declaration.descriptor,
+      serviceId: service.localId, pluginId: service.pluginId, provenance: 'first_party', sourceKind: 'bundled',
+      availability: { state: 'available', reason: 'resolved' }, diagnostics: [], nativeLoginRequiredBy: [] });
+    const resolution = mergeConnectedAccountDescriptorProjections([{ kind: 'ready', descriptors: [descriptor] }]);
+    const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'scope', status: 'ready', descriptors: resolution.descriptors ?? [],
+      conflicts: [], errorReason: null });
+    expect(getConnectedAccountNativeLoginConstraints(service, { entries })).toEqual([]);
+  });
   it.each(['loading', 'ready', 'stale', 'error'] as const)('offers bundled Account-runtime authentication during %s Machine coverage without native execution', (status) => {
     const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'account-cloud', status,
       descriptors: [], conflicts: [], errorReason: status === 'stale' || status === 'error' ? 'partial_machine_failure' : null });
@@ -146,6 +160,26 @@ describe('connectedServiceRegistry', () => {
       authenticationModes: [expect.objectContaining({ id: 'api-key', accountDirectSave: true })] });
     expect(canExecuteConnectedServiceAction(entry!, 'advertised-v4')).toBe(true);
     expect(canExecuteConnectedServiceAction({ ...entry!, availability: { state: 'disabled', reason: 'disabled' } }, 'advertised-v4')).toBe(false);
+  });
+  it('orders projected services by qualified key code units without platform locale collation', () => {
+    // Hermes on Android answers each String#localeCompare through a JNI Collator copy;
+    // an iOS DEV cold start still spent ~1,900 of them ordering these keys.
+    const original = String.prototype.localeCompare;
+    let collations = 0;
+    String.prototype.localeCompare = function (this: string, ...args: Parameters<typeof original>) {
+      collations += 1;
+      return original.apply(this, args);
+    };
+    try {
+      const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'collation-home', status: 'ready',
+        descriptors: [], conflicts: [], errorReason: null });
+      const keys = entries.flatMap(entry => entry.service ? [buildQualifiedPluginContributionKey(entry.service)] : []);
+      expect(keys.length).toBeGreaterThan(1);
+      expect(keys).toEqual([...keys].sort((left, right) => left < right ? -1 : left > right ? 1 : 0));
+      expect(collations).toBe(0);
+    } finally {
+      String.prototype.localeCompare = original;
+    }
   });
   it('admits retained bundled Account-direct authoring without borrowing missing native execution or bypassing real policy', () => {
     const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };

@@ -1,4 +1,4 @@
-import { readAccountAgentProviderRequirements, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { readAccountAgentBrokeredUse, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import type * as React from 'react';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -194,9 +194,9 @@ export function buildNewSessionConnectedServicesSelectionListModel(
 ): NewSessionConnectedServicesSelectionListModel {
     // Native-only Agents have no broker application. Use the same declaration
     // authority as the Provider picker; personal and Direct material stay native.
-    const brokeredSupported = !params.nativeRoute || readAccountAgentProviderRequirements(
+    const brokeredSupported = !params.nativeRoute || readAccountAgentBrokeredUse(
         params.nativeRoute.agentTargetKey, params.declarationContext ?? { kind: 'account' },
-    ) !== null;
+    ).kind === 'supported';
     let firstSelectedOptionId: string | null = null;
     const optionAvailabilityById = new Map<string, ConnectedServicesSelectionOptionAvailabilityFact>();
     const markUnavailable = (optionId: string, unavailableReason: string) => {

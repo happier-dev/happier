@@ -1,7 +1,7 @@
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
 import { PluginConnectedAccountAuthenticationV2Schema, PluginConnectedAccountDescriptorContributionV2Schema, ConnectedAccountBillingUrlSchema,
   type PluginConnectedAccountDescriptorContributionV2 } from './pluginConnectedAccountAuthenticationV2.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
@@ -32,6 +32,11 @@ export const ConnectedAccountUiProjectionEntryV1Schema = lazyZodSchema(() => z.s
   billingUrl: zMini.optional(ConnectedAccountBillingUrlSchema),
   availability: z.strictObject({ state: z.enum(['available', 'disabled', 'blocked']), reason: z.string().check(z.trim(), z.minLength(1)) }),
   diagnostics: z.array(z.string()),
+  /** Derived from Agent declarations, never an independently authored sharing policy. */
+  nativeLoginRequiredBy: z.optional(z.readonly(z.array(z.strictObject({
+    identity: asProtocolZod(PluginContributionIdentityV1Schema),
+    title: z.string().check(z.trim(), z.minLength(1)),
+  })))),
 }).check(z.superRefine((entry, context) => {
   if (!entry.pluginId && !ConnectedServiceIdSchema.safeParse(entry.serviceId).success) {
     context.addIssue({
@@ -53,9 +58,11 @@ export function projectConnectedAccountDescriptorV1(input: Readonly<{
   sourceKind: string;
   availability: ConnectedAccountUiProjectionEntryV1['availability'];
   diagnostics: readonly string[];
+  nativeLoginRequiredBy?: ConnectedAccountUiProjectionEntryV1['nativeLoginRequiredBy'];
 }>): ConnectedAccountUiProjectionEntryV1 {
-  const { descriptor, ...facts } = input;
+  const { descriptor, nativeLoginRequiredBy, ...facts } = input;
   return { ...facts, id: descriptor.id, title: descriptor.title,
+    ...(nativeLoginRequiredBy?.length ? { nativeLoginRequiredBy } : {}),
     ...(descriptor.description ? { description: descriptor.description } : {}),
     ...(descriptor.ui ? { ui: descriptor.ui } : {}),
     authentication: descriptor.authentication, capabilities: descriptor.capabilities ?? [],

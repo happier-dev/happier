@@ -18,6 +18,7 @@ import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTranspor
 import { t } from '@/text';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
 import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedAccountNativeLoginConstraints } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedServiceMarkId } from '@/components/settings/connectedServices/model/resolveQualifiedConnectedServiceMarkId';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -366,10 +367,14 @@ export {
     type TeamCredentialRecoveryTranslationKey,
 } from './credentialStatusPresentation';
 
-/** One explanation for Muse's brokered sharing in the Share sheet and Team offer. */
-export function credentialBrokeredSourceUseMessage(service: Readonly<{ pluginId: string; localId: string }> | undefined): string | undefined {
-    return service?.pluginId === 'happier.agent.muse' && service.localId === 'muse-account'
-        ? t('teams.credentials.edit.museBrokeredUse') : undefined;
+/** Share and Team offer surfaces consume the same declaration-owned native-login constraint. */
+export function credentialBrokeredSourceUseMessage(service: Readonly<{ pluginId: string; localId: string }> | undefined,
+    registry?: Pick<ConnectedServiceRegistrySnapshot, 'entries'>): string | undefined {
+    if (!service) return undefined;
+    const constraints = getConnectedAccountNativeLoginConstraints(service, registry);
+    return constraints.length > 0 ? t('teams.credentials.edit.brokeredNativeLoginUse', {
+        agentNames: [...new Set(constraints.map(constraint => constraint.title))].join(', '),
+    }) : undefined;
 }
 
 /**

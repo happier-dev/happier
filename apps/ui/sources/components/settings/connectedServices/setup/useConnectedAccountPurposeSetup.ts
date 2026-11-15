@@ -62,8 +62,9 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
         enabled: Boolean(request) && !accountRequest, includeConnectedAccountPurposes: Boolean(request) && !accountRequest });
     const accountDescriptors = accountRequest ? accountReader?.readAccountUiProjection()?.connectedAccountDescriptorsById : null;
     const connectedAccountProjection = React.useMemo(() => accountRequest ? { kind: 'ready' as const,
-        descriptors: Object.values(accountDescriptors ?? {}).map(({ pluginId, definition, hostAccountOrigin }) =>
+        descriptors: Object.values(accountDescriptors ?? {}).map(({ pluginId, definition, hostAccountOrigin, nativeLoginRequiredBy }) =>
             projectConnectedAccountDescriptorV1({ descriptor: definition, pluginId, serviceId: definition.id,
+                nativeLoginRequiredBy,
                 provenance: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'first_party' : 'external',
                 sourceKind: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'bundled' : 'account_release',
                 availability: { state: 'available', reason: 'account_declaration' }, diagnostics: [] })) }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { connectedAccountProjectionFamily } from './connectedAccounts';
 import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol';
+import { projectManifestAgentFields } from './projectManifestAgentFields';
 
 function manualAuthentication(fields = [{
   id: 'token',
@@ -21,6 +22,22 @@ function manualAuthentication(fields = [{
 }
 
 describe('connectedAccountProjectionFamily', () => {
+  it('publishes an installed Agent native-login constraint beside its qualified Connected Account', () => {
+    const definition = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: 'subscription', title: 'Acme Login', authentication: manualAuthentication(),
+    });
+    const agent = projectManifestAgentFields({ pluginId: 'acme.accounts', provenance: 'external', source: { kind: 'installed' },
+      definition: { id: 'native', title: 'Acme Native', runtime: { kind: 'custom' }, primary: 'sessions',
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        connectedAccounts: [{ purpose: 'login', service: 'subscription', materializationKinds: ['environment'] }] } });
+    const projected = connectedAccountProjectionFamily.project({ generation: 1, registry: {
+      agents: [agent], connectedAccountDescriptors: [{ provenance: 'external', source: { kind: 'installed' }, pluginId: 'acme.accounts', definition }],
+      scmHostingProviders: [], pluginDiagnosticsByPluginId: {},
+    } as never });
+    expect(projected.entriesById['acme.accounts/subscription']).toMatchObject({
+      nativeLoginRequiredBy: [{ identity: { pluginId: 'acme.accounts', localId: 'native' }, title: 'Acme Native' }],
+    });
+  });
   it('projects the declared organization usage identity requirement into the registry read', () => {
     const definition = PluginConnectedAccountDescriptorContributionV2Schema.parse({
       id: 'work', title: 'Work', authentication: manualAuthentication(),
