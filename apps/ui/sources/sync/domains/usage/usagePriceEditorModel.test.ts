@@ -18,6 +18,15 @@ const slice: UsageQueryResultSlice = { key: getUsageQueryKey(query), requestedQu
     accounting: { v: 1, totals: { eventCount: 1, tokens, cost: contribution.cost }, contributions: [contribution] } };
 
 describe('Usage model price editor projection', () => {
+    it('conserves reported totals and measured floors in rich and compact unpriced model rows', () => {
+        const rows = [contribution, { ...contribution, id: 'parts-only',
+            tokens: { ...tokens, total: null } }];
+        const rich = { ...slice, accounting: { ...slice.accounting!, contributions: rows } };
+        const compact = { ...rich, accounting: projectUsageAnalyticsSummary(rich.accounting,
+            usageQueryToAnalyticsRequest(query), catalog) };
+        expect(buildUsagePriceEditorModel(rich, {}, catalog).rows[0]?.unpricedTokens).toBe(30);
+        expect(buildUsagePriceEditorModel(compact, {}, catalog).rows[0]?.unpricedTokens).toBe(30);
+    });
     it('excludes synthetic transcript ids from editable model rows and mapping targets without dropping real custom models', () => {
         const synthetic = { ...contribution, modelId: '<synthetic>' };
         const model = buildUsagePriceEditorModel({ ...slice, accounting: { ...slice.accounting!,

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createProductionWorkflowSessionContextReader } from './workflowSessionContext';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
+import { addUsageMeasuredTokens, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { evaluateWorkflowCondition } from './input';
 import type { WorkflowCondition, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from './workflowCoordinator.testkit';
@@ -114,6 +115,21 @@ describe('production workflow session context', () => {
     await expect(reader.resolveSessionContextField('goal.tokenBudget')).resolves.toBe(50);
   });
 
+  it.each([
+    { name: 'parts-only', usageTokens: { ...createEmptyUsageTokens(), input: 4, output: 2 }, expected: 6 },
+    { name: 'mixed reported and parts-only', usageTokens: addUsageMeasuredTokens(tokens,
+      { ...createEmptyUsageTokens(), input: 4, output: 2 }), expected: 9 },
+    { name: 'measured zero', usageTokens: { ...createEmptyUsageTokens(), input: 0 }, expected: 0 },
+  ])('accounts for $name usage in context and demanded fields', async ({ usageTokens, expected }) => {
+    vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { v: 1,
+      totals: { eventCount: 1, tokens: usageTokens, cost } } });
+    const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
+    await expect(reader.resolveSessionContext(0)).resolves.toMatchObject({
+      usage: { kind: 'accounted', tokensUsed: expected },
+    });
+    await expect(reader.resolveSessionContextField('usage.tokensUsed')).resolves.toBe(expected);
+  });
+
   it('retains a committed tool-only turn without inventing transcript text', async () => {
     const get = vi.mocked(axios.get).getMockImplementation()!;
     vi.mocked(axios.get).mockImplementation(async (url, config) => {
@@ -214,7 +230,7 @@ describe('production workflow session context', () => {
     const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
     vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: { v: 1, totals: { eventCount: 0, tokens: { ...tokens, total: 0 }, cost } } });
     await expect(reader.resolveSessionContext(0)).resolves.toMatchObject({ usage: { kind: 'unavailable' }, turns: [] });
-    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: { v: 1, totals: { eventCount: 1, tokens: { ...tokens, total: null }, cost } } });
+    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: { v: 1, totals: { eventCount: 1, tokens: createEmptyUsageTokens(), cost } } });
     await expect(reader.resolveSessionContext(0)).resolves.toMatchObject({ usage: { kind: 'unavailable' }, turns: [] });
     delete goal.startedAt;
     delete goal.createdAt;

@@ -28,7 +28,7 @@ import { resolveEffectiveSessionAccessWhere } from '@/app/session/access/session
 import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT } from '@/app/session/sessionTranscriptPublicationPolicy';
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from '../groups/effectiveGroupMembership';
 import { classifyTeamCredentialUsageObservationSource } from '@/app/usage/usageSourceClassifier';
-import { aggregateUsageContributionCosts, compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
+import { aggregateUsageContributionCosts, compareUsageMeasurementsDescending, resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { projectUsageContributionTotals } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import { serializeUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 import {
@@ -377,7 +377,8 @@ export async function queryTeamCredentialUsage(
                 return groups;
             }, new Map<string, ScopedUsageContribution[]>()).entries())
                 .map(([key, group]) => ({ key, totals: aggregate(group, costMode) }))
-                .sort((left, right) => compareUsageMeasurementsDescending(left.totals.tokens.total, right.totals.tokens.total)
+                .sort((left, right) => compareUsageMeasurementsDescending(resolveUsageMeasuredTokens(left.totals.tokens).total,
+                    resolveUsageMeasuredTokens(right.totals.tokens).total)
                     || right.totals.requestCount - left.totals.requestCount
                     || left.key.localeCompare(right.key))
             : undefined;

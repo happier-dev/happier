@@ -17,6 +17,7 @@ import {
     type UsageFileResult,
 } from '../../usage/usageExport.js';
 import { resolveEffectiveUsageCostUsd, type UsageCostMode } from '../../usage/usageCostFacts.js';
+import { resolveUsageMeasuredTokens } from '../../usage/usageAggregation.js';
 
 export const TeamCredentialUsageExportInputV1Schema = lazyZodSchema(() => z.strictObject({
     query: TeamCredentialUsageQueryInputV1Schema,
@@ -204,7 +205,7 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             '',
             '',
             requestCell(result, result.coverage.requestAdmissionCount),
-            tokenCell(result.totals.tokens.total),
+            tokenCell(resolveUsageMeasuredTokens(result.totals.tokens).total),
             costCell(result.totals.cost, input.costMode),
             result.totals.cost.currency,
             input.costMode,
@@ -221,7 +222,7 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             entry.key,
             entry.label ?? '',
             requestCell(result, entry.totals.requestCount),
-            tokenCell(entry.totals.tokens.total),
+            tokenCell(resolveUsageMeasuredTokens(entry.totals.tokens).total),
             costCell(entry.totals.cost, input.costMode),
             entry.totals.cost.currency,
             input.costMode,

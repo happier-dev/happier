@@ -85,6 +85,34 @@ describe('Team credential resource usage query', () => {
     expect(mixed.totals).toMatchObject({ eventCount: 2, requestCount: 5, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
   });
 
+  it('ranks resource breakdowns by conserved measured token totals', async () => {
+    const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const team = await db.team.create({ data: { name: randomUUID() } });
+    await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
+    const resource = await db.teamCredentialResource.create({ data: {
+      teamId: team.id, custodianAccountId: manager.id, displayName: 'Measured usage',
+      disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}',
+      allMembersDeliveryMode: 'brokered',
+    } });
+    const at = Date.now();
+    const base = { accountId: manager.id, observedAt: new Date(at), agentId: 'codex', source: 'codex_app_server', scope: 'turn_delta',
+      teamCredentialResourceId: resource.id, teamCredentialActorAccountId: manager.id, credentialDeliveryMode: 'brokered' };
+    await db.usageEvent.createMany({ data: [
+      { ...base, modelId: 'parts', inputTokens: 100 },
+      { ...base, modelId: 'mixed', inputTokens: 70 },
+      { ...base, modelId: 'mixed', totalTokens: 40 },
+      { ...base, modelId: 'reported', totalTokens: 80 },
+      { ...base, modelId: 'zero', inputTokens: 1000, totalTokens: 0 },
+      { ...base, modelId: 'unknown' },
+    ] });
+    const result = await queryTeamCredentialUsage(manager.id, {
+      resourceId: resource.id, startMs: at, endMs: at, granularity: 'day', costMode: 'auto', breakdown: 'model',
+    }, TEST_AUTHENTICATION);
+    if ('ok' in result) throw new Error(`Usage refused: ${result.error}`);
+    expect(result.breakdown?.map(entry => entry.key)).toEqual(['mixed', 'parts', 'reported', 'zero', 'unknown']);
+    expect(result.breakdown?.[0]?.totals.tokens).toMatchObject({ total: 40, measured: { total: 110, fromParts: true } });
+  });
+
   it('keeps incomplete finite publications unavailable to recipients while preserving owner and complete-share attribution', async () => {
     const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
     const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

@@ -44,6 +44,7 @@ import {
   UsageBodyNothingYet,
 } from './usageBodyKit';
 import { useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
 /** The waffle's legend: the strip's own key layout (one entry a row), never a page-local legend. */
 const MIX_KEY_LEGEND = { legend: 'compact', layout: 'key' } as const;
@@ -88,16 +89,17 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   }
   const { composition } = view;
-  const totalTokens = props.slice.accounting?.totals.tokens.total ?? null;
+  const totalTokens = props.slice.accounting ? resolveUsageMeasuredTokens(props.slice.accounting.totals.tokens).total : null;
   const efficiency = { ...view.efficiency,
     costPerMtokUsd: totalTokens !== null && totalTokens > 0 && view.pageCost.amountUsd !== null
       ? view.pageCost.amountUsd / totalTokens * 1e6 : null,
     currency: view.pageCost.selection?.currency ?? 'USD' };
   const previous = props.slice.comparison?.accounting;
+  const previousTokens = previous ? resolveUsageMeasuredTokens(previous.totals.tokens).total : null;
   const previousPerMtok =
-    previous && previous.totals.tokens.total !== null && previous.totals.tokens.total > 0 && previousCost !== null
+    previousTokens !== null && previousTokens > 0 && previousCost !== null
       ? (previousCost /
-          previous.totals.tokens.total) *
+          previousTokens) *
         1e6
       : null;
   const perMtokComparison = usageComparison(efficiency.costPerMtokUsd, previousPerMtok);

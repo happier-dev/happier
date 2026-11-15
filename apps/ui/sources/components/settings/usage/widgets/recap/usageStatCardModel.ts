@@ -160,6 +160,7 @@ export function buildUsageStatCardModel(
       period: result.period, periodLabel: formatUsageRecapPeriod(result.period), asOfMs: result.asOfMs };
   }
   const { facts } = result;
+  const tokens = facts.tokens ? resolveUsageMeasuredTokens(facts.tokens) : null;
   const selected = new Set(result.selectedFields);
   const stats: UsageStatCardStat[] = [];
   const moneyStats: UsageStatCardStat[] = [];
@@ -199,10 +200,10 @@ export function buildUsageStatCardModel(
     stats.push({ id: 'cacheReadTokens', value: formatTokenCount(facts.cache.readTokens), label: t('usage.tokenMix.cacheRead') });
     stats.push({ id: 'cacheWriteTokens', value: formatTokenCount(facts.cache.writeTokens), label: t('usage.tokenMix.cacheWrite') });
   }
-  if (facts.cache && facts.cache.readTokens !== null && facts.tokens && facts.tokens.total !== null && facts.tokens.total > 0) {
+  if (facts.cache && facts.cache.readTokens !== null && tokens && !tokens.fromParts && tokens.total !== null && tokens.total > 0) {
     stats.push({
       id: 'cacheShare',
-      value: `${Math.round((facts.cache.readTokens / facts.tokens.total) * 100)}%`,
+      value: `${Math.round((facts.cache.readTokens / tokens.total) * 100)}%`,
       label: t('usage.board.recap.statCacheRead'),
     });
   }
@@ -255,7 +256,6 @@ export function buildUsageStatCardModel(
     return rows ? [mixGroup(kind, rows, selected.has('names'))] : [];
   });
   const days = facts.rhythm?.calendarDays.map((day) => day.eventCount) ?? [];
-  const tokens = facts.tokens ? resolveUsageMeasuredTokens(facts.tokens) : null;
   return {
     style: result.style,
     format: result.format,

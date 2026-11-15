@@ -10,7 +10,7 @@ import { resolveUsageCostMode } from "./resolveUsageCostMode";
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
 import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectUsageRecordedActivity } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
-import { addUsageMeasurements, compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageMeasurements, compareUsageMeasurementsDescending, resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 
 type UsageEventRow = Pick<
     ScopedUsageContribution,
@@ -143,14 +143,15 @@ export function buildUsageInsights(
             sessions.add(row.sessionId);
         }
         const modelId = resolveUsageContributionDimensionKey(row, 'model');
+        const { total } = resolveUsageMeasuredTokens(row.tokens);
         if (modelId) {
-            models.set(modelId, addUsageMeasurements(models.get(modelId) ?? null, row.tokens.total));
+            models.set(modelId, addUsageMeasurements(models.get(modelId) ?? null, total));
         }
         const monthKey = getLocalBucketKey(row.observedAt, "month", timeZoneOffsetMinutes);
-        months.set(monthKey, addUsageMeasurements(months.get(monthKey) ?? null, row.tokens.total));
-        days.set(dateKey, addUsageMeasurements(days.get(dateKey) ?? null, row.tokens.total));
+        months.set(monthKey, addUsageMeasurements(months.get(monthKey) ?? null, total));
+        days.set(dateKey, addUsageMeasurements(days.get(dateKey) ?? null, total));
         const hourKey = getLocalBucketKey(row.observedAt, "hour", timeZoneOffsetMinutes);
-        hours.set(hourKey, addUsageMeasurements(hours.get(hourKey) ?? null, row.tokens.total));
+        hours.set(hourKey, addUsageMeasurements(hours.get(hourKey) ?? null, total));
         cacheSavingsUsd += row.cost.breakdown?.cacheSavingsUsd ?? 0;
     }
 

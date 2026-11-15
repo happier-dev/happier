@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
-import { aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema, TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
+import { addUsageMeasuredTokens, aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
@@ -387,6 +388,42 @@ describe('TeamCredentialUsageScreen', () => {
         await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
 
         expect(screen.findAllHostsByTestId('team-credential-usage-series-list-row')).toHaveLength(2);
+    });
+
+    it.each(['parts', 'mixed'] as const)('renders measured %s tokens in totals, chart, table and breakdown', async kind => {
+        const serverId = await addHome();
+        const parts = { ...createEmptyUsageTokens(), input: 300 };
+        const measured = kind === 'parts' ? parts
+            : addUsageMeasuredTokens({ ...NO_TOKENS, input: 100, total: 100 }, parts);
+        const expected = kind === 'parts' ? 300 : 400;
+        const base = usageResult({
+            series: [{ bucketStartMs: Date.UTC(2026, 8, 1), bucketEndMs: Date.UTC(2026, 8, 2), requestCount: 1, tokens: 0 }],
+            breakdown: [{ key: 'measured-model', requestCount: 1, tokens: 0 }],
+        });
+        const body = TeamCredentialUsageQueryResultV1Schema.parse({
+            ...base,
+            totals: { ...base.totals, tokens: measured },
+            series: base.series.map(row => ({ ...row, totals: { ...row.totals, tokens: measured } })),
+            breakdown: base.breakdown?.map(row => ({ ...row, totals: { ...row.totals, tokens: measured } })),
+        });
+        harness.answer(serverId, USAGE_QUERY_PATH, { body });
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-series');
+        expect.soft(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe(String(expected));
+        expect.soft(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-usage-metric:tokens');
+        if (collectRenderedTestIds(screen.tree.toJSON()).includes('team-credential-usage-metric:tokens')) {
+            await screen.pressByTestIdAsync('team-credential-usage-metric:tokens');
+            expect.soft(screen.findByType(StackedSeriesChart).props.series[0].points[0].y).toBe(expected);
+            await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
+            expect.soft(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail).toContain(String(expected));
+        }
+        await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
+        await waitForTestId(screen, 'team-credential-usage-breakdown:model');
+        await screen.pressByTestIdAsync('team-credential-usage-breakdown:model');
+        await waitForTestId(screen, 'team-credential-usage-slice:measured-model');
+        const subtitle = screen.findAllByTestId('team-credential-usage-slice:measured-model')[0]?.props.subtitle;
+        expect.soft(subtitle).toContain(`tokenCount=${expected}`);
+        expect(subtitle).toContain(`tokens=${expected}`);
     });
 
     it('reports an unpriced period as unavailable rather than as nothing spent', async () => {

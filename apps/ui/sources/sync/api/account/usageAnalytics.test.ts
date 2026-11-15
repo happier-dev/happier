@@ -72,6 +72,8 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect.soft(summary.topModel?.totalTokens).toBe(3713);
         const view = buildUsageAnalyticsViewModel(response, baseState);
         expect.soft(view.hero).toMatchObject({ totalTokens: 3713, totalTokensFromParts: true });
+        expect.soft(view.overview.totalTokens).toBe(3713);
+        expect.soft(view.overview.tokenBreakdown.total).toBe(3713);
         expect.soft(view.trend.map(point => [point.tokens, point.tokensFromParts])).toEqual([[2000, false], [3713, true]]);
         expect.soft(view.heroTrend.delta).toEqual({ deltaPct: null, direction: 'flat' });
         expect.soft(view.breakdowns.models[0]?.totalTokens).toBe(3713);

@@ -227,6 +227,19 @@ describe('evidence-bound usage coach', () => {
                 cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }] };
         expect(result({ accounting }, 'outside_usage')).toMatchObject({ status: 'finding', finding: {
             summaryCode: 'outside_happier_usage_observed', measurements: [{ metric: 'outside_tokens', value: 100, unit: 'tokens' }] } });
+        const mixed = result({ accounting: { ...accounting, contributions: [
+            { ...accounting.contributions[0]!, id: 'parts', tokens: { ...tokens, total: null } },
+            { ...accounting.contributions[0]!, id: 'aggregate', tokens: { ...tokens, total: 10, measured: { total: 60, fromParts: true } } },
+            { ...accounting.contributions[0]!, id: 'zero', tokens: { ...tokens, total: 0 } },
+            { ...accounting.contributions[0]!, id: 'unknown', tokens: { input: null, output: null, reasoning: null,
+                cacheRead: null, cacheWrite: null, total: null } },
+        ] } }, 'outside_usage');
+        expect(mixed).toMatchObject({ status: 'finding', finding: {
+            measurements: [{ metric: 'outside_tokens', value: 160, unit: 'tokens' }],
+            evidenceSeries: [{ metric: 'outside_tokens', points: [
+                { evidenceId: 'aggregate', value: 60 }, { evidenceId: 'parts', value: 100 }, { evidenceId: 'zero', value: 0 },
+            ] }],
+        } });
         expect(result({ accounting: { ...accounting, coverage: undefined } }, 'outside_usage').status).toBe('insufficient_evidence');
         const readExecution = (execution: 'happier' | 'outside' | 'unknown') => result({ accounting: { ...accounting,
             contributions: [{ ...accounting.contributions[0]!, sourceContext: { path: 'native', execution } }] } }, 'outside_usage');

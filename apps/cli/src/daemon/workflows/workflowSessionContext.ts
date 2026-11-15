@@ -5,6 +5,7 @@ import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessio
 import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import { SessionTurnInitiatorV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
 import { WorkflowSessionContextGoalV1Schema, WorkflowSessionContextV1Schema } from '@happier-dev/protocol/workflows/workflowSessionContextV1';
@@ -42,8 +43,9 @@ async function readUsage(params: ContextReaderParams, sessionId: string, startMs
   });
   if (response.status !== 200) throw new WorkflowInputResolutionError('workflow_session_context_unavailable');
   const query = UsageAnalyticsQueryResponseSchema.parse(response.data);
-  return query.totals.eventCount === 0 || query.totals.tokens.total === null ? { kind: 'unavailable' }
-    : { kind: 'accounted', tokensUsed: query.totals.tokens.total };
+  const tokensUsed = resolveUsageMeasuredTokens(query.totals.tokens).total;
+  return query.totals.eventCount === 0 || tokensUsed === null ? { kind: 'unavailable' }
+    : { kind: 'accounted', tokensUsed };
 }
 
 /** Authorized canonical Session/usage readers, refreshed for each preparation or condition evaluation. */

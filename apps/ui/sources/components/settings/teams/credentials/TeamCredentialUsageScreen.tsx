@@ -41,6 +41,7 @@ import {
     type UsagePeriod,
 } from '@/sync/api/account/usagePeriods';
 import { t } from '@/text';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 
@@ -310,7 +311,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const showRequests = coverage !== null
         && (coverage.requestCountCoverage === 'complete' || coverage.requestAdmissionCount > 0);
     const tokenChartAvailable = result !== null
-        && result.totals.tokens.total !== null;
+        && resolveUsageMeasuredTokens(result.totals.tokens).total !== null;
     const resolvedCost = result === null ? null : resolveAnalyticsCost(result.totals.cost, costMode);
     const costChartAvailable = resolvedCost !== null;
     const chartMetrics: readonly UsageVolumeMetric[] = coverage === null
@@ -358,7 +359,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const exportUnavailable = exportBusy || !usage.resultIsCurrentQuery;
     const series = result?.series.map((bucket) => ({
         timestamp: Math.floor(bucket.bucketStartMs / 1000),
-        tokens: bucket.totals.tokens.total,
+        tokens: resolveUsageMeasuredTokens(bucket.totals.tokens).total,
         cost: resolveAnalyticsCost(bucket.totals.cost, costMode),
         requests: bucket.totals.requestCount,
         reportCount: bucket.totals.eventCount,
@@ -433,6 +434,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 ) : (
                     <ItemGroup title={usageBreakdownLabel(breakdown)}>
                         {(result.breakdown ?? []).map((entry) => {
+                            const tokenCount = resolveUsageMeasuredTokens(entry.totals.tokens).total;
                             const presentation = usageBreakdownPresentation(breakdown, entry, scope.accountId);
                             const title = breakdown === 'external_api_key'
                                 ? openedExternalApiKeyLabels[entry.key] ?? t('common.unavailable')
@@ -444,12 +446,12 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                                     title={title}
                                     subtitle={[presentation.hint, t('teams.credentials.usage.sliceSummary', {
                                         requestCount: entry.totals.requestCount,
-                                        tokenCount: entry.totals.tokens.total,
+                                        tokenCount,
                                         requests: result.coverage.requestCountCoverage === 'brokered_only'
                                             && entry.totals.requestCount === 0
                                             ? t('common.unavailable')
                                             : formatTokenCountLong(entry.totals.requestCount),
-                                        tokens: formatTokenCountLong(entry.totals.tokens.total),
+                                        tokens: formatTokenCountLong(tokenCount),
                                     })].filter(Boolean).join(' · ')}
                                     showChevron={false}
                                 />
@@ -657,7 +659,7 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                     <Item
                         testID="team-credential-usage-tokens"
                         title={limitMetricLabel('total_tokens')}
-                        detail={formatTokenCountLong(result.totals.tokens.total)}
+                        detail={formatTokenCountLong(resolveUsageMeasuredTokens(result.totals.tokens).total)}
                         showChevron={false}
                     />
                     <Item

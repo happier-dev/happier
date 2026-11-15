@@ -8,6 +8,7 @@ import { UsageRequestAttributionSchema } from '../usageAnalyticsContracts.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { selectUsageWorkPermissions } from '../usageWorkIntervals.js';
 import { summarizeUsageExecutionSources } from '../usageSourceSummary.js';
+import { resolveUsageMeasuredTokens } from '../usageAggregation.js';
 import { hasMeasuredUsageTokenCategories, type MeasuredUsageTokenCategories } from '../usageTokenCategories.js';
 import { UsageCoachPreferencesV1Schema } from '../../account/settings/usageCoachPreferencesV1.js';
 import { USAGE_COACH_DETECTOR_IDS, USAGE_COACH_REQUIRED_EVIDENCE, type UsageCoachCapability, type UsageCoachEvaluation,
@@ -598,7 +599,10 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                     .map(row => [row.id, row])).values()];
                 const summary = summarizeUsageExecutionSources(rows);
                 const outside = summary.groups.find(group => group.execution === 'outside')?.contributions ?? [];
-                const measuredOutside = outside.flatMap(row => row.tokens.total === null ? [] : [{ row, total: row.tokens.total }]);
+                const measuredOutside = outside.flatMap(row => {
+                    const { total } = resolveUsageMeasuredTokens(row.tokens);
+                    return total === null ? [] : [{ row, total }];
+                });
                 if (outside.length) return finding(id, capability, 'outside_happier_usage_observed',
                     outside.map(row => ({ kind: 'accounting', id: row.id, observedAtMs: row.observedAtMs })),
                     measuredOutside.length ? [{ metric: 'outside_tokens', value: measuredOutside.reduce((sum, entry) => sum + entry.total, 0), unit: 'tokens' }] : [], accounting.coverage.status,

@@ -7,6 +7,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 import { buildDemoTeam } from '@/demoMode/world/team';
 import { buildDemoTeamCredentialUsage } from '@/demoMode/world/teamCredentialUsage';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { t } from '@/text';
 
 /** Production usage totals and chart over fictional, non-sensitive aggregate facts. */
@@ -17,7 +18,7 @@ export function TeamCredentialUsageStageSurface(): React.ReactElement {
     const seriesMotion = useUsageSeriesMotion(result.series.length);
     const series = React.useMemo(() => result.series.map(bucket => ({
         timestamp: Math.floor(bucket.bucketStartMs / 1000),
-        tokens: bucket.totals.tokens.total, cost: bucket.totals.cost.reportedUsd,
+        tokens: resolveUsageMeasuredTokens(bucket.totals.tokens).total, cost: bucket.totals.cost.reportedUsd,
         requests: bucket.totals.requestCount, reportCount: bucket.totals.eventCount,
     })), [result]);
     return <ItemList>

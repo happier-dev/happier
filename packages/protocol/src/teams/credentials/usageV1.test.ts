@@ -132,6 +132,22 @@ describe('Team credential usage-limit paging contracts', () => {
 });
 
 describe('Team credential usage coverage contract', () => {
+  it('exports measured token totals and breakdown floors without replacing reported zero', () => {
+    const tokens = { input: 100, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const cost = createEmptyUsageCost();
+    const result = TeamCredentialUsageQueryResultV1Schema.parse({ v: 1,
+      totals: { eventCount: 2, requestCount: 0, tokens: { ...tokens, total: 10, measured: { total: 110, fromParts: true } }, cost },
+      series: [], nextCursor: null, limits: [], breakdown: [
+        { key: 'parts', totals: { eventCount: 1, requestCount: 0, tokens, cost } },
+        { key: 'zero', totals: { eventCount: 1, requestCount: 0, tokens: { ...tokens, total: 0 }, cost } },
+      ], coverage: { requestAdmissionCount: 0, agentObservationCount: 2, externalTerminalObservationCount: 0,
+        directRecordedUseOnly: false, requestCountCoverage: 'complete', tokenCoverage: 'partial', costCoverage: 'unavailable',
+        unobservedExternalRequestCount: 0 } });
+    const lines = buildTeamCredentialUsageCsv({ resourceName: 'Shared provider', result, startMs: 0, endMs: 1000,
+      breakdown: 'member', breakdownComplete: true, costMode: 'auto' }).trim().split('\n').map(line => line.split(','));
+    expect(lines.slice(1).map(row => row[lines[0]!.indexOf('tokens')])).toEqual(['110', '100', '0']);
+  });
+
   it('exports canonical empty population zeros without turning unavailable coverage into missing measurements', () => {
     const missing = [{ eventCount: 1, tokens: createEmptyUsageTokens(), cost: createEmptyUsageCost() }];
     for (const rows of [[], missing]) {

@@ -542,6 +542,23 @@ describe('captured usage query projection', () => {
         }
     });
 
+    it('retains measured token frontier ties when narrowing a shared ranked-price demand', async () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ includeSeries: false,
+            breakdowns: ['model'], topLimit: 1, costMode: 'reported' });
+        const snapshot: UsageAnalyticsSnapshot = { rows: [
+            { ...row('parts', 100, null), modelId: 'a-parts', totalTokens: null },
+            { ...row('mixed-parts', 90, null), modelId: 'b-mixed', totalTokens: null },
+            { ...row('mixed-reported', 10, null), modelId: 'b-mixed' },
+            { ...row('lower', 50, null), modelId: 'c-lower' },
+        ], legacyReports: [], priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const population = projectUsageAnalyticsPopulation(snapshot, query);
+        const select = await projectUsageAnalyticsDemands(snapshot, [query, { ...query, topLimit: 3 }],
+            resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog), population, true);
+        const selected = await select(query, snapshot);
+        expect(selected.summary?.rankedPricing?.['breakdowns:model']?.map(candidate => candidate.value.key))
+            .toEqual(['a-parts', 'b-mixed']);
+    });
+
     it('services native I/O during lazy Summary selection', async () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 1000 },
             includeSeries: true, includeActivity: true, includeLeaders: true, includeModelTimeline: true, breakdowns: ['agent', 'machine'] });

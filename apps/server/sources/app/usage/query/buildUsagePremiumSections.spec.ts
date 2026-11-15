@@ -4,6 +4,21 @@ import { buildUsageEngineTimeline, buildUsageInsights, buildUsageModelTimeline }
 import { resolveScopedUsageContributions } from "./resolveScopedUsageContributions";
 
 describe("buildUsagePremiumSections", () => {
+    it("ranks insight labels by per-contribution measured tokens while preserving reported zero", () => {
+        const base = { sessionId: "session", agentId: "codex", backendMode: null,
+            projectKey: null, workspaceId: null, source: "runtime", contributingEventIds: ["event"],
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: null, estimatedUsd: null, currency: "USD" } };
+        const result = buildUsageInsights([
+            { ...base, modelId: "reported", observedAt: new Date("2026-01-01T01:00:00Z"), tokens: { ...base.tokens, total: 80 } },
+            { ...base, modelId: "parts", observedAt: new Date("2026-02-02T02:00:00Z"), tokens: { ...base.tokens, input: 50 } },
+            { ...base, modelId: "parts", observedAt: new Date("2026-02-02T02:00:00Z"), tokens: { ...base.tokens, total: 40 } },
+            { ...base, modelId: "zero", observedAt: new Date("2026-03-03T03:00:00Z"), tokens: { ...base.tokens, input: 1000, total: 0 } },
+        ], { messageCount: 0 });
+        expect(result).toMatchObject({ favoriteModel: { key: "parts" }, busiestMonth: { key: "2026-02" },
+            busiestDay: { key: "2026-02-02" }, busiestHour: { key: "02:00" } });
+    });
+
     it("ranks a measured zero above an unknown model in insights", () => {
         const base = { sessionId: "session", observedAt: new Date(100), agentId: "codex", backendMode: null,
             projectKey: null, workspaceId: null, source: "runtime", contributingEventIds: ["event"],

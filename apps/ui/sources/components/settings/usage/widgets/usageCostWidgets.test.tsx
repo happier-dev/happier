@@ -8,6 +8,7 @@ import { resolveUsageComparisonQuery, resolveUsagePageAggregation } from '@happi
 import { projectUsagePageCost, resolveUsageCostForSelection} from '@happier-dev/protocol/usage/usageCostFacts';
 import { repriceUsageAnalyticsResponse} from '@happier-dev/protocol/usage/usageCost';
 import { type UsageAnalyticsContribution } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { addUsageMeasuredTokens, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { allocateUsageOutcomes, projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
@@ -772,6 +773,24 @@ describe('one selected money basis across Usage bodies', () => {
     const screen = await renderScreen(<UsageEfficiencyWidget {...props} id="usage_efficiency" testID="efficiency" />);
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'efficiency.perMtok')?.props.value)
       .toBe(150_000);
+  });
+  it.each(['parts', 'mixed'] as const)('uses measured %s tokens for current and previous cost per million', async kind => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, period: { startMs: day, endMs: 2 * day } });
+    const measured = (amount: number) => kind === 'parts'
+      ? { ...createEmptyUsageTokens(), input: amount }
+      : addUsageMeasuredTokens({ ...tokens, input: amount / 4, total: amount / 4 },
+        { ...createEmptyUsageTokens(), input: amount * 3 / 4 });
+    const accounting = { ...props.slice.accounting!, totals: { ...props.slice.accounting!.totals, tokens: measured(400) } };
+    const previous = { ...accounting, totals: { ...accounting.totals, tokens: measured(200) } };
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
+      { query, status: 'available', value: accounting },
+      { query: resolveUsageComparisonQuery(query)!, status: 'available', value: previous },
+    ] }).results[0]!;
+    const screen = await renderScreen(<UsageEfficiencyWidget {...props} query={query} slice={slice} id="usage_efficiency" testID="measured-efficiency" />);
+    const metric = screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'measured-efficiency.perMtok');
+    expect.soft(metric?.props.value).toBe(7_500);
+    expect(metric?.props.comparison).toMatchObject({ value: '▼ 50%', meaning: 'good' });
   });
   it.each([23, 5_701])('uses the same comparison presentation for Efficiency with %s preceding tokens', async previousTokens => {
     const props = mountedCosts();

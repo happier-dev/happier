@@ -846,7 +846,7 @@ function buildTotalsFromResponse(
     const totalCost = resolveAnalyticsCost(totals.cost, costMode);
 
     return {
-        totalTokens: totals.tokens.total,
+        totalTokens: resolveUsageMeasuredTokens(totals.tokens).total,
         totalCost,
         tokenBreakdown: {
             input: totals.tokens.input,
@@ -854,7 +854,7 @@ function buildTotalsFromResponse(
             reasoning: totals.tokens.reasoning,
             cacheRead: totals.tokens.cacheRead,
             cacheWrite: totals.tokens.cacheWrite,
-            total: totals.tokens.total,
+            total: resolveUsageMeasuredTokens(totals.tokens).total,
         },
         costBreakdown: {
             total: totalCost,
@@ -1641,8 +1641,9 @@ export function buildUsageAnalyticsViewModel(
         const overview = memoizeViewSection(() => buildTotalsFromResponse(source.totals, insights().activeDays, filters.costMode));
         const categoryOverview = memoizeViewSection(() => {
             const categoryTokens = source.tokenCategories ?? resolveUsageTokenCategories(source.totals.tokens, null);
-            const displayTotals = { ...source.totals, tokens: categoryTokens ?? {
-                ...createEmptyUsageTokens(), total: source.totals.tokens.total,
+            const displayTotals = { ...source.totals, tokens: {
+                ...(categoryTokens ?? createEmptyUsageTokens()), total: source.totals.tokens.total,
+                measured: resolveUsageMeasuredTokens(source.totals.tokens),
             } };
             return buildTotalsFromResponse(displayTotals, insights().activeDays, filters.costMode);
         });

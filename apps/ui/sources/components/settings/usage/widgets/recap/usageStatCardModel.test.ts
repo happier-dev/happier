@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { UsageRecapComposeResult } from '@happier-dev/protocol/usage/usageRecap';
+import { addUsageMeasuredTokens, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
@@ -103,6 +104,22 @@ describe('private stat card model', () => {
     expect(model.stats.filter(stat => stat.id === 'cacheShare')).toEqual([]);
     expect(model.stats.filter(stat => stat.id === 'cacheReadTokens' || stat.id === 'cacheWriteTokens').map(stat => stat.value)).toEqual(['—', '—']);
     expect(model.mixGroups[0]).toMatchObject({ totalTokens: null, rows: [] });
+  });
+  it('omits an exact cache share when a mixed population includes measured token parts', async () => {
+    const { buildUsageStatCardModel } = await import('./usageStatCardModel');
+    const measured = addUsageMeasuredTokens(
+      { ...createEmptyUsageTokens(), input: 100, total: 100 },
+      { ...createEmptyUsageTokens(), input: 250, cacheRead: 50 },
+    );
+    const model = buildUsageStatCardModel(composed(['tokens', 'cache'], {
+      tokens: measured, cache: { readTokens: 50, writeTokens: null },
+    }));
+    expect(model.headline?.value).toBe('400');
+    expect(model.stats.filter(stat => stat.id === 'cacheShare')).toEqual([]);
+    const exact = buildUsageStatCardModel(composed(['tokens', 'cache'], {
+      tokens: { ...measured, total: 400, measured: undefined }, cache: { readTokens: 50, writeTokens: null },
+    }));
+    expect(exact.stats.find(stat => stat.id === 'cacheShare')?.value).toBe('13%');
   });
   it('renders public shares and independent figures without inventing private amounts or elapsed time', async () => {
     const { buildUsageStatCardModel } = await import('./usageStatCardModel');

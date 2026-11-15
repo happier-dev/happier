@@ -2,7 +2,7 @@ import { bundledUsageModelPriceCatalog, canonicalUsageModelPriceId, readUsageMod
     type ResolvedUsageModelPrice, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { estimateUsageModelCost } from '@happier-dev/protocol/usage/usageCost';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
-import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageMeasurements, resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 export interface UsagePriceEditorRow {
@@ -38,7 +38,7 @@ export function buildUsagePriceEditorModel(slice: UsageQueryResultSlice, overrid
         override: readUsageModelPriceOverride(modelId, overrides),
         catalogPrice: resolveUsageModelPrice(modelId, catalog)?.rates ?? null,
         effectivePrice: resolveUsageModelPrice(modelId, catalog, overrides),
-        unpricedTokens: unpriced.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.tokens.total), unpriced.length === 0 ? 0 : null),
+        unpricedTokens: unpriced.reduce<number | null>((sum, row) => addUsageMeasurements(sum, resolveUsageMeasuredTokens(row.tokens).total), unpriced.length === 0 ? 0 : null),
         };
     });
     return { provenance: catalog.provenance, rows,
