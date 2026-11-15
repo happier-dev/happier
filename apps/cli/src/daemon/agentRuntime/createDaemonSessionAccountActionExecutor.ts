@@ -8,7 +8,7 @@ import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, 
 import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -339,6 +339,12 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       if (operation.actionId === 'workflow.run.start' && !workflowTarget) return refuse('external_authorization_preparation_failed');
       const prepare = params.prepareExternalActionAuthorization;
       external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc
+        // The admitted owner uses the CLI's captured Account data provider.
+        // Machine-purpose proofs are not credentials for private Task KV/resources.
+        && !(executionPlacement === 'account' && (
+          ACTION_ID_FAMILIES_V1.internal_tasks.some(id => id === operation.actionId)
+          || ACTION_ID_FAMILIES_V1.todo_session_link.some(id => id === operation.actionId)
+          || ACTION_ID_FAMILIES_V1.list_reorder.some(id => id === operation.actionId)))
         && !(operation.actionId === 'action.invoke' && executionPlacement === 'account')
         ? await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.authorization',
           () => readRequesterHomeWithinActionLifetime(async () => !await authority.isCurrent() ? null

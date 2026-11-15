@@ -140,7 +140,10 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalAct
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 
 const processIdentity = vi.hoisted(() => vi.fn());
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
+vi.mock('@/daemon/processIdentity', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/processIdentity')>(),
+  readProcessIdentityByPid: processIdentity,
+}));
 
 // Only database I/O and HTTP delivery are substituted. Home issuance, signature
 // verification, Session custody, scope admission and the transport readers run.
@@ -531,6 +534,18 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     omitCallerWorkspace: () => { callerWorkspaceMissing = true; },
     close: async () => { restore(); await app.close(); } };
 }
+
+it('lists internal Tasks through the Session agent Account provider', async () => {
+  const f = await fixture();
+  f.app.get('/v1/kv/:key', { preHandler: f.app.authenticate }, async (_request, reply) => reply.code(404).send({ error: 'not_found' }));
+  f.app.get('/v1/tasks', { preHandler: f.app.authenticate }, async () => ({ tasks: [] }));
+  try {
+    const outcome = await f.execute(f.operation('tasks.internal.list', {}), { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({
+      ok: true, result: { status: 'ok', todos: [], undoneOrder: [], completedOrder: [] },
+    });
+  } finally { await f.close(); }
+});
 
 it('stores a privately approved agent secret through the original Home authority without disclosing its value', async () => {
   const f = await fixture();
