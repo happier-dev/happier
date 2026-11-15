@@ -1589,4 +1589,20 @@ describe('pendingQueueV2Transport', () => {
             token: 'token', sessionId: 'session-1', requestId: 'resolved',
         })).resolves.toBe('missing');
     });
+
+    it('reports a user row already in a consumer custody as claimed, never as ineligible for activation', async () => {
+        // The hosting runtime claimed the row between the activation owner's Session read and this read.
+        for (const deliveryStatus of [{ status: 'delivering', detail: 'awaiting_acceptance' }, { status: 'external_handoff' }]) {
+            mockGet.mockResolvedValueOnce({ data: { pending: [{ localId: 'claimed', messageRole: 'user',
+                requestedAction: { v: 1, kind: 'send_now' }, deliveryStatus }] } });
+            await expect(readPendingQueueV2ActivationEligibilityFromServer({
+                token: 'token', sessionId: 'session-1', requestId: 'claimed',
+            })).resolves.toBe('claimed');
+        }
+        mockGet.mockResolvedValueOnce({ data: { pending: [{ localId: 'blocked', messageRole: 'user',
+            requestedAction: { v: 1, kind: 'send_now' }, deliveryStatus: { status: 'blocked', reason: 'payload_too_large' } }] } });
+        await expect(readPendingQueueV2ActivationEligibilityFromServer({
+            token: 'token', sessionId: 'session-1', requestId: 'blocked',
+        })).resolves.toBe('ineligible');
+    });
 });

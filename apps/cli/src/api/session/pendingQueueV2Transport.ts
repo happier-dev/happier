@@ -853,7 +853,11 @@ export async function listPendingQueueV2ResetStartDemands(params: Readonly<{
     });
 }
 
-export type PendingQueueV2ActivationEligibility = 'eligible' | 'missing' | 'ineligible';
+/**
+ * `claimed`: the exact user row is already in a consumer's custody (delivering or handed off), so
+ * no runtime start is needed for it. Only a row no consumer can take (`ineligible`) settles failure.
+ */
+export type PendingQueueV2ActivationEligibility = 'eligible' | 'claimed' | 'missing' | 'ineligible';
 
 export async function readPendingQueueV2ActivationEligibilityFromServer(params: {
     token: string;
@@ -880,10 +884,10 @@ export async function readPendingQueueV2ActivationEligibilityFromServer(params: 
         const messageRole = SessionMessageRoleSchema.safeParse(record.messageRole);
         normalizePendingRequestedActionV1(record.requestedAction);
         const deliveryStatus = readPendingDeliveryStatusFromRecord(record);
-        return messageRole.success
-            && messageRole.data === 'user'
-            && deliveryStatus.status === 'queued'
-            ? 'eligible'
+        if (!messageRole.success || messageRole.data !== 'user') return 'ineligible';
+        if (deliveryStatus.status === 'queued') return 'eligible';
+        return deliveryStatus.status === 'delivering' || deliveryStatus.status === 'external_handoff'
+            ? 'claimed'
             : 'ineligible';
     }
     return 'missing';

@@ -11,6 +11,7 @@ import {
 import { readPendingQueueV2ActivationEligibilityFromServer } from '@/api/session/pendingQueueV2Transport';
 import { reportPendingSessionActivationFailure } from '@/api/session/pendingActivationTransport';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 
 import { activatePendingInactiveSession, type PendingInactiveSessionActivationRejected } from './activatePendingInactiveSession';
@@ -477,6 +478,23 @@ describe('activatePendingInactiveSession', () => {
       spawnSessionForInternalResume,
     })).resolves.toEqual({ status: 'not-needed', reason: 'pending-resolved' });
     expect(spawnSessionForInternalResume).not.toHaveBeenCalled();
+  });
+
+  it('settles nothing when the hosting runtime already claimed the exact Pending input', async () => {
+    const spawnSessionForInternalResume = vi.fn();
+    vi.mocked(fetchAccountEncryptionCurrentness).mockClear();
+    vi.mocked(reportPendingSessionActivationFailure).mockClear();
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockReset();
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('claimed');
+    await expect(activatePendingInactiveSession({ credentials, machineId: 'machine-1', sessionId: 'session-1',
+      requestId: 'pending-after-ui-death', pendingVersion: 9, spawnSessionForInternalResume,
+    })).resolves.toEqual({ status: 'not-needed', reason: 'pending-resolved' });
+    expect(reportPendingSessionActivationFailure).not.toHaveBeenCalled();
+    expect(spawnSessionForInternalResume).not.toHaveBeenCalled();
+    // A claimed row needs no further reads: no encryption read, no final eligibility read.
+    expect(readPendingQueueV2ActivationEligibilityFromServer).toHaveBeenCalledOnce();
+    expect(fetchAccountEncryptionCurrentness).not.toHaveBeenCalled();
   });
 
   it('rejects Pending activation for an externally linked session instead of spawning it', async () => {

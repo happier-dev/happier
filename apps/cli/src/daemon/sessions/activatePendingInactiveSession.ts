@@ -164,7 +164,7 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
     requestId: params.requestId,
   });
   if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
-  if (pendingEligibility === 'missing') {
+  if (pendingEligibility === 'missing' || pendingEligibility === 'claimed') {
     return { status: 'not-needed', reason: 'pending-resolved' };
   }
   if (pendingEligibility === 'ineligible') return await rejectTerminal('ineligible');
