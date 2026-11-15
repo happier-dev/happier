@@ -14834,6 +14834,8 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
       unavailableHere: 'Здесь недоступно',
       needsUpdate: 'Нужно обновление',
       cantCheck: 'Ещё не проверено',
+      machineUnreachable: 'Машина недоступна',
+      sessionUnavailable: 'Сессия недоступна',
     },
     actions: {
       select_provider: 'Выбрать провайдера',

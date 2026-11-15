@@ -69,6 +69,9 @@ export type VoiceReadinessCopy = {
     unavailableHere: string;
     needsUpdate: string;
     cantCheck: string;
+    /** A Voice attempt's failure word when its machine or Session can't be reached; the caption says why. */
+    machineUnreachable: string;
+    sessionUnavailable: string;
   };
   actions: {
     select_provider: string;
@@ -157,6 +160,8 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
       unavailableHere: 'Not available here',
       needsUpdate: 'Needs an update',
       cantCheck: 'Not checked yet',
+      machineUnreachable: 'Machine unreachable',
+      sessionUnavailable: 'Session unavailable',
     },
     actions: {
       select_provider: 'Choose a provider',

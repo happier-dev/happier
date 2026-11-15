@@ -14780,6 +14780,8 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
       unavailableHere: '此處無法使用',
       needsUpdate: '需要更新',
       cantCheck: '尚未檢查',
+      machineUnreachable: '無法連線機器',
+      sessionUnavailable: '工作階段無法使用',
     },
     actions: {
       select_provider: '選擇提供者',

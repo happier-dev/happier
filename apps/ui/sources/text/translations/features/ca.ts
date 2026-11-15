@@ -14824,6 +14824,8 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
       unavailableHere: 'No disponible aquí',
       needsUpdate: 'Cal actualitzar',
       cantCheck: 'Encara sense comprovar',
+      machineUnreachable: 'Màquina inaccessible',
+      sessionUnavailable: 'Sessió no disponible',
     },
     actions: {
       select_provider: 'Triar un proveïdor',

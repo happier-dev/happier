@@ -14786,6 +14786,8 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
       unavailableHere: 'ここでは利用不可',
       needsUpdate: '更新が必要',
       cantCheck: 'まだ確認していません',
+      machineUnreachable: 'マシンに接続できません',
+      sessionUnavailable: 'セッションを利用できません',
     },
     actions: {
       select_provider: 'プロバイダーを選択',

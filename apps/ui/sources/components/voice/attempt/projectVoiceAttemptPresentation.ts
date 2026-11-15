@@ -65,7 +65,9 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const failureTitle = provider ? t(provider.titleKey)
         : failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
             ? translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage), { service: input.serviceTitle })
-        : failureKind === 'execution_machine_unavailable' || failureKind === 'session_unavailable' ? failureMessage
+        // A short word for the bar and the hero; the full reason reads once, as the caption.
+        : failureKind === 'execution_machine_unavailable' ? t('voice.readiness.short.machineUnreachable')
+        : failureKind === 'session_unavailable' ? t('voice.readiness.short.sessionUnavailable')
         : failureKind === 'provider_error' && statusPresentation.labelKey === 'voiceAssistant.connectionError'
             ? t(statusPresentation.labelKey) : null;
     return {

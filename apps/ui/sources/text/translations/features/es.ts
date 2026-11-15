@@ -14851,6 +14851,8 @@ const voiceReadinessTranslations = { es: defineVoiceReadinessTranslation({
       unavailableHere: 'No disponible aquí',
       needsUpdate: 'Necesita actualizarse',
       cantCheck: 'Aún sin comprobar',
+      machineUnreachable: 'Máquina inaccesible',
+      sessionUnavailable: 'Sesión no disponible',
     },
     actions: {
       select_provider: 'Elegir un proveedor',

@@ -14781,6 +14781,8 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
       unavailableHere: '此处不可用',
       needsUpdate: '需要更新',
       cantCheck: '尚未检查',
+      machineUnreachable: '无法连接机器',
+      sessionUnavailable: '会话不可用',
     },
     actions: {
       select_provider: '选择提供商',
