@@ -15,21 +15,32 @@ export type BrowserLaunchpadModel = Readonly<{
     refreshError: string | null;
 }>;
 
+/** The Services read that supplies the launchpad's rows: until its first snapshot lands, its status is the launchpad's. */
+export type BrowserLaunchpadLauncherRefresh = Readonly<{
+    status: 'idle' | 'refreshing' | 'error';
+    error: string | null;
+}>;
+
 function resolveRefreshStatus(
     state: LocalServicePreviewState | null | undefined,
+    firstLauncherRead: BrowserLaunchpadLauncherRefresh | null,
 ): BrowserLaunchpadModel['refreshStatus'] {
+    if (firstLauncherRead && firstLauncherRead.status !== 'idle') return firstLauncherRead.status;
     if (!state) return 'idle';
     return state.refreshState;
 }
 
 function resolveRefreshError(
     state: LocalServicePreviewState | null | undefined,
+    firstLauncherRead: BrowserLaunchpadLauncherRefresh | null,
 ): string | null {
+    if (firstLauncherRead?.status === 'error') return firstLauncherRead.error ?? 'local_service_launcher_refresh_failed';
     return state?.refreshState === 'error' ? 'local_service_preview_refresh_failed' : null;
 }
 
 export function buildBrowserLaunchpadModel(input: Readonly<{
     launcherSnapshot?: LocalServiceLauncherSnapshot | null;
+    launcherRefresh?: BrowserLaunchpadLauncherRefresh | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     pluginBrowserPolicyContext?: PluginUiPolicyEvaluationContext;
@@ -37,11 +48,14 @@ export function buildBrowserLaunchpadModel(input: Readonly<{
     recents?: readonly BrowserRecentTarget[];
     nowMs?: number;
 }>): BrowserLaunchpadModel {
+    // Before the first Services snapshot there is no inventory to call empty: that read is the launchpad's state.
+    // Later re-reads keep the known rows quiet; only the preview refresh speaks over them.
+    const firstLauncherRead = input.launcherSnapshot ? null : input.launcherRefresh ?? null;
     return {
         rows: buildBrowserLaunchpadRows(input),
         localServiceTargets: input.launcherSnapshot?.targets ?? EMPTY_SERVICE_TARGETS,
-        refreshStatus: resolveRefreshStatus(input.localServicePreviewState),
-        refreshError: resolveRefreshError(input.localServicePreviewState),
+        refreshStatus: resolveRefreshStatus(input.localServicePreviewState, firstLauncherRead),
+        refreshError: resolveRefreshError(input.localServicePreviewState, firstLauncherRead),
     };
 }
 

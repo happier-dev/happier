@@ -216,6 +216,12 @@ export function useBrowserSurfaceHostFeed(
     const launcherState = input.launcherState !== undefined
         ? input.launcherState
         : liveLauncherState;
+    // A live read that has not answered yet is loading, even before its store has marked the request started.
+    const launcherReadPending = input.launcherState === undefined && Boolean(machineId)
+        && input.enabled !== false && input.launcherEnabled !== false
+        && launcherState?.updatedAt === null && launcherState.refreshStatus === 'idle';
+    const launcherRefreshStatus = launcherReadPending ? 'refreshing' : launcherState?.refreshStatus ?? 'idle';
+    const launcherRefreshError = launcherState?.refreshError ?? null;
 
     const previewController = useLocalServicePreviewStateController({
         machineId,
@@ -237,6 +243,7 @@ export function useBrowserSurfaceHostFeed(
 
     const feed = React.useMemo<BrowserSurfaceHostFeedAssembly>(() => buildBrowserLaunchpadModel({
         launcherSnapshot: snapshotFromLocalServiceLauncherState(launcherState),
+        launcherRefresh: { status: launcherRefreshStatus, error: launcherRefreshError },
         localServicePreviewState,
         pluginBrowserProjection: input.pluginBrowserProjection,
         localizePluginText,
@@ -251,6 +258,8 @@ export function useBrowserSurfaceHostFeed(
         input.pluginBrowserPolicyContext,
         localizePluginText,
         launcherState,
+        launcherRefreshStatus,
+        launcherRefreshError,
         localServicePreviewState,
         platform,
     ]);

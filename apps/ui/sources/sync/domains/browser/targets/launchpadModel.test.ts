@@ -60,4 +60,16 @@ describe('buildBrowserLaunchpadModel', () => {
         // A stale service is not a preview anyone can open here: no dead row for it either.
         expect(model.rows.some((row) => row.title === 'Old service')).toBe(false);
     });
+
+    /** Before the first Services read lands there is no inventory: the launchpad loads, it never says nothing is running. */
+    it('reports the first Services read as loading, then as a failure, but not later refreshes over known rows', async () => {
+        const { buildBrowserLaunchpadModel } = await import('./launchpadModel');
+
+        expect(buildBrowserLaunchpadModel({ launcherSnapshot: null, launcherRefresh: { status: 'refreshing', error: null } }).refreshStatus)
+            .toBe('refreshing');
+        const failed = buildBrowserLaunchpadModel({ launcherSnapshot: null, launcherRefresh: { status: 'error', error: 'request_failed' } });
+        expect([failed.refreshStatus, failed.refreshError]).toEqual(['error', 'request_failed']);
+        expect(buildBrowserLaunchpadModel({ launcherSnapshot, launcherRefresh: { status: 'refreshing', error: null }, nowMs: 2_000 }).refreshStatus)
+            .toBe('idle');
+    });
 });
