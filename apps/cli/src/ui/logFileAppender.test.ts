@@ -11,6 +11,18 @@ const { appendFileMock } = vi.hoisted(() => ({
   appendFileMock: vi.fn(),
 }));
 
+// Windows refuses to rename or delete a file another process holds open without
+// share-delete (an editor, a tail viewer); writing and truncating it stays allowed.
+const windowsOpenHandle = vi.hoisted(() => ({ active: false }));
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const refuse = (name: 'renameSync' | 'unlinkSync') => (...args: unknown[]) => {
+    if (windowsOpenHandle.active) throw Object.assign(new Error(`EPERM: operation not permitted, ${name}`), { code: 'EPERM' });
+    return (actual[name] as (...inner: unknown[]) => unknown)(...args);
+  };
+  return { ...actual, renameSync: refuse('renameSync'), unlinkSync: refuse('unlinkSync') };
+});
+
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   appendFileMock.mockImplementation(actual.appendFile);
@@ -37,6 +49,7 @@ describe('BufferedFileAppender', () => {
   });
 
   afterEach(() => {
+    windowsOpenHandle.active = false;
     removeTempDirSync(tempDir);
   });
 
@@ -103,7 +116,8 @@ describe('BufferedFileAppender', () => {
     }).not.toThrow();
   });
 
-  it('keeps the newest whole lines within twice the tail window when writing far past it', async () => {
+  it.each([false, true])('keeps the newest whole lines within twice the tail window when writing far past it (open elsewhere on Windows: %s)', async (openElsewhere) => {
+    windowsOpenHandle.active = openElsewhere;
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     appendFileMock.mockReset();
     appendFileMock.mockImplementation(actual.appendFile);

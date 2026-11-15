@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, mkdirSync, openSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readSync, statSync, writeSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -38,7 +38,7 @@ export class BufferedFileAppender {
     onWriteError?: (error: unknown) => void;
     /**
      * Newest bytes the file must keep readable. Once the file reaches twice this, it is
-     * rewritten to its newest whole lines within the window, so it stays under 2x the window.
+     * rewritten in place to its newest whole lines within the window, so it stays under 2x the window.
      * The file must have this appender as its only writer.
      */
     tailWindowBytes?: number;
@@ -155,32 +155,33 @@ export class BufferedFileAppender {
   private trimToTailWindow(): void {
     const windowBytes = this.tailWindowBytes;
     if (windowBytes === null) return;
-    const tempPath = `${this.filePath}.trim`;
+    let descriptor: number | null = null;
     try {
-      const size = statSync(this.filePath).size;
+      // In place, never rename/replace: Windows refuses those while another process
+      // (a viewer, a bug-report read) holds the log open; writing and truncating stay allowed.
+      descriptor = openSync(this.filePath, 'r+');
+      const size = fstatSync(descriptor).size;
       this.fileBytes = size;
       if (size < windowBytes * 2) return;
       // Read one byte before the window so a window that starts on a line boundary keeps that line.
       const buffer = Buffer.allocUnsafe(windowBytes + 1);
-      const descriptor = openSync(this.filePath, 'r');
-      let bytesRead: number;
-      try {
-        bytesRead = readSync(descriptor, buffer, 0, buffer.length, size - buffer.length);
-      } finally {
-        closeSync(descriptor);
-      }
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, size - buffer.length);
       const firstNewline = buffer.subarray(0, bytesRead).indexOf(0x0A);
       const tail = firstNewline >= 0 && firstNewline < bytesRead - 1
         ? buffer.subarray(firstNewline + 1, bytesRead)
         : buffer.subarray(1, bytesRead);
-      writeFileSync(tempPath, tail);
-      renameSync(tempPath, this.filePath);
+      let written = 0;
+      while (written < tail.length) written += writeSync(descriptor, tail, written, tail.length - written, written);
+      ftruncateSync(descriptor, tail.length);
       this.fileBytes = tail.length;
     } catch (error) {
-      try { unlinkSync(tempPath); } catch { /* the temp file may not exist */ }
       // Retry only after another window of writes, not on every flush.
       if (this.fileBytes !== null) this.fileBytes -= windowBytes;
       this.reportWriteError(error);
+    } finally {
+      if (descriptor !== null) {
+        try { closeSync(descriptor); } catch { /* already reported or harmless */ }
+      }
     }
   }
 
