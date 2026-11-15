@@ -42,7 +42,17 @@ describe('connect authentication consumer lifetime', () => {
       if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: accountSettings } } };
       throw new Error(`Unexpected synthetic HTTP path: ${path}`);
     });
-    vi.spyOn(axios, 'post').mockImplementation(async url => { throw new Error(`Missing synthetic POST fixture: ${new URL(String(url)).pathname}`); });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const path = new URL(String(url)).pathname;
+      // The Account plugin census is an HTTP boundary; every bundled plugin keeps its default intent.
+      if (path === '/v1/plugins/availability/intents/list') {
+        const pluginIds = [...(body as { knownPluginIds: string[] }).knownPluginIds];
+        return { status: 200, data: { availabilityCursor: 0, pluginIds, nextCursor: null, failedPluginIds: [],
+          intentReads: pluginIds.map(pluginId => ({ pluginId, response: { availabilityCursor: 0,
+            hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] } })) } };
+      }
+      throw new Error(`Missing synthetic POST fixture: ${path}`);
+    });
     vi.spyOn(axios, 'request').mockImplementation(async config => { throw new Error(`Missing synthetic request fixture: ${config.method} ${config.url}`); });
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async input => {
       const path = new URL(String(input)).pathname;
@@ -166,7 +176,9 @@ describe('connect authentication consumer lifetime', () => {
     }
   });
 
-  it.each(['connected', 'rejected', 'lostReply'] as const)('closes only a finished %s journey through the existing cancel acknowledgement', async (outcome) => {
+  // A terminal reply settles the attempt. A cancel after it is a reviewed Action
+  // that --yes cannot answer, so it would block a finished Connect on approval.
+  it.each(['connected', 'rejected', 'lostReply'] as const)('ends a %s journey without cancelling its settled attempt', async (outcome) => {
     const service = { pluginId: 'happier.scm.forge.github', localId: contribution.definition.id };
     const commands: unknown[] = [];
     boundary.rpc.mockImplementation(async ({ request }: { request: { command: { operation: string } } }) => {
@@ -196,8 +208,7 @@ describe('connect authentication consumer lifetime', () => {
       expect(commands).toContainEqual({ operation: 'beginConnect', service, modeId: 'fine-grained-pat' });
       expect(commands).toContainEqual({ operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'github_pat_secret' } });
       expect(log.mock.calls.flat().join('\n')).not.toContain('github_pat_secret');
-      if (outcome === 'lostReply') expect(commands).not.toContainEqual({ operation: 'cancel', attemptId: 'attempt-1' });
-      else expect(commands).toContainEqual({ operation: 'cancel', attemptId: 'attempt-1' });
+      expect(commands).not.toContainEqual(expect.objectContaining({ operation: 'cancel' }));
     } finally {
       log.mockRestore();
       boundary.rpc.mockReset();

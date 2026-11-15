@@ -19,6 +19,10 @@ const {
     createClientMock: vi.fn(() => ({
       authenticate,
       control,
+      // Contribution discovery reads the same catalog fixture the command projects.
+      readContributions: async () => (await import('@/plugins/projection/registry/createResolvedContributionRegistry'))
+        .resolveMergedContributionRegistry({}),
+      dispose: async () => undefined,
     })),
     ensureMachineIdMock: vi.fn(async () => ({ machineId: 'machine-1' })),
     openBrowserMock: vi.fn(async () => true),
@@ -355,10 +359,7 @@ describe('handleConnectCommand daemon facade', () => {
         operation: 'pollDevice',
         attemptId: 'attempt-device',
       });
-      expect(authenticateMock).toHaveBeenLastCalledWith({
-        operation: 'cancel',
-        attemptId: 'attempt-device',
-      });
+      expect(authenticateMock).not.toHaveBeenCalledWith(expect.objectContaining({ operation: 'cancel' }));
     } finally {
       output.restore();
       vi.unstubAllEnvs();
