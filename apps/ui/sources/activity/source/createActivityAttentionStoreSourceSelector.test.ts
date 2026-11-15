@@ -12,6 +12,8 @@ import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organ
 import { settingsParse } from '@/sync/domains/settings/settings';
 
 import { createActivityAttentionStoreSourceSelector } from './createActivityAttentionStoreSourceSelector';
+import { buildNextSessionListRenderableDelta } from '@/sync/store/domains/sessionListIndexFinalization';
+import type { StorageState } from '@/sync/store/types';
 import { readActivitySessionRulePolicies } from './readActivitySessionRulePolicies';
 
 function expectNoObjectKeysOrValuesOnRecords(action: () => void, guardedRecords: readonly object[]): void {
@@ -1088,6 +1090,50 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(unrelatedOnly).toBe(first);
         expect(changedPersonal).not.toBe(first);
         expect(changedPersonal.sessionListRowsByServerId['server-a']?.[secondRow.id]?.seq).toBe(2);
+    });
+
+    it('signs only the Sessions a message publication names, whatever the loaded list size', () => {
+        const readsPerPublication = (loaded: number) => {
+            const counter = { reads: 0 };
+            const watch = <T extends object>(value: T): T => new Proxy(value, {
+                get(target, key, receiver) { if (typeof key === 'string' && key in target) counter.reads += 1; return Reflect.get(target, key, receiver); },
+                getOwnPropertyDescriptor(target, key) { counter.reads += 1; return Reflect.getOwnPropertyDescriptor(target, key); },
+            });
+            const sessions: Record<string, ReturnType<typeof createSessionFixture>> = {};
+            const rows: Record<string, ReturnType<typeof buildSessionListRenderableFromSession>> = {};
+            for (let index = 0; index < loaded; index += 1) {
+                const session = createSessionFixture({ id: `s-${index}`, serverId: 'home-a', seq: 1 });
+                sessions[session.id] = session;
+                rows[session.id] = buildSessionListRenderableFromSession(session);
+            }
+            const membership = Object.keys(rows);
+            const messages = createSessionMessagesFixture({ isLoaded: true, messagesVersion: 1 });
+            const base = storage.getState();
+            const first: StorageState = { ...base, sessions, sessionListRowsByServerId: { 'home-a': rows },
+                ordinarySessionListMembershipByServerId: { 'home-a': membership }, sessionListIndexByServerId: {},
+                sessionMessages: { 's-0': messages },
+                sessionListRenderableDelta: buildNextSessionListRenderableDelta({ previous: undefined, changedSessionIds: [],
+                    removedSessionIds: [], rebuiltSessionListIndex: false, ordinaryMembershipChanges: [] }) };
+            const selector = createActivityAttentionStoreSourceSelector({}, { includeSessionMessages: true });
+            const before = selector(first);
+            // One streamed message: the transcript, the Session and its row move; the writer names the Session.
+            const arrived = { ...sessions['s-0']!, seq: 2 };
+            const second: StorageState = { ...first,
+                sessions: watch({ ...sessions, 's-0': arrived }),
+                sessionListRowsByServerId: { 'home-a': watch({ ...rows, 's-0': buildSessionListRenderableFromSession(arrived) }) },
+                ordinarySessionListMembershipByServerId: { 'home-a': watch(membership) },
+                sessionMessages: { 's-0': { ...messages, messagesVersion: 2 } },
+                sessionListRenderableDelta: buildNextSessionListRenderableDelta({ previous: first.sessionListRenderableDelta,
+                    changedSessionIds: ['s-0'], removedSessionIds: [], rebuiltSessionListIndex: false, ordinaryMembershipChanges: [] }) };
+            const after = selector(second);
+            expect(after).not.toBe(before);
+            expect(after.sessionMessagesById?.['s-0']?.messagesVersion).toBe(2);
+            return counter.reads;
+        };
+        const small = readsPerPublication(100);
+        const large = readsPerPublication(2_000);
+        expect({ small, large }).toEqual({ small, large: small });
+        expect(small).toBeLessThan(20);
     });
 
     it('builds the source signature without Object.keys or Object.values over hot state records', () => {

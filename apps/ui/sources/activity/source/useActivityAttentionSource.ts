@@ -39,8 +39,9 @@ export function createActivityAttentionSourceSelector(params: Readonly<{
     includeSessionMessages: boolean;
     detailAddresses?: readonly SessionAddress[];
     /**
-     * `signature` (default) publishes a new source only when a fact Activity reads changed, at the
-     * cost of signing every row per publication. `identity` publishes whenever a store collection it
+     * `signature` (default) publishes a new source only when a fact Activity reads changed; it signs
+     * the Sessions a publication names (every row only for a structural or gap publication), but its
+     * consumer then re-projects the whole source. `identity` publishes whenever a store collection it
      * reads moved, for a reader that follows the changed-id publication itself and so never re-reads
      * unchanged rows.
      */

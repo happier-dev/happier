@@ -1,4 +1,3 @@
-import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import { readSessionViewerAttentionSignature } from '@/sync/domains/session/readState/sessionViewerAttention';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -11,7 +10,7 @@ import {
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
@@ -31,6 +30,12 @@ import { listSessionListLookupServerSessions } from '@/sync/domains/session/list
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { collectRecordIds, forEachRecordValue } from './recordIteration';
+import {
+    createActivityStoreSigner,
+    observeActivityStore,
+    readActivityStoreChangeScope,
+    type ActivityStoreObservation,
+} from './activityStoreSignatures';
 
 type StoreActivityAttentionSource = Pick<
     ActivityAttentionSource,
@@ -47,11 +52,6 @@ type StoreActivityAttentionSource = Pick<
     | 'followRuleTagAssignmentsBySessionKey'
     | 'followRuleFolderAssignmentsBySessionKey'
 >;
-
-type SignatureCacheEntry<T> = Readonly<{
-    signature: string;
-    value: T;
-}>;
 
 const EMPTY_INDEX_BY_SERVER_ID: ActivityAttentionSource['sessionListIndexByServerId'] = {};
 const EMPTY_CONCURRENT_CACHE_BY_SERVER_ID: ConcurrentSessionListCacheByServerId = {};
@@ -323,90 +323,6 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
     ]);
 }
 
-function buildSessionMessagesActivitySignature(
-    sessionMessages: StorageState['sessionMessages'][string] | undefined,
-): string {
-    if (!sessionMessages) return '';
-    // The shared message reader accepts both the current normalized store and
-    // the released array-shaped state. Keep the selector signature aligned
-    // with that compatibility seam so an old hydrated cache cannot crash the
-    // entire Activity/Inbox projection before normalization completes.
-    const stateLike = sessionMessages as Readonly<{
-        messageIdsOldestFirst?: unknown;
-        messages?: unknown;
-    }>;
-    const messageCount = Array.isArray(stateLike.messageIdsOldestFirst)
-        ? stateLike.messageIdsOldestFirst.length
-        : Array.isArray(stateLike.messages) ? stateLike.messages.length : 0;
-    return joinSignatureParts([
-        sessionMessages.isLoaded === true ? 1 : 0,
-        readNumber(sessionMessages.messagesVersion) ?? '',
-        readNumber(sessionMessages.latestReadyEventSeq) ?? '',
-        readNumber(sessionMessages.latestReadyEventAt) ?? '',
-        messageCount,
-    ]);
-}
-
-function buildCachedRecordSignature<T>(
-    record: Readonly<Record<string, T>>,
-    cache: Map<string, SignatureCacheEntry<T>>,
-    buildValueSignature: (value: T) => string,
-): string {
-    const ids = collectRecordIds(record).sort();
-    for (const cachedId of cache.keys()) {
-        if (!Object.prototype.hasOwnProperty.call(record, cachedId)) {
-            cache.delete(cachedId);
-        }
-    }
-    return joinSignatureParts(ids.map((id) => {
-        const value = record[id];
-        const cached = cache.get(id);
-        const signature = cached !== undefined && cached.value === value
-            ? cached.signature
-            : buildValueSignature(value);
-        if (cached?.value !== value) {
-            cache.set(id, { signature, value });
-        }
-        return joinSignatureParts([id, signature]);
-    }));
-}
-
-function collectPotentialSessionIds(state: StorageState): string[] {
-    const ids = new Set<string>();
-    for (const id of collectRecordIds(state.sessions)) ids.add(id);
-    forEachRecordValue(state.ordinarySessionListMembershipByServerId ?? {}, (membership) => {
-        if (!Array.isArray(membership)) return;
-        for (const id of membership) if (id.trim()) ids.add(id.trim());
-    });
-    return Array.from(ids).sort();
-}
-
-function buildSessionMessagesRecordSignature(
-    sessionIds: readonly string[],
-    sessionMessages: StorageState['sessionMessages'],
-    cache: Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>,
-): string {
-    const liveIds = new Set(sessionIds);
-    for (const cachedId of cache.keys()) {
-        if (!liveIds.has(cachedId)) {
-            cache.delete(cachedId);
-        }
-    }
-    return joinSignatureParts(sessionIds.map((id) => {
-        const value = sessionMessages[id];
-        const cached = cache.get(id);
-        const signature = cached !== undefined && cached.value === value
-            ? cached.signature
-            : buildSessionMessagesActivitySignature(value);
-        if (value) {
-            cache.set(id, { signature, value });
-        } else {
-            cache.delete(id);
-        }
-        return joinSignatureParts([id, signature]);
-    }));
-}
-
 function buildSessionListIndexSignature(
     indexByServerId: StorageState['sessionListIndexByServerId'],
 ): string {
@@ -441,41 +357,6 @@ function buildConcurrentCacheSignature(
     }));
 }
 
-function buildActivityRowsSignature(
-    state: StorageState,
-    cache: Map<string, SignatureCacheEntry<SessionListRenderableSession>>,
-    personalMembershipByServerId: Readonly<Record<string, readonly string[]>>,
-    includeFollowRuleFacts: boolean,
-    ruleMembershipByServerId: Readonly<Record<string, readonly string[]>>,
-): string {
-    const addressesByKey = new Map<string, Readonly<{ serverId: string; sessionId: string }>>();
-    for (const membershipByServerId of [
-        state.ordinarySessionListMembershipByServerId ?? {},
-        personalMembershipByServerId,
-        ruleMembershipByServerId,
-    ]) {
-        for (const [serverId, membership] of Object.entries(membershipByServerId)) {
-            for (const sessionId of membership ?? []) {
-                const address = { serverId, sessionId };
-                addressesByKey.set(sessionAddressKey(address), address);
-            }
-        }
-    }
-    const addresses = [...addressesByKey.entries()]
-        .sort(([leftKey], [rightKey]) => compareCodeUnits(leftKey, rightKey));
-    for (const key of cache.keys()) if (!addressesByKey.has(key)) cache.delete(key);
-    return joinSignatureParts(addresses.map(([key, { serverId, sessionId }]) => {
-        const row = state.sessionListRowsByServerId?.[serverId]?.[sessionId];
-        if (!row) return joinSignatureParts([serverId, sessionId, '']);
-        const cached = cache.get(key);
-        const signature = cached?.value === row ? cached.signature : joinSignatureParts([
-            buildRenderableActivitySignature(row), includeFollowRuleFacts ? readFollowRuleFactsSignature(row, serverId) : '',
-        ]);
-        if (cached?.value !== row) cache.set(key, { signature, value: row });
-        return joinSignatureParts([serverId, sessionId, signature]);
-    }));
-}
-
 export function readActivityAttentionStoreSource(
     state: StorageState,
     includeSessionMessages: boolean,
@@ -503,17 +384,32 @@ export function createActivityAttentionStoreSourceSelector(
     options: Readonly<{ includeSessionMessages?: boolean; detailAddresses?: readonly SessionAddress[]; includeFollowRuleFacts?: boolean;
         ruleMembershipByServerId?: Readonly<Record<string, readonly string[]>> }> = {},
 ): (state: StorageState) => StoreActivityAttentionSource {
-    const sessionSignatureCache = new Map<string, SignatureCacheEntry<Session>>();
-    const renderableSignatureCache = new Map<string, SignatureCacheEntry<SessionListRenderableSession>>();
-    const sessionMessagesSignatureCache = new Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>();
-    let previousSignature: string | null = null;
-    let previousSource: StoreActivityAttentionSource | null = null;
-    let previousInputs: StoreActivityAttentionSource | null = null;
-    const signatures = { sessions: '', rows: '', index: '', cache: '', messages: '', workspace: '', organization: '' };
-    let potentialSessionIds: readonly string[] = [];
     const includeSessionMessages = options.includeSessionMessages !== false;
     const includeFollowRuleFacts = options.includeFollowRuleFacts === true;
     const ruleMembershipByServerId = options.ruleMembershipByServerId ?? {};
+    const signer = createActivityStoreSigner({
+        signSession: (session, state) => {
+            const serverId = session.serverId ?? state.profileScope?.serverId;
+            return joinSignatureParts([
+                buildSessionActivitySignature(session),
+                includeFollowRuleFacts && serverId ? readFollowRuleFactsSignature(session, serverId) : '',
+            ]);
+        },
+        signRow: (row, serverId) => joinSignatureParts([
+            buildRenderableActivitySignature(row), includeFollowRuleFacts ? readFollowRuleFactsSignature(row, serverId) : '',
+        ]),
+        fixedRowMemberships: [personalMembershipByServerId, ruleMembershipByServerId],
+        transcripts: includeSessionMessages ? { fixedMemberships: [], detailAddresses: options.detailAddresses } : null,
+    });
+    const signatures = { index: '', cache: '', workspace: '', organization: '' };
+    let observation: ActivityStoreObservation | null = null;
+    let previousSource: StoreActivityAttentionSource | null = null;
+    let previousInputs: StoreActivityAttentionSource | null = null;
+    const replaceSignature = (key: keyof typeof signatures, next: string) => {
+        if (signatures[key] === next) return false;
+        signatures[key] = next;
+        return true;
+    };
 
     return (state) => {
         const inputs = readActivityAttentionStoreSource(state, includeSessionMessages, includeFollowRuleFacts);
@@ -527,56 +423,43 @@ export function createActivityAttentionStoreSourceSelector(
         const organizationChanged = includeFollowRuleFacts && (!previousInputs
             || previousInputs.followRuleTagAssignmentsBySessionKey !== inputs.followRuleTagAssignmentsBySessionKey
             || previousInputs.followRuleFolderAssignmentsBySessionKey !== inputs.followRuleFolderAssignmentsBySessionKey);
-        const messagesChanged = includeSessionMessages && (sessionsChanged || membershipChanged
-            || previousInputs?.sessionMessagesById !== inputs.sessionMessagesById);
+        const transcriptsMoved = includeSessionMessages && previousInputs?.sessionMessagesById !== inputs.sessionMessagesById;
+        const messagesChanged = includeSessionMessages && (sessionsChanged || membershipChanged || transcriptsMoved);
         const workspaceChanged = !previousInputs || previousInputs.workspaceRefsV1 !== inputs.workspaceRefsV1
             || previousInputs.followRuleWorkspaceRefsV1 !== inputs.followRuleWorkspaceRefsV1
             || previousInputs.workspacePathDisplayModeV1 !== inputs.workspacePathDisplayModeV1;
+        const scope = readActivityStoreChangeScope(observation, state, state.sessionListRenderableDelta);
+        observation = observeActivityStore(state, state.sessionListRenderableDelta);
         if (previousSource && previousInputs?.isDataReady === inputs.isDataReady
             && !sessionsChanged && !membershipChanged && !rowsChanged && !indexChanged
             && !cacheChanged && !messagesChanged && !workspaceChanged && !organizationChanged) {
             return previousSource;
         }
 
-        // Store domains publish immutable references. Retain each semantic signature independently:
-        // an unrelated notification must not sort/parse the unchanged Session collections.
-        if (includeSessionMessages && (sessionsChanged || membershipChanged)) {
-            potentialSessionIds = options.detailAddresses
-                ? options.detailAddresses.filter(address =>
-                    state.sessions[address.sessionId]?.serverId === address.serverId,
-                ).map(address => address.sessionId)
-                : collectPotentialSessionIds(state);
-        }
-        if (sessionsChanged) signatures.sessions = buildCachedRecordSignature(state.sessions, sessionSignatureCache, session => {
-            const serverId = session.serverId ?? state.profileScope?.serverId;
-            return joinSignatureParts([
-                buildSessionActivitySignature(session),
-                includeFollowRuleFacts && serverId ? readFollowRuleFactsSignature(session, serverId) : '',
-            ]);
+        // Store domains publish immutable references, and the store names the Sessions one revision
+        // changed: an unrelated notification signs nothing, a row-level one signs only its Sessions.
+        let moved = signer.update(state, scope, {
+            sessions: sessionsChanged, rows: rowsChanged, membership: membershipChanged, transcripts: transcriptsMoved,
         });
-        if (rowsChanged || membershipChanged) signatures.rows = buildActivityRowsSignature(state, renderableSignatureCache,
-            personalMembershipByServerId, includeFollowRuleFacts, ruleMembershipByServerId);
-        if (indexChanged) signatures.index = buildSessionListIndexSignature(state.sessionListIndexByServerId);
-        if (cacheChanged) signatures.cache = buildConcurrentCacheSignature(state.concurrentSessionListCacheByServerId);
-        if (messagesChanged) signatures.messages = buildSessionMessagesRecordSignature(potentialSessionIds, state.sessionMessages, sessionMessagesSignatureCache);
-        if (workspaceChanged) signatures.workspace = buildWorkspaceDisplaySettingsSignature(state, includeFollowRuleFacts);
-        if (includeFollowRuleFacts && (organizationChanged || sessionsChanged || membershipChanged || rowsChanged || cacheChanged)) {
-            signatures.organization = buildFollowRuleOrganizationSignature(state, personalMembershipByServerId, ruleMembershipByServerId);
+        if (indexChanged && replaceSignature('index', buildSessionListIndexSignature(state.sessionListIndexByServerId))) moved = true;
+        if (cacheChanged && replaceSignature('cache', buildConcurrentCacheSignature(state.concurrentSessionListCacheByServerId))) moved = true;
+        if (workspaceChanged && replaceSignature('workspace', buildWorkspaceDisplaySettingsSignature(state, includeFollowRuleFacts))) moved = true;
+        // Organization keys come from the Sessions, member rows and fixed memberships signed above, so a
+        // row-level publication moves this part only together with one of those; assignments are its own input.
+        if (includeFollowRuleFacts && (organizationChanged
+            || scope.complete && (sessionsChanged || membershipChanged || rowsChanged || cacheChanged))
+            && replaceSignature('organization', buildFollowRuleOrganizationSignature(state, personalMembershipByServerId, ruleMembershipByServerId))) {
+            moved = true;
         }
+        const readinessChanged = previousInputs?.isDataReady !== inputs.isDataReady;
         previousInputs = inputs;
-        const signature = joinSignatureParts([
-            inputs.isDataReady === true ? 1 : 0,
-            signatures.sessions, signatures.rows, signatures.index, signatures.cache, signatures.messages, signatures.workspace,
-            signatures.organization,
-        ]);
 
-        if (previousSource && previousSignature === signature) {
+        if (previousSource && !moved && !readinessChanged) {
             return previousSource;
         }
 
-        previousSignature = signature;
         previousSource = options.detailAddresses && includeSessionMessages
-            ? { ...inputs, sessionMessagesById: Object.fromEntries(potentialSessionIds.flatMap(id => {
+            ? { ...inputs, sessionMessagesById: Object.fromEntries(signer.potentialSessionIds().flatMap(id => {
                 const messages = state.sessionMessages[id];
                 return messages ? [[id, messages]] : [];
             })) }
