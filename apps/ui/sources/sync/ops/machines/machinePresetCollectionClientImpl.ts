@@ -1,11 +1,12 @@
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
+import { core } from 'zod/mini';
 import {
     MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1,
     type MachinePresetActionIdV1, type MachinePresetActionInputV1, type MachinePresetActionOutputV1,
 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import {
     ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema,
-    type ManagedMachinePresetV1,
+    type ManagedMachinePresetV1, type ManagedMachinePresetRecipientCensusInputV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import {
     createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetLaunchNameOverrideV1,
@@ -19,9 +20,10 @@ import {
     type ManagedMachinePresetRecipientProjectionV1, type ManagedMachinePresetSavedSecretReferenceRewriteV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import {
-    isManagedOpaquePresetReadV1, ManagedListOutputV1Schema, type ManagedMachineReadV1, type ManagedMachineActionInputV1,
+    isManagedOpaquePresetReadV1, ManagedListOutputV1Schema, type ManagedMachineReadV1, type ManagedOpaquePresetReadV1,
+    type ManagedMachineActionInputV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isManagedOpaquePresetMachineV1, type ManagedMachineEnrollmentIdentityV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, type ManagedMachineEnrollmentIdentityV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionerSizeV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { mergeMachineSetupsV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
@@ -42,6 +44,9 @@ import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStor
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { storage } from '@/sync/domains/state/storageStore';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import {
     captureManagedMachinePresetCustodyV1,
     captureManagedMachinePresetE2eeCustodyV1,
@@ -72,7 +77,7 @@ export type MachinePresetContentOverrideResult =
     | Readonly<{ kind: 'failed'; code: 'content_unavailable' }>;
 export type MachinePresetLaunchNameOverrideResult = MachinePresetContentOverrideResult;
 export type MachinePresetSetupOverrideResult = MachinePresetContentOverrideResult;
-export type MachinePresetAcquireOverrideResult = MachinePresetContentOverrideResult;
+export type MachinePresetAcquireOverrideResult = Exclude<MachinePresetContentOverrideResult, { kind: 'unchanged' }>;
 export type MachinePresetResizeOverrideResult = MachinePresetContentOverrideResult;
 
 /**
@@ -86,13 +91,12 @@ type ManagedMachinePresetResizeProjectionBasisV1 = Readonly<{
     recipientProjection: ManagedMachinePresetRecipientProjectionV1;
     resize: ManagedMachinePresetContentV1['resize'];
 }>;
-type ManagedMachinePresetReadSnapshotBasisV1 = ManagedMachinePresetResizeProjectionBasisV1 & Readonly<{
-    managedId: string;
-    homeId: string;
-    presetRevision: number;
+type ManagedMachinePresetReadSnapshotBasisV1 = Readonly<{
+    originalRead: ManagedOpaquePresetReadV1;
+    resizeBasis?: ManagedMachinePresetResizeProjectionBasisV1;
 }>;
 const managedMachinePresetReadSnapshotBasisV1: unique symbol = Symbol('managedMachinePresetReadSnapshotBasisV1');
-type ManagedMachineReadSnapshotWithBasisV1 = ManagedMachineV1 & Readonly<{
+type ManagedMachineReadSnapshotWithBasisV1 = ManagedMachineReadSnapshotV1 & Readonly<{
     [managedMachinePresetReadSnapshotBasisV1]?: ManagedMachinePresetReadSnapshotBasisV1;
 }>;
 
@@ -151,7 +155,7 @@ export type MachinePresetCollectionOptions<T> = Readonly<{
     onApprovalFailed?: (code: string) => void;
 }>;
 
-export type MachinePresetHistoryData = Readonly<{ preset: OpenedMachinePreset; machines: readonly ManagedMachineV1[] }>;
+export type MachinePresetHistoryData = Readonly<{ preset: OpenedMachinePreset; machines: readonly ManagedMachineReadSnapshotV1[] }>;
 export type MachinePresetDraftSaveInput = Readonly<{ draft: MachinePresetEditDraft } & (
     | { preset: Readonly<Pick<OpenedMachinePreset, 'id' | 'revision'>
         & Partial<Pick<OpenedMachinePreset, 'owner' | 'controller' | 'controllerPoolId' | 'teamAcquireDelegated'>>> }
@@ -248,8 +252,8 @@ async function prepareManagedMachinePresetResizeOverrideFromProjection(scope: Se
     } finally { reader.dispose(); }
 }
 
-function attachManagedMachineReadSnapshotBasis(machine: ManagedMachineV1,
-    basis: ManagedMachinePresetReadSnapshotBasisV1): ManagedMachineV1 {
+function attachManagedMachineReadSnapshotBasis(machine: ManagedMachineReadSnapshotV1,
+    basis: ManagedMachinePresetReadSnapshotBasisV1): ManagedMachineReadSnapshotV1 {
     const local = { ...machine } as ManagedMachineReadSnapshotWithBasisV1;
     Object.defineProperty(local, managedMachinePresetReadSnapshotBasisV1, {
         value: Object.freeze(basis), enumerable: false, configurable: false, writable: false,
@@ -257,15 +261,16 @@ function attachManagedMachineReadSnapshotBasis(machine: ManagedMachineV1,
     return local;
 }
 
-function readManagedMachineReadSnapshotBasis(machine: ManagedMachineV1): ManagedMachinePresetReadSnapshotBasisV1 | null {
+function readManagedMachineReadSnapshotBasis(machine: ManagedMachineReadSnapshotV1): ManagedMachinePresetReadSnapshotBasisV1 | null {
     const candidate = Object.getOwnPropertyDescriptor(machine, managedMachinePresetReadSnapshotBasisV1)?.value;
     if (!candidate || typeof candidate !== 'object') return null;
     const basis = candidate as ManagedMachinePresetReadSnapshotBasisV1;
+    const original = basis.originalRead.machine;
     const preset = machine.preset;
-    if (machine.id !== basis.managedId || machine.homeId !== basis.homeId || !preset
-        || preset.id !== basis.presetId || preset.revision !== basis.presetRevision
-        || preset.contentEncryptionMode !== basis.contentEncryptionMode) return null;
-    const projection = ManagedMachinePresetRecipientProjectionV1Schema.safeParse(basis.recipientProjection);
+    if (machine.id !== original.id || machine.homeId !== original.homeId || !preset
+        || preset.id !== original.preset.id || preset.revision !== original.preset.revision
+        || preset.contentEncryptionMode !== original.preset.contentEncryptionMode) return null;
+    const projection = ManagedMachinePresetRecipientProjectionV1Schema.safeParse(basis.originalRead.presetContent);
     return projection.success ? basis : null;
 }
 
@@ -285,7 +290,7 @@ async function resolveWriterMode(scope: ServerAccountScope, signal?: AbortSignal
 }
 
 async function openManagedMachineReadSnapshot(read: ManagedMachineReadV1,
-    reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<ManagedMachineV1> {
+    reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<ManagedMachineReadSnapshotV1> {
     if (!isManagedOpaquePresetReadV1(read)) return read;
     const { machine, presetContent } = read;
     const mode = machine.preset.contentEncryptionMode;
@@ -293,11 +298,11 @@ async function openManagedMachineReadSnapshot(read: ManagedMachineReadV1,
     const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: machine.preset.id,
         mode, projection: presetContent, custody });
     const hydrated = content ? hydrateManagedOpaquePresetMachineV1({ machine, opened: content }) : null;
-    return hydrated ? attachManagedMachineReadSnapshotBasis(hydrated, {
-        managedId: machine.id, homeId: machine.homeId, presetId: machine.preset.id,
-        presetRevision: machine.preset.revision, contentEncryptionMode: mode,
-        recipientProjection: presetContent, resize: content.resize,
-    }) : machine;
+    return attachManagedMachineReadSnapshotBasis(hydrated ?? machine, {
+        originalRead: read,
+        ...(hydrated && content ? { resizeBasis: { presetId: machine.preset.id, contentEncryptionMode: mode,
+            recipientProjection: presetContent, resize: content.resize } } : {}),
+    });
 }
 
 /**
@@ -305,21 +310,28 @@ async function openManagedMachineReadSnapshot(read: ManagedMachineReadV1,
  * by the caller. The caller retains custody lifetime and disposal ownership.
  */
 export async function openManagedMachineReadSnapshotsAtCustody(reads: readonly ManagedMachineReadV1[],
-    custody: ManagedMachinePresetReadCustodyV1 | null): Promise<ManagedMachineV1[]> {
+    custody: ManagedMachinePresetReadCustodyV1 | null): Promise<ManagedMachineReadSnapshotV1[]> {
     return await Promise.all(reads.map(read => openManagedMachineReadSnapshot(read, async () => custody)));
 }
 
 /** Open exact admitted managed-row projections once at the Account custody boundary. */
 export async function openManagedMachineReadSnapshots(scope: ServerAccountScope, reads: readonly ManagedMachineReadV1[],
-    signal?: AbortSignal): Promise<ManagedMachineV1[]> {
-    let readerKey: Promise<ManagedMachinePresetReadCustodyV1 | null> | null = null;
-    const reader = () => readerKey ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
+    signal?: AbortSignal): Promise<ManagedMachineReadSnapshotV1[]> {
+    const readerState: { key: Promise<ManagedMachinePresetReadCustodyV1 | null> | null } = { key: null };
+    const reader = () => readerState.key ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
     try {
         return await Promise.all(reads.map(read => openManagedMachineReadSnapshot(read, reader)));
     } finally {
-        const key = readerKey ? await readerKey : null;
+        const key = await readerState.key;
         await key?.dispose();
     }
+}
+
+/** Native control consumes the original public read rather than the opened private row. */
+export function readManagedMachineReadForSnapshot(machine: ManagedMachineReadSnapshotV1): ManagedMachineReadV1 | undefined {
+    return readManagedMachineReadSnapshotBasis(machine)?.originalRead
+        ?? (isManagedOpaquePresetMachineV1(machine) || machine.preset?.contentEncryptionMode === 'e2ee'
+            ? undefined : machine);
 }
 
 /**
@@ -328,16 +340,16 @@ export async function openManagedMachineReadSnapshots(scope: ServerAccountScope,
  * selected revision; this function never reads a newer Preset.
  */
 export async function prepareManagedMachinePresetResizeOverrideForSnapshot(scope: ServerAccountScope,
-    machine: ManagedMachineV1, size: MachineProvisionerSizeV1,
+    machine: ManagedMachineReadSnapshotV1, size: MachineProvisionerSizeV1,
     signal?: AbortSignal): Promise<MachinePresetResizeOverrideResult> {
-    const basis = readManagedMachineReadSnapshotBasis(machine);
+    const basis = readManagedMachineReadSnapshotBasis(machine)?.resizeBasis;
     return basis ? await prepareManagedMachinePresetResizeOverrideFromProjection(scope, basis, size, signal)
         : { kind: 'failed', code: 'content_unavailable' };
 }
 
 /** The exact read snapshot decides the resize carrier; legacy full rows retain native size input. */
 export async function prepareManagedMachineResizeInputForSnapshot(scope: ServerAccountScope,
-    machine: ManagedMachineV1, size: MachineProvisionerSizeV1, signal?: AbortSignal): Promise<
+    machine: ManagedMachineReadSnapshotV1, size: MachineProvisionerSizeV1, signal?: AbortSignal): Promise<
     Readonly<{ kind: 'ready'; input: ManagedMachineActionInputV1<'machines.managed.resize'> }>
     | Exclude<MachinePresetResizeOverrideResult, { kind: 'ready' }>
 > {
@@ -362,7 +374,7 @@ function readPresetDomainFailureResult<T extends MachinePresetActionIdV1>(action
         ? value as MachinePresetActionOutputV1<T> : null;
 }
 
-function sameRecipientEnvelopes(left: ManagedMachinePresetV1['recipients'], right: ManagedMachinePresetV1['recipients']) {
+function sameRecipientEnvelopes(left: Readonly<ManagedMachinePresetV1['recipients']>, right: Readonly<ManagedMachinePresetV1['recipients']>) {
     return left.length === right.length && left.every((recipient, index) => recipient.accountId === right[index]?.accountId
         && JSON.stringify(recipient.envelope) === JSON.stringify(right[index]?.envelope));
 }
@@ -398,21 +410,16 @@ async function withManagedMachinePresetSavedSecretPromotionReader<T>(context: Ma
     const executeAction = scopedHomeActionExecutor(context.scope);
     const actionContext = { surface: 'ui' as const, authority: 'present_user' as const, serverId: context.scope.serverId,
         expectedAccountId: context.scope.accountId, ...(context.signal ? { signal: context.signal } : {}) };
-    let plainCustody: ManagedMachinePresetCustodyV1 | null = null;
-    let e2eeCustody: ManagedMachinePresetE2eeCustodyV1 | null = null;
-    let plainCapture: Promise<ManagedMachinePresetCustodyV1 | null> | null = null;
-    let e2eeCapture: Promise<ManagedMachinePresetE2eeCustodyV1 | null> | null = null;
+    const captures: { plain: Promise<ManagedMachinePresetCustodyV1 | null> | null; e2ee: Promise<ManagedMachinePresetE2eeCustodyV1 | null> | null } = { plain: null, e2ee: null };
     const custody = async (mode: 'plain' | 'e2ee') => {
         if (mode === 'plain') {
-            plainCapture ??= captureManagedMachinePresetCustodyV1({ account: context.account,
+            captures.plain ??= captureManagedMachinePresetCustodyV1({ account: context.account,
                 expectedAccountId: context.scope.accountId, resourceMode: 'plain', signal: context.signal });
-            plainCustody = await plainCapture;
-            return plainCustody;
+            return await captures.plain;
         }
-        e2eeCapture ??= captureManagedMachinePresetE2eeCustodyV1({ account: context.account,
+        captures.e2ee ??= captureManagedMachinePresetE2eeCustodyV1({ account: context.account,
             expectedAccountId: context.scope.accountId, signal: context.signal });
-        e2eeCustody = await e2eeCapture;
-        return e2eeCustody;
+        return await captures.e2ee;
     };
     const reader: ManagedMachinePresetSavedSecretPromotionReaderV1 = {
         accountId: context.account.accountId,
@@ -457,8 +464,8 @@ async function withManagedMachinePresetSavedSecretPromotionReader<T>(context: Ma
     try {
         return await operation(reader);
     } finally {
-        plainCustody?.dispose();
-        e2eeCustody?.dispose();
+        (await captures.plain)?.dispose();
+        (await captures.e2ee)?.dispose();
     }
 }
 
@@ -517,7 +524,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
     async function sealPrivateContent(input: Readonly<{
         presetId: string;
         privateContent: ManagedMachinePresetContentV1;
-        censusInput: unknown;
+        censusInput: ManagedMachinePresetRecipientCensusInputV1;
+        teamAcquireDelegated?: boolean;
         signal?: AbortSignal;
     }>): Promise<SealResult> {
         const writerMode = await resolveWriterMode(scope, input.signal);
@@ -526,14 +534,26 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         if (!census) return { kind: 'failed', code: 'content_unavailable' };
         if (census.kind === 'refused') return { kind: 'failed', code: census.code };
         if (census.contentEncryptionMode !== writerMode) return { kind: 'failed', code: 'account_mode_mismatch' };
+        const { controllerDisplayName: suppliedLabel, ...privateContent } = input.privateContent;
+        let controllerDisplayName: string | null | undefined = suppliedLabel;
+        if (writerMode === 'plain' && input.censusInput.owner.kind === 'team' && input.teamAcquireDelegated === true) {
+            const controller = input.censusInput.controller;
+            if (controller) {
+                const machine = resolveServerScopedMachine(storage.getState(), scope.serverId, controller.machineId);
+                if (machine?.installationId === controller.installationId) controllerDisplayName = readMachineName(machine);
+            }
+        }
+        const content = { ...privateContent, ...(controllerDisplayName == null ? {} : { controllerDisplayName }) };
         try {
             const envelope = writerMode === 'plain'
-                ? sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'plain', content: input.privateContent })
-                : sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'e2ee', content: input.privateContent,
-                    recipientCensus: census.recipients, randomBytes: getRandomBytes });
+                ? sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'plain', content })
+                : sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'e2ee', content,
+                    recipientCensus: [...census.recipients], randomBytes: getRandomBytes });
             return { kind: 'sealed', contentEncryptionMode: writerMode,
-                content: envelope.content, recipients: envelope.recipients };
-        } catch {
+                content: envelope.content, recipients: [...envelope.recipients] };
+        } catch (error) {
+            if (error instanceof core.$ZodError) return { kind: 'failed', code: 'invalid_parameters',
+                diagnosticDetail: JSON.stringify(actionInputValidationFailure(error), null, 2) };
             return { kind: 'failed', code: 'content_unavailable' };
         }
     }
@@ -556,7 +576,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
                 && rawRecipientIds.has(recipient.account.accountId));
         if (audienceIsPreparedAndCurrent) return null;
         const recipients = key.withAccountKey(({ accountId, accountKey }) => rewrapManagedMachinePresetRecipientsV1({
-            recipients: raw.recipients, accountId, accountKey, recipientCensus: census.recipients, randomBytes: getRandomBytes,
+            recipients: raw.recipients, accountId, accountKey, recipientCensus: [...census.recipients], randomBytes: getRandomBytes,
         }));
         if (!recipients || sameRecipientEnvelopes(raw.recipients, recipients)) return null;
         const input = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse({
@@ -708,8 +728,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
 
     async function openActionOutput<T extends MachinePresetActionIdV1>(actionId: T, value: MachinePresetActionOutputV1<T>,
         signal?: AbortSignal): Promise<OpenedPresetActionOutput<T> | null> {
-        let readerKey: Promise<ManagedMachinePresetReadCustodyV1 | null> | null = null;
-        const reader = () => readerKey ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
+        const readerState: { key: Promise<ManagedMachinePresetReadCustodyV1 | null> | null } = { key: null };
+        const reader = () => readerState.key ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
         try {
             if (actionId === 'machines.presets.get' && value.kind === 'found') {
                 const preset = await openPreset(value.preset, reader);
@@ -731,7 +751,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             }
             return value as OpenedPresetActionOutput<T>;
         } finally {
-            const key = readerKey ? await readerKey : null;
+            const key = await readerState.key;
             await key?.dispose();
         }
     }
@@ -743,7 +763,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             const censusInput = { homeId: draft.homeId, owner: draft.owner,
                 ...(draft.controller ? { controller: draft.controller } : {}),
                 ...(draft.controllerPoolId ? { controllerPoolId: draft.controllerPoolId } : {}) };
-            const sealed = await sealPrivateContent({ presetId: draft.id, privateContent: draft.privateContent, censusInput, signal: options?.signal });
+            const sealed = await sealPrivateContent({ presetId: draft.id, privateContent: draft.privateContent, censusInput,
+                teamAcquireDelegated: draft.teamAcquireDelegated, signal: options?.signal });
             if (sealed.kind === 'failed') return sealed;
             const { privateContent: _privateContent, ...structural } = draft;
             return { ...structural, contentEncryptionMode: sealed.contentEncryptionMode,
@@ -759,7 +780,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             const controllerPoolId = Object.hasOwn(structuralPatch, 'controllerPoolId') ? structuralPatch.controllerPoolId ?? undefined : current.controllerPoolId;
             const censusInput = { homeId: draft.homeId, owner: current.owner,
                 ...(controller ? { controller } : {}), ...(controllerPoolId ? { controllerPoolId } : {}) };
-            const sealed = await sealPrivateContent({ presetId: draft.id, privateContent, censusInput, signal: options?.signal });
+            const sealed = await sealPrivateContent({ presetId: draft.id, privateContent, censusInput,
+                teamAcquireDelegated: structuralPatch.teamAcquireDelegated ?? current.teamAcquireDelegated, signal: options?.signal });
             if (sealed.kind === 'failed') return sealed;
             return { ...draft, patch: { ...structuralPatch, contentEncryptionMode: sealed.contentEncryptionMode,
                 content: sealed.content, recipients: sealed.recipients } } as MachinePresetActionInputV1<T>;
@@ -808,7 +830,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         return opened ? { kind: 'succeeded', value: opened } : { kind: 'failed', code: 'content_unavailable' };
     }
 
-    function read<T extends 'machines.presets.get' | 'machines.presets.list'>(actionId: T, input: MachinePresetActionInputV1<T>,
+    function read<T extends 'machines.presets.get' | 'machines.presets.list'>(actionId: T, input: MachinePresetClientInput<T>,
         options?: MachinePresetCollectionOptions<OpenedPresetActionOutput<T>>) {
         let awaitingApproval = false;
         return awaitActionApprovalResult<OpenedPresetActionOutput<T>, MachinePresetCollectionSettledResult<OpenedPresetActionOutput<T>>>({
@@ -851,7 +873,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         const results = await Promise.all([false, true].map(async archived => {
             const input = { homeId, presetId: id, ...(archived ? { archived: true } : {}) };
             let awaitingApproval = false;
-            return awaitActionApprovalResult<ManagedMachineV1[], MachinePresetCollectionSettledResult<ManagedMachineV1[]>>({
+            return awaitActionApprovalResult<ManagedMachineReadSnapshotV1[], MachinePresetCollectionSettledResult<ManagedMachineReadSnapshotV1[]>>({
                 execute: async callbacks => {
                     const openRows = (value: unknown) => {
                         const output = ManagedListOutputV1Schema.safeParse(value);

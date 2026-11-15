@@ -10,7 +10,7 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const {
     createMachinePresetCollectionClient, hasOpenedManagedMachinePresetCreationV1,
-    isOpenedManagedMachinePresetV1, openManagedMachineReadSnapshots,
+    isOpenedManagedMachinePresetV1, openManagedMachineReadSnapshots, readManagedMachineReadForSnapshot,
     prepareManagedMachinePresetResizeOverrideForSnapshot,
 } = await import('./machinePresetCollectionClient');
 const { captureManagedMachinePresetCustodyV1 } = await import('./managedMachinePresetCustody');
@@ -27,7 +27,7 @@ const controller = { machineId: 'controller', installationId: 'installation' } a
 function recipient(accountId: string, contentPublicKey: Uint8Array,
     envelopeStatus: 'missing' | 'prepared' = 'missing') {
     return {
-        account: { kind: 'account' as const, accountId, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+        account: { kind: 'account' as const, accountId, name: null, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
         readiness: {
             status: 'available' as const,
             contentPublicKey: encodeBase64(contentPublicKey, 'base64'),
@@ -51,6 +51,29 @@ afterEach(async () => {
 });
 
 describe('machine preset content envelopes', () => {
+    it.each(['opened', 'unopened', 'legacy'] as const)('retains the original %s managed read for native control without exposing its carrier in the row', async form => {
+        const { ManagedMachineReadV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const serverId = await harness.addHome({ name: 'Retained managed read', serverUrl: 'https://retained-managed-read.example',
+            serverIdentityId: 'srv_retained_managed_read', accountId: 'owner', currentAccount: true });
+        const structural = { id: 'managed-read', homeId: 'srv_retained_managed_read', custodianAccountId: 'owner', controller,
+            allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const read = ManagedMachineReadV1Schema.parse(form === 'legacy' ? { ...structural, launch } : {
+            machine: { ...structural, preset: { id: 'retained-preset', revision: 3, contentEncryptionMode: 'plain' } },
+            presetContent: { content: { t: 'plain', v: form === 'unopened' ? { v: 1, name: 'No launch' }
+                : { v: 1, name: 'Private row', launch } }, recipientEnvelope: null },
+        });
+        const [snapshot] = await openManagedMachineReadSnapshots({ serverId, accountId: 'owner' }, [read]);
+        if (!snapshot) throw new Error('Expected the retained managed snapshot');
+        const retained = readManagedMachineReadForSnapshot(snapshot);
+        expect(retained).toBe(read);
+        expect(ManagedMachineReadV1Schema.safeParse(retained).success).toBe(true);
+        expect(snapshot).not.toHaveProperty('presetContent');
+        expect(snapshot.launch !== undefined).toBe(form !== 'unopened');
+        if (form === 'unopened') expect(await prepareManagedMachinePresetResizeOverrideForSnapshot(
+            { serverId, accountId: 'owner' }, snapshot, { cpuCores: 4 })).toEqual({ kind: 'failed', code: 'content_unavailable' });
+        expect(harness.requests.filter(request => request.path.startsWith('/v1/machines/'))).toEqual([]);
+    });
     it('propagates a retired Action Account instead of opening plaintext after its custody has changed', async () => {
         const serverId = await harness.addHome({
             name: 'Preset custody', serverUrl: 'https://preset-custody.example',
@@ -773,13 +796,13 @@ describe('machine preset content envelopes', () => {
             projectManagedMachinePresetForRecipientV1 } = await import(
             '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1'
         );
-        const setup = { scripts: [], items: [] } as const;
+        const setup = { scripts: [], items: [] };
         const reviewedFacts = {
             launch, controller, optionStatus: 'current' as const,
             billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const }, prerequisites: [],
-            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] as const },
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false, setup,
-        };
+        } satisfies import('@happier-dev/protocol/machines/managed/managedConfigurationV1').ManagedConfigurationFactsV1;
         const nativeResult = {
             kind: 'bound' as const,
             resource: {
@@ -838,6 +861,11 @@ describe('machine preset content envelopes', () => {
         })]);
         expect(Object.keys(result[0]!)).not.toContain('recipientProjection');
         expect(JSON.stringify(result[0]!)).not.toContain('encryptedDataKey');
+        const retained = readManagedMachineReadForSnapshot(result[0]!);
+        expect(retained).toEqual(read);
+        expect(readManagedMachineReadForSnapshot({ ...result[0]! })).toBeUndefined();
+        const { ManagedMachineReadV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        expect(ManagedMachineReadV1Schema.safeParse(retained).success).toBe(true);
         const resize = await prepareManagedMachinePresetResizeOverrideForSnapshot({ serverId, accountId: 'owner' },
             result[0]!, { cpuCores: 8 });
         expect(resize).toMatchObject({ kind: 'ready', override: { content: { t: 'encrypted' } } });

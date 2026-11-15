@@ -301,6 +301,8 @@ import { createManagedMachineActionClient, ManagedMachineActionError } from '@/s
 import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction } from '@/sync/api/machines/managedMachineOrigination';
 import { executeUiManagedProvisionerList, prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
 import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
+import { readManagedMachineReadForSnapshot } from '@/sync/ops/machines/machinePresetCollectionClient';
+import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
@@ -5211,7 +5213,7 @@ export type UiActionExecutorContext = import('@/components/plugins/surfaces/plug
   /** Local read-aloud presentation only; never serialized into Action custody. */
   voiceSpeechSource?: import('@/voice/backends/tts/localVoiceTtsProviderControllers').VoiceReadAloudSource;
   /** Reviewed Delete routing only; the receiving owner still admits expectedRevision and authority. Never serialized. */
-  reviewedManagedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
+  reviewedManagedMachine?: ManagedMachineReadSnapshotV1;
   /** Exact object admitted by the enclosing UI stop/archive lifecycle. */
   archiveOperation?: SessionArchiveOperation;
   /** Destination-owner navigation leaf, consumed only in this invocation. */
@@ -5624,7 +5626,7 @@ export function resolveDefaultActionInvocationServerId(actionId: ActionId, input
 
 async function resolveNativeManagedAction(actionId: ActionId, input: unknown, account: LazyActionAccountContext,
   context?: ActionExecutorContext, opts?: DefaultActionExecutorOptions,
-  reviewedManagedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>): Promise<Readonly<{ actionId: ManagedMachineActionIdV1;
+  reviewedManagedMachine?: ManagedMachineReadSnapshotV1): Promise<Readonly<{ actionId: ManagedMachineActionIdV1;
     retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'> }> | ActionExecuteFailure | null> {
   // An admitted replay retains its existing strict approval custody. Ordinary
   // relay ingress cannot consume a local Artifact's bypass proof.
@@ -5637,12 +5639,14 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
     const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     try {
-      const retainedMachine = (actionId === 'machines.managed.delete' ? reviewedManagedMachine : undefined)
-        ?? await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+      const retainedMachine = actionId === 'machines.managed.delete' && reviewedManagedMachine
+        ? readManagedMachineReadForSnapshot(reviewedManagedMachine)
+        : await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
         homeId: parsed.data.homeId,
         managedId: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId,
       }, { signal: account.invocationSignal });
       account.assertCurrent();
+      if (!retainedMachine) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
       const structural = unwrapManagedMachineReadV1(retainedMachine);
       return structural.controller ? { actionId, retainedMachine } : null;
     } catch (error) {
