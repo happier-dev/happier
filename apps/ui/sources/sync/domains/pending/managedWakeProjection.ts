@@ -1,4 +1,5 @@
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 
@@ -87,9 +88,10 @@ export function deriveManagedWakeProjection(input: ManagedWakeProjectionInput): 
     if (observation?.availability === 'unavailable') return { ...base, kind: 'unavailable' };
     if (!queued) return { ...base, kind: 'deliveryUnknown' };
     if (ready && input.runtimeResuming) return { ...base, kind: 'resuming' };
-    // A submitted native Start outlives a failed activation until its own
+    // A submitted native wake outlives a failed activation until its own
     // observation advances; it cannot be unsent or retried by the queue.
-    if (managed.submittedNativeEffect?.intent === 'start' && !ready && observation?.power !== 'running') {
+    const pendingPower = resolveManagedMachinePendingPowerIntentV1(managed);
+    if ((pendingPower === 'start' || pendingPower === 'resume') && !ready) {
         return { ...base, kind: 'starting' };
     }
     // An authorization is accepted input, not proof of an outstanding native
