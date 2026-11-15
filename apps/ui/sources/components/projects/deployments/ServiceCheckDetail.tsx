@@ -13,6 +13,7 @@ import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThem
 import { checkNowConfiguredHealthCheck } from '@/components/store/inventory/configuredHealthResults';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -385,7 +386,10 @@ export function ServiceCheckDetail(
             <Item
               key={result.observedAt}
               testID={`services.check.result.${result.observedAt}`}
-              title={serviceCheckResultWord(result.status) ?? '—'}
+              // The result's word in its tone through the shared Status (as Checks list rows draw it; FIDELITY G6b).
+              title={serviceCheckResultWord(result.status)
+                ? <InlineStatus tone={serviceCheckStatusTone(result.status) ?? 'secondary'} label={serviceCheckResultWord(result.status)!} />
+                : '—'}
               subtitle={observer ? t(`${k}.resultFrom`, { machine: observer }) : undefined}
               detail={[
                 result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
