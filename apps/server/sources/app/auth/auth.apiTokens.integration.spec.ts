@@ -30,6 +30,13 @@ import {
 
 const apiTokenAuth = auth;
 const fullGrantProjection = { grant: API_TOKEN_FULL_GRANT_V1, parentTokenId: null, embedConfig: null };
+const embedConfigFixture = {
+    v: 1 as const,
+    ui: { attachments: true },
+    newChat: { enabled: false },
+    organization: { folderId: null, tagIds: [] },
+    style: { v: 1 as const, typography: { fontFamily: 'Inter' }, parts: { composer: { radius: 'md' as const } } },
+};
 
 const UNKNOWN_API_TOKEN = `hap_v1_550e8400-e29b-41d4-a716-446655440000_${"A".repeat(43)}`;
 
@@ -199,6 +206,31 @@ describe("auth (API tokens)", () => {
             tokenId: crypto.randomUUID(),
             label: plainLabel,
         })).rejects.toMatchObject({ code: "api_token_label_mode_mismatch" });
+
+        await db.account.update({ where: { id: encryptedAccount.id }, data: { encryptionMode: "invalid" } });
+        await expect(apiTokenAuth.createApiToken({
+            accountId: encryptedAccount.id,
+            tokenId: crypto.randomUUID(),
+            label,
+        })).rejects.toMatchObject({ code: "api_token_encryption_unavailable" });
+        await expect(apiTokenAuth.listApiTokens(encryptedAccount.id))
+            .rejects.toMatchObject({ code: "api_token_encryption_unavailable" });
+        await expect(apiTokenAuth.updateApiToken({
+            accountId: encryptedAccount.id,
+            tokenId: encryptedTokenId,
+            label,
+        })).rejects.toMatchObject({ code: "api_token_encryption_unavailable" });
+        const beforeUnlabeledUpdate = await db.accountApiToken.findUniqueOrThrow({
+            where: { id: encryptedTokenId }, select: { embedConfig: true },
+        });
+        await expect(apiTokenAuth.updateApiToken({
+            accountId: encryptedAccount.id,
+            tokenId: encryptedTokenId,
+            embedConfig: embedConfigFixture,
+        })).rejects.toMatchObject({ code: "api_token_encryption_unavailable" });
+        await expect(db.accountApiToken.findUniqueOrThrow({
+            where: { id: encryptedTokenId }, select: { embedConfig: true },
+        })).resolves.toEqual(beforeUnlabeledUpdate);
     });
 
     it("stores structurally valid plain Account token labels without reading their client-owned text", async () => {
@@ -620,13 +652,7 @@ describe("auth (API tokens)", () => {
     it("reads stored presentation config by known fields while permission grants fail closed and writes remain strict", async () => {
         const account = await db.account.create({ data: { publicKey: 'stored-grant-projection' } });
         const grant = { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: ['s1'], machines: [] } };
-        const embedConfig = {
-            v: 1 as const,
-            ui: { attachments: true },
-            newChat: { enabled: false },
-            organization: { folderId: null, tagIds: [] },
-            style: { v: 1 as const, typography: { fontFamily: 'Inter' }, parts: { composer: { radius: 'md' as const } } },
-        };
+        const embedConfig = embedConfigFixture;
         const minted = await auth.createApiToken({
             accountId: account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Stored projection'), grant, embedConfig,
         });

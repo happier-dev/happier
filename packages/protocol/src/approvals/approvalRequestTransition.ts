@@ -2,7 +2,7 @@ import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.j
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type CurrentApprovalRequest } from './approvalRequestV1.js';
+import { ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type ApprovalRequestV2, type CurrentApprovalRequest, type StoredApprovalRequestV2 } from './approvalRequestV1.js';
 export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
 
 /**
@@ -76,6 +76,8 @@ export function settleApprovalRequestDecision(request: ApprovalRequest): Approva
 }
 
 /** Raw replay operands share one lifetime, including the original finite invocation envelope. */
+export function settleApprovalRequestReplayInputs(request: ApprovalRequestV2): ApprovalRequestV2;
+export function settleApprovalRequestReplayInputs(request: StoredApprovalRequestV2): StoredApprovalRequestV2;
 export function settleApprovalRequestReplayInputs(request: CurrentApprovalRequest): CurrentApprovalRequest;
 export function settleApprovalRequestReplayInputs(request: ApprovalRequest): ApprovalRequest;
 export function settleApprovalRequestReplayInputs(request: ApprovalRequest): ApprovalRequest {

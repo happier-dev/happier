@@ -55,6 +55,7 @@ import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV
 import { readWorkspaceSyncAdmissionInTx } from './workspaceSyncAdmission';
 import type { WorkflowExternalActionAdmission } from './externalActionExecutionAuthorization';
 import { admitAccountPrivateLabelWriteInTx, projectAccountPrivateLabelForRecipientV1 } from '@/app/encryption/accountPrivateLabelContent';
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 
 interface TokenGeneratorLike {
     new: (payload: Readonly<{
@@ -313,6 +314,12 @@ function readApiTokenGrant(value: unknown): ApiTokenGrantV1 {
 
 function readApiTokenEmbedConfig(value: unknown): EmbedConfigV1 | null {
     return value == null ? null : StoredEmbedConfigV1Schema.parse(value);
+}
+
+function requireApiTokenLabelMode(account: Readonly<{ encryptionMode: unknown }>) {
+    const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+    if (mode.status !== "ready") throw new ApiTokenOperationError("api_token_encryption_unavailable");
+    return mode.mode;
 }
 
 function requireAdmittedApiTokenLabel(
@@ -1154,7 +1161,7 @@ class AuthModule {
             assertAccountActive(admission.status);
             const label = requireAdmittedApiTokenLabel(await admitAccountPrivateLabelWriteInTx(tx, {
                 accountId,
-                mode: admission.encryptionMode,
+                mode: requireApiTokenLabelMode(admission),
                 stored: params.label,
             }));
             if (child) {
@@ -1289,11 +1296,12 @@ class AuthModule {
                 _count: { select: { children: { where: { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } } } },
             },
         });
+        const mode = requireApiTokenLabelMode(owner);
         return rows.map((row) => ({
             tokenId: row.id,
             label: projectApiTokenLabelForAccount({
                 serialized: row.label,
-                mode: owner.encryptionMode,
+                mode,
                 accountId: ownerAccountId,
             }),
             displayPrefix: createApiTokenDisplayPrefix(row.id),
@@ -1326,15 +1334,14 @@ class AuthModule {
                 && params.grant === undefined && params.embedConfig === undefined && params.deployment === undefined;
             const row = await tx.accountApiToken.findFirst({ where: { id: params.tokenId, accountId: params.accountId,
                 ...(evidenceOnly ? {} : { parentTokenId: null }) },
-                select: { accessGrant: true, embedConfig: true, authenticationEvidence: true } });
+                select: { accessGrant: true, embedConfig: true, authenticationEvidence: true,
+                    Account: { select: { encryptionMode: true } } } });
             if (!row) throw new ApiTokenOperationError("invalid_token");
+            const mode = requireApiTokenLabelMode(row.Account);
             const label = params.label === undefined ? undefined : requireAdmittedApiTokenLabel(
                 await admitAccountPrivateLabelWriteInTx(tx, {
                     accountId: params.accountId,
-                    mode: (await tx.account.findUniqueOrThrow({
-                        where: { id: params.accountId },
-                        select: { encryptionMode: true },
-                    })).encryptionMode,
+                    mode,
                     stored: params.label,
                 }),
             );
