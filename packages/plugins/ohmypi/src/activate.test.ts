@@ -254,6 +254,7 @@ describe('OhMyPi plugin activation', () => {
       },
     });
     expect(open).toHaveBeenCalledWith(request, {
+      requiredFiles: [],
       transport: {
         kind: 'stdio',
         executable: { kind: 'systemTool', id: 'ohmypi-cli' },
