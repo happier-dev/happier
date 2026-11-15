@@ -8,6 +8,7 @@ import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 = 'sessions.external.candidate.delete' as const;
 export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;
 export const SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 = 'scm.pullRequest.openOrReuse' as const;
 /** Native publication results whose reported facts can be read by Prepare. */
@@ -608,7 +609,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   external_sessions: [
     'sessions.external.candidates.list',
-    'sessions.external.candidate.delete',
+    EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1,
     'sessions.external.link.ensure',
     'sessions.external.follow',
     'sessions.external.unfollow',

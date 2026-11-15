@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { openChatWithFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { View } from 'react-native';
 import { readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
-import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionCandidateDeleteResponseSchema, type ExternalSessionsAgentId, type ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -34,14 +35,11 @@ import {
     readMachineAdministrationCandidateName,
 } from '@/sync/domains/machines/administration/targetSelection';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
-import {
-    machineExternalSessionCandidateDelete,
-} from '@/sync/ops/machineExternalSessions';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 import { useProfile, useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
-import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import type { Theme } from '@/theme';
@@ -88,6 +86,7 @@ type ExternalSessionBrowseProviderId = ExternalSessionsAgentId;
 type AppTheme = Theme;
 
 const EXTERNAL_SESSION_BROWSE_SEARCH_DEBOUNCE_MS = 250;
+const executeCandidateDelete = createFrontDoorActionExecute();
 
 export type ExternalSessionsBrowseScopeLock = Readonly<{
     machineId: string;
@@ -767,9 +766,13 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 // addresses the same record without reinterpreting them.
                 remoteSessionId: candidate.remoteSessionId,
             };
-            const result = currentTarget.serverId
-                ? await machineExternalSessionCandidateDelete(request, { serverId: currentTarget.serverId, signal: controller.signal })
-                : await machineExternalSessionCandidateDelete(request, { signal: controller.signal });
+            const action = await executeCandidateDelete.confirmed(EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1, request, {
+                surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                ...(currentTarget.serverId ? { serverId: currentTarget.serverId } : {}),
+                signal: controller.signal,
+            });
+            requireActionSuccess(action);
+            const result = ExternalSessionCandidateDeleteResponseSchema.parse(action.result);
             if (!requestIsCurrent()) return;
             if (!result.ok) {
                 Modal.alert(

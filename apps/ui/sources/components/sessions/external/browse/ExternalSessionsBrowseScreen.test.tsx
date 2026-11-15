@@ -19,7 +19,7 @@ import {
     type PluginProjectionV2,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
-    RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
+    MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RpcError} from '@happier-dev/protocol/rpcErrors';
 import {
     type ExternalSessionCandidateV1,
     type ExternalSessionLinkEnsureResponse,
@@ -968,6 +968,84 @@ describe('ExternalSessionsBrowseScreen', () => {
                 { serverId: serverA },
             );
             expect(screen.findByTestId('direct-session-candidate: provider\nsession-1 ')).toBeNull();
+        });
+
+        it('keeps the Agent session when Account policy disables the confirmed delete Action', async () => {
+            candidatesListSpy.mockResolvedValue({
+                ok: true,
+                candidates: deletableCandidates,
+                nextCursor: null,
+                capabilities: { deleteCandidate: true },
+            });
+            accountSettingsState.current = { ...accountSettingsState.current,
+                actionsSettingsV1: { v: 1, actions: { 'sessions.external.candidate.delete': { disabledSurfaces: ['ui'] } } },
+            };
+            const update = UpdateContainerSchema.parse({
+                id: 'browse-delete-policy', seq: 2, createdAt: 2,
+                body: { t: 'update-account', id: 'browse-account',
+                    settingsV2: { content: { t: 'plain', v: accountSettingsState.current }, version: 2 },
+                    encryptionCurrentness: { mode: 'plain', version: 2, settingsVersion: 2,
+                        updatedAt: 2, signingKeyFingerprint: null, contentKeyFingerprint: null } },
+            });
+            await act(async () => {
+                for (const boundary of socketBoundaries()) {
+                    if (boundary.serverUrl === home.homes.focused!.serverUrl) boundary.trigger('update', update);
+                }
+            });
+            const { getStorage } = await import('@/sync/domains/state/storageStore');
+            await vi.waitFor(() => expect(getStorage().getState().settingsVersion).toBe(2));
+            const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+            const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(findCandidateActions(screen)).toBeDefined();
+            });
+            const actions = findCandidateActions(screen)?.props.actions as ReadonlyArray<Readonly<{
+                id: string;
+                onPress: () => void;
+            }>>;
+            await act(async () => {
+                actions.find(action => action.id === 'delete_agent_session')?.onPress();
+                await flushHookEffects();
+            });
+
+            expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+            expect(candidateDeleteSpy).not.toHaveBeenCalled();
+            expect(screen.findByTestId('direct-session-candidate: provider\nsession-1 ')).not.toBeNull();
+            expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'externalSessions.browseDeleteCandidateFailed');
+        });
+
+        it.each([
+            [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'newSession.daemonRpcUnavailableBody'],
+            [MACHINE_RPC_TIMEOUT_ERROR_CODE, 'externalSessions.browseAgentTimedOut'],
+        ])('retains the row and the transport diagnosis when deletion fails with %s', async (code, message) => {
+            candidatesListSpy.mockResolvedValue({
+                ok: true,
+                candidates: deletableCandidates,
+                nextCursor: null,
+                capabilities: { deleteCandidate: true },
+            });
+            candidateDeleteSpy.mockRejectedValue(code === MACHINE_RPC_TIMEOUT_ERROR_CODE
+                ? Object.assign(new Error(code), { code })
+                : new RpcError(code, code));
+            const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+            const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(findCandidateActions(screen)).toBeDefined();
+            });
+            const actions = findCandidateActions(screen)?.props.actions as ReadonlyArray<Readonly<{
+                id: string;
+                onPress: () => void;
+            }>>;
+            await act(async () => {
+                actions.find(action => action.id === 'delete_agent_session')?.onPress();
+                await flushHookEffects();
+            });
+
+            await waitForHomeGovernance(() => expect(modalAlertSpy).toHaveBeenCalledWith('common.error', message));
+            expect(screen.findByTestId('direct-session-candidate: provider\nsession-1 ')).not.toBeNull();
+            expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
         });
 
         it('deletes nothing when the user cancels the confirmation', async () => {
