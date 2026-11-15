@@ -38,11 +38,6 @@ import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/se
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-const sessionChanges = createSessionLiveWorkProducer({
-  readSessions: () => [],
-  readActivity: async () => ({ session: 'unknown', input: 'unknown' }),
-});
-
 // Socket.IO is a network boundary. Keep its ordinary implementation outside
 // this fixture so sibling composed paths retain their own transport behavior.
 vi.mock('socket.io-client', async importOriginal => {
@@ -72,6 +67,8 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
     let row: ReturnType<typeof createCurrentSessionProjectionRecordFixture> | null = null;
     const runners: ReturnType<typeof spawn>[] = [];
     const tracked = new Map<SessionTrackingKey, TrackedSession>();
+    const sessionChanges = createSessionLiveWorkProducer({ readSessions: () => [...tracked.values()],
+        readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
     let launches = 0;
     let nonceReads = 0;
     let admittedInputs = 0;
@@ -133,9 +130,11 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 : spawn(process.execPath, ['-e', 'process.exit(1)'], { stdio: 'ignore' });
             runners.push(child);
             if (!child.pid) throw new Error('Missing fixture runner pid');
+            child.once('exit', () => sessionChanges.notifySessionChanged(sessionId));
             tracked.set(legacyPidSessionTrackingKey(child.pid), { trackingKey: legacyPidSessionTrackingKey(child.pid), pid: child.pid, startedBy: 'daemon', happySessionId: sessionId,
                 ...(preparationCode === 'opened' ? { agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/native-startup-authority' } : {}),
                 childProcess: child, processStartTimeMs: Date.now() });
+            sessionChanges.notifySessionChanged(sessionId);
             const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
                 storedContentMode: 'plain', agentState: null, metadata: {
                     ...buildCommittedLaunchMetadata({ options, directory: home }), hostPid: child.pid,
@@ -156,6 +155,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                         publishedIssue = mutation.issue;
                         if (!row) throw new Error('Native refusal preceded Session custody');
                         row = { ...row, latestTurnStatus: 'failed', lastRuntimeIssue: mutation.issue };
+                        sessionChanges.notifySessionChanged(sessionId);
                     }
                 })).catch(error => {
                     publicationFailure = error;
@@ -169,7 +169,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
             } } : {}) };
         },
         stopSession: async () => ({ status: 'not_found' }),
-    }, awaitAgentSessionOpen: openInput => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener), ...openInput, getTrackedSessions: () => [...tracked.values()],
+    }, awaitAgentSessionOpen: openInput => awaitTrackedRunnerAgentSessionOpen({ subscribeChanges: listener => sessionChanges.subscribe(listener, sessionId), ...openInput, getTrackedSessions: () => [...tracked.values()],
         readStartupFailure: async () => input.publishFailure ? row?.lastRuntimeIssue ?? null : preparationCode && preparationCode !== 'opened' ? classifyPrimarySessionRuntimeIssue({
             cause: 'session_error', ...(preparationCode === 'agent_cli_not_runnable' ? { provider: 'codex' } : {}), error: preparationCode === 'broker_unavailable'
                 || preparationCode === 'connected_service_credential_reconnect_required'
@@ -258,9 +258,12 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 const terminal = invoke();
                 const runner = [...tracked.values()][0];
                 if (!runner || !creationTag) throw new Error('Missing committed runner identity');
-                if (preparationCode === 'opened') runner.agentRuntimeDaemonServiceSessionOpenAttestation = {
-                    request: { kind: 'create', sessionId, cwd: home }, providerSessionId: 'native-session',
-                };
+                if (preparationCode === 'opened') {
+                    runner.agentRuntimeDaemonServiceSessionOpenAttestation = {
+                        request: { kind: 'create', sessionId, cwd: home }, providerSessionId: 'native-session',
+                    };
+                    sessionChanges.notifySessionChanged(sessionId);
+                }
                 const localId = buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag: creationTag });
                 const terminalResult = await terminal;
                 expect(terminalResult, JSON.stringify(terminalResult)).toMatchObject({ ok: true, result: { type: 'success', sessionId,
