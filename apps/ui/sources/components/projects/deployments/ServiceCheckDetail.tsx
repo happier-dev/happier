@@ -27,6 +27,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
@@ -513,6 +514,11 @@ function CheckNow(props: Readonly<{ run: ServiceCheckSettings['run']; scope: Man
       if (!current.signal.aborted) setState('failed');
     }
   }, [props.run, props.scope.accountId, props.scope.serverId]);
+  // The person can stop waiting: the Action's own signal is aborted; a result its Machine still sends arrives as usual.
+  const cancel = React.useCallback(() => {
+    controller.current?.abort();
+    setState('idle');
+  }, []);
   return (
     <View style={styles.checkNow}>
       <RoundButton
@@ -522,6 +528,12 @@ function CheckNow(props: Readonly<{ run: ServiceCheckSettings['run']; scope: Man
         loading={state === 'running'}
         onPress={() => void run()}
       />
+      {state === 'running' ? (
+        // While it waits it says so, and after a few seconds how long (the loading state's own "Still waiting" clock).
+        <SurfaceStateCard testID="services.check.checkNow.pending" kind="loading" size="line"
+          title={t(`${k}.checkNowRunning`)}
+          action={{ label: t('common.cancel'), onPress: cancel, testID: 'services.check.checkNow.cancel' }} />
+      ) : null}
       {state === 'failed' ? (
         <Text variant="meta" style={styles.metaText} testID="services.check.checkNow.failed">
           {t(`${k}.checkNowFailed`)}
@@ -531,7 +543,9 @@ function CheckNow(props: Readonly<{ run: ServiceCheckSettings['run']; scope: Man
   );
 }
 
-const CHECK_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
+// A failing Check is a failure page like a receipt, an Inbox notice or a run: the task default (investigate) leads,
+// then the subject's own records. 'subjectOnly' is the Environment page's mode, whose records set things up.
+const CHECK_AGENT_ACTIONS = { agentActions: 'withDefault' } as const;
 
 /** Investigate a failing Check through the one failure-investigation owner, on the subject its source watches. */
 function CheckInvestigate(props: Readonly<{ subject: NonNullable<ReturnType<typeof serviceCheckInvestigationSubject>>; serverId: string }>) {
@@ -568,7 +582,8 @@ function CheckInvestigate(props: Readonly<{ subject: NonNullable<ReturnType<type
 
 const styles = StyleSheet.create((theme) => ({
   metaText: { color: theme.colors.text.secondary },
-  checkNow: { gap: theme.space.s4 },
+  // The button keeps its own width; the waiting line under it takes the room it needs.
+  checkNow: { gap: theme.space.s4, alignItems: 'flex-start' },
   investigate: { gap: theme.space.s8, alignItems: 'flex-start' },
   actions: { paddingTop: theme.space.s12, flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'flex-start' },
   strip: { paddingHorizontal: theme.space.s16 },

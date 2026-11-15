@@ -30,6 +30,7 @@ import { t } from '@/text';
 import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useDeploymentInventory } from './useDeploymentProject';
+import { useDeploymentCollection } from './useDeploymentReads';
 import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
 import { deploymentRailState } from './deploymentPresentation';
 import { buildServiceCheckHref } from './deploymentNavigation';
@@ -211,7 +212,13 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     setViewNeedYou((current) => current[next.view] === (next.needYou ?? 0) ? current : { ...current, [next.view]: next.needYou ?? 0 });
   }, []);
   const pagedRead = read.hasNextPage || read.hasPreviousPage;
-  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items, pagedRead) : null, [items, pagedRead, view]);
+  // The count line's own read: the first page with the Account-wide total. The Home counts per includeTotal page, so
+  // the list's own pages never ask for it and paging never recounts (b7049368e1f); absent means unknown.
+  const counted = useDeploymentCollection(view === 'apps' && props.demand ? props.controller ?? null : null,
+    props.demand ?? NO_DEMAND, COUNT_QUERY);
+  const total = counted.snapshot.value?.totalCount;
+  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items, pagedRead, total) : null,
+    [items, pagedRead, total, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   const header = (create: boolean) => (
     <MainScreenHeader
@@ -383,7 +390,10 @@ function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
-function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean): readonly (string | null)[] {
+const COUNT_QUERY = Object.freeze({ includeTotal: true });
+const NO_DEMAND: DeploymentReadDemandV1 = Object.freeze({ mounted: false, visible: false, focused: false });
+
+function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, total: number | undefined): readonly (string | null)[] {
   let needYou = 0;
   let deploying = 0;
   for (const item of items) {
@@ -392,10 +402,13 @@ function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean): r
     else if (state) deploying += 1;
   }
   const projects = new Set(items.map((item) => item.environment.projectSourceId)).size;
+  // With more pages, the Account-wide total when its read has answered (its Projects are not known); until then the
+  // count says it is this page's.
+  const accountTotal = paged && total !== undefined;
   return [
-    items.length > 0 ? t('projects.deployments.services.countEnvironments', { environments: items.length, projects }) : null,
-    // The read reports no Account-wide total: with more pages, the count says it is this page's.
-    items.length > 0 && paged ? t('projects.deployments.services.countOnPage') : null,
+    accountTotal ? t('projects.deployments.services.countEnvironmentsTotal', { count: total })
+      : items.length > 0 ? t('projects.deployments.services.countEnvironments', { environments: items.length, projects }) : null,
+    items.length > 0 && paged && !accountTotal ? t('projects.deployments.services.countOnPage') : null,
     needYou > 0 ? t('projects.deployments.services.needYou', { count: needYou }) : null,
     deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,
   ];

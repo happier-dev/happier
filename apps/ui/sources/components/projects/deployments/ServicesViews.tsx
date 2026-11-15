@@ -202,7 +202,18 @@ export function ServicesDatabasesView(
     uncovered > 0 ? t('projects.deployments.notBackedUpCount', { count: uncovered }) : null,
   ] : null, [read.snapshot.value, rows.length, uncovered]);
   useReportViewCount('databases', countParts, props.onCount, uncovered);
-  if (!read.snapshot.value) {
+  // The data page reads every Environment (their contents are end-to-end encrypted, so the Home cannot pick the ones
+  // that hold databases): a page holding none moves on the way the person was going instead of stopping empty.
+  const travel = React.useRef<'older' | 'newer'>('older');
+  const settled = read.snapshot.status === 'ready' ? read.snapshot.value : undefined;
+  const skip = !settled || rows.length > 0 ? null
+    : travel.current === 'older' ? (read.hasNextPage ? read.nextPage : null)
+    : read.hasPreviousPage ? read.previousPage : null;
+  React.useEffect(() => { skip?.(); }, [skip, settled]);
+  const older = React.useCallback(() => { travel.current = 'older'; read.nextPage(); }, [read.nextPage]);
+  const newer = React.useCallback(() => { travel.current = 'newer'; read.previousPage(); }, [read.previousPage]);
+  // While it moves on (or the next page is on its way), the rows' place holds its skeleton, never an empty line.
+  if (!read.snapshot.value || skip || (rows.length === 0 && read.snapshot.status === 'loading')) {
     return read.snapshot.status === 'unavailable' ? (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -243,8 +254,7 @@ export function ServicesDatabasesView(
         <ServicesPageList<DatabaseRow> testID="services.databases" model={model} anatomy={anatomy}
           accessibilityLabel={t('projects.deployments.services.databases')} />
       )}
-      <ServicesPaging testID="services.databases.paging" page={read.snapshot.value}
-        onNewer={read.previousPage} onOlder={read.nextPage} />
+      <ServicesPaging testID="services.databases.paging" page={read.snapshot.value} onNewer={newer} onOlder={older} />
     </>
   );
 }

@@ -85,7 +85,8 @@ function controllerFor(list: (cursor: string | undefined) => ListResult, extra: 
   const calls: (string | undefined)[] = [];
   const transport: DeploymentReadTransportV1 = {
     listEnvironments: async (_scope, query) => {
-      calls.push(query?.cursor);
+      // The list's own page reads; the count line's one counted read (includeTotal) is not a page of the list.
+      if (!query?.includeTotal) calls.push(query?.cursor);
       return list(query?.cursor);
     },
     readEnvironment: async () => ({
@@ -201,6 +202,31 @@ describe('Projects → All deployments', () => {
       await waitForTestEvent(screen.subscribe, () => screen.findHostByTestId('all-deployments.header:count'), (node) => node !== null);
     });
     expect(screen.getTextContent()).toContain('on this page');
+    controller.retire();
+  });
+
+  it('says the Account-wide total from its own counted read, never "on this page", and paging never recounts', async () => {
+    const counted: (string | undefined)[] = [];
+    const first = page([environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' })], { nextCursor: 'env-later' });
+    const later = page([environment('env-later', 'source-later', 'Later', { projectSourceName: 'later' })]);
+    const { controller } = controllerFor(() => first, {
+      listEnvironments: async (_scope, query) => {
+        if (query?.includeTotal) counted.push(query.cursor);
+        const result = query?.cursor ? later : first;
+        return query?.includeTotal && result.ok ? { ...result, value: { ...result.value, totalCount: 2417 } } : result;
+      },
+    });
+    const screen = await render(controller, 'all-deployments');
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.getTextContent().includes('2417'), (found) => found);
+    });
+    expect(screen.getTextContent()).not.toContain('on this page');
+    await screen.pressByTestIdAsync('all-deployments.paging.older');
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-later'), (node) => node !== null);
+    });
+    expect(screen.getTextContent()).toContain('2417');
+    expect(counted).toEqual([undefined]);
     controller.retire();
   });
 
@@ -388,6 +414,31 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
       controller.retire();
     }
   });
+  it('moves past a page of Environments without databases to the page that has them (the read pages every Environment)', async () => {
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const bare = createDeploymentEnvironmentHeaderV1({ id: 'env-bare', projectSourceId: 'source-bare' });
+    const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
+    const content = createDeploymentEnvironmentDetailV1().content;
+    const cursors: (string | undefined)[] = [];
+    const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
+      listDataServicePage: async (_scope, query) => {
+        cursors.push(query.cursor);
+        return query.cursor === undefined
+          ? { ok: true, value: { nextCursor: 'older', items: [{ environment: bare, title: 'Demo', content, databaseSizes: [] }] } }
+          : { ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Production', content, databaseSizes: [
+            { service: 'shop-db', size: { status: 'available', bytes: 8_136_000, measurement: 'database_bytes', observedAtMs: 1 },
+              growth: { status: 'unavailable', reason: 'no_previous_measurement' } }] }] } };
+      },
+    });
+    const screen = await renderScreen(<Page controller={controller} view="databases" />);
+    await act(async () => {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services.databases.row.env-shop.shop-db'), (node) => node !== null);
+    });
+    expect(screen.findByTestId('services.databases.pageEmpty')).toBeNull();
+    expect(cursors).toEqual([undefined, 'older']);
+    controller.retire();
+  });
+
   it('names the page Services and, in its Databases view, lists each environment\'s databases with their measured size', async () => {
     const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
