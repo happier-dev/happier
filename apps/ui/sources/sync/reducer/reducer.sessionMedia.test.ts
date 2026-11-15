@@ -6,6 +6,54 @@ import { parseSessionMediaMessageMeta } from '../domains/sessionMedia/sessionMed
 import { createReducer, reducer } from './reducer';
 
 describe('tool-result session media ownership', () => {
+    it('publishes late media for a completed nested tool without republishing equal metadata', () => {
+        const state = createReducer();
+        const calls: NormalizedMessage[] = ['outer', 'read'].map(id => ({
+            id: `call-${id}`, localId: null, createdAt: 1, role: 'agent',
+            isSidechain: id === 'read', sidechainId: id === 'read' ? 'outer' : undefined,
+            content: [{
+                type: 'tool-call', id, name: id === 'outer' ? 'Task' : 'Read', input: {},
+                description: null, uuid: `call-${id}`, parentUUID: null,
+            }],
+        }));
+        const result: NormalizedMessage = {
+            id: 'result', localId: null, createdAt: 2, role: 'agent', isSidechain: false,
+            content: [{
+                type: 'tool-result', tool_use_id: 'read', content: 'Read finished',
+                is_error: false, uuid: 'result', parentUUID: null,
+            }],
+        };
+        const completed = reducer(state, [...calls, result]);
+        const root = completed.messages.find(message => message.kind === 'tool-call' && message.tool.id === 'outer');
+        if (!root || root.kind !== 'tool-call') throw new Error('Expected outer Task');
+        expect(root.children[0]).toMatchObject({ tool: { state: 'completed', result: 'Read finished', completedAt: 2 } });
+        expect(parseSessionMediaMessageMeta(root.children[0]?.meta).inlineImages).toEqual([]);
+
+        const meta = { happier: { kind: 'session_media.v1', payload: {
+            media: [{
+                id: 'late-image', role: 'output', category: 'tool-artifact', mediaKind: 'image',
+                name: 'comparison.png', path: '.happier/uploads/artifacts/comparison.png',
+                mimeType: 'image/png', sizeBytes: 80,
+                origin: { source: 'tool-output', toolCallId: 'read' },
+            }],
+        } } };
+        const lateResult: NormalizedMessage = { ...result, id: 'late-result', createdAt: 3, meta };
+        const updated = reducer(state, [lateResult]);
+        const nextRoot = updated.messages.find(message => message.id === root.id);
+        expect(nextRoot).toMatchObject({
+            children: [{ tool: { state: 'completed', result: 'Read finished', completedAt: 2 }, meta }],
+        });
+        if (!nextRoot || nextRoot.kind !== 'tool-call') throw new Error('Expected updated outer Task');
+        expect(parseSessionMediaMessageMeta(nextRoot.children[0]?.meta).inlineImages).toMatchObject([{ id: 'late-image' }]);
+        expect(parseSessionMediaMessageMeta(root.children[0]?.meta).inlineImages).toEqual([]);
+        expect(updated.messages).toHaveLength(1);
+
+        const replay = reducer(state, [{ ...lateResult, id: 'late-result-replay', meta: JSON.parse(JSON.stringify(meta)) }]);
+        expect(replay.messages).toEqual([]);
+        const read = [...state.messages.values()].find(message => message.tool?.id === 'read');
+        expect(read?.meta).toBe(nextRoot.children[0]?.meta);
+    });
+
     it.each(['main', 'sidechain', 'orphan', 'namespaced'] as const)(
         'keeps images and unavailable items on their owning tool (%s)',
         (mode) => {
