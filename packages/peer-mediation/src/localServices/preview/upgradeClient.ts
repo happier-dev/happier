@@ -44,8 +44,10 @@ export function createLocalServicePreviewUpgradeClient(
         end() {
             socket.end?.();
         },
-        destroy(error) {
-            socket.destroy?.(error instanceof Error ? error : error === undefined ? undefined : new Error(String(error)));
+        destroy() {
+            // The adapter already reports the failure. Before HTTP 101 no downstream reader
+            // owns socket errors, so re-emitting that caught error can terminate the host.
+            socket.destroy?.();
         },
     };
 }

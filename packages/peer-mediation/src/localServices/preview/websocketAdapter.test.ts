@@ -1,6 +1,39 @@
 import { expect, it } from 'vitest';
+import { Socket } from 'node:net';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { proxyLocalServicePreviewWebSocketUpgrade } from './websocketAdapter.js';
+import { createLocalServicePreviewUpgradeClient } from './upgradeClient.js';
+
+it('closes a refused upgrade without emitting an unhandled downstream socket error', async () => {
+    const preview: LocalServicePreviewResourceV1 = {
+        previewId: 'preview_1', machineId: 'machine_1', owner: { kind: 'user', id: 'account_1' },
+        target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+        display: { title: 'Preview', addressLabel: 'loopback' }, originMode: 'host',
+    };
+    const socket = new Socket();
+    const socketErrors: Error[] = [];
+    // Observe the real Node error event so a regression fails here rather than killing the test worker.
+    socket.on('error', error => { socketErrors.push(error); });
+    const closed = new Promise<void>(resolve => { socket.once('close', () => resolve()); });
+    try {
+        const result = await proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: { path: '/hmr', search: '', headers: { upgrade: 'websocket', connection: 'Upgrade',
+                'sec-websocket-key': 'client-key', 'sec-websocket-version': '13' }, rawHeaders: [],
+                client: createLocalServicePreviewUpgradeClient(socket) },
+            // The remote tunnel closes before answering HTTP 101; the downstream reader has not started.
+            openTunnel: async () => ({ tunnelId: 'tunnel', substreamId: 'closed-upgrade',
+                write() {}, endWrite() {}, async *read() {}, close() {}, abort() {} }),
+        });
+        expect(result).toEqual({ ok: false, reasonCode: 'upstream_response_invalid' });
+        await closed;
+        expect(socket.destroyed).toBe(true);
+        expect(socketErrors).toEqual([]);
+    } finally {
+        socket.destroy();
+        await closed;
+    }
+});
 
 it('denies a WebSocket upgrade when the registered method policy excludes GET', async () => {
     const preview: LocalServicePreviewResourceV1 = {
