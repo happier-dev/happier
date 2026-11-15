@@ -54,7 +54,8 @@ async function renderSections(
       onHandoff={onHandoff}
       cards={[
         card('hetzner', handoff, needsApp),
-        card('vercel', handoff, needsApp),
+        // A hand-off provider in a second group: the page still says it once (DESIGN-1114 row 10).
+        { ...card('vercel', handoff, needsApp), enrollmentRole: 'sandbox' },
         card(
           'crabbox',
           { kind: 'choose', label: 'Connect', onPress: vi.fn() },
@@ -67,13 +68,15 @@ async function renderSections(
 
 describe('MachineProvisionerSections when the browser cannot reach a provider (R8-8)', () => {
   for (const compact of [false, true]) {
-    it(`says it once for the group, with one Get the app, and keeps those cards quiet (${compact ? 'phone' : 'wide'})`, async () => {
+    it(`says it once for the page, with one Get the app, and keeps those cards quiet (${compact ? 'phone' : 'wide'})`, async () => {
       const onHandoff = vi.fn();
       const screen = await renderSections(compact, onHandoff);
-      expect(screen.findByTestId('p.cloud.handoff')).toBeTruthy();
+      expect(screen.findByTestId('p.handoff')).toBeTruthy();
+      expect(screen.findByTestId('p.cloud.handoff')).toBeFalsy();
+      expect(screen.findByTestId('p.cloud-sandboxes.handoff')).toBeFalsy();
       // Only the card with its own next step keeps a button or status of its own.
       expect(screen.findByTestId('p.cloud.hetzner.action')).toBeFalsy();
-      expect(screen.findByTestId('p.cloud.vercel.action')).toBeFalsy();
+      expect(screen.findByTestId('p.cloud-sandboxes.vercel.action')).toBeFalsy();
       if (!compact)
         expect(screen.findByTestId('p.cloud.crabbox.action')).toBeTruthy();
       type Node = { children: ReadonlyArray<Node | string> };
@@ -84,7 +87,7 @@ describe('MachineProvisionerSections when the browser cannot reach a provider (R
       const page = textOf(screen.tree.root as unknown as Node);
       expect(page.split('Needs the app').length - 1).toBe(1);
       expect(page).toContain('No account yet');
-      await act(async () => screen.pressByTestId('p.cloud.handoff.action'));
+      await act(async () => screen.pressByTestId('p.handoff.action'));
       expect(onHandoff).toHaveBeenCalledTimes(1);
       await screen.unmount();
     });

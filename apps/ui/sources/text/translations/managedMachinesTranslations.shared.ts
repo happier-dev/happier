@@ -170,6 +170,8 @@ export const managedMachinesEn = {
                 body: ({ provider }: { provider: string }) => `${provider} can’t be reached from a browser. The Happier app on your phone or computer creates it with your account.`,
                 cloudBody: "These services can’t be reached from a browser. The Happier app on your phone or computer creates them with your account.",
                 scan: "Scan with your phone to open this page in Happier.",
+                openInApp: "Open in Happier",
+                noAppYet: "No app yet? Get it free.",
             },
         },
         price: {
@@ -338,7 +340,7 @@ export const managedMachinesEn = {
             waiting: ({ controller }: { controller: string }) => `Waiting for ${controller}`,
             waitingDetail: ({ provider, controller, name }: { provider: string; controller: string; name: string }) => `Your ${provider} account is on ${controller}, which is offline. ${name} is created when it’s back.`,
             required: ({ controller }: { controller: string }) => `${controller} manages this machine and needs to be online.`,
-            requiredUnnamed: "The Machine that manages this Machine needs to be online.",
+            requiredUnnamed: "The machine that manages this one needs to be online.",
         },
         creation: {
             allow: "Allow creating machines",

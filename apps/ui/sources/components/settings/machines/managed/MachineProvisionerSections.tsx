@@ -63,11 +63,29 @@ export const MachineProvisionerSections = React.memo(
       : 'collapsed';
     const scopeFor = (cards: readonly ManagedProvisionerCard[] | 'collapsed') =>
       props.scope && cards === scoped ? props.scope : undefined;
+    // Every provider this browser cannot reach shares one state and one next step: the page says it once, above
+    // the first group holding one, with one Get the app; those cards stay quiet (each still opens the same hand-off).
+    const onHandoff = props.onHandoff;
+    const handoffGroup = onHandoff
+      ? [local, sandboxes, cloud].find((cards) => cards.some((card) => card.action.kind === 'handoff'))
+      : undefined;
     const group = (cards: readonly ManagedProvisionerCard[], key: 'local' | 'cloud-sandboxes' | 'cloud') => {
       if (cards.length === 0) return null;
       const scope = scopeFor(cards);
       return (
         <React.Fragment key={key}>
+          {cards === handoffGroup && onHandoff ? (
+            <ItemGroup surface="none">
+              <SurfaceStateCard
+                testID={`${props.testID}.handoff`}
+                kind="unavailable"
+                size="line"
+                title={t('managedMachines.add.status.needsApp')}
+                reason={t('managedMachines.add.handoff.cloudBody')}
+                action={{ label: t('managedMachines.add.action.getTheApp'), onPress: onHandoff, testID: `${props.testID}.handoff.action` }}
+              />
+            </ItemGroup>
+          ) : null}
           {scope?.placement === 'row' ? <ManagedScopeRow testID="managed-picker.scope" chip={scope.chip} /> : null}
           <ProvisionerGroup
             title={key === 'local' ? props.localTitle : t(key === 'cloud-sandboxes'
@@ -78,7 +96,7 @@ export const MachineProvisionerSections = React.memo(
             cards={cards}
             action={scope?.placement === 'header' ? scope.chip : undefined}
             compact={props.compact}
-            onHandoff={props.onHandoff}
+            quietHandoff={!!handoffGroup}
             testID={`${props.testID}.${key}`}
           />
         </React.Fragment>
@@ -204,30 +222,17 @@ function ProvisionerGroup(
     cards: readonly ManagedProvisionerCard[];
     action?: React.ReactNode;
     compact: boolean;
-    onHandoff?: () => void;
+    /** The page's one hand-off line speaks for this browser's unreachable providers; their cards stay quiet. */
+    quietHandoff: boolean;
     testID: string;
   }>,
 ) {
   const { theme } = useUnistyles();
-  // Every provider this browser cannot reach shares one state and one next step: the group says it once, with
-  // one Get the app, and those cards stay quiet (each still opens the same hand-off when pressed).
-  const handoffShared = !!props.onHandoff && props.cards.some((card) => card.action.kind === 'handoff');
-  const quiet = (card: ManagedProvisionerCard) => handoffShared && card.action.kind === 'handoff';
-  const handoffLine = handoffShared && props.onHandoff ? (
-    <SurfaceStateCard
-      testID={`${props.testID}.handoff`}
-      kind="unavailable"
-      size="line"
-      title={t('managedMachines.add.status.needsApp')}
-      reason={t('managedMachines.add.handoff.cloudBody')}
-      action={{ label: t('managedMachines.add.action.getTheApp'), onPress: props.onHandoff, testID: `${props.testID}.handoff.action` }}
-    />
-  ) : null;
+  const quiet = (card: ManagedProvisionerCard) => props.quietHandoff && card.action.kind === 'handoff';
   if (props.compact) {
     return (
       <ItemGroup title={props.title} description={props.description} action={props.action}
         actionLayout="adaptive">
-        {handoffLine}
         {props.cards.map((card) => (
           <React.Fragment key={card.id}>
           <Item
@@ -242,7 +247,7 @@ function ProvisionerGroup(
             icon={card.mark(MANAGED_PROVISIONER_MARK_SIZE.row)}
             onPress={card.action.disabled ? undefined : card.action.onPress}
           />
-          {card.repairFailure ? <ManagedProvisionerRepairFailureNotice failure={card.repairFailure}
+          {card.repairFailure && !quiet(card) ? <ManagedProvisionerRepairFailureNotice failure={card.repairFailure}
             testID={`${props.testID}.${card.id}.repairFailure`} /> : null}
           </React.Fragment>
         ))}
@@ -258,7 +263,6 @@ function ProvisionerGroup(
         actionLayout="adaptive"
       surface="none"
     >
-      {handoffLine}
       <SelectionTiles<string>
         variant="action"
         accessibilityLabel={props.title}

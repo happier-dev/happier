@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `無法從瀏覽器連線到 ${provider}。手機或電腦上的 Happier App 會用你的帳號建立它。`,
                 cloudBody: "無法從瀏覽器連線到這些服務。手機或電腦上的 Happier App 會用你的帳號建立它。",
                 scan: "用手機掃描，在 Happier 中開啟此頁面。",
+                openInApp: "在 Happier 中開啟",
+                noAppYet: "還沒有 App？可免費取得。",
             },
         },
         price: {

@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `${provider} にはブラウザから接続できません。スマートフォンまたはコンピュータの Happier アプリが、あなたのアカウントで作成します。`,
                 cloudBody: "これらのサービスにはブラウザから接続できません。スマートフォンまたはコンピュータの Happier アプリが、あなたのアカウントで作成します。",
                 scan: "スマートフォンでスキャンすると、このページが Happier で開きます。",
+                openInApp: "Happier で開く",
+                noAppYet: "まだアプリがない場合は無料で入手できます。",
             },
         },
         price: {

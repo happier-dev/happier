@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `${provider} недоступен из браузера. Приложение Happier на телефоне или компьютере создаст машину с вашей учётной записью.`,
                 cloudBody: "Эти сервисы недоступны из браузера. Приложение Happier на телефоне или компьютере создаст машину с вашей учётной записью.",
                 scan: "Отсканируйте телефоном, чтобы открыть эту страницу в Happier.",
+                openInApp: "Открыть в Happier",
+                noAppYet: "Ещё нет приложения? Оно бесплатное.",
             },
         },
         price: {

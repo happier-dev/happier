@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `${provider} ist aus dem Browser nicht erreichbar. Die Happier-App auf deinem Handy oder Computer erstellt ihn mit deinem Konto.`,
                 cloudBody: "Diese Dienste sind aus dem Browser nicht erreichbar. Die Happier-App auf deinem Handy oder Computer erstellt die Maschine mit deinem Konto.",
                 scan: "Scanne mit dem Handy, um diese Seite in Happier zu öffnen.",
+                openInApp: "In Happier öffnen",
+                noAppYet: "Noch keine App? Sie ist kostenlos.",
             },
         },
         price: {

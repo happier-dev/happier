@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `${provider} não pode ser acessado de um navegador. O app Happier no seu celular ou computador cria a máquina com a sua conta.`,
                 cloudBody: "Esses serviços não podem ser acessados de um navegador. O app Happier no seu celular ou computador cria a máquina com a sua conta.",
                 scan: "Escaneie com o celular para abrir esta página no Happier.",
+                openInApp: "Abrir no Happier",
+                noAppYet: "Ainda não tem o app? É grátis.",
             },
         },
         price: {

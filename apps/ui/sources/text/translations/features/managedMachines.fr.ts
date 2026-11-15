@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `${provider} n’est pas joignable depuis un navigateur. L’app Happier sur ton téléphone ou ton ordinateur la crée avec ton compte.`,
                 cloudBody: "Ces services ne sont pas joignables depuis un navigateur. L’app Happier sur ton téléphone ou ton ordinateur crée la machine avec ton compte.",
                 scan: "Scanne avec ton téléphone pour ouvrir cette page dans Happier.",
+                openInApp: "Ouvrir dans Happier",
+                noAppYet: "Pas encore l’app ? Elle est gratuite.",
             },
         },
         price: {

@@ -164,6 +164,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 body: ({ provider }: { provider: string }) => `无法从浏览器访问 ${provider}。手机或电脑上的 Happier 应用会用你的账号创建它。`,
                 cloudBody: "无法从浏览器访问这些服务。手机或电脑上的 Happier 应用会用你的账号创建它。",
                 scan: "用手机扫描，在 Happier 中打开此页面。",
+                openInApp: "在 Happier 中打开",
+                noAppYet: "还没有应用？可免费获取。",
             },
         },
         price: {
