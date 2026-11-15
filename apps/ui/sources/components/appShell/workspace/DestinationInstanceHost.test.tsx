@@ -396,6 +396,31 @@ describe('DestinationInstanceHost', () => {
         ]);
     });
 
+    it('keeps param, path and navigation readers still while their retained tab is hidden and shown again', async () => {
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
+        // Every hosted page reads its params; a tab switch flips only focus and visibility, which they do not read.
+        let renders = 0;
+        function ParamsReader() {
+            useDestinationParams();
+            useDestinationPathname();
+            useNavigation();
+            renders += 1;
+            return null;
+        }
+        const body = <ParamsReader />;
+        const target = { kind: 'session', params: { id: 'A', serverId: 'home-a' } } as const;
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const host = (shown: boolean) => <InjectedAuthProvider credentials={null}>
+            <DestinationInstanceHost tabId="tab-a" ref={target} pathname="/session/A" focused={shown} visible={shown}
+                navigation={navigation}>{body}</DestinationInstanceHost>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(host(true));
+        await screen.update(host(false));
+        await screen.update(host(true));
+        expect(renders).toBe(1);
+    });
+
     it('sends each hosted page action through its own tab navigation owner', async () => {
         const opened: string[] = [];
         const screen = await renderScreen(React.createElement(React.Fragment, null,

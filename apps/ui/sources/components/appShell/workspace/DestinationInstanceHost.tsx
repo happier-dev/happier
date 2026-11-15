@@ -292,11 +292,16 @@ export function useDestinationScreenOptions(options: NativeStackNavigationOption
     }, [options, setOptions]);
 }
 
+const selectDestinationParams = (instance: DestinationInstanceContextValue | null) => instance ? instance.ref.params : null;
+const selectDestinationPathname = (instance: DestinationInstanceContextValue | null) => instance ? instance.pathname : null;
+const sameValue = <T,>(left: T, right: T) => Object.is(left, right);
+
+/** A hosted body's params: a focus or visibility flip of its tab (a tab switch) does not render this reader. */
 export function useDestinationParams<T extends Record<string, string | string[] | undefined>>(): T {
-    const instance = useDestinationInstance();
+    const params = useDestinationInstance(selectDestinationParams, sameValue);
     // A mounted body never moves between the Expo and workspace owners.
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    return (instance ? instance.ref.params : useLocalSearchParams()) as T;
+    return (params ?? useLocalSearchParams()) as T;
 }
 
 /** A hosted reader follows only its selected params; the Expo owner keeps its existing fallback. */
@@ -311,11 +316,11 @@ export function useDestinationParamsSelector<T>(selector: (params: Readonly<Reco
 }
 
 export function useDestinationGlobalParams<T extends Record<string, string | string[] | undefined>>(): T {
-    const instance = useDestinationInstance();
+    const hostedParams = useDestinationInstance(selectDestinationParams, sameValue);
     const focused = useWorkspaceFocusedRoute();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    const params = instance ? null : useGlobalSearchParams();
-    if (instance) return instance.ref.params as T;
+    const params = hostedParams ? null : useGlobalSearchParams();
+    if (hostedParams) return hostedParams as T;
     if (focused) return focused.target.params as T;
     return params as T;
 }
@@ -341,11 +346,11 @@ export function useDestinationGlobalParamsSelector<T>(select: (params: Destinati
 const NO_FOCUSED_SELECTION: unique symbol = Symbol('no focused route');
 
 export function useDestinationPathname(): string {
-    const instance = useDestinationInstance();
+    const hostedPathname = useDestinationInstance(selectDestinationPathname, sameValue);
     const focused = useWorkspaceFocusedPathname();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    const pathname = instance || focused !== null ? null : usePathname();
-    if (instance) return instance.pathname;
+    const pathname = hostedPathname !== null || focused !== null ? null : usePathname();
+    if (hostedPathname !== null) return hostedPathname;
     // The shell column follows the same tab owner as its body. Expo mirrors that route after
     // navigation and must not retain a previous tab's selection in the meantime.
     if (focused !== null) return focused;

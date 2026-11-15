@@ -115,9 +115,13 @@ export function useDestinationInstanceKey(): string | null {
     return useDestinationInstanceIdentity()?.tabId ?? null;
 }
 
+const selectNavigationFacts = (value: DestinationInstanceContextValue | null) => value
+    ? { navigation: value.navigation, isFocused: value.isFocused } : null;
+
 /** The retained host owns its chrome options; Back still belongs to the same tab owner. */
 export function useDestinationNavigation() {
-    const instance = useDestinationInstance();
+    // Navigation and its focus query keep their identity across a tab switch, so a switch does not render this reader.
+    const instance = useDestinationInstance(selectNavigationFacts);
     const nativeNavigation = React.useContext(NavigationContext);
     const setOptions = React.useContext(DestinationHeaderOptionsContext);
     return React.useMemo(() => instance ? {
