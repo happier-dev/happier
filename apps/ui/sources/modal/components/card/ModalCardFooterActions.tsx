@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { HappierModalCardFooterActions } from '@happier-dev/plugin-ui/presentation';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
@@ -19,11 +21,21 @@ export function ModalCardFooterActions(props: Readonly<{
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const phoneSheet = useSheetDismiss() !== null;
+  const phone = useDeviceType() === 'phone';
+  const noteAction = props.noteAction ? <TextLinkButton testID={props.noteAction.testID} size="meta" label={props.noteAction.label}
+    onPress={props.noteAction.onPress} /> : null;
+  // A phone's footer is too narrow for the way out beside two actions (QA 320): it takes its own line above them.
+  if (noteAction && phone) return <View style={{ gap: theme.space.s12 }}>
+    {noteAction}
+    <HappierModalCardFooterActions phoneSheet={phoneSheet} gap={theme.space.s8}
+      cancel={props.cancel ? <RoundButton {...props.cancel} display="inverted" title={props.cancel.title ?? t('common.cancel')} /> : null}>
+      {props.children}
+    </HappierModalCardFooterActions>
+  </View>;
   return <HappierModalCardFooterActions phoneSheet={phoneSheet} gap={theme.space.s8}
     cancel={props.cancel ? <RoundButton {...props.cancel} display="inverted" title={props.cancel.title ?? t('common.cancel')} /> : null}
-    note={props.noteAction ? <TextLinkButton testID={props.noteAction.testID} size="meta" label={props.noteAction.label}
-      onPress={props.noteAction.onPress} /> : props.note ? <Text testID={props.noteTestID} variant="meta" numberOfLines={2}
-      style={{ color: theme.colors.text.secondary }}>{props.note}</Text> : null}>
+    note={noteAction ?? (props.note ? <Text testID={props.noteTestID} variant="meta" numberOfLines={2}
+      style={{ color: theme.colors.text.secondary }}>{props.note}</Text> : null)}>
     {props.children}
   </HappierModalCardFooterActions>;
 }

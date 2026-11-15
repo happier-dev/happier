@@ -6213,6 +6213,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     errors: {
         networkError: '發生網路錯誤',
+        machineNotAnswering: '那台機器沒有回應。請選擇在線的機器，或等它恢復後再試。',
         serverError: '發生Home錯誤',
         unknownError: '發生未知錯誤',
         connectionTimeout: '連線逾時',

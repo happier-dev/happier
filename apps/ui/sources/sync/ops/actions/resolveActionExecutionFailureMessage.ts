@@ -1,3 +1,4 @@
+import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
@@ -206,6 +207,13 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'credential_unavailable') return t('session.startFailure.cause.credential_unavailable');
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
+    // The Home refused the target Machine as offline (its admission's typed availability diagnostic, carried as the
+    // HTTP refusal body or as the diagnostic itself): say so instead of a bare "Request failed."
+    if (code === 'target_unavailable') {
+        const details = asRecord(record.details);
+        const availability = MachineAvailabilityDiagnosticV1Schema.safeParse(details?.diagnostic ?? details).data;
+        if (availability?.reason === 'machine_offline') return t('errors.machineNotAnswering');
+    }
     // An error text that only repeats its code ("target_unavailable") is not a sentence: the caller's fallback speaks.
     const error = typeof record.error === 'string' ? record.error.trim() : '';
     if (error.length > 0 && error !== code) return error;

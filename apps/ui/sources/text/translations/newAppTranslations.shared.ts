@@ -21,6 +21,7 @@ type Copy = Readonly<{
   askAgent: string;
   askAgentPrompt: string;
   codeSearchPlaceholder: string;
+  codeSearchPlaceholderShort: string;
   pastedSubtitle: (p: Readonly<{ provider: string }>) => string;
   codeNoMatch: string;
   hasDockerfile: string;
@@ -112,6 +113,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Or ask an agent to set it up',
     askAgentPrompt: 'Help me deploy an app with Happier. Ask me what it is and where its code lives, then get it ready and walk me through deploying it.',
     codeSearchPlaceholder: 'Search the catalog, or paste a GitHub or GitLab link',
+    codeSearchPlaceholderShort: 'Search, or paste a repository link',
     pastedSubtitle: ({ provider }) => `${provider} · opens as a Project first`,
     codeNoMatch: 'No repository here by that name. Paste its link to open it.',
     hasDockerfile: 'has a Dockerfile',
@@ -191,6 +193,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'O demana a un agent que ho configuri',
     askAgentPrompt: 'Ajuda’m a desplegar una app amb Happier. Pregunta’m què és i on és el codi, prepara-la i guia’m en el desplegament.',
     codeSearchPlaceholder: 'Cerca al catàleg o enganxa un enllaç de GitHub o GitLab',
+    codeSearchPlaceholderShort: 'Cerca o enganxa un enllaç de repositori',
     pastedSubtitle: ({ provider }) => `${provider} · primer s’obre com a projecte`,
     codeNoMatch: 'Cap repositori amb aquest nom. Enganxa’n l’enllaç per obrir-lo.',
     hasDockerfile: 'té un Dockerfile',
@@ -270,6 +273,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Oder einen Agenten einrichten lassen',
     askAgentPrompt: 'Hilf mir, eine App mit Happier bereitzustellen. Frag mich, was sie ist und wo ihr Code liegt, bereite sie vor und führe mich durch das Deployment.',
     codeSearchPlaceholder: 'Katalog durchsuchen oder GitHub-/GitLab-Link einfügen',
+    codeSearchPlaceholderShort: 'Suchen oder Repository-Link einfügen',
     pastedSubtitle: ({ provider }) => `${provider} · wird zuerst als Projekt geöffnet`,
     codeNoMatch: 'Kein Repository mit diesem Namen. Füge seinen Link ein, um es zu öffnen.',
     hasDockerfile: 'hat ein Dockerfile',
@@ -349,6 +353,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'O pide a un agente que lo configure',
     askAgentPrompt: 'Ayúdame a desplegar una app con Happier. Pregúntame qué es y dónde está su código, prepárala y guíame en el despliegue.',
     codeSearchPlaceholder: 'Busca en el catálogo o pega un enlace de GitHub o GitLab',
+    codeSearchPlaceholderShort: 'Busca o pega un enlace de repositorio',
     pastedSubtitle: ({ provider }) => `${provider} · primero se abre como proyecto`,
     codeNoMatch: 'Ningún repositorio con ese nombre. Pega su enlace para abrirlo.',
     hasDockerfile: 'tiene un Dockerfile',
@@ -428,6 +433,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Ou demandez à un agent de s’en charger',
     askAgentPrompt: 'Aide-moi à déployer une app avec Happier. Demande-moi ce qu’elle est et où se trouve son code, prépare-la et guide-moi pour le déploiement.',
     codeSearchPlaceholder: 'Cherchez dans le catalogue ou collez un lien GitHub ou GitLab',
+    codeSearchPlaceholderShort: 'Cherchez ou collez un lien de dépôt',
     pastedSubtitle: ({ provider }) => `${provider} · s’ouvre d’abord comme projet`,
     codeNoMatch: 'Aucun dépôt de ce nom ici. Collez son lien pour l’ouvrir.',
     hasDockerfile: 'a un Dockerfile',
@@ -507,6 +513,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Oppure chiedi a un agente di configurarla',
     askAgentPrompt: 'Aiutami a distribuire un’app con Happier. Chiedimi cos’è e dove si trova il codice, preparala e guidami nel deploy.',
     codeSearchPlaceholder: 'Cerca nel catalogo o incolla un link GitHub o GitLab',
+    codeSearchPlaceholderShort: 'Cerca o incolla un link al repository',
     pastedSubtitle: ({ provider }) => `${provider} · si apre prima come progetto`,
     codeNoMatch: 'Nessun repository con questo nome. Incolla il suo link per aprirlo.',
     hasDockerfile: 'ha un Dockerfile',
@@ -586,6 +593,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'またはエージェントに任せる',
     askAgentPrompt: 'Happier でアプリをデプロイするのを手伝ってください。どんなアプリでコードがどこにあるかを聞いて、準備し、デプロイまで案内してください。',
     codeSearchPlaceholder: 'カタログを検索、または GitHub / GitLab のリンク',
+    codeSearchPlaceholderShort: '検索、またはリポジトリのリンク',
     pastedSubtitle: ({ provider }) => `${provider} · まずプロジェクトとして開きます`,
     codeNoMatch: 'その名前のリポジトリはありません。リンクを貼り付けて開いてください。',
     hasDockerfile: 'Dockerfile あり',
@@ -665,6 +673,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Albo poproś agenta o konfigurację',
     askAgentPrompt: 'Pomóż mi wdrożyć aplikację w Happier. Zapytaj, czym jest i gdzie jest jej kod, przygotuj ją i przeprowadź mnie przez wdrożenie.',
     codeSearchPlaceholder: 'Szukaj w katalogu lub wklej link GitHub albo GitLab',
+    codeSearchPlaceholderShort: 'Szukaj lub wklej link do repozytorium',
     pastedSubtitle: ({ provider }) => `${provider} · najpierw otworzy się jako projekt`,
     codeNoMatch: 'Brak repozytorium o tej nazwie. Wklej jego link, aby je otworzyć.',
     hasDockerfile: 'ma Dockerfile',
@@ -744,6 +753,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Ou peça a um agente para configurar',
     askAgentPrompt: 'Ajude-me a implantar um app com o Happier. Pergunte o que ele é e onde está o código, prepare-o e me guie na implantação.',
     codeSearchPlaceholder: 'Pesquise no catálogo ou cole um link do GitHub ou GitLab',
+    codeSearchPlaceholderShort: 'Pesquise ou cole um link de repositório',
     pastedSubtitle: ({ provider }) => `${provider} · abre primeiro como projeto`,
     codeNoMatch: 'Nenhum repositório com esse nome. Cole o link para abri-lo.',
     hasDockerfile: 'tem um Dockerfile',
@@ -823,6 +833,7 @@ export const newAppTranslations: Readonly<
     askAgent: 'Или поручите это агенту',
     askAgentPrompt: 'Помоги развернуть приложение в Happier. Спроси, что это за приложение и где его код, подготовь его и проведи меня через развёртывание.',
     codeSearchPlaceholder: 'Поиск в каталоге или ссылка GitHub / GitLab',
+    codeSearchPlaceholderShort: 'Поиск или ссылка на репозиторий',
     pastedSubtitle: ({ provider }) => `${provider} · сначала откроется как проект`,
     codeNoMatch: 'Репозитория с таким именем нет. Вставьте ссылку, чтобы открыть его.',
     hasDockerfile: 'есть Dockerfile',
@@ -902,6 +913,7 @@ export const newAppTranslations: Readonly<
     askAgent: '或者让代理来设置',
     askAgentPrompt: '帮我用 Happier 部署一个应用。先问我它是什么、代码在哪里，然后把它准备好，并带我完成部署。',
     codeSearchPlaceholder: '搜索目录，或粘贴 GitHub / GitLab 链接',
+    codeSearchPlaceholderShort: '搜索，或粘贴仓库链接',
     pastedSubtitle: ({ provider }) => `${provider} · 先作为项目打开`,
     codeNoMatch: '这里没有这个名字的仓库。粘贴它的链接来打开。',
     hasDockerfile: '有 Dockerfile',
@@ -977,6 +989,7 @@ export const newAppTranslations: Readonly<
     askAgent: '或者讓代理程式來設定',
     askAgentPrompt: '幫我用 Happier 部署一個應用程式。先問我它是什麼、程式碼在哪裡，然後把它準備好，並帶我完成部署。',
     codeSearchPlaceholder: '搜尋目錄，或貼上 GitHub / GitLab 連結',
+    codeSearchPlaceholderShort: '搜尋，或貼上儲存庫連結',
     pastedSubtitle: ({ provider }) => `${provider} · 先以專案開啟`,
     codeNoMatch: '這裡沒有這個名稱的儲存庫。貼上它的連結來開啟。',
     hasDockerfile: '有 Dockerfile',

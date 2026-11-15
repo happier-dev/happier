@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistryItems } from '@/registries/useRegistryItems';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -142,6 +143,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const { theme } = useUnistyles();
   const router = useRouter();
   const phone = useDeviceType() === 'phone';
+  // The page's sections stand on PageFrame's reading column; the pinned bar's contents take the same one.
+  const pageMaxWidth = useLayoutMaxWidth('reading');
   const dialog = props.setChrome !== undefined;
   const scope = useActiveServerAccountScope();
   const knownMachines = useActiveMachineFacts();
@@ -635,8 +638,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               <SelectionTiles
                 density="compact"
                 testIdPrefix="newApp.starter"
-                maximumColumns={3}
-                subtitleLines={2}
+                maximumColumns={phone ? 1 : 3}
+                // A starter's one-sentence description reads whole, like a catalog listing's first clause.
+                subtitleLines={4}
                 accessibilityLabel={t('newApp.startNew')}
                 value={starterId}
                 onChange={chooseStarter}
@@ -654,7 +658,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               <View style={dialog ? styles.dialogInset : null}>
                 <SelectionTiles
                   density="compact"
-                  maximumColumns={2}
+                  maximumColumns={phone ? 1 : 2}
                   subtitleLines={2}
                   accessibilityLabel={t('newApp.alreadyBuilt')}
                   value={door}
@@ -674,8 +678,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 <View style={dialog ? styles.dialogInset : null}>
                   <SelectionTiles
                     density="compact"
-                    maximumColumns={3}
-                    subtitleLines={3}
+                    maximumColumns={phone ? 1 : 3}
+                    // A listing's first clause fits whole (the longest seen, ~95 characters, takes four lines).
+                    subtitleLines={4}
                     accessibilityLabel={t('newApp.fromCatalog')}
                     value={door}
                     onChange={chooseDoor}
@@ -977,7 +982,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       </ItemList>
       {dialog || !primary ? null : (
         <KeyboardStickyFooter>
-          <PagePinnedBar style={styles.phoneFooter}>
+          {/* On a wide page the bar's contents stand on the page's content column (QA #35), not across the pane. */}
+          <PagePinnedBar style={phone ? styles.phoneFooter : [styles.wideFooter, { maxWidth: pageMaxWidth }]}>
             {step === 'start' && !addingMachine ? (
               <TextLinkButton testID="newApp.askAgent" size="meta" label={t('newApp.askAgent')} onPress={askAgent} />
             ) : footerNote ? (
@@ -1033,4 +1039,6 @@ const styles = StyleSheet.create((theme) => ({
   dialogInset: { paddingHorizontal: theme.space.s16 },
 
   phoneFooter: { gap: theme.space.s8 },
+  wideFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12,
+    width: '100%', marginHorizontal: 'auto' },
 }));

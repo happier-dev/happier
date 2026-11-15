@@ -124,7 +124,8 @@ export function NewAppCodeSources(
           onSubmitEditing={() => {
             if (query.trim()) void address.resolve(query.trim());
           }}
-          placeholder={t('newApp.codeSearchPlaceholder')}
+          // The lab's sentence on wide; a phone's field holds the short one whole (QA #34, 320).
+          placeholder={t(props.columns === 1 ? 'newApp.codeSearchPlaceholderShort' : 'newApp.codeSearchPlaceholder')}
         />
         {refusal ? (
           <SurfaceStateCard testID="newApp.code.address.refusal" size="line" kind="unavailable" title={refusal} />

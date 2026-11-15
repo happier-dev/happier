@@ -11,6 +11,17 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('says the Machine is not answering when the Home refuses its target as offline (Deploy draft, QA #27b)', () => {
+        const fallback = t('common.requestFailed');
+        // The Home's action route answers 409 with the Machine admission's typed availability diagnostic.
+        const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        const refused = (details: unknown) => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details });
+        expect(resolveActionExecutionFailureMessage(refused({ error: 'invalid_request', code: 'target_unavailable', diagnostic }), fallback))
+            .toBe(t('errors.machineNotAnswering'));
+        expect(resolveActionExecutionFailureMessage(refused(diagnostic), fallback)).toBe(t('errors.machineNotAnswering'));
+        // Other target refusals keep the caller's sentence rather than guessing at a cause.
+        expect(resolveActionExecutionFailureMessage(refused({ diagnostic: { reason: 'session_absent' } }), fallback)).toBe(fallback);
+    });
     it('retains a child Session refusal through returned and thrown parent Action failures', () => {
         const child = SessionSpawnNewActionResultV1Schema.parse({ type: 'error', code: 'agent_signed_out',
             retryable: false, agentId: 'claude', launchError: { kind: 'launch_error', code: 'agent_signed_out',
