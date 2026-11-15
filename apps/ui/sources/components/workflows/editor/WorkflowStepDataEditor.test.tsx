@@ -205,6 +205,9 @@ describe('WorkflowStepDataEditor field selects', () => {
         const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [producer, step] });
         const screen = await renderEditor(draft, step);
         expect(fieldSelect(screen.root, 'editor-step-step-a-input-0-value').props.selectedId).not.toBeNull();
+        // The selected step's binding says what it is, in the footer's word for it at rest (QA-DESIGN R3).
+        expect(screen.findByTestId('editor-step-step-a-input-0-row')?.findAll((node) => typeof node.type === 'string'
+            && node.props.children === 'workflows.page.blocks.uses')).toHaveLength(1);
         for (const old of ['kind', 'producer', 'input-name', 'workspace-field', 'item-field', 'iteration-field']) {
             expect(screen.findByTestId(`editor-step-step-a-input-0-${old}`)).toBeNull();
         }

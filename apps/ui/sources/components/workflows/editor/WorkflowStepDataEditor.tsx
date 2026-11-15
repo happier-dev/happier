@@ -157,7 +157,6 @@ export function WorkflowBindingRow(props: Readonly<{
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const { binding } = props;
-    const track = React.useContext(WorkflowKindCardLabelTrack);
     const editing = props.editable && props.editing !== false;
     // "+ Set" unmounts the control that had focus; its value editor takes it, so focus never drops
     // to the page body (DESIGN-9 N5). Web only: native focus has no body to fall to.
@@ -219,29 +218,22 @@ export function WorkflowBindingRow(props: Readonly<{
         );
     }
     const pair = (
-        <>
-            <View
-                style={[workflowEditorStyles.actionFieldLabelColumn, track?.width == null ? null : { width: track.width }]}
-                onLayout={track === null || track.width !== null ? undefined
-                    : (event) => track.report(props.testID, event.nativeEvent.layout.width)}
-            >
-                <Text style={workflowEditorStyles.actionFieldLabel}>{props.label}</Text>
-                {props.required === true && (binding === undefined || (binding.kind === 'literal' && isBlankWorkflowLiteral(binding.value))) ? (
-                    <Text testID={`${props.testID}-required`} style={workflowEditorStyles.actionFieldMarker}>{t('workflows.page.blocks.required')}</Text>
-                ) : null}
-            </View>
-            <View ref={valueRef} style={workflowEditorStyles.actionFieldValue}>
-                {/* The value track owns its width: a field box in it spans the track, the room this row gives it,
-                    rather than holding a page field's inline minimum past a narrow card's edge. */}
-                <HappierPageRowFieldLayoutContext.Provider value={VALUE_TRACK_FIELD_LAYOUT}>{value}</HappierPageRowFieldLayoutContext.Provider>
-                {/* How a field binds is help for the one changing it: it shows under the value while the
-                    step is selected, never as a paragraph in the label column of a resting card. */}
-                {props.note === undefined || !editing ? null
-                    : <Text testID={`${props.testID}-note`} style={workflowEditorStyles.kindCardNote}>{props.note}</Text>}
-                {props.issue === undefined || props.issue === null ? null
-                    : <Text testID={`${props.testID}-issue`} style={workflowEditorStyles.issueText}>{props.issue}</Text>}
-            </View>
-        </>
+        <WorkflowFieldPair
+            label={props.label}
+            trackKey={props.testID}
+            valueRef={valueRef}
+            marker={props.required === true && (binding === undefined || (binding.kind === 'literal' && isBlankWorkflowLiteral(binding.value))) ? (
+                <Text testID={`${props.testID}-required`} style={workflowEditorStyles.actionFieldMarker}>{t('workflows.page.blocks.required')}</Text>
+            ) : null}
+        >
+            {value}
+            {/* How a field binds is help for the one changing it: it shows under the value while the
+                step is selected, never as a paragraph in the label column of a resting card. */}
+            {props.note === undefined || !editing ? null
+                : <Text testID={`${props.testID}-note`} style={workflowEditorStyles.kindCardNote}>{props.note}</Text>}
+            {props.issue === undefined || props.issue === null ? null
+                : <Text testID={`${props.testID}-issue`} style={workflowEditorStyles.issueText}>{props.issue}</Text>}
+        </WorkflowFieldPair>
     );
     return (
         <View testID={props.testID}>
@@ -259,6 +251,39 @@ export function WorkflowBindingRow(props: Readonly<{
 }
 
 const VALUE_TRACK_FIELD_LAYOUT = Object.freeze({ maxWidthPx: null, stacked: true });
+
+/**
+ * A typed row's label column and value track (lab `.uwe-kr`): the label says what the value is, on the
+ * card's one label track, and the value starts where every other value on the card starts.
+ */
+function WorkflowFieldPair(props: Readonly<{
+    /** Empty on a field's further values: they keep the label column, so they line up under the first. */
+    label: string;
+    /** Identifies the row on the card's label track. */
+    trackKey: string;
+    marker?: React.ReactNode;
+    valueRef?: React.Ref<View>;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const track = React.useContext(WorkflowKindCardLabelTrack);
+    return (
+        <>
+            <View
+                style={[workflowEditorStyles.actionFieldLabelColumn, track?.width == null ? null : { width: track.width }]}
+                onLayout={track === null || track.width !== null ? undefined
+                    : (event) => track.report(props.trackKey, event.nativeEvent.layout.width)}
+            >
+                <Text style={workflowEditorStyles.actionFieldLabel}>{props.label}</Text>
+                {props.marker ?? null}
+            </View>
+            <View ref={props.valueRef} style={workflowEditorStyles.actionFieldValue}>
+                {/* The value track owns its width: a field box in it spans the track, the room this row gives it,
+                    rather than holding a page field's inline minimum past a narrow card's edge. */}
+                <HappierPageRowFieldLayoutContext.Provider value={VALUE_TRACK_FIELD_LAYOUT}>{props.children}</HappierPageRowFieldLayoutContext.Provider>
+            </View>
+        </>
+    );
+}
 
 /** A literal with nothing in it (`""`, spaces): what a pressed "+ Set" leaves before a value is typed. */
 function isBlankWorkflowLiteral(value: JsonValue): boolean {
@@ -479,22 +504,27 @@ export function WorkflowStepDataEditor(props: Readonly<{
     ));
     return (
         <View>
+            {/* Selected, the inputs are a labelled field: "Uses" (the footer's word for them at rest), then one
+                binding per value, each on the value track under the first. */}
             {!editing ? null : props.step.input.map((reference, index) => (
-                <WorkflowValueReferenceEditor
-                    key={index}
-                    reference={reference}
-                    index={index}
-                    draft={props.draft}
-                    stepId={props.step.id}
-                    onChange={(value) => props.onChangeInput(props.step.input.map((current, candidate) => (
-                        candidate === index ? value : current
-                    )))}
-                    onRemove={props.onRemoveInput ? () => props.onRemoveInput?.(index) : undefined}
-                    // Rows are addressed by their step, exactly as the loop editors
-                    // address theirs; the bare editor prefix gave every step's first
-                    // input the same identity.
-                    testIDPrefix={id}
-                />
+                <View key={index} testID={`${id}-input-${index}-row`} style={workflowEditorStyles.actionFieldRow}>
+                    <WorkflowFieldPair label={index === 0 ? t('workflows.page.blocks.uses') : ''} trackKey={`${id}-input-${index}`}>
+                        <WorkflowValueReferenceEditor
+                            reference={reference}
+                            index={index}
+                            draft={props.draft}
+                            stepId={props.step.id}
+                            onChange={(value) => props.onChangeInput(props.step.input.map((current, candidate) => (
+                                candidate === index ? value : current
+                            )))}
+                            onRemove={props.onRemoveInput ? () => props.onRemoveInput?.(index) : undefined}
+                            // Rows are addressed by their step, exactly as the loop editors
+                            // address theirs; the bare editor prefix gave every step's first
+                            // input the same identity.
+                            testIDPrefix={id}
+                        />
+                    </WorkflowFieldPair>
+                </View>
             ))}
             {/* One footer line (07 S7): what the step returns. A reading document has no binding
                 controls, so the step's inputs sit on that line as tokens. */}

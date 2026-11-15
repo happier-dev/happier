@@ -19,6 +19,11 @@ export type SurfaceFreshnessAction = SurfaceStateAction & Readonly<{ emphasis?: 
 
 const SurfaceFreshnessOnSheetContext = React.createContext(false);
 
+/** Whether this subtree's host already sits on a sheet; a retained body carries its shell's answer. */
+export function useSurfaceFreshnessOnSheet(): boolean {
+    return React.useContext(SurfaceFreshnessOnSheetContext);
+}
+
 /**
  * Hosts whose body already sits on a sheet or card (a widget body, a popover, a dialog) render the line plain
  * on it. `onSheet={false}` keeps the strip (a fullscreen page) without changing the host's tree shape.

@@ -1201,6 +1201,52 @@ function renderedOrder(
 }
 
 describe('workflow editor body', () => {
+    it('preserves an unsubmitted settings operation across a viewport breakpoint (E09)', async () => {
+        const harness = await loadHarness();
+        const { TextInput } = await import('react-native');
+        function PendingSourceInput() {
+            const [value, setValue] = React.useState('');
+            return <TextInput testID="e09-unsubmitted-source" value={value} onChangeText={setValue} />;
+        }
+        const screen = await renderBody(harness, { onSave: () => {}, triggersSummary: 'Manual',
+            triggersSection: <PendingSourceInput />,
+            draft: { ...buildDraft(harness), inputs: [{ name: 'retries', valueType: 'number', required: false }] } });
+        const source = () => screen.findByTestId('e09-unsubmitted-source')?.props.value;
+        // A real descendant's unsubmitted text: an input default that does not parse yet stays the field's own.
+        const pendingDefault = () => screen.findByTestId('workflow-editor-input-0-default')?.props.value;
+        const resize = async (wide: boolean) => {
+            paneState.detailsAvailable = wide;
+            viewport.window = wide ? { width: 1440, height: 1000 } : { width: 390, height: 844 };
+            await act(async () => { getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, uiMultiPanePanelsEnabled: wide } }); });
+        };
+        const settingsPane = () => screen.findByType(AppPaneScopeHost).props.destinationDetails;
+        await screen.pressByTestIdAsync('workflow-editor-triggers-chip');
+        await act(async () => {
+            screen.findByTestId('e09-unsubmitted-source')!.props.onChangeText('unsubmitted-environment');
+            screen.findByTestId('workflow-editor-input-0-default')!.props.onChangeText('three');
+        });
+        expect(source()).toBe('unsubmitted-environment');
+        expect(pendingDefault()).toBe('three');
+
+        // The phone presents the same mounted inspector in its dialog, and a wide window docks it again.
+        await resize(false);
+        expect(settingsPane()).toBeNull();
+        expect(screen.visibleModals()).toHaveLength(1);
+        expect(source()).toBe('unsubmitted-environment');
+        expect(pendingDefault()).toBe('three');
+        await resize(true);
+        expect(screen.visibleModals()).toEqual([]);
+        expect(settingsPane()?.pane.props.testID).toBe('workflow-editor-settings-pane');
+        expect(source()).toBe('unsubmitted-environment');
+        expect(pendingDefault()).toBe('three');
+
+        // Closing Workflow settings still retires what it held.
+        await act(async () => { settingsPane()?.onClose(); });
+        await screen.pressByTestIdAsync('workflow-editor-triggers-chip');
+        expect(source()).toBe('');
+        expect(pendingDefault()).toBe('');
+        await screen.unmount();
+    });
     it('keeps the authoring Session in the one details companion and retires its hidden renderer', async () => {
         const harness = await loadHarness();
         const screen = await renderBody(harness, { authoringSessionId: 'author-session', authoringServerId: 'server-a',

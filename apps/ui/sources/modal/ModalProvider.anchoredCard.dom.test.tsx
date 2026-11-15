@@ -232,6 +232,65 @@ it.each(['resize', 'late-anchor'] as const)('keeps modal-local form state when i
     }
 });
 
+it('keeps a page-owned body in the newest shell while the outgoing shell is still leaving (E09)', async () => {
+    const { useRetainedPlacement } = await import('./components/RetainedModalFrame');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let mounts = 0;
+    function Draft() {
+        const [draft, setDraft] = React.useState('');
+        React.useEffect(() => { mounts += 1; }, []);
+        return <input data-testid="page-draft" value={draft} onInput={event => setDraft(event.currentTarget.value)} />;
+    }
+    function Dialog(props: Readonly<{ body: React.ReactElement }> & import('./types').CustomModalInjectedProps) {
+        return props.body;
+    }
+    const renderDraft = () => <Draft />;
+    // The page's shape: its pane column and its phone dialog each present the one body it renders.
+    function Page(props: Readonly<{ docked: boolean; paneMounted: boolean }>) {
+        const retained = useRetainedPlacement<null>(renderDraft);
+        const slot = React.useMemo(() => retained.mount(null), [retained.mount]);
+        const dialog = React.useRef<string | null>(null);
+        React.useEffect(() => {
+            if (props.docked) {
+                if (dialog.current !== null) Modal.hide(dialog.current);
+                dialog.current = null;
+                return;
+            }
+            dialog.current ??= Modal.show({ component: Dialog, props: { body: slot }, chrome: { kind: 'card', title: 'Settings' } });
+        }, [props.docked, slot]);
+        return <>{props.paneMounted ? <div data-testid="page-pane">{slot}</div> : null}{retained.body}</>;
+    }
+    const render = async (docked: boolean, paneMounted: boolean) => {
+        await act(async () => root.render(<ModalProvider><Page docked={docked} paneMounted={paneMounted} /></ModalProvider>));
+    };
+    try {
+        await render(true, true);
+        const field = document.querySelector<HTMLInputElement>('[data-testid="page-draft"]')!;
+        await act(async () => {
+            field.value = 'unsubmitted';
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        // The dialog opens while the docked pane is still leaving: the dialog presents the body.
+        await render(false, true);
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="page-pane"]')!.contains(field)).toBe(false));
+        expect(document.body.contains(field)).toBe(true);
+        // The pane finishes leaving without taking the body out of the dialog.
+        await render(false, false);
+        expect(document.querySelector('[data-testid="page-draft"]')).toBe(field);
+        expect(field.value).toBe('unsubmitted');
+        // Docked again: the pane presents it, and the body was mounted once throughout.
+        await render(true, true);
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="page-pane"]')!.contains(field)).toBe(true));
+        expect(field.value).toBe('unsubmitted');
+        expect(mounts).toBe(1);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 it.each([390, 1440].flatMap(width => (['picker', 'confirm'] as const).map(kind => ({ width, kind }))))('keeps a $width px sheet presented while its nested $kind owns input', async ({ width, kind }) => {
     Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });

@@ -25,6 +25,22 @@ export function ModalPortalTargetProvider(props: {
     return <ModalLayerZIndexContext.Provider value={props.layerZIndex}>{provided}</ModalLayerZIndexContext.Provider>;
 }
 
+/** A shell's portal facts exactly as its subtree reads them, including whether any provider exists. */
+export type ModalPortalPlacement = Readonly<{ target: ModalPortalTargetContextValue; layerZIndex: number | null }>;
+
+export function useModalPortalPlacement(): ModalPortalPlacement {
+    const target = React.useContext(ModalPortalTargetContext);
+    const layerZIndex = React.useContext(ModalLayerZIndexContext);
+    return React.useMemo(() => ({ target, layerZIndex }), [target, layerZIndex]);
+}
+
+/** A body rendered away from its shell (a retained dialog body) reads that shell's portal facts verbatim. */
+export function ModalPortalPlacementProvider(props: Readonly<{ placement: ModalPortalPlacement; children: React.ReactNode }>) {
+    return <ModalPortalTargetContext.Provider value={props.placement.target}>
+        <ModalLayerZIndexContext.Provider value={props.placement.layerZIndex}>{props.children}</ModalLayerZIndexContext.Provider>
+    </ModalPortalTargetContext.Provider>;
+}
+
 /**
  * The dialog layer for a dialog that lays out without its own portal target (a card hung from its control):
  * body-level surfaces opened inside it stack above this layer.

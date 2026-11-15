@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-type PluginSurfaceFocusEligibility = Readonly<{
+export type PluginSurfaceFocusEligibility = Readonly<{
     effective: boolean;
     currentUiContextEffective: boolean;
     presentationEffective: boolean;
@@ -51,6 +51,34 @@ function RetainedFocusEligibility(props: Readonly<{
         currentUiContextEffective: props.captured.currentUiContextEffective && presented,
     }) : slot, [presented, props.captured, slot]);
     const signal = useProvidedPresentationSignal(value?.presentationEffective ?? true);
+    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
+        <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
+    </PluginSurfaceFocusEligibilityContext.Provider>;
+}
+
+/** A shell's facts as its subtree reads them, for a body rendered away from that shell. */
+export function useCapturedPluginSurfaceFocusEligibility(): PluginSurfaceFocusEligibility | null {
+    return React.useContext(PluginSurfaceFocusEligibilityContext);
+}
+
+/**
+ * A body its page keeps mounted while it moves between shells (a docked pane, the phone's dialog). It is
+ * focused where its current shell lets it be, but it is presented as long as its page is: the shell it
+ * leaves withdraws before the next one mounts, and that hand-off must not read as the page going away
+ * (it would close the body's open popovers and operations).
+ */
+export function PluginSurfaceFocusEligibilityTransfer(props: Readonly<{
+    captured: PluginSurfaceFocusEligibility | null;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const page = React.useContext(PluginSurfaceFocusEligibilityContext);
+    const presented = page?.presentationEffective ?? true;
+    const value = React.useMemo(() => props.captured ? Object.freeze({
+        effective: props.captured.effective && presented,
+        currentUiContextEffective: props.captured.currentUiContextEffective && presented,
+        presentationEffective: presented,
+    }) : page, [page, presented, props.captured]);
+    const signal = useProvidedPresentationSignal(presented);
     return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
         <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
     </PluginSurfaceFocusEligibilityContext.Provider>;

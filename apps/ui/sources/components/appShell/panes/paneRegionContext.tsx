@@ -12,7 +12,7 @@ const PaneRegionContext = React.createContext<PaneRegion | null>(null);
  * Set by the pane geometry owner around each column, so opening Details records where it was opened
  * from without every caller naming its region.
  */
-export function PaneRegionProvider(props: Readonly<{ region: PaneRegion; children: React.ReactNode }>) {
+export function PaneRegionProvider(props: Readonly<{ region: PaneRegion | null; children: React.ReactNode }>) {
     return <PaneRegionContext.Provider value={props.region}>{props.children}</PaneRegionContext.Provider>;
 }
 

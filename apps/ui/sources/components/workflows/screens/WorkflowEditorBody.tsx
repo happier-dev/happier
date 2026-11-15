@@ -55,6 +55,7 @@ import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutHandlers } from '@/keyboard';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { t, tLoose } from '@/text';
 
 import {
@@ -317,17 +318,13 @@ export type WorkflowEditorCommands = Readonly<{
 }>;
 
 type WorkflowSettingsModalProps = Readonly<{
-    inspector: WorkflowEditorInspectorProps;
+    /** The page's one settings inspector, presented here (see `useRetainedPlacement`). */
+    inspector: React.ReactElement;
 }>;
 
-/** Workflow settings on a phone: the same inspector content, in `@/modal`. */
+/** Workflow settings on a phone: the page's same mounted inspector, in `@/modal`. */
 function WorkflowSettingsModal(props: WorkflowSettingsModalProps & CustomModalInjectedProps): React.ReactElement {
-    return (
-        // The card body is a contained page: it owns the edge its sections sit on (the header's), as the docked pane's does.
-        <ItemList containerStyle={styles.settingsModalBody}>
-            <WorkflowEditorInspector {...props.inspector} />
-        </ItemList>
-    );
+    return props.inspector;
 }
 
 /**
@@ -1328,6 +1325,17 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         presentation: 'pane',
         testIDPrefix,
     }), [inspectorBaseProps, testIDPrefix]);
+    // Workflow settings is one inspector whether it docks beside the page or opens as the phone's dialog,
+    // so a width change keeps its open operations and unsubmitted fields (E09).
+    const renderSettingsInspector = React.useCallback(() => (
+        // In the dialog the card body is a contained page: it owns the edge its sections sit on (the header's),
+        // as the docked pane's does.
+        <ItemList containerStyle={compactLayout ? styles.settingsModalBody : undefined}>
+            <WorkflowEditorInspector {...inspectorProps} />
+        </ItemList>
+    ), [compactLayout, inspectorProps]);
+    const settingsInspector = useRetainedPlacement<null>(renderSettingsInspector);
+    const settingsInspectorSlot = React.useMemo(() => settingsInspector.mount(null), [settingsInspector.mount]);
     const buildStepOptionsProps = React.useCallback((blockId: string): WorkflowEditorInspectorProps => ({
         ...inspectorBaseProps,
         subject: { kind: 'block', blockId },
@@ -1367,7 +1375,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         if (settingsModalRef.current === null) {
             settingsModalRef.current = Modal.show({
                 component: WorkflowSettingsModal,
-                props: { inspector: inspectorProps },
+                props: { inspector: settingsInspectorSlot },
                 onRequestClose: () => {
                     settingsModalRef.current = null;
                     setDetailsCompanion(null);
@@ -1385,8 +1393,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             });
             return;
         }
-        Modal.update(settingsModalRef.current, { inspector: inspectorProps });
-    }, [compactLayout, canOpenSettings, inspectorProps, detailsCompanion, testIDPrefix]);
+        Modal.update(settingsModalRef.current, { inspector: settingsInspectorSlot });
+    }, [compactLayout, canOpenSettings, settingsInspectorSlot, detailsCompanion, testIDPrefix]);
     React.useEffect(() => () => {
         if (settingsModalRef.current !== null) Modal.hide(settingsModalRef.current);
     }, []);
@@ -1844,9 +1852,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                         <WorkflowAgentAuthoringDraft {...props.authoringDraft} />
                     </View>
                 ) : null}
-                {shownCompanion === 'settings' ? <ItemList>
-                    <WorkflowEditorInspector {...inspectorProps} />
-                </ItemList> : null}
+                {shownCompanion === 'settings' ? settingsInspectorSlot : null}
                 {/* Step options own their scroll below their pinned subject header, as in the popover. */}
                 {shownCompanion === 'step' && stepCompanionBlockId !== null ? (
                     <WorkflowEditorInspector {...inspectorBaseProps} subject={{ kind: 'block', blockId: stepCompanionBlockId }}
@@ -1873,6 +1879,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 mainMinWidthPx={WORKFLOW_EDITOR_MAIN_MIN_WIDTH_PX}
             />
             {validationPublisher}
+            {/* Workflow settings renders here, the one position both its pane and its dialog outlive; closing it retires it. */}
+            {detailsCompanion === 'settings' && canOpenSettings ? settingsInspector.body : null}
         </View>
     );
 }

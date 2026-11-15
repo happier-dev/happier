@@ -50,7 +50,7 @@ export type EscapeLayerScope = Readonly<{ parent: EscapeLayerScope | null }>;
 const EscapeLayerContext = React.createContext<EscapeLayerScope | null>(null);
 
 /** React ancestry survives portals; visual children dismiss before their enclosing layer. */
-export function EscapeLayerProvider(props: React.PropsWithChildren<{ layer: EscapeLayerScope }>) {
+export function EscapeLayerProvider(props: React.PropsWithChildren<{ layer: EscapeLayerScope | null }>) {
     return React.createElement(EscapeLayerContext.Provider, { value: props.layer }, props.children);
 }
 

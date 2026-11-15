@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
 import { WorkflowPageNavigation } from '../navigation/WorkflowNavigationViews';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
@@ -441,6 +442,11 @@ function WorkflowSelectedDetail(props: Readonly<{
             ...(props.phone ? {} : { belowResult: <WorkflowInvocationDetail {...detail} resultShownAbove /> }) }) ?? null;
     const reviewShown = card !== null && !reviewDismissed;
     const reviewOpen = props.phone && active && reviewShown;
+    // The held review is one mounted card whether it sits in the step's pane or in the phone's sheet, so a
+    // width change keeps its unsubmitted text, selection and focus (QA-LAYOUT J18).
+    const renderCard = React.useCallback(() => card, [card]);
+    const retainedCard = useRetainedPlacement<null>(renderCard);
+    const cardSlot = React.useMemo(() => retainedCard.mount(null), [retainedCard.mount]);
     const paneHeaderScroll = usePaneHeaderScrollSink();
     // A step without its own conversation ends the page: its last facts scroll clear of the phone's floating chrome.
     const { theme } = useUnistyles();
@@ -452,7 +458,7 @@ function WorkflowSelectedDetail(props: Readonly<{
     }, [paneHeaderScroll]);
     useWorkflowCardModal({
         open: reviewOpen, component: WorkflowReviewCardModal,
-        props: card === null ? null : { card, contentSized: props.detail.progress?.blockKind === 'wait',
+        props: card === null ? null : { card: cardSlot, contentSized: props.detail.progress?.blockKind === 'wait',
             headerActions: props.headerActions, headerTrailing: props.headerTrailing, subtitle: props.subtitle }, identity: props.identity,
         title: props.title, subtitle: props.subtitle ?? undefined, testID: `${props.detail.testIDPrefix}-review-modal`,
         phonePresentation: 'sheet',
@@ -472,8 +478,13 @@ function WorkflowSelectedDetail(props: Readonly<{
     </HappierPressable> : null;
     // A hold with no conversation belongs over the Run, not an empty step page.
     // Keep this owner mounted for sheet dismissal/reopening and draft continuity.
-    if (props.phone && props.sessionId === null && card !== null) return reopenReview;
-    return <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+    // The card renders here, the one position its pane and its sheet share; dismissing the review retires it.
+    const withRetainedCard = (content: React.ReactNode) => <>
+        <React.Fragment key="content">{content}</React.Fragment>
+        {reviewShown ? retainedCard.body : null}
+    </>;
+    if (props.phone && props.sessionId === null && card !== null) return withRetainedCard(reopenReview);
+    return withRetainedCard(<View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
         {props.phone ? <PaneHeader testID={`${props.detail.testIDPrefix}-selected-header`}
             // The step's name wraps whole: it is what tells this step from its siblings.
             title={props.title} subtitle={props.subtitle} size="large" titleNumberOfLines={null} onClose={props.onClose}
@@ -487,7 +498,7 @@ function WorkflowSelectedDetail(props: Readonly<{
         {/* The held result stays bounded above its own conversation, with the composer at the pane's foot. */}
         {!props.phone && reviewShown ? <View testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
             style={[props.sessionId === null ? styles.scroll : [styles.inspectorAboveConversation, styles.reviewAboveConversation], styles.reviewRegion]}>
-            {card}
+            {cardSlot}
         </View> : <ScrollView testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
             // The inspector is the body under the step's header: its scroll drives that header's shade.
             onScroll={paneHeaderScroll ? reportInspectorScroll : undefined} scrollEventThrottle={16}
@@ -498,7 +509,7 @@ function WorkflowSelectedDetail(props: Readonly<{
         {props.sessionId === null ? null : <SessionInPane sessionId={props.sessionId}
             serverId={props.serverId} active={active && !reviewOpen} composer
             composerPlaceholder={t('workflows.run.stepComposerPlaceholder')} />}
-    </View>;
+    </View>);
 }
 
 /**
@@ -1777,6 +1788,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         onClose={props.onDeselectInvocation}
         renderReviewCard={props.renderReviewCard} focusReturnRef={detailFocusReturnRef}
     />;
+    // The selected step is one mounted detail whether it docks beside the Run or fills a phone's page, so a
+    // width change keeps a review's unsubmitted text, its selection and focus (QA-LAYOUT J18).
+    const renderInspector = React.useCallback(() => inspector, [inspector]);
+    const retainedInspector = useRetainedPlacement<null>(renderInspector);
+    const inspectorSlot = React.useMemo(() => retainedInspector.mount(null), [retainedInspector.mount]);
 
     const footer = (
         <View style={styles.root}>
@@ -1968,18 +1984,23 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             count={attentionIndexRows.length} steps={attentionIndexRows.map(({ invocation }) => invocationLabel(invocation)).filter((label): label is string => label !== null)}
             onReview={(event) => selectInvocation(dockStep.id, event)} onHeight={setDockHeightPx} primary={primaryAction === null} /> : null}
     </View>;
+    // The detail renders beside whichever presentation shows it, at the one position every presentation shares.
+    const withRetainedInspector = (content: React.ReactNode, presented: boolean) => <>
+        <React.Fragment key="content">{content}</React.Fragment>
+        {presented ? retainedInspector.body : null}
+    </>;
     if (!detailsPaneAvailable && props.invocationPage && inspector !== null) {
-        return phone && selectedSessionId === null && props.renderReviewCard !== undefined
-            ? <>{main}{inspector}</>
-            : inspector;
+        return withRetainedInspector(phone && selectedSessionId === null && props.renderReviewCard !== undefined
+            ? <>{main}{inspectorSlot}</>
+            : inspectorSlot, true);
     }
-    if (!detailsPaneAvailable) return main;
-    return <DetailsPaneHost main={main}
+    if (!detailsPaneAvailable) return withRetainedInspector(main, false);
+    return withRetainedInspector(<DetailsPaneHost main={main}
         mainColumn={runMainColumn}
         // A step is read and discussed at a Session's width; the Run keeps the rest of the page.
         detailsPreferredWidthPx={DEFAULT_SESSION_WIDTH_PX}
         onMainColumnControlsChange={navigation.onMainColumnControlsChange}
-        details={inspector === null ? null : { content: inspector, header: { title: selectedDetailTitle, subtitle: selectedDetailSubtitle,
+        details={inspector === null ? null : { content: inspectorSlot, header: { title: selectedDetailTitle, subtitle: selectedDetailSubtitle,
             actions: selectedHeaderActions, lineTrailing: selectedHeaderTrailing }, accessibilityLabel: selectedDetailTitle }}
-        onCloseDetails={() => props.onDeselectInvocation?.()} />;
+        onCloseDetails={() => props.onDeselectInvocation?.()} />, inspector !== null);
 }

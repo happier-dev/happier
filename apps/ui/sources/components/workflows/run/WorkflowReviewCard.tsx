@@ -101,6 +101,8 @@ const styles = StyleSheet.create((theme) => ({
     filled: { flex: 1, minHeight: 0 },
     /** Sized to its content inside a bounded region, and the first thing to give way when the region is short. */
     fitted: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
+    /** The value at its own height where the card does not scroll it (the sheet scrolls the card). */
+    unscrolled: { flexGrow: 0, flexShrink: 0 },
     actions: { gap: theme.space.s8, alignItems: 'stretch' },
     /** The decision: the primary, its one consequence, then the quiet choices. */
     decision: { gap: theme.space.s8, paddingTop: theme.space.s12, alignItems: 'stretch' },
@@ -522,11 +524,12 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const footer = props.primaryActionPlacement === 'footer' && primaryAction !== null
         ? <View onLayout={scrolls ? onFooterLayout : undefined}>{primaryAction}</View> : null;
     return <View testID={prefix} style={[styles.root, scrolls ? fill : null]} onLayout={scrolls ? onCardLayout : undefined}>
-        {scrolls ? <ScrollView testID={`${prefix}-scroll`} style={fill}
+        {/* One parent for the value whether it scrolls or sits in its sheet at its own height: a width change that
+            moves the card between a pane and a phone sheet keeps the field being edited, its selection and focus. */}
+        <ScrollView testID={scrolls ? `${prefix}-scroll` : undefined} style={scrolls ? fill : styles.unscrolled} scrollEnabled={scrolls}
             // The body under a pane's header: its scroll drives that header's shade.
-            onScroll={paneHeaderScroll ? (event) => paneHeaderScroll.reportTopDistance(event.nativeEvent.contentOffset.y) : undefined}
+            onScroll={scrolls && paneHeaderScroll ? (event) => paneHeaderScroll.reportTopDistance(event.nativeEvent.contentOffset.y) : undefined}
             scrollEventThrottle={16} keyboardShouldPersistTaps="handled">{body}{props.belowResult}{footerCrowds ? footer : null}</ScrollView>
-            : <>{body}{props.belowResult}</>}
         {footerCrowds ? null : footer}
     </View>;
 }

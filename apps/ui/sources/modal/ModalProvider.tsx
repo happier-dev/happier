@@ -12,13 +12,13 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
 import { MODAL_Z_INDEX, MODAL_Z_INDEX_STEP, SCREEN_OVERLAY_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { ModalContentIdProvider, useModalContentId } from './context/ModalContentIdContext';
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
 // Consumers that only need presentation context must not receive titles,
 // prompts, callbacks, or custom modal props from the modal host state.
 const VisibleModalKindContext = createContext<ModalType | null>(null);
 const VisibleModalIdContext = createContext<string | null>(null);
-const ModalContentIdContext = createContext<string | null>(null);
 
 type VisibleModal = Readonly<{ kind: ModalType; id: string }>;
 /**
@@ -31,7 +31,7 @@ const NestedVisibleModalReportContext = createContext<((host: object, visible: V
 
 /** Host-owned identities let contextual controls distinguish the foreground dialog from retained content. */
 export const useVisibleModalId = () => useContext(VisibleModalIdContext);
-export const useModalContentId = () => useContext(ModalContentIdContext);
+export { useModalContentId };
 
 type ModalProviderProps = Readonly<{
     active?: boolean;
@@ -389,9 +389,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
 
                         return null;
                     };
-                    return <ModalContentIdContext.Provider key={modal.id} value={modal.id}>
+                    return <ModalContentIdProvider key={modal.id} id={modal.id}>
                         {renderModal()}
-                    </ModalContentIdContext.Provider>;
+                    </ModalContentIdProvider>;
                     })}
                 </ModalContext.Provider>
             </NestedVisibleModalReportContext.Provider>
