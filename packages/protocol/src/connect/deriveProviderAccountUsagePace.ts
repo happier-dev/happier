@@ -80,9 +80,14 @@ export function resolveProviderAccountUsagePaceWindow(snapshot: ProviderAccountU
     windowStartAtMs: window.windowStartAtMs, windowDurationMs: window.windowDurationMs } : null;
 }
 
-/** Clock interval in which unchanged observations have the same pace/ended-window facts. Not read authority. */
+/**
+ * Clock interval in which unchanged observations have the same pace/ended-window facts. Not read authority.
+ * `boundaries: 'windows'` leaves out the current observation's freshness boundary: only window resets,
+ * whose ended-window facts need the history a read projects.
+ */
 export function getProviderAccountUsageDerivationInterval(input: Readonly<{
   current: ProviderAccountUsageSnapshotV1 | null; history: readonly ProviderAccountUsageSnapshotV1[]; nowMs: number;
+  boundaries?: 'all' | 'windows';
 }>): Readonly<{ fromMs: number; untilMs: number }> | null {
   if (!Number.isFinite(input.nowMs) || input.nowMs < 0) return null;
   let fromMs = 0;
@@ -93,8 +98,10 @@ export function getProviderAccountUsageDerivationInterval(input: Readonly<{
     else untilMs = Math.min(untilMs, atMs);
   };
   if (input.current) {
-    boundary(input.current.observedAtMs);
-    boundary(input.current.observedAtMs + input.current.staleAfterMs);
+    if (input.boundaries !== 'windows') {
+      boundary(input.current.observedAtMs);
+      boundary(input.current.observedAtMs + input.current.staleAfterMs);
+    }
     for (const meter of input.current.meters) {
       const window = resolveProviderAccountUsagePaceWindow(input.current, meter.meterId);
       if (window) boundary(window.resetAtMs);

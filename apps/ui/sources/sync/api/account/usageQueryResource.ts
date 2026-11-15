@@ -1848,7 +1848,31 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const staleAtMs = read.current ? read.current.fetchedAtMs + read.current.staleAfterMs : Infinity;
         const value = { fromMs: Math.max(interval.fromMs, nowMs >= staleAtMs ? staleAtMs : 0),
             untilMs: Math.min(interval.untilMs, nowMs < staleAtMs ? staleAtMs : Infinity) };
-        return value;
+        // Crossing only a freshness boundary changes no fact a reread returns: the same record
+        // reconciles to `stale` with its prior pace kept (`reconcileQuotaRead`), and a newer record
+        // arrives as a pushed record change. Window resets still need the read's projected history.
+        const windows = getProviderAccountUsageDerivationInterval({ current: read.current,
+            history: read.history?.entries.map(entry => entry.snapshot) ?? [], nowMs, boundaries: 'windows' });
+        return { value, derivation: windows ?? { fromMs: Infinity, untilMs: 0 } };
+    };
+    // Quota pushes replace the retained resource identity. Each replacement keeps the record
+    // ids it named, so a view reopened after closed-view pushes rereads only those records.
+    const resourceInputSteps = new WeakMap<object, Readonly<{ next: object; recordIds: readonly string[] | undefined }>>();
+    const replaceResourceInputs = (recordIds: readonly string[] | undefined) => {
+        const next = {};
+        resourceInputSteps.set(resourceInputs, { next, recordIds });
+        resourceInputs = next;
+    };
+    /** The record ids changed since `from` was the resource identity; `undefined` when unknown. */
+    const readResourceInputChanges = (from: object): readonly string[] | undefined => {
+        const ids = new Set<string>();
+        for (let at = from; at !== resourceInputs;) {
+            const step = resourceInputSteps.get(at);
+            if (!step?.recordIds) return undefined;
+            for (const id of step.recordIds) ids.add(id);
+            at = step.next;
+        }
+        return [...ids];
     };
     const projectionDocuments: ProviderAccountUsageProjectionDocuments = new Map();
     const history: AccountResourceOwner['history'] = new Map();
@@ -1909,11 +1933,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const admission = content && decodedValues.get(content)?.admission;
         const nowMs = Date.now();
         const quotaClockCurrent = !!admission && nowMs >= admission.quotaInterval.fromMs && nowMs < admission.quotaInterval.untilMs;
+        // Inside the derivation interval only source freshness can have moved: a reprojection, not a reread.
+        const derivationCurrent = !!admission && nowMs >= admission.derivationInterval.fromMs && nowMs < admission.derivationInterval.untilMs;
         const admitted = !snapshot.error && admission?.settled === true && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => identity === readInputs[index]) && quotaClockCurrent;
         const sourcesCurrent = admission?.settled === true && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => index === 0 || identity === readInputs[index]);
-        return { readInputs, nowMs, admission, quotaClockCurrent, sourcesCurrent,
+        return { readInputs, nowMs, admission, quotaClockCurrent, derivationCurrent, sourcesCurrent, error: !!snapshot.error,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
     const owner: AccountResourceOwner = {
@@ -2077,13 +2103,16 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             && (!source.errorCode || source.status === 'unsupported') && !source.updateRequired));
                     const intervals = settledRead ? [...new Set(value.results.flatMap(slice => slice.quota ?? []))]
                         .map(read => readQuotaInterval(read, nowMs)) : [];
-                    const quotaInterval = { fromMs: Math.max(0, ...intervals.map(interval => interval?.fromMs ?? Infinity)),
-                        untilMs: Math.min(Infinity, ...intervals.map(interval => interval?.untilMs ?? 0)) };
+                    const intersect = (pick: (interval: NonNullable<ReturnType<typeof readQuotaInterval>>) => Readonly<{ fromMs: number; untilMs: number }>) => ({
+                        fromMs: Math.max(0, ...intervals.map(interval => interval ? pick(interval).fromMs : Infinity)),
+                        untilMs: Math.min(Infinity, ...intervals.map(interval => interval ? pick(interval).untilMs : 0)) });
+                    const quotaInterval = intersect(interval => interval.value);
+                    const derivationInterval = intersect(interval => interval.derivation);
                     // Progress reaches this owner only after the accounting
                     // reader's physical-issuance barrier. Keep that same
                     // admission identity available to newly mounted bodies.
                     decodedValues.set(content, { value, ...(reproject ? { reproject } : {}),
-                        admission: { inputs: readInputs, quotaInterval, reusable, settled: settledRead } });
+                        admission: { inputs: readInputs, quotaInterval, derivationInterval, reusable, settled: settledRead } });
                     return content;
                 };
                 const contentFor = async (batch: UsageQueryBatchResult): Promise<ResourceContent> => {
@@ -2401,6 +2430,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // Demand reattaches retained collection observations first;
                 // their closed-view changes belong to this same admission.
                 const admission = reference.hostRead === 'usage.query' ? readUsageAdmission(reference, queries) : undefined;
+                // A settled admission whose accounting and Session inputs still stand, closed while only
+                // source freshness or named quota records changed, rereads just those records (often none)
+                // and reprojects the rest at this instant (P03-TAB-CONTENT-2 W8).
+                const missedRecordIds = admission && !admission.reusable && readsAllowance && !admission.error
+                    && admission.admission?.settled === true && admission.admission.reusable && admission.sourcesCurrent
+                    && admission.derivationCurrent ? readResourceInputChanges(admission.admission.inputs[0]!) : undefined;
+                if (missedRecordIds !== undefined) {
+                    allowanceReadDemand = true; allowanceRecordIds = missedRecordIds; allowanceOnlyDemand = true; projectionOnly = false;
+                }
                 woken ||= admission?.reusable !== true;
                 const dispose = () => {
                     activeReadDemand = undefined;
@@ -2503,7 +2541,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     accountingReads.invalidate(affected);
                 }
             } else if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
-            else if (quotaChange || typeof homeChange === 'string') resourceInputs = {};
+            else if (quotaChange || typeof homeChange === 'string') replaceResourceInputs(homeChange === 'quota-inputs' ? quotaRecordIds
+                : typeof homeChange === 'object' ? readUsageQuotaChangedRecordIds(homeChange) : undefined);
             for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange, quotaRecordIds);
         },
     };
@@ -2735,7 +2774,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
 const decodedValues = new WeakMap<ResourceContent, Readonly<{
     value: UsageQueryBatchResult;
     reproject?: UsageQueryReprojection;
-    admission?: Readonly<{ inputs: readonly object[]; quotaInterval: Readonly<{ fromMs: number; untilMs: number }>; reusable: boolean; settled: boolean }>;
+    admission?: Readonly<{ inputs: readonly object[]; quotaInterval: Readonly<{ fromMs: number; untilMs: number }>;
+        derivationInterval: Readonly<{ fromMs: number; untilMs: number }>; reusable: boolean; settled: boolean }>;
 }>>();
 
 export function decodeUsageQueryResource(value: ResourceContent): UsageQueryBatchResult {

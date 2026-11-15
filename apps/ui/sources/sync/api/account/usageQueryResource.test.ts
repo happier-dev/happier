@@ -3376,6 +3376,74 @@ describe('usage query captured Resource adapter', () => {
     } finally { releases.forEach(release => release()); }
   });
 
+  it('reopens a closed Usage view after its sources go stale, or another record changes, without rereading unchanged allowance records', async () => {
+    let now = 1_900_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'closed-return' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    let record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: 120_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [] });
+    const otherRecordId = buildProviderAccountUsageRecordId({ ...recordKey, accountSubjectId: 'another-account' });
+    const captured = await context(request => {
+      if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json(ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json(ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({
+        source, recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: record.fetchedAtMs, staleAfterMs: 120_000 });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({ content: { t: 'plain', v: record },
+        metadata: { fetchedAt: record.fetchedAtMs, staleAfterMs: 120_000, status: 'ok' }, sources: [source] });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/history') return Response.json({ entries: [], nextCursor: null });
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
+    const query = normalizeUsageQuery({ period: { relative: '30days' }, includeSessionEvidence: false, includeWorkEvidence: false,
+      includeActivity: false, includeModelTimeline: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const settle = async () => {
+      await flushHookEffects({ cycles: 20 });
+      await expect.poll(() => entry.getSnapshot().value !== undefined && entry.getSnapshot().pending === 'idle').toBe(true);
+      expect(entry.getSnapshot().error).toBeUndefined();
+    };
+    const allowanceReads = () => home!.requests.filter(request =>
+      request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve'
+      || request.path === '/v4/connect/qualified/provider-account-usage/record').length;
+    const quotaState = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.sources.find(state => state.source.startsWith('quota:'))?.status;
+    // A view opens, closes (the person leaves for another tab) and opens again.
+    const reopen = async (whileClosed: () => void) => {
+      const release = entry.subscribe(() => {}, true);
+      await settle();
+      release();
+      whileClosed();
+      const reads = allowanceReads();
+      const again = entry.subscribe(() => {}, true);
+      await settle();
+      again();
+      return allowanceReads() - reads;
+    };
+    expect(await reopen(() => { now += 1_000; })).toBe(0);
+    expect(quotaState()).toBe('available');
+    // Freshness is a presentation of the same record: the record a reread returns is the one
+    // pushed changes deliver, so a closed view that crosses staleness reprojects it.
+    expect({ reads: await reopen(() => { now += 121_000; }), state: quotaState() }).toEqual({ reads: 0, state: 'stale' });
+    // A record-scoped push for another record while closed changes nothing this view holds.
+    const publishRecordChange = (recordId: string) => publishHomeAccountChange(captured.accountLifetime.scope.serverId,
+      [`provider-account-usage-record:${recordId}`], { changeKinds: ['account'], providerAccountUsageRecordIds: [recordId] });
+    expect(await reopen(() => publishRecordChange(otherRecordId))).toBe(0);
+    // Its own record changing while closed is read again.
+    expect(await reopen(() => {
+      now += 1_000;
+      record = ProviderAccountUsageSnapshotV1Schema.parse({ ...record, observedAtMs: now, fetchedAtMs: now });
+      publishRecordChange(record.recordId);
+    })).toBeGreaterThan(0);
+    expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota?.[0]?.current).toEqual(record);
+  });
+
   it('keeps current-only allowance readings across navigation before history has ever settled', async () => {
     const now = Date.now();
     const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'current-only' };
