@@ -425,25 +425,35 @@ describe("Artifact document grants (real SQLite)", () => {
         } finally { db.$transaction = transaction; }
     }, 180_000);
 
-    it('preserves content recency while publishing a kind-only index change', async () => {
+    it('labels an unclassified row without changing content recency or publishing a change no reader can see', async () => {
         const owner = await plainAccount();
         const old = await plainArtifact(owner.id);
         await db.artifact.update({ where: { id: old.id }, data: { updatedAt: new Date(0) } });
         const newer = await plainArtifact(owner.id);
         const before = await db.artifact.findUniqueOrThrow({ where: { id: old.id } });
-        await withAuthenticatedTestApp(artifactsRoutes, async app => {
-            const headers = { 'x-test-user-id': owner.id, ...protocolHeaders };
-            const list = () => app.inject({ method: 'GET', url: '/v1/artifacts?limit=2', headers });
-            expect((await list()).json().map((row: { id: string }) => row.id)).toEqual([newer.id, old.id]);
-            const repaired = await app.inject({ method: 'POST', url: `/v1/artifacts/${old.id}`, headers,
-                payload: { kind: 'v1:other:workflow-definition.v1', expectedHeaderVersion: 1 } });
-            expect(repaired.statusCode, repaired.body).toBe(200);
-            expect((await list()).json().map((row: { id: string }) => row.id)).toEqual([newer.id, old.id]);
-        });
+        // Observe the real router's publication intent only.
+        const emitted = vi.spyOn(eventRouter, 'emitUpdate');
+        try {
+            await withAuthenticatedTestApp(artifactsRoutes, async app => {
+                const headers = { 'x-test-user-id': owner.id, ...protocolHeaders };
+                const list = () => app.inject({ method: 'GET', url: '/v1/artifacts?limit=2', headers });
+                expect((await list()).json().map((row: { id: string }) => row.id)).toEqual([newer.id, old.id]);
+                emitted.mockClear();
+                const repaired = await app.inject({ method: 'POST', url: `/v1/artifacts/${old.id}`, headers,
+                    payload: { kind: 'v1:other:workflow-definition.v1', expectedHeaderVersion: 1 } });
+                expect(repaired.statusCode, repaired.body).toBe(200);
+                expect((await list()).json().map((row: { id: string }) => row.id)).toEqual([newer.id, old.id]);
+            });
+            // A label changes no header, body or recency, and kind-selected readers already reach
+            // unclassified rows: no recipient update and no AccountChange wake (each one made every
+            // connected client re-read headers, Discussions attention and Run windows per row).
+            expect(emitted.mock.calls.map(([value]) => (value.payload.body as { t: string }).t)).toEqual([]);
+        } finally { emitted.mockRestore(); }
         expect(await db.artifact.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({
             updatedAt: before.updatedAt, seq: before.seq, headerVersion: before.headerVersion, bodyVersion: before.bodyVersion,
             header: before.header, body: before.body });
-        expect(await db.accountChange.count({ where: { artifactId: old.id, accountId: owner.id } })).toBe(1);
+        expect(await db.accountChange.count({ where: { artifactId: old.id, accountId: owner.id } })).toBe(0);
+        expect(await db.artifact.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({ kind: 'v1:other:workflow-definition.v1' });
     });
 
     it('classifies metadata in ordered batches with per-item CAS and current authorization', async () => {
@@ -487,8 +497,8 @@ describe("Artifact document grants (real SQLite)", () => {
         expect(await db.artifact.findUniqueOrThrow({ where: { id: selected.id } })).toMatchObject({
             kind: 'v1:other:workflow-definition.v1', updatedAt: before.updatedAt, seq: before.seq,
             headerVersion: before.headerVersion, bodyVersion: before.bodyVersion, header: before.header, body: before.body });
-        expect((await db.accountChange.findMany({ where: { artifactId: selected.id } })).map(row => row.accountId).sort())
-            .toEqual([owner.id, editor.id, viewer.id].sort());
+        // A label of an unclassified row publishes nothing; recipients' results are unchanged.
+        expect(await db.accountChange.count({ where: { artifactId: selected.id } })).toBe(0);
         expect(await db.accountChange.count({ where: { artifactId: { in: [stale.id, hidden.id] } } })).toBe(0);
     });
 
@@ -809,8 +819,7 @@ describe("Artifact document grants (real SQLite)", () => {
             expect(stored).toMatchObject({ kind: 'v1:other:workflow-definition.v1', headerVersion: unknown.headerVersion, bodyVersion: unknown.bodyVersion,
                 header: unknown.header, body: unknown.body, dataEncryptionKey: unknown.dataEncryptionKey });
             expect(stored.seq).toBe(unknown.seq);
-            expect((await db.accountChange.findMany({ where: { artifactId: unknown.id } })).map(row => row.accountId).sort())
-                .toEqual([owner.id, editor.id, viewer.id].sort());
+            expect(await db.accountChange.count({ where: { artifactId: unknown.id } })).toBe(0);
             const changedAccount = await db.account.findUniqueOrThrow({ where: { id: owner.id } });
             const repeat = await app.inject({ method: 'POST', url: `/v1/artifacts/${unknown.id}`, headers,
                 payload: { kind: 'skill', expectedHeaderVersion: 1 } });

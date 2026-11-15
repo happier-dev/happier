@@ -3505,8 +3505,11 @@ without scanning settled history or weakening the existing deletion-race guard.
 
 UI and CLI writers share the Protocol extraction. Their existing metadata-only
 update checks the observed header version and changes neither header/body bytes,
-their content versions, nor Artifact recency/row sequence. Required Account
-change notifications still make newly available classification discoverable.
+their content versions, nor Artifact recency/row sequence. Labelling a
+previously unclassified row publishes no Account change: kind-selected readers
+already reach unclassified rows, so the label changes no reader's result (one
+change per labelled row made every connected client re-read headers, Discussion
+attention and Run windows per row).
 Repeated equal hints are no-ops. Needed labels use the same writer through
 `POST /v1/artifacts/query-hints/batch`, with ordered per-id results and no private
 payloads; HTTP-byte framing reuses the existing request budget. Each item retains

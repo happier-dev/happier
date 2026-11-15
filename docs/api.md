@@ -3077,7 +3077,11 @@ clears the previous hint. The existing update
 route also accepts `{kind, expectedHeaderVersion}` alone for owner backfill.
 It requires header-edit authority and the current header version, and changes no
 header/body bytes, content versions, recency timestamp or Artifact row sequence.
-Required AccountChange/discovery invalidations remain. The same owner also accepts
+Labelling a row that had no classified hint publishes no AccountChange and no
+`update-artifact`: kind-selected readers already reach unclassified rows through
+their partial-coverage walk, so no reader's result changes (only an approval
+hint's Session facts are marked). Relabelling an already classified row keeps its
+AccountChange with both kinds. The same owner also accepts
 `POST /v1/artifacts/query-hints/batch` with
 `{items:[{artifactId,kind,expectedHeaderVersion}]}`. It returns ordered
 `{items:[{artifactId,success:true}|{artifactId,success:false,error:string}]}`;

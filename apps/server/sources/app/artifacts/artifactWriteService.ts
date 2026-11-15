@@ -11,7 +11,7 @@ import { isPrismaErrorCode } from '@/storage/prisma';
 import { readArtifactStorageEnv } from '@/app/features/catalog/readFeatureEnv';
 import { deletePrivateFile } from '@/storage/blob/files';
 import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema, decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { readArtifactKindsV1 } from '@happier-dev/protocol/changes';
@@ -1492,6 +1492,14 @@ export async function updateArtifactTx(
 
     await applyArtifactPublicationGrantsInTx(tx, { artifactId: params.artifactId,
         actorAccountId: params.actorUserId, publicationGrants: publication.publicationGrants });
+    // Labelling an unclassified row changes no header, body or recency, and every kind-selected
+    // reader already reaches unclassified rows through its partial-coverage walk, so no reader's
+    // result changes: there is nothing to publish to the Artifact's audience. Only the approval
+    // hint's own Session facts move.
+    if (kindOnly && !decodeArtifactKindV1(current.kind).classified) {
+        await markApprovalSessionsChangedInTx(tx, ownerAccountId, [current.approvalSessionId, nextKind?.approvalSessionId ?? null]);
+        return { ok: true, recipientUpdates: [] };
+    }
     const recipients = await resolveArtifactAudienceInTx(tx, params.artifactId);
     const recipientCursors = await markAccountsChanged(tx, { accountIds: recipients, kind: "artifact", entityId: params.artifactId,
         // A type-changing header leaves its old inventory as well as entering the new one.
