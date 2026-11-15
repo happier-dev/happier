@@ -8,6 +8,7 @@ export function withExecutionRunHostRuntimeCleanup(
     return wrapExecutionRunHostRuntime({
         readPermissionCapability: () => runtime.permissionCapability,
         readInteraction: () => runtime.interaction,
+        readExecuteAction: () => runtime.executeAction?.bind(runtime),
         readToolNormalizationSource: () => runtime.toolNormalizationSource,
         readResumeSupport: (opts) => runtime.readResumeSupport(opts),
         readPrepareInputBudget: () => runtime.prepareInputBudget?.bind(runtime),

@@ -5,6 +5,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { VoiceAgentManager } from '../../../../../cli/src/agent/voice/agent/VoiceAgentManager';
 import { createNativeAgentSessionInteractionHostRuntime } from '../../../../../cli/src/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { createLazyExecutionRunHostRuntime } from '../../../../../cli/src/agent/runtime/bridges/executionRun/hostRuntime/lazy';
+import { withExecutionRunHostRuntimeCleanup } from '../../../../../cli/src/agent/runtime/bridges/executionRun/hostRuntime/cleanup';
+import { withExecutionRunPermissionResponder } from '../../../../../cli/src/agent/runtime/bridges/executionRun/hostRuntime/permissionResponder';
+import { withExecutionRunRuntimeIdentityPublication } from '../../../../../cli/src/agent/runtime/identity/executionRunRuntimeIdentityPublication';
 import { createNativeSessionBoundary, createVoiceSessionContextLease } from '../../../../../cli/src/agent/runtime/bridges/executionRun/testkit/nativeSessionContext';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionIdSchema, type ActionId } from '@happier-dev/protocol/actions';
@@ -42,7 +46,8 @@ export async function createNativeVoiceActionHarness(execute: (
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing MCP listener');
     const native = createNativeSessionBoundary();
-    const manager = new VoiceAgentManager({ createRuntime: options => createNativeAgentSessionInteractionHostRuntime({
+    const manager = new VoiceAgentManager({ createRuntime: options => createLazyExecutionRunHostRuntime({ resolveRuntime: async () => {
+      const runtime = createNativeAgentSessionInteractionHostRuntime({
         runtime: { sessions: { open: native.open } },
         lease: { pluginId: 'acme.voice', pluginVersion: '1', agentId: 'acme.voice/agents/default',
             localAgentId: 'default', occurrenceId: 'native-action-regression', isCurrent: () => true },
@@ -54,7 +59,16 @@ export async function createNativeVoiceActionHarness(execute: (
         options: { cwd: '/repo', runId: 'native-action-regression', backendId: 'acme.voice/agents/default',
             scope: 'session_owned', permissionMode: 'read_only', functionTools: options.functionTools,
             start: options.start },
-    }) });
+      });
+      // Exercise the production decorators: a raw native runtime alone hides
+      // a dropped Action transport between the Voice manager and Session MCP.
+      return withExecutionRunRuntimeIdentityPublication({
+        runtime: withExecutionRunHostRuntimeCleanup(withExecutionRunPermissionResponder(runtime, {
+          respondToPermissionRequest: async () => true,
+        }), async () => {}),
+        identity: { runtimeDescriptor: null, runtimeCapabilities: {}, runtimeFacets: null },
+      });
+    } }) });
     return { manager, native, boundaryFailures, async dispose() {
         await manager.dispose();
         server.closeAllConnections();

@@ -584,7 +584,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             metadata: encodePlainMachineStoredContent({ host: 'r35-resume', platform: 'linux', happyCliVersion: '0.3',
                 homeDir: database.baseDir, happyHomeDir: database.baseDir }),
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: requester.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: requester.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const actor = { actorAccountId: requester.id, machineId: machine.id };
         expect(await resolveMachineAdmission(actor)).toMatchObject({ kind: 'admitted', role: 'use' });
@@ -670,7 +670,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 sessionInputAdmission: { protocolVersions: [1, 2] },
                 externalActionExecutionAuthorization: { protocolVersions: [1] },
             }) } });
-        if (!ownAccount) await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: requester.id,
+        if (!ownAccount) await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: requester.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         let physicalLaunches = 0;
         let nativeReplyLaunches = 0;
@@ -747,6 +747,8 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 stopSession: (sessionId, options) => readDaemonRuntime().stopSession(sessionId, options),
                 awaitAgentSessionOpen: request => awaitTrackedRunnerAgentSessionOpen({ ...request,
                     getTrackedSessions: () => nativeTracked ? [nativeTracked] : [],
+                    // This simulated OS child commits its final attestation before spawnSession returns.
+                    subscribeChanges: () => () => {},
                     readStartupFailure: async () => nativeFailure }),
             } : retainedRunner ? {
                 stopSession: (sessionId, options) => readDaemonRuntime().stopSession(sessionId, options),

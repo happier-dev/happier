@@ -29,6 +29,7 @@ import type {
 import type { PluginServices } from '@happier-dev/plugin-sdk';
 import type { WorkStateService } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { randomUUID } from 'node:crypto';
+import { callSessionMcpTool } from '@/cli/commands/toolsSessionMcp';
 import { createExecutionRunHostBackendFromSessionRuntime } from './sessionAdapter';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
@@ -2291,6 +2292,12 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
     };
 
     return Object.freeze({
+        async executeAction(actionId: string, input: unknown, actionRequestId: string) {
+            const { sessionMcpContext } = await prepareSessionContext();
+            if (!sessionMcpContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'Authenticated Session MCP context is required.' };
+            return await callSessionMcpTool({ source: 'happier', toolName: 'action_execute', args: { actionId, input },
+                actionRequestId, sessionContext: sessionMcpContext, signal });
+        },
         permissionCapability: params.createSessionContext.respondToPermissionRequest ? 'responds' as const : 'static' as const,
         ...(params.createSessionContext.abortPendingPermissionRequests
             ? { abortPendingPermissionRequests: params.createSessionContext.abortPendingPermissionRequests }

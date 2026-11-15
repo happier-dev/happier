@@ -1,5 +1,6 @@
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type {
+    ActionExecuteResult,
     ExecutionRunInteractionV1,
     ExecutionRunResultContractV1,
     SessionUsageLimitRecoveryV1,
@@ -60,6 +61,8 @@ export function toRuntimePermissionResponseOutcome(
 }
 
 export type ExecutionRunHostRuntime = Readonly<{
+    /** Host-bound Session Action transport; the provider call id is the Action request identity. */
+    executeAction?: (actionId: string, input: unknown, actionRequestId: string) => Promise<ActionExecuteResult>;
     /** Actual opened Agent transport, reported by the admitted host composition. */
     toolNormalizationSource?: ToolNormalizationSourceV3;
     /** Host projection from the current permission store, never plugin-authored state. */

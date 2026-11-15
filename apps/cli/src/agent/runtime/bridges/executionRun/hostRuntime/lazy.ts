@@ -169,6 +169,12 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   return wrapExecutionRunHostRuntime({
     readPermissionCapability: () => permissionCapability ?? undefined,
     readInteraction: () => resolvedRuntime?.interaction,
+    readExecuteAction: () => async (actionId, input, actionRequestId) => {
+      const runtime = await resolveRuntime();
+      return runtime.executeAction
+        ? await runtime.executeAction(actionId, input, actionRequestId)
+        : { ok: false, errorCode: 'execution_run_not_allowed', error: 'This runtime has no Session Action transport.' };
+    },
     readToolNormalizationSource: () => resolvedRuntime?.toolNormalizationSource,
     async readResumeSupport(opts) {
       const runtime = await resolveRuntime();
