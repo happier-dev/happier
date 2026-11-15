@@ -132,6 +132,15 @@ test('commits a consumer with its producer while an unchanged pre-existing break
   assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
 });
 
+test('an @/ alias that no tsconfig maps (a test runner alias) is outside the closure and never refuses', async (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.cwd, 'packages/plugin/src'), { recursive: true });
+  f.write('packages/plugin/tsconfig.json', '{ "compilerOptions": { "strict": true }, "exclude": ["src/**/*.test.ts"] }');
+  f.write('packages/plugin/src/history.test.ts', "import { exec } from '@/plugins/runtime/exec';\nexport const value = exec;");
+  const commit = await commitFromPrivateIndex({ ...f, paths: ['packages/plugin/tsconfig.json', 'packages/plugin/src/history.test.ts'] });
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
+});
+
 test('refuses an unresolved module-scope require but never resolves createRequire calls against the importing file', async t => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));

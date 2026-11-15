@@ -113,7 +113,9 @@ function revisionView(repo, git, rev) {
     const alias = Object.keys(options.paths ?? {}).some(pattern => pattern.includes('*')
       ? specifier.startsWith(pattern.split('*')[0]) && specifier.endsWith(pattern.split('*')[1]) : pattern === specifier);
     let result = { kind: 'external' };
-    if (specifier.startsWith('.') || specifier.startsWith('@/') || alias || workspaces.has(workspace)) {
+    // A path alias is ours only when the file's own tsconfig maps it; an alias that only a bundler
+    // or test-runner config defines (e.g. a host-source `@/` alias in plugin tests) is outside the scan.
+    if (specifier.startsWith('.') || alias || workspaces.has(workspace)) {
       const resolved = ts.resolveModuleName(specifier, resolve(repo, file), options, host).resolvedModule;
       const target = resolved && repoPath(resolved.resolvedFileName);
       if (!resolved) result = ignoredOnDisk(file, specifier, options) ? { kind: 'external' } : { kind: 'missing' };
