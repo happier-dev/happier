@@ -279,6 +279,33 @@ describe('useTemporaryComputerLaunch', () => {
         expect(hook.getCurrent().status).toBe('idle');
     });
 
+    // P03-ANDROID-FIX-2: Home hides through Activity, so every return to Home re-runs this owner's effects. The
+    // draft's recovery answer is already known; a return with nothing changed asks the Home nothing.
+    it('asks for the draft recovery once, not again on each return to a page hidden through Activity', async () => {
+        const readByDraft = vi.fn(async () => { throw new RunnerActivationClientError('not_found', 404, false); });
+        const input = {
+            serverId: 'server-1',
+            client: { readByDraft } as unknown as RunnerActivationClient,
+            draftId: 'draft-return',
+            existingPublicRef: null,
+            prepareActivation: vi.fn(),
+            persistPublicRef: vi.fn(),
+            onMaterialized: vi.fn(),
+        };
+        function Probe() { useTemporaryComputerLaunch(input); return null; }
+        const { renderScreen } = await import('@/dev/testkit');
+        const page = (shown: boolean) => <React.Activity mode={shown ? 'visible' : 'hidden'}><Probe /></React.Activity>;
+        const screen = await renderScreen(page(true));
+        await vi.waitFor(() => expect(readByDraft).toHaveBeenCalledTimes(1));
+        for (let visit = 0; visit < 3; visit += 1) {
+            await screen.update(page(false));
+            await screen.update(page(true));
+        }
+        await act(async () => { await Promise.resolve(); });
+        expect(readByDraft).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+    });
+
     it('cancels an in-flight safe projection read when the mounted creator goes away', async () => {
         const observedSignals: (AbortSignal | undefined)[] = [];
         const readByDraft = vi.fn(async (_draftId: string, signal?: AbortSignal) => {

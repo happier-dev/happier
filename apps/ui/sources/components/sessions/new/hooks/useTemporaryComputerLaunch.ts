@@ -427,10 +427,17 @@ export function useTemporaryComputerLaunch(input: Readonly<{
     // the mounted owner passes fresh lifecycle callbacks each time — a
     // render-driven request loop, and a freshness signal that lies about where
     // currentness comes from.
+    // Activity re-runs this on every return to a hidden page (Home). An identity already answered, with nothing
+    // live that a missed wake could have moved, asks nothing; an in-progress activation catches up.
+    const reconciledKeyRef = React.useRef(reconciledKey);
+    reconciledKeyRef.current = reconciledKey;
     React.useEffect(() => {
         if (!input.client) return;
+        const live = latestProjectionRef.current !== null
+            && ['pending', 'claimed', 'consented'].includes(latestProjectionRef.current.state);
+        if (reconciledKeyRef.current === reconciliationKey && !live) return;
         void refreshRef.current();
-    }, [input.client, input.draftId, input.existingPublicRef?.activationId]);
+    }, [input.client, reconciliationKey]);
 
     // Endpoint-driven transitions (claim, endpoint facts, consent, readiness,
     // decline) are the only activation facts this creator cannot learn from its
