@@ -18,6 +18,15 @@ const buildPolicyState = vi.hoisted(() => ({
 // The phone's three home-route tabs, switched the way the tab bar does (one active tab at a time).
 const tabState = vi.hoisted(() => ({ activeTab: 'sessions' as 'sessions' | 'projects' | 'inbox', listeners: new Set<() => void>() }));
 const tabMounts = vi.hoisted(() => ({ sessions: 0, projects: 0, inbox: 0 }));
+const inboxStore = vi.hoisted(() => {
+    let value = 0;
+    const listeners = new Set<() => void>();
+    return {
+        read: () => value,
+        subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        set: (next: number) => { value = next; for (const listener of [...listeners]) listener(); },
+    };
+});
 
 
 vi.mock('@expo/vector-icons', () => ({
@@ -152,8 +161,10 @@ vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
 vi.mock('@/components/navigation/shell/InboxView', async () => {
     const React = await import('react');
     return { InboxView: function InboxView() {
-        React.useEffect(() => { tabMounts.inbox += 1; }, []);
-        return React.createElement('InboxView');
+        React.useState(() => { tabMounts.inbox += 1; return null; });
+        // A live store subscription in a hidden tab body (rows, badges and summaries all have one).
+        const value = React.useSyncExternalStore(inboxStore.subscribe, inboxStore.read);
+        return React.createElement('InboxView', { value });
     } };
 });
 
@@ -164,7 +175,7 @@ vi.mock('@/components/navigation/shell/FriendsView', () => ({
 vi.mock('@/components/projects/ProjectsListView', async () => {
     const React = await import('react');
     return { ProjectsListView: function ProjectsListView() {
-        React.useEffect(() => { tabMounts.projects += 1; }, []);
+        React.useState(() => { tabMounts.projects += 1; return null; });
         return React.createElement('ProjectsListView');
     } };
 });
@@ -172,7 +183,7 @@ vi.mock('@/components/projects/ProjectsListView', async () => {
 vi.mock('@/components/sessions/shell/SessionsListWrapper', async () => {
     const React = await import('react');
     return { SessionsListWrapper: function SessionsListWrapper() {
-        React.useEffect(() => { tabMounts.sessions += 1; }, []);
+        React.useState(() => { tabMounts.sessions += 1; return null; });
         return React.createElement('SessionsListWrapper');
     } };
 });
@@ -224,6 +235,7 @@ describe('MainView (phone home-route tabs)', () => {
         buildPolicyState.decision = 'neutral';
         tabState.activeTab = 'sessions';
         tabMounts.sessions = 0; tabMounts.projects = 0; tabMounts.inbox = 0;
+        inboxStore.set(0);
     });
 
     // Three tabs: a third tab's first mount beside two suspended tabs must settle (it once cascaded and never drained).
@@ -236,5 +248,29 @@ describe('MainView (phone home-route tabs)', () => {
             });
         }
         expect(tabMounts).toEqual({ sessions: 1, projects: 1, inbox: 1 });
+    });
+
+    // P03-ANDROID-FIX: a frozen (thrown-thenable) hidden tab re-attempted its body on every store update outside
+    // an Offscreen render, and React 19.2 spawned a fresh retry render for it each time; with an update landing
+    // during each retry (Android deep-link resume) that became ~120 empty commits/s. A hidden tab does no work.
+    it('commits nothing while a hidden tab body store updates', { timeout: 30000 }, async () => {
+        let commits = 0;
+        await renderScreen(<React.Profiler id="main" onRender={() => { commits += 1; }}><MainView variant="phone" /></React.Profiler>);
+        for (const tab of ['inbox', 'sessions'] as const) {
+            await renderer.act(async () => {
+                tabState.activeTab = tab;
+                for (const listener of [...tabState.listeners]) listener();
+            });
+        }
+        commits = 0;
+        for (let value = 1; value <= 3; value++) {
+            await renderer.act(async () => { inboxStore.set(value); });
+        }
+        expect(commits).toBe(0);
+        await renderer.act(async () => {
+            tabState.activeTab = 'inbox';
+            for (const listener of [...tabState.listeners]) listener();
+        });
+        expect(tabMounts.inbox).toBe(1);
     });
 });
