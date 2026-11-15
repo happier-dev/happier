@@ -2,16 +2,17 @@ import { logger } from '@/ui/logger';
 import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
-import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { parseLocalServiceDomainActionRpcRequest, readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionId } from '@happier-dev/protocol';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, projectDeploymentTemplateInstantiationResultV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -47,13 +48,21 @@ type ApprovalCreateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsCr
 
 export { consumeDeferredCliApprovalResult } from './approvals/deferredResult';
 
-/** Admission can defer Ask only when the receiving Account policy retains it. */
-export function isOriginalCliApprovalPreservedAtAccount(actionId: ActionSettingsActionId, input: unknown,
-  context: ActionExecutorContext, provider: RuntimeActionSettingsProvider): boolean {
+/**
+ * Original CLI admission defers Ask to the receiving Account, which decides with its own policy and the
+ * receiver-visible invocation (CLI surface, caller authority). A host-only Ask that Account policy cannot
+ * preserve refuses before dispatch rather than creating an unsigned approval. Both answers come from the
+ * shared approval router; no caller re-decides either side.
+ */
+export function isUnpreservableOriginalCliApproval(actionId: ActionId, input: unknown, context: ActionExecutorContext,
+  hostSettings: ActionsSettingsV1, provider: Pick<RuntimeActionSettingsProvider, 'getAccountSettings'>): boolean {
+  const spec = getActionSpec(actionId);
+  const required = (settings: ActionsSettingsV1, routedContext: ActionExecutorContext) =>
+    resolveActionApprovalRouting({ actionId, spec, input, settings, context: routedContext }).required;
+  if (!required(hostSettings, { ...context, surface: 'cli' })) return false;
   const accountSettings = provider.getAccountSettings?.();
-  return Boolean(accountSettings && isApprovalRequiredByActionsSettings(actionId,
-    normalizeActionsSettingsV1(accountSettings.actionsSettingsV1),
-    { surface: 'cli', authority: context.authority }, undefined, undefined, input));
+  return !accountSettings || !required(normalizeActionsSettingsV1(accountSettings.actionsSettingsV1),
+    { surface: 'cli', authority: context.authority });
 }
 
 /** Extra host-local requester custody; never an Action, SDK or transported field. */
@@ -113,6 +122,8 @@ export function createCliActionExecutorHarness(
   const originationSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider({
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
   });
+  const readHostActionsSettings = (ctx: ActionExecutorContext) => params.actionsSettingsProvider?.getActionsSettings()
+    ?? ctx.actionsSettings ?? actionSettingsProvider.getActionsSettings();
   const hasAcceptedReservationPolicy = (id: string, ctx: ActionExecutorContext) =>
     id === 'discussion.invite' && ctx.actionCaller?.kind === 'workflowRun'
       && ctx.actionCaller.discussionModelReservation !== undefined && ctx.actionsSettings !== undefined;
@@ -168,12 +179,9 @@ export function createCliActionExecutorHarness(
     },
     projectAction: async args => {
       if (requiresOriginalCliFiniteAdmission(args.actionId, args.context)
-        && readApprovalRequired(args.actionId, args.context, args.input)) {
-        if (!isOriginalCliApprovalPreservedAtAccount(args.actionId, args.input, args.context, originationSettingsProvider)) {
-          // A custom host policy may be narrower than Account policy. Neither
-          // unsigned replay nor a receiver waiver can preserve that requirement.
-          return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-        }
+        && isUnpreservableOriginalCliApproval(args.actionId, args.input, args.context,
+          readHostActionsSettings(args.context), originationSettingsProvider)) {
+        return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       }
       return await baseDepsForRuntime.projectAction!(args);
     },
@@ -425,8 +433,8 @@ export function createCliActionExecutorHarness(
       if (!parsed.result.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (dispatch.caller === 'host') {
         if (!isActionEnabled(dispatch.actionId, context)) return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
-        if (readApprovalRequired(dispatch.actionId, context, parsed.result.data)
-          && !isOriginalCliApprovalPreservedAtAccount(dispatch.actionId, parsed.result.data, context, originationSettingsProvider))
+        if (isUnpreservableOriginalCliApproval(dispatch.actionId, parsed.result.data, context,
+          readHostActionsSettings(context), originationSettingsProvider))
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       }
       if (parsed.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {

@@ -101,7 +101,7 @@ import type {
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliTeamCredentialUsageExportAction } from './teamCredentialUsageExportAction';
 import { isControllerDeploymentMutationAction } from './createCliActionDeps';
-import { consumeDeferredCliApprovalResult, isOriginalCliApprovalPreservedAtAccount, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
+import { consumeDeferredCliApprovalResult, isUnpreservableOriginalCliApproval, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
 import { executeLiveCliApprovalRequest } from './approvals/deferredResult';
 import { executeOriginalAccountCliApprovalRequest } from './approvals/originalAccountRequest';
 import { readControllerDeploymentDispatch } from './controllerDeploymentDispatch';
@@ -2100,9 +2100,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   if (!isActionEnabledByActionsSettings(parsedActionId.data, settings, { surface: 'cli', placement: context.placement ?? null })) {
                     return actionFailure('action_disabled');
                   }
-                  if (resolveActionApprovalRouting({ actionId: spec.id, spec, input: admittedInput, settings,
-                    context: { ...originalContext, surface: 'cli' } }).required
-                    && !isOriginalCliApprovalPreservedAtAccount(parsedActionId.data, admittedInput, originalContext, policy)) {
+                  if (isUnpreservableOriginalCliApproval(parsedActionId.data, admittedInput, originalContext, settings, policy)) {
                     return actionFailure('approval_context_unavailable');
                   }
                 }

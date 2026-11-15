@@ -6938,9 +6938,13 @@ seal the original CLI invocation to the admitted installation through the
 existing private requester context, including on an owned Machine. The receiving
 requester-policy owner applies CLI approval settings and binds Ask to the exact
 Home-issued Machine root; a UI waiver cannot replace CLI Ask. Missing installation
-sealing material refuses admission. A supplied host-only Ask that Account policy
-cannot preserve returns `approval_context_unavailable` before dispatch rather
-than creating an unsigned approval.
+sealing material refuses admission. `resolveActionApprovalRouting` answers both
+sides of this deferral: the host's Actions settings with the full invocation, and
+the Account's settings with the context the receiver sees (CLI surface, caller
+authority). A host-only Ask that the Account answer cannot preserve returns
+`approval_context_unavailable` before dispatch rather than creating an unsigned
+approval (`isUnpreservableOriginalCliApproval`, shared by the credentialed CLI and
+the CLI action harness).
 
 The development UI Account relay projects mounted Plugin caller descriptors
 onto the closed private requester invocation schema before native reads and
