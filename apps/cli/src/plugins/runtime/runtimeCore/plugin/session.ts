@@ -1105,7 +1105,7 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                     ? { augmentSessionMetadata }
                     : {}),
                 policyAgentId,
-                readSessionAgentCatalogEntry: () => params.agent.catalogEntry ?? null,
+                readSessionAgent: () => params.agent,
                 providerRequirements:
                     params.agent.richDefinition?.definition
                         .providerRequirements,

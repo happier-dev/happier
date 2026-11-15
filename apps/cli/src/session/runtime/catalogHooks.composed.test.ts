@@ -87,7 +87,7 @@ describe('session resume through the applied plugin runtime', () => {
       } as Parameters<NonNullable<typeof wrapped.config.createSessionRuntime>>[0]);
       const agent = await resolveCapabilityApplyAgentFacts({ agentId: 'codex', metadata: {
         runtimeDescriptorV1: opened.runtimeDescriptorV1,
-      }, sessionRunning: true, catalogEntry: wrapped.config.readSessionAgentCatalogEntry?.() });
+      }, sessionRunning: true, catalogEntry: wrapped.config.readSessionAgent?.().catalogEntry ?? null });
       expect(resolveCapabilityApplyTimingV1({ kind: 'mcp_server', sessionRunning: true, agent, launchRestart: 'automatic' }))
         .toEqual({ t: 'next_turn' });
       let metadata = createTestMetadata({ flavor: 'codex', startedBy: 'daemon' });

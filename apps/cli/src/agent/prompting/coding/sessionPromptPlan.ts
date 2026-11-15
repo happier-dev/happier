@@ -120,6 +120,8 @@ export function createSessionPromptPlanResolver(params: Readonly<{
   opts: HostSessionRuntimeRunOptions;
   session: Pick<ApiSessionClient, 'sessionId' | 'getMetadataSnapshot' | 'enqueueSessionEventCommitted'>;
   agentId: string;
+  /** The Session's own Agent facts; absent → the current catalog. */
+  agentCatalog?: Parameters<typeof resolveAgentToolsDelivery>[1];
   machineId: string;
   directory: string;
   serverId?: string;
@@ -131,7 +133,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
   /** Captures fresh material from the same admitted Home/Account for one preparation. */
   readOperationContext?: () => SavedSecretOperationContextV1 | undefined;
 }>): SessionPromptPlanResolver {
-  const toolDelivery = resolveAgentToolsDelivery(params.agentId);
+  const toolDelivery = resolveAgentToolsDelivery(params.agentId, params.agentCatalog);
   let resolvedText: string | null = null;
   let optionalLibraryUnavailable = false;
   let revision = params.opts.agentSessionStartupInstructionsV1?.revision ?? 1;

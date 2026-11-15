@@ -11258,6 +11258,19 @@ describe('runHostSessionRuntime', () => {
     expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' }, extra: { command: 'extra' } });
   });
 
+  it('starts a hosted Session from its admitted Agent without reading the full Agent catalog', async () => {
+    const harness = createHarness();
+    const sessionAgent = getResolvedContributionRegistry().agentDefinitionsById.get(harness.config.policyAgentId);
+    if (!sessionAgent) throw new Error('Expected the harness Agent in the built-in catalog');
+    harness.config.readSessionAgent = () => sessionAgent;
+    // The catalog reader is counted through its module boundary; it still answers normally.
+    readAgentCatalogSnapshotOverride.mockClear();
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(readAgentCatalogSnapshotOverride).toHaveBeenCalledTimes(0);
+  });
+
   it('passes resolved MCP servers to an external Agent that declares native MCP delivery', async () => {
     const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
     const agentId = 'com.acme.review/review';
