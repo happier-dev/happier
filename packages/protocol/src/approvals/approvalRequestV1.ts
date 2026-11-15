@@ -1,4 +1,5 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.js';
+import { readInitiatingActionCallerV1 } from '../actions/invocationAuthority.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
@@ -462,8 +463,7 @@ export function resolveApprovalRequesterConfirmationV1(params: Readonly<{
   context?: ActionExecutorContext; actionId: ActionId; input: unknown; required: boolean;
 }>): Readonly<{ ok: true; requesterConfirmation: ApprovalRequesterConfirmationV1 | null }>
   | Readonly<{ ok: false; errorCode: 'approval_requester_unavailable'; error: typeof APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 }> {
-  let caller = params.context?.actionCaller;
-  while (caller?.kind === 'plugin' && caller.initiatingCaller) caller = caller.initiatingCaller;
+  const caller = readInitiatingActionCallerV1(params.context?.actionCaller);
   // An origin Session and daemon custody do not identify a Workflow's person.
   // Refuse before artifact creation, including explicit and nested requests.
   const context = params.context;

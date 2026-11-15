@@ -1,10 +1,18 @@
 import type { ActionRequiredAuthority, ActionSurfaces } from './metadata.js';
 import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import type { ApprovalExecutionOriginV1 } from '../approvals/approvalRequestV1.js';
 import { AUTH_TOKEN_KIND_AUTHORITIES, type AuthTokenAuthority, type AuthTokenKind } from '../auth/authToken.js';
 
 export const AUTHORITY_CEILING_HEADER_V1 =
   'x-happier-authority-ceiling' as const;
+
+/** Nested Plugin Actions retain the original host-stamped initiating caller. */
+export function readInitiatingActionCallerV1(caller: ActionExecutorContext['actionCaller'] | ApprovalExecutionOriginV1['caller']):
+  ActionExecutorContext['actionCaller'] | ApprovalExecutionOriginV1['caller'] {
+  while (caller?.kind === 'plugin' && 'initiatingCaller' in caller && caller.initiatingCaller) caller = caller.initiatingCaller;
+  return caller;
+}
 
 /** A trusted present-person host invocation, never external or Session-supplied authority. */
 export function isPresentUserHostInvocation(

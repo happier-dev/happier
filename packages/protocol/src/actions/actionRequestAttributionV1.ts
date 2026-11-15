@@ -5,6 +5,9 @@ import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRe
 import { SessionMessageAccountActorV1Schema, deriveSessionMessageAuthorAccountIdV1 } from '../sessions/messages/sessionMessageAccountActorV1.js';
 import { SessionInputAdmissionReceiptV1Schema, SessionInputAuthoritySchema } from '../sessions/messages/sessionInputAdmission.js';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from './externalActionApi.js';
+import type { ActionExecutorContext } from './executor/types.js';
+import type { ActionId } from './actionIds.js';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, readInitiatingActionCallerV1 } from './invocationAuthority.js';
 
 /** Authenticated requester identity is independent of terminal consent authority. */
 export function readAuthenticatedActionRequesterAccountIdV1(binding: ExternalActionExecutionAuthorizationBindingV1): string | null {
@@ -18,6 +21,44 @@ export const ActionRequestRequesterV1Schema = lazyZodSchema(() => z.strictObject
   serverId: SessionMessageRefV1Schema.shape.session.shape.serverId,
   accountId: SessionMessageAccountActorV1Schema.shape.accountId,
 }));
+
+/** Private historical actor references; display names remain with their existing content owners. */
+export const ActionActorV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ actorKind: z.literal('person'), accountId: ActionRequestRequesterV1Schema.shape.accountId }),
+  z.strictObject({ actorKind: z.literal('agent'), sessionId: SessionMessageRefV1Schema.shape.session.shape.sessionId,
+    onBehalfOf: z.optional(ActionRequestRequesterV1Schema) }),
+  z.strictObject({ actorKind: z.literal('workflow'), runId: z.string().check(z.minLength(1)),
+    automationId: z.optional(z.string().check(z.minLength(1))), onBehalfOf: z.optional(ActionRequestRequesterV1Schema) }),
+]));
+export type ActionActorV1 = Readonly<z.infer<typeof ActionActorV1Schema>>;
+
+/** Capture only host-authenticated provenance at the operation/effect owner's admission boundary. */
+export function deriveActionActorV1(context: ActionExecutorContext, actionId: ActionId,
+  witnessedApproval?: Readonly<Pick<NonNullable<ActionExecutorContext['presentUserApproval']>, 'decidingAccountId'>>): ActionActorV1 | undefined {
+  const approval = witnessedApproval ?? context.presentUserApproval;
+  if (approval) {
+    const approver = approval.decidingAccountId;
+    return approver ? { actorKind: 'person', accountId: approver } : undefined;
+  }
+  const original = context.approvedActionReplay?.origin;
+  const caller = readInitiatingActionCallerV1(original?.caller ?? context.actionCaller);
+  const requester = context.actionRequestAttributionV1 ? context.actionRequestAttributionV1.requester
+    : caller?.kind === 'workflowRun' ? caller.authenticatedStarterV1?.requester : undefined;
+  const onBehalfOf = requester ? { onBehalfOf: { ...requester } } : {};
+  if (caller?.kind === 'session') return { actorKind: 'agent', sessionId: caller.sessionId, ...onBehalfOf };
+  if (caller?.kind === 'workflowRun') return { actorKind: 'workflow', runId: caller.runId, ...onBehalfOf };
+  if (caller?.kind === 'automationRun') return { actorKind: 'workflow', runId: caller.runId,
+    automationId: caller.automationId, ...onBehalfOf };
+  if (!caller || caller.kind === 'host') {
+    const confirmation = context.presentUserConfirmation?.actionId === actionId ? context.presentUserConfirmation.accountId : undefined;
+    const binding = context.externalActionExecutionAuthorization?.binding;
+    const accountId = confirmation ?? (isHomeAdmittedPresentUserHostInvocation(context, actionId) && binding
+      ? readAuthenticatedActionRequesterAccountIdV1(binding)
+      : isPresentUserHostInvocation(context) ? context.runtimeAccountId : undefined);
+    if (accountId) return { actorKind: 'person', accountId };
+  }
+  return undefined;
+}
 
 /** Content-free host projection of one admitted cause. Never execution or approval authority. */
 export const ActionRequestAttributionV1Schema = lazyZodSchema(() => z.strictObject({

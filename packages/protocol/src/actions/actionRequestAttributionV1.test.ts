@@ -1,11 +1,67 @@
 import { describe, expect, it } from 'vitest';
-import { deriveSessionInputActionRequestAttributionV1, materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
+import { deriveActionActorV1, deriveSessionInputActionRequestAttributionV1, materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
+import type { ActionCaller } from './executor/types.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { settleSessionInputRequestV1 } from '../sessions/messages/sessionInputAdmission.js';
 
 describe('host request attribution custody', () => {
   const persona = { serverId: 'home', sessionId: 'bot' };
+
+  it('names the witnessed approver instead of the requesting Session or its host Account', () => {
+    expect(deriveActionActorV1({ runtimeAccountId: 'machine-owner',
+      actionCaller: { kind: 'session', sessionId: 'bot', starterDepth: 0, turnDepth: 0 },
+      presentUserApproval: { actionId: 'deployments.deploy', requestId: 'approved', inputDigest: 'digest',
+        decidingAccountId: 'person', decidedAtMs: 1 },
+    }, 'deployments.deploy')).toEqual({ actorKind: 'person', accountId: 'person' });
+  });
+
+  it('retains the original Session and qualified person through nested Plugin delegation', () => {
+    expect(deriveActionActorV1({ actionCaller: { kind: 'plugin', pluginId: 'outer',
+      initiatingCaller: { kind: 'plugin', pluginId: 'inner',
+        initiatingCaller: { kind: 'session', sessionId: 'bot', starterDepth: 0, turnDepth: 0 } } },
+      actionRequestAttributionV1: { requestRef: 'request', persona,
+        requester: { serverId: 'original-home', accountId: 'person' }, origin: null },
+    }, 'deployments.deploy')).toEqual({ actorKind: 'agent', sessionId: 'bot',
+      onBehalfOf: { serverId: 'original-home', accountId: 'person' } });
+  });
+
+  it('keeps an accepted approval with an uncaptured person unknown rather than naming its requesting agent', () => {
+    expect(deriveActionActorV1({ runtimeAccountId: 'execution-owner',
+      actionCaller: { kind: 'session', sessionId: 'requesting-agent', starterDepth: 0, turnDepth: 0 },
+      presentUserApproval: { actionId: 'deployments.deploy', requestId: 'historical-approval',
+        inputDigest: 'digest', decidedAtMs: 1 },
+    }, 'deployments.deploy')).toBeUndefined();
+  });
+
+  it('requires the existing present-person admission rather than a host Account or credential alone', () => {
+    const actionCaller = { kind: 'host' } as const;
+    const runtimeAccountId = 'machine-owner';
+    expect(deriveActionActorV1({ actionCaller, runtimeAccountId }, 'deployments.deploy')).toBeUndefined();
+    expect(deriveActionActorV1({ actionCaller, runtimeAccountId, surface: 'cli', authority: 'present_user' },
+      'deployments.deploy')).toEqual({ actorKind: 'person', accountId: runtimeAccountId });
+    const externalActionExecutionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture',
+      binding: { accountId: runtimeAccountId, custodianAccountId: runtimeAccountId, principalId: 'machine-principal',
+        credentialId: 'machine-credential', grant: API_TOKEN_FULL_GRANT_V1, accountEncryptionMode: 'plain',
+        serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'deployments.deploy',
+        requestId: 'machine-request', target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43) } });
+    expect(deriveActionActorV1({ actionCaller, runtimeAccountId, surface: 'cli', authority: 'present_user',
+      externalActionExecutionAuthorization }, 'deployments.deploy')).toBeUndefined();
+  });
+
+  it('keeps a settled unknown requester instead of substituting the Workflow starter', () => {
+    const actionCaller = { kind: 'workflowRun', runId: 'run',
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' },
+      authenticatedStarterV1: { requestRef: 'workflow-start', requester: { serverId: 'home', accountId: 'starter' } },
+    } satisfies ActionCaller;
+    expect(deriveActionActorV1({ actionCaller }, 'deployments.deploy')).toEqual({ actorKind: 'workflow', runId: 'run',
+      onBehalfOf: { serverId: 'home', accountId: 'starter' } });
+    expect(deriveActionActorV1({ actionCaller, actionRequestAttributionV1: {
+      requestRef: 'autonomous-effect', persona, requester: null, origin: null,
+    } }, 'deployments.deploy')).toEqual({ actorKind: 'workflow', runId: 'run' });
+  });
 
   it('derives the requester from the receipt while retaining the distinct committed origin', () => {
     const origin = CoordinationMessageRefV1Schema.parse(SessionMessageRefV1Schema.parse({
