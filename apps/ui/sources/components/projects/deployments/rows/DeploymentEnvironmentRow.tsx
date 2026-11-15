@@ -13,6 +13,9 @@ import { Typography } from '@/constants/Typography';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { CollectionRowMenu } from '@/components/ui/lists/collection/CollectionRowMenu';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { t } from '@/text';
 
 import type { deploymentRailState } from '../deploymentPresentation';
 
@@ -186,6 +189,43 @@ export const DeploymentTreeRow = React.memo(function DeploymentTreeRow(
           .filter(Boolean)
           .join(', ')
       }
+    />
+  );
+});
+
+/**
+ * An Environment row's ⋯ in the Services column (owner 2026-11-15 13:34Z, lab sideSvc "Pinned"): Pin keeps it at the
+ * top of the column, Unpin takes it back off. The menu mounts only while open.
+ */
+export const DeploymentEnvironmentRowMenu = React.memo(function DeploymentEnvironmentRowMenu(
+  props: Readonly<{ testID: string; pinned: boolean; onSelectPin: () => void }>,
+) {
+  const { theme } = useUnistyles();
+  return (
+    <CollectionRowMenu
+      testID={props.testID}
+      renderMenu={(menu) => (
+        <DropdownMenu
+          open
+          onOpenChange={(next) => { if (!next) menu.onClose(); }}
+          items={[{
+            id: 'pin',
+            testID: `${props.testID}.pin`,
+            title: props.pinned ? t('projects.actions.unpin') : t('projects.actions.pin'),
+            icon: <Icon name={props.pinned ? 'push-pin-slash' : 'push-pin'} size={16} color={theme.colors.text.secondary} />,
+          }]}
+          onSelect={() => { menu.onClose(); props.onSelectPin(); }}
+          trigger={null}
+          popoverAnchorRef={menu.anchorRef}
+          placement="bottom"
+          popoverAnchorAlign="end"
+          variant="slim"
+          matchTriggerWidth={false}
+          maxWidthCap={240}
+          showCategoryTitles={false}
+          popoverPortalWebTarget="body"
+        />
+      )}
     />
   );
 });

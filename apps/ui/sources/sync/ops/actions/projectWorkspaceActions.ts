@@ -5,6 +5,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectOrganizationUpdateOutputV1Schema, type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
+import { ProjectServicesPinOutputV1Schema, type ProjectServicesPinInputV1 } from '@happier-dev/protocol/projects/projectServicesActionsV1';
 
 /** UI intents enter Action admission; its captured Account adapter owns row effects. */
 export async function updateProjectWorkspace(input: ProjectWorkspaceUpdateInputV1,
@@ -17,13 +18,19 @@ export async function forgetProjectWorkspace(input: ProjectWorkspaceForgetInputV
     return invokeProjectAction('projects.workspace.forget', input, lifetime, ProjectWorkspaceForgetOutputV1Schema);
 }
 
+/** Pin or unpin a service in the person's Services column (projects.services.pin). */
+export async function pinProjectService(input: ProjectServicesPinInputV1,
+    lifetime = captureActiveServerAccountScopeLifetime()) {
+    return invokeProjectAction('projects.services.pin', input, lifetime, ProjectServicesPinOutputV1Schema);
+}
+
 export async function updateProjectOrganization(input: ProjectOrganizationUpdateInputV1,
     lifetime = captureActiveServerAccountScopeLifetime()) {
     return invokeProjectAction('projects.organization.update', input, lifetime, ProjectOrganizationUpdateOutputV1Schema);
 }
 
-async function invokeProjectAction<T>(actionId: 'projects.workspace.update' | 'projects.workspace.forget' | 'projects.organization.update',
-    input: ProjectWorkspaceUpdateInputV1 | ProjectWorkspaceForgetInputV1 | ProjectOrganizationUpdateInputV1, lifetime: ActiveServerAccountScopeLifetime | null,
+async function invokeProjectAction<T>(actionId: 'projects.workspace.update' | 'projects.workspace.forget' | 'projects.organization.update' | 'projects.services.pin',
+    input: ProjectWorkspaceUpdateInputV1 | ProjectWorkspaceForgetInputV1 | ProjectOrganizationUpdateInputV1 | ProjectServicesPinInputV1, lifetime: ActiveServerAccountScopeLifetime | null,
     schema: Readonly<{ parse(value: unknown): T }>) {
     const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
     const serverId = 'projectRef' in input ? input.projectRef.serverId : input.serverId;

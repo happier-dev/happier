@@ -5,7 +5,7 @@ import {
   type DeploymentReadControllerV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
-import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
 import {
   act,
@@ -45,11 +45,13 @@ function environment(
   projectSourceId: string,
   title: string,
   projectSourceName: string | null,
+  deployed = true,
 ) {
   return {
     environment: createDeploymentEnvironmentHeaderV1({ id, projectSourceId }),
     title,
-    currentDeployment: null,
+    // A deployed Environment runs something; one never deployed has nothing in the column (E1).
+    currentDeployment: deployed ? createDeploymentReceiptHeaderV1({ id: `receipt-${id}`, environmentId: id, state: 'succeeded' }) : null,
     projectSourceName,
   };
 }
@@ -83,6 +85,8 @@ function Column(
     controller: DeploymentReadControllerV1;
     selection: Selection;
     onNavigate: (href: string) => void;
+    pinnedEnvironmentIds?: readonly string[];
+    onTogglePinned?: (environmentId: string, pinned: boolean) => void;
   }>,
 ) {
   const read = useDeploymentCollection(props.controller, shown);
@@ -94,6 +98,8 @@ function Column(
       selection={props.selection}
       onNavigate={props.onNavigate}
       create={null}
+      pinnedEnvironmentIds={props.pinnedEnvironmentIds ?? []}
+      onTogglePinned={props.onTogglePinned ?? (() => {})}
     />
   );
 }
@@ -104,12 +110,14 @@ async function render(
   onNavigate = vi.fn(),
   /** The row whose arrival says the column's read has landed. */
   ready = 'services-column:project:unnamed',
+  pins: Readonly<{ pinnedEnvironmentIds?: readonly string[]; onTogglePinned?: (environmentId: string, pinned: boolean) => void }> = {},
 ) {
   const screen = await renderScreen(
     <Column
       controller={controller}
       selection={selection}
       onNavigate={onNavigate}
+      {...pins}
     />,
   );
   await act(async () => {
@@ -179,7 +187,8 @@ describe('Services column', () => {
     const project = treeItemOf('services-column:project:source-shop');
     expect(project).toMatchObject({ webRole: 'treeitem', accessibilityLevel: 1, accessibilityExpanded: false });
     expect(treeItemOf('services-column:environment:env-api')).toMatchObject({ webRole: 'treeitem', accessibilityLevel: 1 });
-    expect(treeItemOf('services-column:environment:env-api')?.accessibilityExpanded).toBeUndefined();
+    // A deployed Environment discloses what it runs (level 3), folded at first.
+    expect(treeItemOf('services-column:environment:env-api')?.accessibilityExpanded).toBe(false);
     // One roving tab stop: exactly one row is in the tab order.
     const tabStops = rowIds(screen).filter((id) => treeItemOf(id)?.webTabIndex === 0);
     expect(tabStops).toHaveLength(1);
@@ -290,7 +299,7 @@ describe('Services column draws the one Environment row (UI refinements 2026-11-
       ...environment('env-shop-staging', 'source-shop', 'Staging', 'storefront'),
       currentDeployment: createDeploymentReceiptHeaderV1({ id: 'receipt-1', environmentId: 'env-shop-staging', state: 'failed' }),
     };
-    const items = [failed, environment('env-shop-production', 'source-shop', 'Production', 'storefront')];
+    const items = [failed, environment('env-shop-production', 'source-shop', 'Production', 'storefront', false)];
     const folded = controllerFor(items);
     const { screen: closed } = await render(folded, { kind: 'all' }, vi.fn(), 'services-column:project:source-shop');
     const projectEnd = closed.root.findAll((node) => node.props.presentation === 'inline'
@@ -304,11 +313,67 @@ describe('Services column draws the one Environment row (UI refinements 2026-11-
     const end = screen.root.findAll((node) => node.props.testID === 'services-column:environment:env-shop-staging:end'
       && node.props.presentation === 'inline')[0]!;
     expect(end.props).toMatchObject({ tone: 'danger', presentation: 'inline' });
-    // A deployed Environment discloses what it runs (level 3, lab sideSvc); one never deployed has nothing beneath.
+    // A deployed Environment discloses what it runs (level 3, lab sideSvc); one never deployed has nothing beneath, and
+    // stays listed while its Project has something deployed (E1 ruling 16:29Z).
     const row = (id: string) => screen.root.findAll((node) => node.props.testID === `services-column:environment:${id}`
       && 'disclosure' in node.props)[0]!;
     expect(row('env-shop-staging').props.disclosure).toMatchObject({ expanded: false });
     expect(row('env-shop-production').props.disclosure).toBeNull();
     opened.retire();
+  });
+});
+
+describe('Services column Pinned (lab sideSvc "Pinned"; owner 2026-11-15 13:34Z)', () => {
+  it('lists pinned Environments at the top under Pinned, named by their Project with the Environment beside it, and only when there are pins', async () => {
+    const pinned = controllerFor(ITEMS);
+    const { screen } = await render(pinned, { kind: 'all' }, vi.fn(), 'services-column:pinned:env-shop-staging',
+      { pinnedEnvironmentIds: ['env-shop-staging', 'env-missing'] });
+    const row = screen.root.findAll((node) => node.props.testID === 'services-column:pinned:env-shop-staging' && 'row' in node.props)[0]!;
+    expect(row.props.row).toMatchObject({ kind: 'environment', title: 'storefront', titleQualifier: 'Staging' });
+    // Above the Projects, right under All services; a pin this read does not hold draws nothing.
+    const ids = rowIds(screen);
+    expect(screen.findByTestId('services-column:pinned:env-missing')).toBeNull();
+    const order = screen.root.findAll((node) => typeof node.props.testID === 'string'
+      && /^services-column:(all|pinned:[^:]+|project:source-shop)$/.test(node.props.testID)).map((node) => node.props.testID as string);
+    expect([...new Set(order)]).toEqual(['services-column:all', 'services-column:pinned:env-shop-staging', 'services-column:project:source-shop']);
+    expect(ids).toContain('services-column:all');
+    pinned.retire();
+    const none = controllerFor(ITEMS);
+    const { screen: unpinned } = await render(none, { kind: 'all' }, vi.fn(), 'services-column:project:source-shop');
+    expect(unpinned.root.findAll((node) => String(node.props.testID ?? '').startsWith('services-column:pinned')).length).toBe(0);
+    none.retire();
+  });
+
+  it('pins and unpins an Environment from its row menu, pinned or in the tree', async () => {
+    const onTogglePinned = vi.fn();
+    const controller = controllerFor(ITEMS);
+    const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:pinned:env-api',
+      { pinnedEnvironmentIds: ['env-api'], onTogglePinned });
+    const menuOf = (testID: string) => screen.root.findAll((node) => node.props.testID === `${testID}:menu`
+      && typeof node.props.onSelectPin === 'function')[0]!;
+    // The pinned row unpins; an unpinned tree Environment pins.
+    expect(menuOf('services-column:pinned:env-api').props.pinned).toBe(true);
+    await act(async () => { menuOf('services-column:pinned:env-api').props.onSelectPin(); });
+    expect(onTogglePinned).toHaveBeenLastCalledWith('env-api', false);
+    controller.retire();
+  });
+});
+
+describe('Services column lists what runs (OWNER-UI-1115B E1)', () => {
+  it('leaves out Projects whose Environments were never deployed, keeping the one the route has open', async () => {
+    const items = [
+      environment('env-shop-staging', 'source-shop', 'Staging', 'storefront'),
+      environment('env-shop-draft', 'source-shop', 'Draft', 'storefront', false),
+      environment('env-idle', 'source-idle', 'idle-app', 'idle-app', false),
+      environment('env-draft', 'source-draft', 'draft-app', 'draft-app', false),
+    ];
+    const controller = controllerFor(items);
+    const { screen } = await render(controller, { kind: 'environment', projectSourceId: 'source-draft', environmentId: 'env-draft' },
+      vi.fn(), 'services-column:project:source-shop');
+    const ids = rowIds(screen);
+    expect(ids).toContain('services-column:project:source-shop');
+    expect(ids).toContain('services-column:environment:env-draft');
+    expect(ids.some((id) => id.includes('env-idle') || id.includes('source-idle'))).toBe(false);
+    controller.retire();
   });
 });

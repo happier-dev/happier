@@ -35,6 +35,8 @@ export type ProjectAccountRowsSnapshot = Readonly<{
     /** Ephemeral, producer-set invalidations for an exact source checkout and worker. */
     workerCopyStatusRevisions?: Readonly<Record<string, number>>;
     organizations: readonly ProjectOrganizationRow[];
+    /** The person's pinned services on this Home (its Services organization row), newest first. */
+    pinnedEnvironmentIds?: readonly string[];
     /** Server-owned display relationships; absence retains the older hydrated-Session fallback. */
     authoringSessionsByPhysicalKey?: Readonly<Record<string, ProjectAccountAuthoringSessionV1>>;
     revisionsByPhysicalKey: Readonly<Record<string, number>>;
@@ -108,6 +110,13 @@ export function readProjectAccountWorkspaceRefs(state: Parameters<typeof readCur
 /** Demand only the opened checkout facts; unrelated Project records retain the selected identity. */
 export function useProjectAccountWorkspaceRefs(enabled: boolean): readonly WorkspaceRefV1[] | undefined {
     return useProjectAccountRows(rows => readProjectAccountWorkspaceRefs({ projectAccountRows: rows }), enabled);
+}
+
+export const NO_PINNED_ENVIRONMENTS: readonly string[] = Object.freeze([]);
+/** The opened Home's pinned services (Services column → Pinned); an unrelated Project push keeps the same array. */
+export function usePinnedEnvironmentIds(serverId: string | null): readonly string[] {
+    return useProjectAccountRows(rows => serverId && rows?.scope.serverId === serverId
+        ? rows.pinnedEnvironmentIds ?? NO_PINNED_ENVIRONMENTS : NO_PINNED_ENVIRONMENTS, serverId !== null);
 }
 
 /** Exact checkout demand uses the same qualified, ambiguity-preserving resolver as the census. */

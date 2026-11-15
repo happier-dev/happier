@@ -237,6 +237,28 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
     ]);
   });
 
+  it('pins and unpins a service through the Home\'s one Services organization row, read by its key (projects.services.pin)', async () => {
+    const services = { kind: 'services-organization' as const, serverId: 'home-a' };
+    const boundary = accountRows([refRow(), { key: services, revision: 1,
+      content: { t: 'plain', v: { key: services, value: { pinnedEnvironmentIds: ['env-a'] } } } }]);
+    const pin = ActionIdSchema.parse('projects.services.pin');
+    expect(getActionSpec(pin)).toMatchObject({ safety: 'safe', executionPlacement: 'account',
+      surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true } });
+    const executor = createActionExecutor(dependencies());
+    expect(await executor.execute(pin, { serverId: 'home-a', environmentId: 'env-b', pinned: true },
+      { surface: 'cli', bypassApprovals: true })).toMatchObject({ ok: true, result: { ok: true, pinnedEnvironmentIds: ['env-b', 'env-a'] } });
+    expect(boundary.writes()).toHaveLength(1);
+    expect(boundary.writes()[0]?.[1]).toMatchObject({ topologyChange: false, expectedRefs: [], mutations: [{ key: services, expectedRevision: 1 }] });
+    // Already pinned: nothing is written.
+    expect(await executor.execute(pin, { serverId: 'home-a', environmentId: 'env-b', pinned: true },
+      { surface: 'cli', bypassApprovals: true })).toMatchObject({ ok: true, result: { pinnedEnvironmentIds: ['env-b', 'env-a'] } });
+    expect(await executor.execute(pin, { serverId: 'home-a', environmentId: 'env-a', pinned: false },
+      { surface: 'cli', bypassApprovals: true })).toMatchObject({ ok: true, result: { pinnedEnvironmentIds: ['env-b'] } });
+    expect(boundary.writes()).toHaveLength(2);
+    // Only the services row is read: never the Project census.
+    expect(boundary.post.mock.calls.filter(([url]) => String(url).endsWith('/list'))).toHaveLength(0);
+  });
+
   it('Forget tombstones the exact Home ref with the graph and retains the other Home', async () => {
     const boundary = accountRows([refRow(), refRow({ ...ref, serverId: 'home-b' })]);
     await expect(dependencies().projectsWorkspaceForget!({ serverId: 'home-a', workspaceId: ref.id })).resolves.toMatchObject({ ok: true, workspaceId: ref.id });

@@ -1,5 +1,5 @@
 import {
-    PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema,
+    PROJECT_ACCOUNT_ROWS_ROUTE_V1, PROJECT_ACCOUNT_ROW_KINDS_V1, ProjectAccountRowListResponseV1Schema,
     ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema,
     ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema, buildProjectAccountRowPhysicalKeyV1,
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -10,6 +10,8 @@ import type { ServerFetch } from '@/sync/http/client';
 
 /** Credential and Home are captured by the incumbent Account request context. */
 export function createApiProjectAccountRowsTransport(options: Readonly<{ request: ServerFetch }>): ProjectAccountRowsTransport {
+    // The current list request: every row kind (pinned services are listed only by asking) with authoring ids.
+    // An older server refuses it as invalid params; this Home then lists its older default census.
     let includeAuthoringSession = true;
     async function post(operation: 'list' | 'read' | 'mutate', input: unknown, signal?: AbortSignal): Promise<unknown> {
         signal?.throwIfAborted();
@@ -43,7 +45,8 @@ export function createApiProjectAccountRowsTransport(options: Readonly<{ request
             }
             return result;
         },
-        list: async (options) => ProjectAccountRowListResponseV1Schema.parse(await post('list', includeAuthoringSession ? { includeAuthoringSession: true } : {}, options?.signal)),
+        list: async (options) => ProjectAccountRowListResponseV1Schema.parse(await post('list',
+            includeAuthoringSession ? { kinds: [...PROJECT_ACCOUNT_ROW_KINDS_V1], includeAuthoringSession: true } : {}, options?.signal)),
         mutate: async (input, options) => ProjectAccountRowMutationResponseV1Schema.parse(await post('mutate', ProjectAccountRowMutationRequestV1Schema.parse(input), options?.signal)),
     };
 }

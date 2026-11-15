@@ -420,6 +420,34 @@ describe('Project Account row sync owner', () => {
         expect(h.projection()?.revisionsByPhysicalKey[buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: 'home', id: 'ref' })]).toBe(0);
     });
 
+    it.each(['plain', 'e2ee'] as const)('keeps pinned services in the Home\'s one %s services row: pin adds once at the top, unpin removes, nothing else is written', async mode => {
+        const h = harness(mode);
+        const services = { kind: 'services-organization' as const, serverId: 'home' };
+        const physical = buildProjectAccountRowPhysicalKeyV1(services);
+        h.rows.set(physical, { key: services, revision: 2, content: h.cipher.seal({ key: services, value: { pinnedEnvironmentIds: ['env-a'] } }) });
+        expect((await h.owner.read()).pinnedEnvironmentIds).toEqual(['env-a']);
+        await h.owner.setEnvironmentPinned({ serverId: 'home', environmentId: 'env-b', pinned: true });
+        expect(h.requests.at(-1)).toMatchObject({ topologyChange: false, expectedRefs: [], mutations: [{ key: services, expectedRevision: 2 }] });
+        expect(h.rows.get(physical)?.content?.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
+        expect(h.projection()?.pinnedEnvironmentIds).toEqual(['env-b', 'env-a']);
+        // Pinning again, or unpinning what is not pinned, writes nothing.
+        await h.owner.setEnvironmentPinned({ serverId: 'home', environmentId: 'env-b', pinned: true });
+        await h.owner.setEnvironmentPinned({ serverId: 'home', environmentId: 'env-z', pinned: false });
+        expect(h.requests).toHaveLength(1);
+        await h.owner.setEnvironmentPinned({ serverId: 'home', environmentId: 'env-a', pinned: false });
+        expect(h.projection()?.pinnedEnvironmentIds).toEqual(['env-b']);
+        expect(h.projection()?.revisionsByPhysicalKey[buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: 'home', id: 'ref' })]).toBe(0);
+        await expect(h.owner.setEnvironmentPinned({ serverId: 'foreign', environmentId: 'env-a', pinned: true })).rejects.toThrow();
+    });
+
+    it('starts a Home with no pinned services and writes its services row on the first pin', async () => {
+        const h = harness();
+        expect((await h.owner.read()).pinnedEnvironmentIds).toEqual([]);
+        await h.owner.setEnvironmentPinned({ serverId: 'home', environmentId: 'env-a', pinned: true });
+        expect(h.requests.at(-1)?.mutations).toMatchObject([{ key: { kind: 'services-organization', serverId: 'home' }, expectedRevision: 'absent' }]);
+        expect(h.projection()?.pinnedEnvironmentIds).toEqual(['env-a']);
+    });
+
     it('refuses Forget while even a paused relationship still holds the checkout', async () => {
         const h = harness();
         const target = { id: 'target', serverId: 'home', machineId: 'target-machine', rootPath: '/target', createdAtMs: 1, projectKey: 'anchor' };

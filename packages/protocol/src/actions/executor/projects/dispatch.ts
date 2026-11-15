@@ -139,6 +139,13 @@ export async function dispatchProjectsDispatch2(inv: Pick<CoreInvocation, 'actio
           return completeActionResult(ProjectWorkspaceUpdateOutputV1Schema.parse(await deps.projectsWorkspaceUpdate(input, ctx)));
         }
 
+        if (actionId === 'projects.services.pin') {
+          if (!deps.projectsServicesPin) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.services.pin' };
+          const { ProjectServicesPinOutputV1Schema } = await import('../../../projects/projectServicesActionsV1.js');
+          return completeActionResult(ProjectServicesPinOutputV1Schema.parse(
+            await deps.projectsServicesPin(data as AdmittedActionInputById['projects.services.pin'], ctx)));
+        }
+
         if (actionId === 'projects.workspace.forget') {
           if (!deps.projectsWorkspaceForget) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.workspace.forget' };
           const { ProjectWorkspaceForgetOutputV1Schema } = await import('../../../projects/projectWorkspaceActionsV1.js');

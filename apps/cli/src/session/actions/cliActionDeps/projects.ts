@@ -61,7 +61,7 @@ export function createCliProjectActionDeps(
     approvalsStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
     exactHome: CliActionExactHomeTarget;
   }>,
-): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
+): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'projectsServicesPin' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
   return {
     projectsWorkspaceUpdate: async ({ serverId, workspaceId, label, pinned, projectKey }: ProjectWorkspaceUpdateInputV1,
       context?: ActionExecutorContext): Promise<ProjectWorkspaceUpdateOutputV1> => {
@@ -115,6 +115,36 @@ export function createCliProjectActionDeps(
           }
         }
         return { ok: true, workspaceRef: acknowledgedWorkspaceRef, organization: acknowledgedOrganization };
+      } catch (error) {
+        if (isExecutionRunActionAbort(error, operationSignal)) return executionRunActionFailure('cancelled');
+        return executionRunActionFailure(readRpcErrorCode(error) ?? 'project_account_rows_unavailable');
+      }
+    },
+    /** Pin or unpin a service: the Home's one Services organization row, read by its key and written with its revision. */
+    projectsServicesPin: async ({ serverId, environmentId, pinned }, context) => {
+      const refused = await projectAccountAdmission(serverId, context);
+      if (refused) return refused;
+      serverId = await resolveProjectHomeIdentity();
+      const operationSignal = context?.signal;
+      const key = { kind: 'services-organization' as const, serverId };
+      const identity = buildProjectAccountRowPhysicalKeyV1(key);
+      try {
+        const { mutateProjectAccountRows } = await import("@/workspaces/projectAccountRows");
+        while (true) {
+          const read = await readProjectRows({ key }, operationSignal, context, 'projects.services.pin');
+          const row = read.rows.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === identity);
+          const value = row?.payload?.value;
+          const before: readonly string[] = value && 'pinnedEnvironmentIds' in value ? value.pinnedEnvironmentIds : [];
+          if (before.includes(environmentId) === pinned) return { ok: true, pinnedEnvironmentIds: [...before] };
+          const next = pinned ? [environmentId, ...before] : before.filter(id => id !== environmentId);
+          const result = await withProjectHome(() => mutateProjectAccountRows({ ...projectRowsAuthority(context, 'projects.services.pin', operationSignal),
+            request: { mutations: [{ key, expectedRevision: row?.revision ?? 'absent', payload: { key, value: { pinnedEnvironmentIds: next } } }],
+              expectedRefs: [], topologyChange: false }, ...(operationSignal ? { signal: operationSignal } : {}) }));
+          // A concurrent pin elsewhere moved the row: apply this one intent to its newer value.
+          if (result.status === 'conflict') continue;
+          if (result.status !== 'updated') return executionRunActionFailure(`project_account_rows_${result.status}`);
+          return { ok: true, pinnedEnvironmentIds: next };
+        }
       } catch (error) {
         if (isExecutionRunActionAbort(error, operationSignal)) return executionRunActionFailure('cancelled');
         return executionRunActionFailure(readRpcErrorCode(error) ?? 'project_account_rows_unavailable');

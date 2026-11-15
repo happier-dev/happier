@@ -169,6 +169,8 @@ import { DeploymentPendingRequest } from './DeploymentPendingRequest';
 import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
 import { formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { DomainStateLine } from './DeploymentDomainRow';
+import { usePinnedEnvironmentIds } from '@/sync/domains/workspaces/projectAccountRows';
+import { pinProjectService } from '@/sync/ops/actions/projectWorkspaceActions';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -240,6 +242,8 @@ export const DeploymentEnvironmentDetail = React.memo(
   ) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    // The person's pinned services on this Home, for the page menu's Pin (only this Home's pins wake it).
+    const pinned = usePinnedEnvironmentIds(props.serverId);
     const {
       running: deploying, outcome, reviewPending, press, banner,
     } = useDeploymentPress(props.review, props.onOpenReceipt);
@@ -736,6 +740,9 @@ export const DeploymentEnvironmentDetail = React.memo(
         } } : undefined}
         deleteTitle={disposition.canDelete ? t('projects.deployments.menuDelete', { name: detail.content.name }) : null}
         onDelete={() => openDisposition(null)}
+        pin={{ pinned: pinned.includes(detail.environment.id), toggle: () => {
+          void pinProjectService({ serverId: props.serverId, environmentId: detail.environment.id, pinned: !pinned.includes(detail.environment.id) });
+        } }}
       />
     );
     const machineLabel = machineName(machineIds[0] ?? '');
@@ -1865,12 +1872,17 @@ function EnvironmentMenu(
     /** "Delete Staging…", last and destructive; null where this viewer cannot delete it. */
     deleteTitle: string | null;
     onDelete: () => void;
+    /** Pin keeps it at the top of the person's Services column; Unpin takes it off (projects.services.pin). */
+    pin?: Readonly<{ pinned: boolean; toggle: () => void }>;
   }>,
 ) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
+      ...(props.pin ? [{ id: 'pin', testID: 'project-deployments.environment.menu.pin',
+        title: props.pin.pinned ? t('projects.actions.unpin') : t('projects.actions.pin'),
+        icon: <Icon name={props.pin.pinned ? 'push-pin-slash' : 'push-pin'} size={16} color={theme.colors.text.secondary} /> }] : []),
       ...(props.onDuplicate ? [{ id: 'duplicate', testID: 'project-deployments.environment.menu.duplicate',
         title: t('projects.deployments.copy.menu'),
         icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} /> }] : []),
@@ -1915,7 +1927,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [props.deleteTitle, props.onDuplicate, props.onMove, props.onOpenHistory, props.logs?.open, Boolean(props.logs), theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [props.deleteTitle, props.onDuplicate, props.onMove, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -1926,7 +1938,8 @@ function EnvironmentMenu(
       placement="bottom"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
-        if (id === 'history') props.onOpenHistory?.();
+        if (id === 'pin') props.pin?.toggle();
+        else if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();
         else if (id === 'move') props.onMove?.();
         else if (id === 'logs') props.logs?.toggle();

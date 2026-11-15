@@ -13,6 +13,7 @@ const payloads: ProjectAccountRowPayloadV1[] = [
     { key: { kind: 'workspace-ref', serverId: 'home', id: 'ref' }, value: { id: 'ref', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 } },
     { key: { kind: 'relationship-graph' }, value: { relationships: [] } },
     { key: { kind: 'project-organization', serverId: 'home', projectKey: 'project' }, value: { hidden: true, pinned: true } },
+    { key: { kind: 'services-organization', serverId: 'home' }, value: { pinnedEnvironmentIds: ['env-a'] } },
 ];
 
 describe('Project row Account encryption census and reseal', () => {
@@ -22,7 +23,8 @@ describe('Project row Account encryption census and reseal', () => {
         const request = async (path: string, init?: RequestInit) => {
             expect(path).toBe('/v1/account/project-rows/list');
             expect(init?.method).toBe('POST');
-            expect(JSON.parse(String(init?.body))).toEqual({});
+            // Every registered family, by asking: a list without kinds is the older Project-only census.
+            expect(JSON.parse(String(init?.body))).toEqual({ kinds: ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization'] });
             return Response.json({ status: 'listed', rows: [...rows, tombstone], coverage: 'complete' });
         };
         for (const sourceMode of ['plain', 'e2ee'] as const) {
@@ -32,7 +34,7 @@ describe('Project row Account encryption census and reseal', () => {
             expect(candidates.map(row => row.payload)).toEqual(payloads);
             const target = sourceMode === 'plain' ? { mode: 'e2ee' as const, material, randomBytes } : { mode: 'plain' as const };
             const directive = buildAccountEncryptionProjectRowsDirective({ candidates, target });
-            expect(directive!.items).toHaveLength(3);
+            expect(directive!.items).toHaveLength(4);
             rows = directive!.items.map(item => ({ key: item.key, revision: item.expectedRevision + 1, content: item.content }));
         }
         expect(rows).toEqual(payloads.map(payload => ({ key: payload.key, revision: 9, content: { t: 'plain', v: payload } })));

@@ -763,6 +763,22 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('offers Pin in the Environment page menu (Services column Pinned, owner 2026-11-15 13:34Z)', async () => {
+    const { ModalProvider } = await import('@/modal');
+    const { controller, detail } = controllerFor({});
+    try {
+      const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} /></ModalProvider>);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.pin');
+      const menu = screen.root.findAll((node) => Array.isArray(node.props.items)
+        && node.props.items.some((item: { id?: string }) => item.id === 'pin'))[0];
+      expect(menu?.props.items[0]).toMatchObject({ id: 'pin', title: 'Pin' });
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
   it.each(['review', 'refusal', 'receipt', 'retained'] as const)(
     'opens promotion from the native stored receipt and preserves the destination controller’s %s', async response => {
     // Designed confirmation binds the real current Account and stable Home identity.

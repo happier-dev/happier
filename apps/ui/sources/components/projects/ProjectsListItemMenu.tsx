@@ -1,17 +1,13 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import type { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { t } from '@/text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { Icon } from '@/components/ui/icons/Icon';
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
-import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
-import { useItemRowHovered } from '@/components/ui/lists/ItemRowHover';
+import { CollectionRowMenu } from '@/components/ui/lists/collection/CollectionRowMenu';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { projectWorkspaceRefV1, type QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -48,26 +44,6 @@ type ProjectsListItemMenuProps = Readonly<{
         onSeparate: (() => void) | null;
     }> | null;
 }>;
-
-const ROW_MENU_BUTTON_PX = 24;
-/**
- * The free space around the button inside the shortest row (the button is centred in it). Stacked rows
- * touch, so the finger reach stops at the row's own edge and a neighbour's trigger never shares it.
- */
-const ROW_MENU_VERTICAL_GAP_PX = HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight - ROW_MENU_BUTTON_PX;
-
-function stopPressEventPropagation(event: unknown): void {
-    const maybeEvent = event as {
-        stopPropagation?: () => void;
-        nativeEvent?: { stopPropagation?: () => void };
-    };
-    try {
-        maybeEvent.stopPropagation?.();
-    } catch {}
-    try {
-        maybeEvent.nativeEvent?.stopPropagation?.();
-    } catch {}
-}
 
 /**
  * The menu model and its popover. Mounted only while the row's menu is open, so a closed row costs just its
@@ -223,34 +199,9 @@ function ProjectsListItemMenuPopover(props: ProjectsListItemMenuProps & Readonly
     );
 }
 
-export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => {
-    const [open, setOpen] = React.useState(false);
-    const anchorRef = React.useRef<View>(null);
-    const rowHovered = useItemRowHovered();
-    const coarsePrimaryPointer = useCoarsePrimaryPointer();
-    const close = React.useCallback(() => setOpen(false), []);
-    return (
-        <View ref={anchorRef} collapsable={false} style={{ position: 'relative' }}>
-            {/* Quiet until the row is engaged (lab TREE shows no menu at rest): the shared reveal slot keeps
-                its place and stays focusable, and touch screens always show it. */}
-            <RowActionRevealSlot revealed={Platform.OS !== 'web' || coarsePrimaryPointer || rowHovered || open}>
-                {/* The shared icon-only button and the row menu's glyph (the Sessions rows' "⋯"). */}
-                <IconButton
-                    testID={props.testID}
-                    iconName="dots-three"
-                    variant="plain"
-                    size={ROW_MENU_BUTTON_PX}
-                    interactiveTargetVerticalGapPx={ROW_MENU_VERTICAL_GAP_PX}
-                    accessibilityLabel={t('common.moreActions')}
-                    expanded={open}
-                    tooltipHidden={open}
-                    onPress={(event) => {
-                        stopPressEventPropagation(event);
-                        setOpen((current) => !current);
-                    }}
-                />
-            </RowActionRevealSlot>
-            {open ? <ProjectsListItemMenuPopover {...props} anchorRef={anchorRef} onClose={close} /> : null}
-        </View>
-    );
-});
+export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps) => (
+    <CollectionRowMenu
+        testID={props.testID}
+        renderMenu={(menu) => <ProjectsListItemMenuPopover {...props} anchorRef={menu.anchorRef} onClose={menu.onClose} />}
+    />
+));

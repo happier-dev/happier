@@ -477,6 +477,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "projects.script.run",
   "projects.service.placement.set",
   "projects.service.relocate",
+  "projects.services.pin",
   "projects.sources.create",
   "projects.sources.delete",
   "projects.sources.moveToTeam",
@@ -2422,6 +2423,9 @@ export type GeneratedActions = Readonly<{
         readonly set: (input: PublicActionInputById["projects.service.placement.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.service.placement.set">>;
       }> ;
       readonly relocate: (input: PublicActionInputById["projects.service.relocate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.service.relocate">>;
+    }> ;
+    readonly services: Readonly<{
+      readonly pin: (input: PublicActionInputById["projects.services.pin"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.services.pin">>;
     }> ;
     readonly sources: Readonly<{
       readonly create: (input: PublicActionInputById["projects.sources.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.create">>;
@@ -5296,6 +5300,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           set: (input: PublicActionInputById["projects.service.placement.set"], options?: ActionExecutionOptions) => execute("projects.service.placement.set", input, options),
         },
         relocate: (input: PublicActionInputById["projects.service.relocate"], options?: ActionExecutionOptions) => execute("projects.service.relocate", input, options),
+      },
+      services: {
+        pin: (input: PublicActionInputById["projects.services.pin"], options?: ActionExecutionOptions) => execute("projects.services.pin", input, options),
       },
       sources: {
         create: (input: PublicActionInputById["projects.sources.create"], options?: ActionExecutionOptions) => execute("projects.sources.create", input, options),

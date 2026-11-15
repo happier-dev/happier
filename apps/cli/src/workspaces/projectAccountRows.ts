@@ -381,7 +381,9 @@ async function fetchSnapshot(input: ReadInput, mode: 'plain' | 'e2ee', selection
 }
 async function fetchChangedSnapshot(input: ProjectAccountRowsReadInput, mode: 'plain' | 'e2ee', keys: readonly ProjectAccountRowKeyV1[]): Promise<ActiveProjectAccountRowsSnapshot> {
   if (input.publication !== 'installed' || !canPublish(input) || input.selection) throw rowError('project_requester_authority_unavailable');
-  const uniqueKeys = [...new Map(keys.map(key => [buildProjectAccountRowPhysicalKeyV1(key), key])).values()];
+  // Pinned services are not part of the daemon's Project projection; their hints change nothing it holds.
+  const uniqueKeys = [...new Map(keys.filter(key => key.kind !== 'services-organization')
+    .map(key => [buildProjectAccountRowPhysicalKeyV1(key), key])).values()];
   // Graph endpoints and their hints may straddle feed pages. Read their complete
   // domain together, never an isolated graph against potentially missing refs.
   const topologyRequired = uniqueKeys.some(key => key.kind !== 'project-organization');
@@ -416,9 +418,9 @@ function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scope
     } else if (row.key.kind === 'relationship-graph') {
       graphRevision = row.revision;
       if ('relationships' in payload.value) relationships.push(...payload.value.relationships);
-    } else {
+    } else if (row.key.kind === 'project-organization') {
       const value = payload.value;
-      if (!('id' in value) && !('relationships' in value)) organizations.push({ key: row.key, revision: row.revision, value });
+      if (!('id' in value) && !('relationships' in value) && !('pinnedEnvironmentIds' in value)) organizations.push({ key: row.key, revision: row.revision, value });
     }
   }
   const snapshot: ActiveProjectAccountRowsSnapshot = { workspaceRefs, relationships, source: 'network', organizations, rows, graphRevision,

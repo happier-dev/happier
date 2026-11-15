@@ -1,6 +1,7 @@
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { type AccountEncryptionMigrateProjectRowsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
 import {
+    PROJECT_ACCOUNT_ROW_KINDS_V1,
     assertProjectAccountRowContentForModeV1,
     assertProjectAccountRowPayloadBindingV1,
     buildProjectAccountRowPhysicalKeyV1,
@@ -36,7 +37,7 @@ export async function migrateProjectAccountRowsForAccountModeInTx(tx: Tx, params
     | Readonly<{ status: 'applied'; rows: readonly ProjectAccountRowV1[] }>
     | Readonly<{ status: 'migration_incomplete' | 'invalid_content' }>
 > {
-    const source = await listProjectAccountRowsInTx(tx, { accountId: params.accountId, includeAuthoringSession: true });
+    const source = await listProjectAccountRowsInTx(tx, { accountId: params.accountId, kinds: [...PROJECT_ACCOUNT_ROW_KINDS_V1], includeAuthoringSession: true });
     if (source.status !== 'listed') return { status: 'invalid_content' };
     const rows = source.rows.filter(row => row.content !== null);
     const items = indexDirective(params);
@@ -69,7 +70,7 @@ export async function matchProjectAccountRowsAccountMigrationPostStateInTx(tx: T
     | Readonly<{ status: 'matched'; rows: readonly ProjectAccountRowV1[] }>
     | Readonly<{ status: 'mismatch' }>
 > {
-    const state = await listProjectAccountRowsInTx(tx, { accountId: params.accountId });
+    const state = await listProjectAccountRowsInTx(tx, { accountId: params.accountId, kinds: [...PROJECT_ACCOUNT_ROW_KINDS_V1] });
     if (state.status !== 'listed') return { status: 'mismatch' };
     const rows = state.rows.filter(row => row.content !== null);
     const items = indexDirective(params);

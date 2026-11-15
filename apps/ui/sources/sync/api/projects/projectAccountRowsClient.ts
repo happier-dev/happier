@@ -98,6 +98,12 @@ export function createUiProjectAccountRowsClient(account: Account) {
       try { return await (await getOwner()).recordWorkspaceRepositoryObservation(address, observation, signal); }
       catch (error) { return mutationFailure(error, signal); }
     },
+    /** Pin or unpin a service on this Home through the one opened owner (projects.services.pin). */
+    setEnvironmentPinned: async (input: Readonly<{ serverId: string; environmentId: string; pinned: boolean; signal?: AbortSignal }>, context?: Caller) => {
+      if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
+      try { return { ok: true as const, ...await (await getOwner()).setEnvironmentPinned(input) }; }
+      catch (error) { return mutationFailure(error, input.signal); }
+    },
     forgetWorkspace: async (input: Readonly<{ serverId: string; workspaceId: string; signal?: AbortSignal }>, context?: Caller) => {
       if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
       try {

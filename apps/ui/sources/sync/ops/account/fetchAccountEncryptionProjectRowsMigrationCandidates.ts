@@ -1,4 +1,4 @@
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, PROJECT_ACCOUNT_ROW_KINDS_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -14,7 +14,8 @@ export async function fetchAccountEncryptionProjectRowsMigrationCandidates(param
     const cipher = createProjectAccountRowCipherV1({ mode: params.mode,
         material: params.mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(params.credentials), randomBytes: getRandomBytes });
     const response = await params.request(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+        // Every registered family by name: a list without kinds is the older Project-only census.
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kinds: [...PROJECT_ACCOUNT_ROW_KINDS_V1] }),
     });
     if (!response.ok) throw new Error(`Project Account row census failed (${response.status})`);
     const result = ProjectAccountRowListResponseV1Schema.parse(await response.json());

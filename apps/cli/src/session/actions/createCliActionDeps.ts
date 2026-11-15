@@ -1373,6 +1373,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     } } : {}),
     projectsWorkspaceUpdate: projectDeps.projectsWorkspaceUpdate,
     projectsWorkspaceForget: projectDeps.projectsWorkspaceForget,
+    projectsServicesPin: projectDeps.projectsServicesPin,
     ...createCliProjectSourceActionDeps({
       serverHttpBaseUrl: todoHomeBaseUrl,
       admitAccount: admitAccountStorage,

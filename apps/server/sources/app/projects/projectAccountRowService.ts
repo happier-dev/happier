@@ -1,5 +1,6 @@
 import {
     PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1,
+    PROJECT_ACCOUNT_ROW_DEFAULT_LIST_KINDS_V1,
     ProjectAccountRowChangeHintV1Schema,
     ProjectAccountRowMutationRequestV1Schema,
     assertProjectAccountRowContentForModeV1,
@@ -45,9 +46,12 @@ export async function readProjectAccountRowInTx(tx: Tx, input: Readonly<{ accoun
 
 /** A complete selected census; selected invalid retained content refuses rather than disappearing. */
 export async function listProjectAccountRowsInTx(tx: Tx, input: Readonly<{ accountId: string }> & ProjectAccountRowListRequestV1): Promise<ProjectAccountRowListResponseV1> {
-    const kinds = [...new Set(input.kinds ?? ['workspace-ref', 'relationship-graph', 'project-organization'])];
+    const kinds: readonly ProjectAccountRowKeyV1['kind'][] = [...new Set(input.kinds ?? PROJECT_ACCOUNT_ROW_DEFAULT_LIST_KINDS_V1)];
     const physicalPrefixes = kinds.map(kind => {
         if (kind === 'relationship-graph') return buildProjectAccountRowPhysicalKeyV1({ kind });
+        // One services row per Home: its key ends at the Home id.
+        if (kind === 'services-organization') return input.serverId
+            ? buildProjectAccountRowPhysicalKeyV1({ kind, serverId: input.serverId }) : `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}services/`;
         const family = kind === 'workspace-ref' ? 'ref' : 'organization';
         return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}${family}/${input.serverId ? `${encodeURIComponent(input.serverId)}/` : ''}`;
     });

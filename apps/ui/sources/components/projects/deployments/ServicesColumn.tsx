@@ -35,7 +35,9 @@ import {
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref, SERVICES_ROUTE } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
-import { DeploymentEnvironmentStateMark, DeploymentTreeRow } from './rows/DeploymentEnvironmentRow';
+import { DeploymentEnvironmentRowMenu, DeploymentEnvironmentStateMark, DeploymentTreeRow } from './rows/DeploymentEnvironmentRow';
+import { usePinnedEnvironmentIds } from '@/sync/domains/workspaces/projectAccountRows';
+import { pinProjectService } from '@/sync/ops/actions/projectWorkspaceActions';
 import { deploymentEnvironmentRowFact, deploymentEnvironmentRunsOnMachine } from './rows/deploymentEnvironmentRowFact';
 
 /** What the open route has selected in the Services column. */
@@ -121,6 +123,12 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
     (href: string) => router.push(href as never),
     [router],
   );
+  const serverId = lifetime?.scope.serverId ?? null;
+  // The person's pinned services: their private Services organization row on this Home (projects.services.pin).
+  const pinnedEnvironmentIds = usePinnedEnvironmentIds(serverId);
+  const togglePinned = React.useCallback((environmentId: string, pinned: boolean) => {
+    if (serverId) void pinProjectService({ serverId, environmentId, pinned });
+  }, [serverId]);
   return (
     <ServicesColumnView
       read={read}
@@ -129,6 +137,8 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
       selection={selection}
       onNavigate={navigate}
       create={create}
+      pinnedEnvironmentIds={pinnedEnvironmentIds}
+      onTogglePinned={togglePinned}
     />
   );
 });
@@ -146,6 +156,9 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
       testID: string;
       onPress: () => void;
     }> | null;
+    /** Pinned services, newest first (the Services organization row); an id this read does not hold draws nothing. */
+    pinnedEnvironmentIds: readonly string[];
+    onTogglePinned: (environmentId: string, pinned: boolean) => void;
   }>,
 ) {
   const { read, serverId, selection, onNavigate } = props;
@@ -158,14 +171,22 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
   );
   const [query, setQuery] = React.useState('');
   const needle = query.trim().toLocaleLowerCase();
+  // The column lists Projects that have something deployed (OWNER-UI-1115B E1, ruling 16:29Z): a Project with at least
+  // one deployed Environment, whatever its state, keeps all its Environments; one with only drafts stays on All services
+  // (still shown while the route has one of its Environments open).
+  const routeEnvironmentId = selection?.kind === 'environment' ? selection.environmentId : null;
+  const listed = React.useMemo(() => {
+    const deployed = new Set(items.flatMap((item) => item.currentDeployment ? [item.environment.projectSourceId] : []));
+    return rows.filter((row) => deployed.has(row.projectSourceId) || row.environmentId === routeEnvironmentId);
+  }, [items, rows, routeEnvironmentId]);
   const groups = React.useMemo(() => {
     const shown = needle
-      ? rows.filter((row) =>
+      ? listed.filter((row) =>
           `${row.projectName ?? ''} ${row.title}`
             .toLocaleLowerCase()
             .includes(needle),
         )
-      : rows;
+      : listed;
     const { named, unnamed } = groupDeploymentRowsByProject(shown);
     return unnamed.length
       ? [
@@ -177,7 +198,16 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           },
         ]
       : named;
-  }, [needle, rows]);
+  }, [needle, listed]);
+  // Pinned (lab sideSvc): the pinned Environments the tree shows, in pin order; a search narrows them as it does the tree.
+  const pinnedSet = React.useMemo(() => new Set(props.pinnedEnvironmentIds), [props.pinnedEnvironmentIds]);
+  const pinnedRows = React.useMemo(() => {
+    const shown = new Map(groups.flatMap((group) => group.rows.map((row) => [row.environmentId, row] as const)));
+    return props.pinnedEnvironmentIds.flatMap((id) => {
+      const row = shown.get(id);
+      return row ? [row] : [];
+    });
+  }, [groups, props.pinnedEnvironmentIds]);
   // Folded by default (lab: the tree loads collapsed); the Project the open route is in stays open.
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(NO_KEYS);
   const [collapsed, setCollapsed] =
@@ -266,6 +296,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     };
     const treeRows: ServicesTreeRow[] = [
       { key: 'all', level: 0, expandable: false, expanded: false, href: SERVICES_ROUTE },
+      ...pinnedRows.map((row): ServicesTreeRow => ({ key: `pinned:${row.environmentId}`, level: 0, expandable: false,
+        expanded: false, href: environmentHref(row.projectSourceId, row.environmentId) })),
       ...presented.flatMap(({ group, only, open }) =>
         only
           ? environmentRow(only, 0)
@@ -285,7 +317,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     return { presented, rows: treeRows, byKey: new Map(treeRows.map((row) => [row.key, row])) };
     // isOpen, environmentHref and projectHref read exactly these inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, expanded, collapsed, routeProject, needle, serverId, openEnvironments, children, itemById]);
+  }, [groups, expanded, collapsed, routeProject, needle, serverId, openEnvironments, children, itemById, pinnedRows]);
   const keyboard = useCollectionTreeKeyboard(tree.rows, {
     onToggle: (key) => {
       const row = tree.byKey.get(key);
@@ -322,6 +354,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           child={child}
           disclosure={expandable ? { expanded: open, onToggle: () => toggleEnvironment(row.environmentId) } : null}
           selected={selection?.kind === 'environment' && selection.environmentId === row.environmentId}
+          rightElement={<DeploymentEnvironmentRowMenu testID={`${testID}:menu`} pinned={pinnedSet.has(row.environmentId)}
+            onSelectPin={() => props.onTogglePinned(row.environmentId, !pinnedSet.has(row.environmentId))} />}
           onPress={() => { if (href) onNavigate(href); }}
         />
         {under.map((item) => {
@@ -377,6 +411,27 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           selected={selection?.kind === 'all'}
           onPress={() => onNavigate(SERVICES_ROUTE)}
         />
+        {pinnedRows.length > 0 ? <CollectionListGroupLabel title={t('projects.groups.pinned')} /> : null}
+        {pinnedRows.map((row) => {
+          const href = environmentHref(row.projectSourceId, row.environmentId);
+          const testID = `services-column:pinned:${row.environmentId}`;
+          // Named by its Project, the Environment beside it (lab: "billing-api  Production  v1.42").
+          const project = row.projectName && !isSameDeploymentName(row.title, row.projectName) ? row.projectName : null;
+          return (
+            <DeploymentTreeRow
+              key={testID}
+              testID={testID}
+              row={{ kind: 'environment', title: project ?? row.title, titleQualifier: project ? row.title : row.titleQualifier,
+                platform: row.platform, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
+              href={href}
+              treeItem={treeItemOf(`pinned:${row.environmentId}`)}
+              selected={selection?.kind === 'environment' && selection.environmentId === row.environmentId}
+              rightElement={<DeploymentEnvironmentRowMenu testID={`${testID}:menu`} pinned
+                onSelectPin={() => props.onTogglePinned(row.environmentId, false)} />}
+              onPress={() => { if (href) onNavigate(href); }}
+            />
+          );
+        })}
         {!status.value && status.status !== 'unavailable' ? (
           <CollectionSkeletonRows count={3} />
         ) : !status.value && selection?.kind !== 'all' ? (

@@ -52,6 +52,26 @@ describe('Project context through the default Account Action host', () => {
         expect(homes.requestsFor(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`)).toHaveLength(1);
     });
 
+    it('pins and unpins a service through the Home\'s one Services organization row (projects.services.pin, agent parity)', async () => {
+        const serverId = await homes.addHome({ name: 'Pins Home', serverUrl: 'https://pinned-services.test', accountId: 'pins-account', active: false });
+        const key = { kind: 'services-organization' as const, serverId };
+        let row: ProjectAccountRowV1 | null = null;
+        homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { select: () => ({ body: { status: 'listed', coverage: 'complete', rows: row ? [row] : [] } }) });
+        homes.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { select: input => {
+            const mutation = ProjectAccountRowMutationRequestV1Schema.parse(input).mutations[0]!;
+            expect(mutation.key).toEqual(key);
+            row = { key, revision: row ? row.revision + 1 : 0, content: mutation.content };
+            return { body: { status: 'updated', rows: [row], cursor: row.revision } };
+        } });
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId };
+        expect(await executor.execute('projects.services.pin', { serverId, environmentId: 'env-a', pinned: true }, context))
+            .toMatchObject({ ok: true, result: { ok: true, pinnedEnvironmentIds: ['env-a'] } });
+        expect(await executor.execute('projects.services.pin', { serverId, environmentId: 'env-a', pinned: false }, context))
+            .toMatchObject({ ok: true, result: { ok: true, pinnedEnvironmentIds: [] } });
+        expect(homes.requestsFor(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`)).toHaveLength(2);
+    });
+
     it('does not demand Project rows for readable Session metadata without a checkout address', async () => {
         const serverId = await homes.addHome({ name: 'No checkout', serverUrl: 'https://no-checkout.test', accountId: 'owner', active: false });
         const account = await captureLazyActionAccountContext(serverId);

@@ -18,9 +18,16 @@ const RevisionSchema = lazyDefinition(() => z.int().check(z.minimum(0), z.maximu
 export const ProjectAccountRowExpectedRevisionV1Schema = lazyDefinition(() => z.union([RevisionSchema, z.literal('absent')]));
 export const ProjectAccountRelationshipGraphKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('relationship-graph') }));
 export const ProjectAccountOrganizationKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('project-organization'), serverId: IdSchema, projectKey: IdSchema }));
+/** The person's Services organization on one Home (its pinned services): one private row, outside Project rows. */
+export const ProjectAccountServicesOrganizationKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('services-organization'), serverId: IdSchema }));
 export const ProjectAccountRowKeyV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
     ProjectAccountWorkspaceRefKeyV1Schema, ProjectAccountRelationshipGraphKeyV1Schema, ProjectAccountOrganizationKeyV1Schema,
+    ProjectAccountServicesOrganizationKeyV1Schema,
 ]));
+/** Every row kind, for the Account's own whole-record work (an encryption-mode migration). */
+export const PROJECT_ACCOUNT_ROW_KINDS_V1 = ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization'] as const;
+/** What a list without `kinds` returns: the Project census an older reader parses. Newer kinds are listed by asking. */
+export const PROJECT_ACCOUNT_ROW_DEFAULT_LIST_KINDS_V1 = ['workspace-ref', 'relationship-graph', 'project-organization'] as const;
 export type ProjectAccountRowKeyV1 = z.infer<typeof ProjectAccountRowKeyV1Schema>;
 export const ProjectAccountRelationshipGraphV1Schema = lazyDefinition(() => z.strictObject({ relationships: z.array(WorkspaceSyncRelationshipV1Schema) }));
 export type ProjectAccountRelationshipGraphV1 = z.infer<typeof ProjectAccountRelationshipGraphV1Schema>;
@@ -34,6 +41,11 @@ export const ProjectAccountOrganizationV1Schema = lazyDefinition(() => z.strictO
     }))),
 }));
 export type ProjectAccountOrganizationV1 = z.infer<typeof ProjectAccountOrganizationV1Schema>;
+/** Pinned services, newest first: the Environments the person keeps at the top of the Services column. */
+export const ProjectAccountServicesOrganizationV1Schema = lazyDefinition(() => z.strictObject({
+    pinnedEnvironmentIds: z.array(IdSchema).check(z.refine(ids => new Set(ids).size === ids.length, 'Duplicate pinned Environment')),
+}));
+export type ProjectAccountServicesOrganizationV1 = z.infer<typeof ProjectAccountServicesOrganizationV1Schema>;
 /** Navigation recency lives in authoring memory, outside structural row revisions. */
 export const ProjectAccountWorkspaceRefV1Schema = lazyDefinition(() => {
     const { lastOpenedAtMs: _lastOpenedAtMs, ...structuralFields } = WorkspaceRefV1WriteSchema.shape;
@@ -45,6 +57,7 @@ export const ProjectAccountRowPayloadV1Schema = lazyDefinition(() => z.union([
         .check(z.refine(payload => payload.key.id === payload.value.id && payload.key.serverId === payload.value.serverId, 'Workspace row identity mismatch')),
     z.strictObject({ key: ProjectAccountRelationshipGraphKeyV1Schema, value: ProjectAccountRelationshipGraphV1Schema }),
     z.strictObject({ key: ProjectAccountOrganizationKeyV1Schema, value: ProjectAccountOrganizationV1Schema }),
+    z.strictObject({ key: ProjectAccountServicesOrganizationKeyV1Schema, value: ProjectAccountServicesOrganizationV1Schema }),
 ]));
 export type ProjectAccountRowPayloadV1 = z.infer<typeof ProjectAccountRowPayloadV1Schema>;
 export const StoredProjectAccountRowPayloadV1Schema = createStoredReadSchema(ProjectAccountRowPayloadV1Schema);
@@ -78,6 +91,7 @@ export function buildProjectAccountRowPhysicalKeyV1(input: ProjectAccountRowKeyV
     const key = ProjectAccountRowKeyV1Schema.parse(input);
     if (key.kind === 'relationship-graph') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}graph`;
     if (key.kind === 'workspace-ref') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}ref/${encodeURIComponent(key.serverId)}/${encodeURIComponent(key.id)}`;
+    if (key.kind === 'services-organization') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}services/${encodeURIComponent(key.serverId)}`;
     return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}organization/${encodeURIComponent(key.serverId)}/${encodeURIComponent(key.projectKey)}`;
 }
 export function parseProjectAccountRowPhysicalKeyV1(physicalKey: string): ProjectAccountRowKeyV1 | null {
@@ -87,6 +101,7 @@ export function parseProjectAccountRowPhysicalKeyV1(physicalKey: string): Projec
     try {
         if (parts.length === 1 && parts[0] === 'graph') input = { kind: 'relationship-graph' };
         else if (parts.length === 3 && parts[0] === 'ref') input = { kind: 'workspace-ref', serverId: decodeURIComponent(parts[1]!), id: decodeURIComponent(parts[2]!) };
+        else if (parts.length === 2 && parts[0] === 'services') input = { kind: 'services-organization', serverId: decodeURIComponent(parts[1]!) };
         else if (parts.length === 3 && parts[0] === 'organization') input = { kind: 'project-organization', serverId: decodeURIComponent(parts[1]!), projectKey: decodeURIComponent(parts[2]!) };
         else return null;
     } catch { return null; }
@@ -107,7 +122,7 @@ const ProjectAccountRowStoredReadV1Schema = lazyDefinition(() => z.strictObject(
 export const ProjectAccountRowReadRequestV1Schema = lazyDefinition(() => z.strictObject({ key: ProjectAccountRowKeyV1Schema,
     includeAuthoringSession: z.optional(z.literal(true)) }));
 export const ProjectAccountRowListRequestV1Schema = lazyDefinition(() => z.strictObject({
-    kinds: z.optional(z.array(z.enum(['workspace-ref', 'relationship-graph', 'project-organization']))), serverId: z.optional(IdSchema),
+    kinds: z.optional(z.array(z.enum(PROJECT_ACCOUNT_ROW_KINDS_V1))), serverId: z.optional(IdSchema),
     includeAuthoringSession: z.optional(z.literal(true)),
 }));
 export type ProjectAccountRowListRequestV1 = z.infer<typeof ProjectAccountRowListRequestV1Schema>;

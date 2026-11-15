@@ -158,6 +158,7 @@ export const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, strin
   "projects.organization.update": "{\"projectRef\":{\"serverId\":\"home\",\"projectKey\":\"example\"},\"expectedRevision\":0,\"label\":\"Project\"}",
   "projects.workspace.update": "{\"serverId\":\"home\",\"workspaceId\":\"example\"}",
   "projects.workspace.forget": "{\"serverId\":\"home\",\"workspaceId\":\"example\"}",
+  "projects.services.pin": "{\"serverId\":\"home\",\"environmentId\":\"example\",\"pinned\":true}",
   "projects.list": "{}",
   "session.pending.action.set": "{\"sessionId\":\"session-1\",\"localId\":\"example\",\"requestedAction\":{\"v\":1,\"kind\":\"enqueue\"},\"resumeWhenAvailable\":true}",
   "session.pending.withdraw": "{\"sessionId\":\"session-1\",\"localId\":\"example\"}",

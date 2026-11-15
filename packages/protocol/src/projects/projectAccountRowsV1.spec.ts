@@ -5,6 +5,7 @@ import {
     ProjectAccountRowReadResponseV1Schema,
     ProjectAccountRowAuthoringSessionRequestV1Schema,
     ProjectAccountRowContentV1Schema,
+    ProjectAccountRowListRequestV1Schema,
     StoredProjectAccountRowPayloadV1Schema,
     assertProjectAccountRowPayloadBindingV1,
     buildProjectAccountRowPhysicalKeyV1,
@@ -57,5 +58,20 @@ describe('Project Account row persistence admission', () => {
         expect(parseProjectAccountRowPhysicalKeyV1(physical.replace('%2F', '%2f'))).toBeNull();
         expect(() => assertProjectAccountRowPayloadBindingV1({ ...key, serverId: 'foreign-home' }, { key, value })).toThrow();
         expect(() => assertProjectAccountRowPayloadBindingV1(key, { key, value: { ...value, id: 'foreign-ref' } })).toThrow();
+    });
+
+    it('keeps the person\'s pinned services as one private row per Home, outside the default census', () => {
+        const services = { kind: 'services-organization', serverId: 'home/a' } as const;
+        const physical = buildProjectAccountRowPhysicalKeyV1(services);
+        expect(parseProjectAccountRowPhysicalKeyV1(physical)).toEqual(services);
+        // Its own family: never inside the Project organization or checkout prefixes an older reader lists.
+        for (const family of ['ref/', 'organization/', 'graph']) expect(physical).not.toContain(family);
+        const payload = { key: services, value: { pinnedEnvironmentIds: ['env-b', 'env-a'] } };
+        expect(StoredProjectAccountRowPayloadV1Schema.parse(ProjectAccountRowPayloadV1Schema.parse(payload))).toEqual(payload);
+        expect(() => assertProjectAccountRowPayloadBindingV1({ ...services, serverId: 'foreign-home' }, payload)).toThrow();
+        for (const invalid of [{ pinnedEnvironmentIds: ['env-a', 'env-a'] }, { pinnedEnvironmentIds: [''] }, { pinned: true }]) {
+            expect(ProjectAccountRowPayloadV1Schema.safeParse({ key: services, value: invalid }).success).toBe(false);
+        }
+        expect(ProjectAccountRowListRequestV1Schema.safeParse({ kinds: ['services-organization'] }).success).toBe(true);
     });
 });

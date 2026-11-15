@@ -235,4 +235,32 @@ describe('Project Account rows (SQLite integration)', () => {
         expect(after.settingsVersion).toBe(before.settingsVersion);
         expect(await db.accountSettingsSnapshot.count({ where: { accountId: account.id } })).toBe(0);
     });
+
+    it('keeps pinned services as one row a reader lists only by asking for it, so an older default census never sees it', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const services = { kind: 'services-organization', serverId: 'home-a' } as const;
+        await withAuthenticatedTestApp(registerProjectAccountRowRoutes, async app => {
+            const post = async (operation: string, payload: unknown) => (await app.inject({ method: 'POST', url: `/v1/account/project-rows/${operation}`,
+                headers: { 'x-test-user-id': account.id }, payload })).json();
+            expect(await post('mutate', { mutations: [mutation(services, 'absent', { pinnedEnvironmentIds: ['env-a'] }),
+                mutation(refKey('a'), 'absent', refValue('a')), mutation(graphKey, 'absent', { relationships: [] })],
+            expectedRefs: [], topologyChange: true })).toMatchObject({ status: 'updated' });
+            const kinds = (rows: { key: { kind: string } }[]) => rows.map(row => row.key.kind).sort();
+            expect(kinds((await post('list', {})).rows)).toEqual(['relationship-graph', 'workspace-ref']);
+            const asked = await post('list', { kinds: ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization'], serverId: 'home-a' });
+            expect(kinds(asked.rows)).toEqual(['relationship-graph', 'services-organization', 'workspace-ref']);
+            expect(asked.rows.find((row: { key: { kind: string } }) => row.key.kind === 'services-organization'))
+                .toMatchObject({ content: { t: 'plain', v: { value: { pinnedEnvironmentIds: ['env-a'] } } } });
+        });
+        // An encryption-mode migration re-seals every row the Account holds: pinned services are never left behind.
+        const { migrateProjectAccountRowsForAccountModeInTx } = await import('./projectAccountRowsEncryptionMigration');
+        const { inTx } = await import('@/storage/inTx');
+        const item = (key: ProjectAccountRowKeyV1, value: unknown) => ({ key, expectedRevision: 0, content: plain(key, value) });
+        const projectItems = [item(refKey('a'), refValue('a')), item(graphKey, { relationships: [] })];
+        await expect(inTx(tx => migrateProjectAccountRowsForAccountModeInTx(tx, { accountId: account.id, toMode: 'plain',
+            directive: { items: projectItems } as never }))).resolves.toEqual({ status: 'migration_incomplete' });
+        await expect(inTx(tx => migrateProjectAccountRowsForAccountModeInTx(tx, { accountId: account.id, toMode: 'plain',
+            directive: { items: [...projectItems, item(services, { pinnedEnvironmentIds: ['env-a'] })] } as never })))
+            .resolves.toMatchObject({ status: 'applied', rows: expect.arrayContaining([expect.objectContaining({ key: services, revision: 1 })]) });
+    });
 });

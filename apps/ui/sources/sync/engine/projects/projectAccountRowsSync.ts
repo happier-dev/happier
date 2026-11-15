@@ -15,6 +15,7 @@ import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspace
 import { resolveWorkspaceGroupingV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import type { ProjectAccountRowsSnapshot, ProjectAccountRowsMaterialization } from '@/sync/store/domains/projectAccountRows';
+import { NO_PINNED_ENVIRONMENTS } from '@/sync/domains/workspaces/projectAccountRows';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
@@ -57,6 +58,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         const organizations: ProjectAccountRowsSnapshot['organizations'][number][] = [];
         const revisionsByPhysicalKey: Record<string, number> = {};
         const authoringSessionsByPhysicalKey: Record<string, ProjectAccountAuthoringSessionV1> = {};
+        let pinnedEnvironmentIds: readonly string[] = NO_PINNED_ENVIRONMENTS;
         for (const { row, payload } of rows) {
             const identity = buildProjectAccountRowPhysicalKeyV1(row.key);
             if (identity in revisionsByPhysicalKey) throw failure('project_account_duplicate_row');
@@ -72,10 +74,13 @@ export function createProjectAccountRowsSync(options: Readonly<{
             } else if (payload.key.kind === 'relationship-graph' && 'relationships' in payload.value) relationships.push(...payload.value.relationships);
             else if (payload.key.kind === 'project-organization' && !('id' in payload.value) && !('relationships' in payload.value)) {
                 organizations.push({ key: payload.key, revision: row.revision, value: payload.value });
+            } else if (payload.key.kind === 'services-organization' && 'pinnedEnvironmentIds' in payload.value) {
+                // The opened payload is reused while its content is unchanged, so the pins keep their identity.
+                pinnedEnvironmentIds = payload.value.pinnedEnvironmentIds;
             } else throw failure('project_account_row_invalid');
         }
         const snapshot = parseProjectAccountSnapshotV1({ workspaceRefs, relationships });
-        return { ...snapshot, scope: options.scope, status: 'ready', coverage: 'complete', organizations, revisionsByPhysicalKey, authoringSessionsByPhysicalKey };
+        return { ...snapshot, scope: options.scope, status: 'ready', coverage: 'complete', organizations, pinnedEnvironmentIds, revisionsByPhysicalKey, authoringSessionsByPhysicalKey };
     }
     function observe(rows: readonly ProjectAccountRowV1[], source: 'census' | 'projection' = 'projection', materialization?: ProjectAccountRowsMaterialization): ProjectAccountRowsSnapshot {
         assertCurrent();
@@ -292,6 +297,21 @@ export function createProjectAccountRowsSync(options: Readonly<{
             return { workspaceRef: nextRef, organization: nextOrganization };
         }
     }
+    /** Pin or unpin a service on this Home: its one Services organization row, newest pin first; a no-op writes nothing. */
+    async function setEnvironmentPinned(input: Readonly<{ serverId: string; environmentId: string; pinned: boolean; signal?: AbortSignal }>) {
+        if (!areServerProfileIdentifiersEquivalent(input.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
+        const key = { kind: 'services-organization' as const, serverId: options.scope.serverId };
+        while (true) {
+            await refresh(input.signal);
+            const payload = rowFor(key)?.payload;
+            const before = payload && 'pinnedEnvironmentIds' in payload.value ? payload.value.pinnedEnvironmentIds : NO_PINNED_ENVIRONMENTS;
+            if (before.includes(input.environmentId) === input.pinned) return { pinnedEnvironmentIds: before };
+            const next = input.pinned ? [input.environmentId, ...before] : before.filter(id => id !== input.environmentId);
+            const request = { mutations: [mutation({ key, value: { pinnedEnvironmentIds: next } }, key)], expectedRefs: [], topologyChange: false } satisfies ProjectAccountRowMutationRequestV1;
+            if (await commit(request, input.signal) === 'conflict') continue;
+            return { pinnedEnvironmentIds: next };
+        }
+    }
     /** Accepted Source/SCM observations patch only the exact checkout already owned by this Account. */
     async function recordWorkspaceFacts(
         address: WorkspaceAddressV1, facts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity'> & Readonly<{
@@ -396,6 +416,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         recordWorkspaceRepositoryObservation: (address: WorkspaceAddressV1, repositoryObservation: ProjectRepositoryObservationV1, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { repositoryObservation }, signal),
         mutateOrganizationAtRevision,
+        setEnvironmentPinned,
         refreshRecency: (reader?: typeof options.readRecency) => {
             assertCurrent();
             if (reader) readRecency = reader;
