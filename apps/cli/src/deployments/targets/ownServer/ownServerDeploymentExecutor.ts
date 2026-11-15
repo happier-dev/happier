@@ -111,8 +111,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
     const publishSettlementNotice = createDeploymentSettlementNotices(host);
     const publishBackupSettlementNotice = createBackupSettlementNotices(host);
     const backupRunNotice = (environment: DeploymentEnvironmentDetailV1, targetLinkId: string,
-        operationId: string, delivery: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>): NonNullable<OwnServerNativeRestoreInput['onBackupSettled']> => (outcome, configRevision) =>
-        publishBackupSettlementNotice({ environment, targetLinkId, operationId, configRevision, check: 'run', outcome, delivery });
+        operationId: string, delivery: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>,
+        retryTarget?: Parameters<ReturnType<typeof createBackupSettlementNotices>>[0]['retryTarget']): NonNullable<OwnServerNativeRestoreInput['onBackupSettled']> => (outcome, configRevision) =>
+        publishBackupSettlementNotice({ environment, targetLinkId, operationId, configRevision, check: 'run', outcome, delivery, retryTarget });
     const sourceRetention = createOwnServerSourceRetention(host);
     const retain: OwnServerDeploymentTargetForHost['retain'] = async input => {
         try { return await sourceRetention.retain(input); }
@@ -426,7 +427,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     : undefined;
                 const native = { project, render, activation: currentActivation, context, io: recovery.runtime.nativeIo, onExpectedDownServicesChanged,
                     retainSource: () => recovery.source.commit(),
-                    onBackupSettled: input.backupDelivery ? backupRunNotice(input.snapshot.environment, input.snapshot.link.id, context.operation.operationId, input.backupDelivery) : undefined,
+                    onBackupSettled: input.backupDelivery ? backupRunNotice(input.snapshot.environment, input.snapshot.link.id,
+                        context.operation.operationId, input.backupDelivery, { serverId: host.serverId,
+                            environmentId: input.generation.deployment.environmentId, targetLinkId: input.snapshot.link.id,
+                            deploymentId: input.generation.deployment.id, machineId: host.machineId, installationId: input.installationId }) : undefined,
                     async onNamedVolumeBindingsChanged(...[namedVolumes, activated]:
                         Parameters<NonNullable<OwnServerNativeRestoreInput['onNamedVolumeBindingsChanged']>>) {
                         const source = await captureOwnServerDeploymentSource({ source: recovery.source,
@@ -1236,7 +1240,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                     context, io: retained.runtime.nativeIo,
                                     retainSource: () => incumbentSource.commit(),
                                     onBackupSettled: backupRunNotice(snapshot.environment, snapshot.link.id, context.operation.operationId,
-                                        await readEnvironmentAlertDeliveryForHost(host, snapshot.environment.environment.id, snapshot.signal)),
+                                        await readEnvironmentAlertDeliveryForHost(host, snapshot.environment.environment.id, snapshot.signal),
+                                        { serverId: host.serverId, environmentId: snapshot.environment.environment.id,
+                                            targetLinkId: snapshot.link.id, deploymentId: snapshot.link.activeDeploymentId!,
+                                            machineId: host.machineId, installationId: retained.runtime.source.installationId }),
                                     readDatabaseUsername: readIncumbentDatabaseUsername,
                                     onIncumbentServicesChanged,
                                     runtimeImage: await retainedProject.prepareResticRuntime({ render: incumbentRender, context }),
@@ -1328,7 +1335,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         attachDeploymentServiceHealthNotices({ credentials: host.credentials,
                             serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
                             homeServerIdentityId: prepared.homeServerIdentityId,
-                            environment: snapshot.environment, handles,
+                            environment: snapshot.environment, handles, recoveryReceipt: receipt,
+                            serviceRows: prepared.runtime.projectManagedServices.machineServiceRows,
                             readHealthAlertSource: prepared.runtime.readHealthAlertSource,
                             readEnvironment: signal => host.readEnvironment({ environmentId: snapshot.environment.environment.id, context: { signal } }),
                             nativeWorkload: { installationId: input.installationId, handles,

@@ -142,8 +142,9 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         const header = readAccountNoticeArtifactHeader(entry.artifact, input.scope.accountId);
         if (!header || header.status !== 'open' || header.resolved || header.healthPhase !== 'open'
             || header.source.kind !== 'host' || header.source.topic !== 'service_health'
-            || !header.page || !('kind' in header.page) || header.page.page !== 'environment'
-            || !areServerProfileIdentifiersEquivalent(header.page.environment.serverId, input.scope.serverId)) return NO_RECOVERY_CHOICES;
+            || !header.page || !('kind' in header.page)
+            || !areServerProfileIdentifiersEquivalent(header.page.page === 'environment' ? header.page.environment.serverId
+                : header.page.machine.serverId, input.scope.serverId)) return NO_RECOVERY_CHOICES;
         return entry.header.recoveryChoices && sameStrictJsonValue(entry.header.recoveryChoices, header.recoveryChoices)
             ? entry.header.recoveryChoices : NO_RECOVERY_CHOICES;
     };

@@ -131,11 +131,23 @@ function matchingRecoveryChoices(value: z.infer<ReturnType<typeof noticeContentS
   if (!value.recoveryChoices) return true;
   const source = value.source;
   const page = value.page;
-  if (source.kind !== 'host' || source.topic !== 'service_health' || source.subject.kind !== 'environment'
-    || source.subject.condition !== 'deployment_failed' || !page || !('kind' in page) || page.page !== 'environment') return false;
+  if (source.kind !== 'host' || source.topic !== 'service_health'
+    || !page || !('kind' in page)) return false;
   const subject = source.subject;
+  if (page.page === 'machine_service') return subject.kind === 'deployment' && value.recoveryChoices.every(choice =>
+    choice.actionId === 'deployments.restart' && choice.input.serverId === page.machine.serverId
+      && sameStrictJsonValue(choice.input.service, subject)
+    || choice.actionId === 'deployments.rollback' && choice.input.serverId === page.machine.serverId
+      && choice.input.environmentId === subject.environmentId);
+  if (subject.kind === 'backup') return value.recoveryChoices.every(choice => choice.actionId === 'deployments.backups.run'
+    && choice.input.serverId === page.environment.serverId && choice.input.environmentId === subject.environmentId
+    && choice.input.targetLinkId === page.targetLinkId);
+  if (subject.kind !== 'environment' || subject.condition !== 'deployment_failed' && subject.condition !== 'health') return false;
   return value.recoveryChoices.every(choice => choice.actionId === 'inbox.notice.dismiss'
-    || choice.input.serverId === page.environment.serverId
+    || choice.actionId === 'deployments.restart' && subject.condition === 'health'
+      && choice.input.serverId === page.environment.serverId && choice.input.environmentId === subject.environmentId
+      && choice.input.targetLinkId === subject.targetLinkId
+    || choice.actionId === 'deployments.rollback' && choice.input.serverId === page.environment.serverId
       && choice.input.environmentId === subject.environmentId && choice.input.targetLinkId === subject.targetLinkId);
 }
 function noticeContentSchema() { return z.strictObject(accountNoticeContent); }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema,
     ACCOUNT_NOTICE_ARTIFACT_KIND_V1, readAccountNoticeArtifactV1, normalizeAccountNoticeArtifactV1, projectAccountNoticeInboxItemV1 } from './usageNoticeArtifactV1.js';
 import { withArtifactExcerptV1 } from '../artifacts/artifactExcerptV1.js';
+import { buildDeploymentBackupActionInputV1 } from '../deployments/deploymentBackupActionsV1.js';
 
 it.each([undefined, 'Design review'])('projects only authored notice text after the Artifact writer adds its JSON excerpt (%s)', body => {
     const content = AccountNoticeArtifactBodyV1Schema.parse({ v: 1,
@@ -31,6 +32,41 @@ it('keeps plugin identity on Inbox projections without inventing it for host not
 });
 
 describe('C1 typed Environment health evidence', () => {
+    it('keeps service restart recovery bound to the notice Home and service', () => {
+        const service = { kind: 'deployment', machineId: 'machine', environmentId: 'environment',
+            environmentInstanceId: 'instance', composeService: 'app', serviceId: 'instance/app' } as const;
+        const input = { serverId: 'home', environmentId: 'environment', deploymentId: 'current', targetLinkId: 'runtime',
+            machineId: 'machine', installationId: 'installation', service, expectedGeneration: 'native-generation' };
+        const content = { v: 1, source: { kind: 'host', topic: 'service_health', subject: service },
+            type: 'update', resolved: false, healthPhase: 'open', page: { kind: 'host', page: 'machine_service', service,
+                machine: { serverId: 'home', machineId: 'machine' },
+                environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' } },
+            recoveryChoices: [{ actionId: 'deployments.restart', label: 'Restart service', input }] };
+        expect(AccountNoticeArtifactBodyV1Schema.parse(content)).toMatchObject({ recoveryChoices: content.recoveryChoices });
+        for (const mismatch of [{ serverId: 'other' }, { service: { ...service, composeService: 'worker', serviceId: 'instance/worker' } }]) {
+            expect(AccountNoticeArtifactBodyV1Schema.safeParse({ ...content, recoveryChoices: [
+                { ...content.recoveryChoices[0], input: { ...input, ...mismatch } },
+            ] }).success).toBe(false);
+        }
+    });
+    it('keeps backup retries bound to the notice Home, Environment and target', () => {
+        const input = buildDeploymentBackupActionInputV1('deployments.backups.run', {
+            serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime', deploymentId: 'generation',
+            machineId: 'machine', installationId: 'installation', expectedRevision: 1, configRevision: 1,
+        });
+        const content = { v: 1, source: { kind: 'host', topic: 'service_health',
+            subject: { kind: 'backup', environmentId: 'environment', check: 'run' } },
+            type: 'update', resolved: false, healthPhase: 'open',
+            page: { kind: 'host', page: 'environment', targetLinkId: 'runtime',
+                environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' } },
+            recoveryChoices: [{ actionId: 'deployments.backups.run', input, label: 'Run backup again' }] };
+        expect(AccountNoticeArtifactBodyV1Schema.parse(content)).toMatchObject({ recoveryChoices: content.recoveryChoices });
+        for (const mismatch of [{ serverId: 'other' }, { environmentId: 'other' }, { targetLinkId: 'other' }]) {
+            expect(AccountNoticeArtifactBodyV1Schema.safeParse({ ...content, recoveryChoices: [
+                { ...content.recoveryChoices[0], input: { ...input, ...mismatch } },
+            ] }).success).toBe(false);
+        }
+    });
     it('retains strict platform ordering evidence only on the matching platform condition', () => {
         const content = { v: 1, source: { kind: 'host', topic: 'service_health', subject: { kind: 'platformTarget',
             environmentId: 'environment-a', targetLinkId: 'link-a' } }, type: 'update', resolved: false, healthPhase: 'recovered',

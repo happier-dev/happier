@@ -7,6 +7,9 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
+import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
+import { deploymentNoticeRollbackChoice } from './deploymentNoticeRecovery';
+import type { AccountNoticeRecoveryChoiceV1 } from '@happier-dev/protocol/activity/accountNoticeRecoveryV1';
 import { createCommittedServiceHealthDelivery } from '@/notifications/activity/committedServiceHealthDelivery';
 import { observeNativeWorkload } from './healthChecks/readNativeWorkload';
 import { projectSavedHealthAlertSelection, type SavedHealthCheckSourceRead } from './healthChecks/readSavedHealthCheckSource';
@@ -132,6 +135,8 @@ export type DeploymentServiceHealthNoticeInput = Readonly<{
     serverHttpBaseUrl: string;
     machineId: string;
     environment: DeploymentEnvironmentDetailV1;
+    recoveryReceipt?: DeploymentReceiptDetailV1;
+    serviceRows?: Pick<ReturnType<typeof createMachineServiceRowProjection>, 'read'>;
     readEnvironment(signal: AbortSignal): Promise<DeploymentEnvironmentDetailV1>;
     readHealthAlertSource?: (sourceInstanceId: string) => Promise<SavedHealthCheckSourceRead>;
     handles: readonly Extract<ProjectManagedServiceHandle, { kind: 'environment' }>[];
@@ -163,6 +168,36 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     const deliver = createCommittedServiceHealthDelivery(input);
     const cleanups: Array<() => void> = [];
     let admittedEnvironment: DeploymentEnvironmentDetailV1 | null = null;
+    const serviceRows = input.serviceRows ?? input.nativeWorkload?.rows;
+    const readRows = () => (input.nativeWorkload?.handles ?? input.handles).flatMap(handle => {
+        const row = serviceRows?.read(handle);
+        return row ? [row] : [];
+    });
+    const recoveryChoices = (environment: DeploymentEnvironmentDetailV1, rows: readonly MachineServiceRowV1[]) => {
+        const choices: AccountNoticeRecoveryChoiceV1[] = [];
+        const row = rows.find(row => row.capabilities.restart && row.deployment && row.generation);
+        const deployment = row?.deployment;
+        const targetLinkId = environment.environment.runtimeTargetLinkId;
+        if (row?.generation && deployment && targetLinkId) choices.push({ actionId: 'deployments.restart', label: 'Restart service',
+            input: { serverId: input.serverId, environmentId: deployment.service.environmentId,
+                deploymentId: deployment.deploymentId, targetLinkId, machineId: deployment.service.machineId,
+                installationId: deployment.installationId, service: deployment.service, expectedGeneration: row.generation } });
+        const rollback = deploymentNoticeRollbackChoice(environment, input.recoveryReceipt);
+        if (rollback) choices.push(rollback);
+        return choices.length ? { recoveryChoices: choices } : {};
+    };
+    const readMachineLabels = async (machineIds: readonly string[], signal: AbortSignal) => {
+        try {
+            const machines = await listCurrentAccountMachines({ credentials: input.credentials, token: input.credentials.token,
+                serverHttpBaseUrl: input.serverHttpBaseUrl, machineIds, signal });
+            return new Map(machines.filter(machine => machine.label !== machine.id).map(machine => [machine.id, machine.label]));
+        } catch (error) {
+            if (!signal.aborted) logger.infoFile('[deploymentHealth] Machine names unavailable', {
+                errorCode: error instanceof Error && 'code' in error ? error.code : 'machine_names_unavailable',
+            });
+            return new Map<string, string>();
+        }
+    };
     const readAlertDelivery = async () => {
         const source = await input.readHealthAlertSource?.(createHealthCheckSourceInstanceIdV1({
             kind: 'environment', environmentId: input.environment.environment.id,
@@ -221,6 +256,9 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                 if (!fresh || aggregate.environmentId !== fresh.environment.id
                     || aggregate.targetLinkId !== fresh.environment.runtimeTargetLinkId) return;
                 const alertDelivery = await readAlertDelivery();
+                const rows = readRows();
+                const affectedRows = rows.filter(row => row.health?.status !== 'up' && row.health?.expectedDown !== 'stop');
+                const labels = await readMachineLabels(aggregate.members.map(member => member.machineId), signal);
                 if (!currentHealth()) return;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
                     accountId, source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
@@ -232,8 +270,13 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     type: !recovered && !expectedStop && aggregate.protection === 'production' ? 'blocked' : 'update',
                     healthPhase: recovered ? 'recovered' : 'open', resolved: false,
                     environmentHealth: aggregate,
+                    ...(!recovered && !expectedStop ? recoveryChoices(fresh, affectedRows) : {}),
                     body: [...aggregate.members.flatMap(member => member.evidence.filter(evidence => evidence.status !== 'up')
-                        .map(evidence => `${member.machineId} ${evidence.role}: ${evidence.status}${evidence.reason ? ` (${evidence.reason})` : ''}.`)),
+                        .map(evidence => {
+                            const names = evidence.role === 'runtime' ? affectedRows.filter(row => row.deployment?.service.machineId === member.machineId)
+                                .map(row => row.name) : [];
+                            return `${labels.get(member.machineId) ?? 'Machine name unavailable'} ${evidence.role}${names.length ? ` (${names.join(', ')})` : ''}: ${evidence.status}${evidence.reason ? ` (${evidence.reason})` : ''}.`;
+                        })),
                         ...(alertDelivery?.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${alertDelivery.code}).`] : []),
                     ].join(' '),
                     signal,
@@ -270,6 +313,9 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                 if (!isCurrent()) return;
                 const expectedStop = snapshot.expectedDown === 'stop';
                 const recovered = snapshot.state === 'healthy' && !expectedStop;
+                const row = serviceRows?.read(handle);
+                const labels = await readMachineLabels([subject.machineId], signal);
+                if (!isCurrent()) return;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
                     accountId, source: { kind: 'host', topic: 'service_health', subject },
                     page: { kind: 'host', page: 'machine_service', service: subject,
@@ -279,7 +325,8 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     title: `${subject.composeService} ${expectedStop ? 'expected during stop' : recovered ? 'recovered' : 'needs attention'}`,
                     type: !recovered && !expectedStop && fresh.environment.protection === 'production' ? 'blocked' : 'update',
                     healthPhase: recovered ? 'recovered' : 'open', resolved: false,
-                    body: [`Service health: ${snapshot.state}.`,
+                    ...(!recovered && !expectedStop ? recoveryChoices(fresh, row ? [row] : []) : {}),
+                    body: [`${labels.get(subject.machineId) ?? 'Machine name unavailable'}: ${row?.name ?? handle.composeService}. Service health: ${snapshot.state}.`,
                         ...(snapshot.readiness ? [`Readiness: ${snapshot.readiness.replaceAll('_', ' ')}.`] : []),
                         ...(snapshot.nativePhase ? [`Native phase: ${snapshot.nativePhase.replaceAll('_', ' ')}.`] : []),
                         ...(alertDelivery?.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${alertDelivery.code}).`] : []),

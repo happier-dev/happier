@@ -3,10 +3,37 @@ import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivit
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 
-import { createInboxItemRoute, isFocusedInboxWorkItem, readInboxItemFocus, resolveInboxItemPageRoute } from './inboxItemFocus';
+import { createInboxItemRoute, isFocusedInboxWorkItem, readInboxItemFocus, resolveInboxItemPageRoute, resolveInboxNoticeSubjectRoute } from './inboxItemFocus';
 
 describe('Home-qualified Inbox focus', () => {
+    it('links the affected Environment from its service-health notice', () => {
+        const { header } = createAccountNoticeArtifactFixture({ header: {
+            source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
+                environmentId: 'environment', targetLinkId: 'runtime', condition: 'health' } },
+            healthPhase: 'open', page: { kind: 'host', page: 'environment', targetLinkId: 'runtime',
+                environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' } },
+        } });
+        const url = new URL(resolveInboxNoticeSubjectRoute(header)!, 'https://happier.test');
+        expect(url.pathname).toBe('/deployments/source');
+        expect(url.searchParams.get('deploymentEnvironment')).toBe('environment');
+        expect(url.searchParams.get('deployment')).toBeNull();
+    });
+    it('opens the exact failed receipt from a deployment notice', () => {
+        const { header } = createAccountNoticeArtifactFixture({ header: {
+            source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
+                environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed' } },
+            healthPhase: 'open', page: { kind: 'host', page: 'environment',
+                environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
+                targetLinkId: 'runtime', deploymentId: 'failed/receipt' },
+        } });
+        const route = resolveInboxItemPageRoute({ kind: 'notice', serverId: 'home', id: 'notice' }, { notice: header });
+        const url = new URL(route, 'https://happier.test');
+        expect(url.pathname).toBe('/deployments/source');
+        expect(url.searchParams.get('deployment')).toBe('failed/receipt');
+        expect(url.searchParams.get('deploymentEnvironment')).toBe('environment');
+    });
     it('opens a managed Machine on its exact Home through the existing page presenter', () => {
         const focus = { kind: 'managed_machine', serverId: 'home:b', id: 'box/one' } as const;
         const route = createInboxItemRoute(focus);

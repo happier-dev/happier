@@ -28,6 +28,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV
 import { attachDeploymentServiceHealthNotices } from '@/deployments/deploymentServiceHealthNotices';
 import { createCurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { finiteHealthCheckResult } from '@/deployments/healthChecks/finiteHealthCheckResult';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { HealthCheckDefinitionV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -997,7 +998,8 @@ describe('managed-services SVC09 owner', () => {
             targetLinkRevision: environment.targetLinks[0].targetLink.revision, sourceIntent: receipt.content.sourceIntent,
             manifestFingerprint: 'exact-a', configInputDigests: [], physicalProjectName: 'fixture', toolVersion: 'fixture',
             services: ['app', 'worker'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
-            bindings: [], ownServer: environment.content.ownServer, images: [] } };
+            bindings: [], ownServer: environment.content.ownServer, images: [] },
+            rollbackTarget: { deploymentId: 'previous-good', revision: { kind: 'repository', sha: 'b'.repeat(40) } } };
         let receiptReads = 0;
         // Team access is decided by the canonical authenticated Source read;
         // its admitted Environment facts do not change the C1 recipient.
@@ -1010,12 +1012,21 @@ describe('managed-services SVC09 owner', () => {
         // The cross-Machine RPC transport is the network boundary. All C1
         // commit/currentness and managed-service publication logic stays real.
         const remote = vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockResolvedValue({ kind: 'attempted' });
+        const namedMachine = (id: string, displayName: string) => ({
+            id, managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
+            metadata: createMachineContentCodec({ encryptionMode: 'plain' }).encodeStored({ host: 'prod-host',
+                displayName, platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/production', happyHomeDir: '/home/production/.happier' }),
+        });
         // HTTP and native process observations are the only substituted boundaries.
         // C1 storage, identity, mode admission and health subscriptions remain real.
         const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
             const path = new URL(url).pathname;
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+            if (path === '/v1/machines/machine-a') return { status: 200, data: { machine: namedMachine('machine-a', 'Production server') } };
+            if (path === '/v1/machines') return { status: 200, data: [namedMachine('machine-a', 'Production server'),
+                namedMachine('machine-edge', 'Ingress server')] };
             // C1 owns retained-id lookup across Account-mode conversion. Keep
             // that real writer path beneath the substituted HTTP boundary.
             if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...stored.values()]) };
@@ -1058,6 +1069,7 @@ describe('managed-services SVC09 owner', () => {
                     inspect: async () => ({ phase: nativePhase, readiness: nativeHealth, endpoint: null }),
                     stop: async () => { nativePhase = 'stopped'; return { status: 'stopped' }; },
                     start: async () => { nativePhase = 'running'; return { phase: nativePhase, readiness: nativeHealth, endpoint: null }; },
+                    restart: async () => { nativePhase = 'running'; return { phase: nativePhase, readiness: nativeHealth, endpoint: null }; },
                 } } },
             });
             const handle = await supervise('app');
@@ -1070,6 +1082,7 @@ describe('managed-services SVC09 owner', () => {
                 targetLinkId: environment.environment.runtimeTargetLinkId, condition: 'health' } : handle.identity;
             const attach = () => attachDeploymentServiceHealthNotices({ credentials: { token, encryption: null }, serverId: 'home', homeServerIdentityId: 'home',
                 serverHttpBaseUrl, machineId: 'machine-a', environment, handles: aggregate ? [] : handles, readEnvironment,
+                recoveryReceipt: receipt, serviceRows: owner.machineServiceRows,
                 ...(aggregate ? { nativeWorkload: { installationId: 'installation-a', handles, rows: owner.machineServiceRows, edge,
                     async *receipts() { receiptReads++; yield receipt; } } } : {}) });
             attachment = attach();
@@ -1094,6 +1107,14 @@ describe('managed-services SVC09 owner', () => {
                 page: aggregate ? { kind: 'host', page: 'environment' }
                     : { kind: 'host', page: 'machine_service', service: handle.identity, machine: { serverId: 'home', machineId: 'machine-a' } },
                 type: 'update', healthPhase: 'open', resolved: false });
+            expect(readHeader()).toMatchObject({ recoveryChoices: [
+                { actionId: 'deployments.restart', label: 'Restart service', input: {
+                    machineId: 'machine-a', environmentId: environment.environment.id,
+                    deploymentId: handle.deploymentId, expectedGeneration: handle.instanceId, service: handle.identity } },
+                { actionId: 'deployments.rollback', input: { deploymentId: 'previous-good' } },
+            ] });
+            expect(readHeader()).toHaveProperty('body', expect.stringContaining('Production server'));
+            expect(readHeader()).toHaveProperty('body', expect.stringContaining('app'));
             const outageWrites = writes;
             await handle.inspectCurrentOccurrence();
             await attachment.settled();
@@ -1136,6 +1157,7 @@ describe('managed-services SVC09 owner', () => {
             expect(readEnvironment, 'reattachment is the next Environment admission').toHaveBeenCalledTimes(2);
             expect(stored.size).toBe(1);
             expect(readHeader()).toMatchObject({ source: { subject }, healthPhase: 'recovered', type: 'update', resolved: false });
+            expect(readHeader()).not.toHaveProperty('recoveryChoices');
             const recoveryWrites = writes;
             if (aggregate) {
                 expect(receiptReads, 'one finite receipt acquisition per attachment, never per native push').toBe(2);

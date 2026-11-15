@@ -10,6 +10,9 @@ import { createHealthCheckSourceInstanceIdV1, type HealthAlertIdentityV1,
 import { createCliHealthCheckSourceReader } from '@/session/actions/workflowTriggers';
 import type { DeploymentBackupRunInputV1 } from '@happier-dev/deployments';
 import { projectSavedHealthAlertSelection } from './healthChecks/readSavedHealthCheckSource';
+import { deploymentNoticeRollbackChoice } from './deploymentNoticeRecovery';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { buildDeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
 /** Capture saved selection at native admission. An unavailable read is never legacy absence. */
 export async function readEnvironmentAlertDeliveryForHost(host: Pick<OwnServerDeploymentTargetHostInput,
@@ -30,16 +33,24 @@ export async function readEnvironmentAlertDeliveryForHost(host: Pick<OwnServerDe
 
 /** Native backup settlement lends its already admitted Environment and exact check.
  * C1 alone decides initial recovery suppression and same-condition deduplication. */
-export function createBackupSettlementNotices(host: OwnServerDeploymentTargetHostInput) {
+export type BackupNoticeHost = Pick<OwnServerDeploymentTargetHostInput,
+  'credentials' | 'serverHttpBaseUrl' | 'serverId' | 'machineId' | 'signal'>;
+export type BackupNoticeEnvironment = Readonly<{
+  environment: DeploymentEnvironmentDetailV1['environment'];
+  content?: Pick<DeploymentEnvironmentDetailV1['content'], 'name'>;
+}>;
+export function createBackupSettlementNotices(host: BackupNoticeHost) {
   const accountId = readAccountIdFromToken(host.credentials.token);
   const store = createCredentialedAccountArtifactStore(host.credentials);
   const deliver = createCommittedServiceHealthDelivery(host);
   return async (input: Readonly<{
-    environment: DeploymentEnvironmentDetailV1;
-    targetLinkId: string;
+    environment: BackupNoticeEnvironment;
+    targetLinkId?: string;
     check: Extract<HealthAlertIdentityV1, { kind: 'backup' }>['check'];
     operationId: string;
     configRevision?: number;
+    retryTarget?: DeploymentBackupTargetV1;
+    missedSchedule?: Readonly<{ automationId: string; triggerId: string; dueAt: number }>;
     outcome: Parameters<NonNullable<DeploymentBackupRunInputV1['onSettled']>>[0];
     delivery: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>;
   }>) => {
@@ -54,10 +65,17 @@ export function createBackupSettlementNotices(host: OwnServerDeploymentTargetHos
         page: { kind: 'host', page: 'environment', targetLinkId: input.targetLinkId,
           environment: { serverId: host.serverId, projectSourceId: environment.environment.projectSourceId,
             environmentId: environment.environment.id } },
-        title: `${environment.content.name}: backup ${input.check} ${recovered ? 'recovered'
+        title: `${environment.content?.name ?? environment.environment.id}: backup ${input.check} ${recovered ? 'recovered'
+          : input.missedSchedule ? 'missed'
           : input.outcome === 'outcome_unknown' ? 'outcome unknown' : 'failed'}`,
         type: 'update', healthPhase: recovered ? 'recovered' : 'open', resolved: false,
+        ...(input.outcome === 'failed' && input.retryTarget && input.configRevision !== undefined
+          ? { recoveryChoices: [{ actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1,
+            label: input.missedSchedule ? 'Run backup now' : 'Run backup again',
+            input: buildDeploymentBackupActionInputV1(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, { ...input.retryTarget,
+              expectedRevision: environment.environment.revision, configRevision: input.configRevision }) }] } : {}),
         body: [`Backup ${input.check}. Operation: ${input.operationId}. Outcome: ${input.outcome}.`,
+          ...(input.missedSchedule ? [`Missed scheduled backup: ${input.missedSchedule.automationId}/${input.missedSchedule.triggerId}, due at ${input.missedSchedule.dueAt}.`] : []),
           ...(input.configRevision === undefined ? [] : [`Configuration revision: ${input.configRevision}.`]),
           ...(input.delivery.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${input.delivery.code}).`] : [])].join(' '), signal,
       }));
@@ -115,6 +133,8 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
       if (!current) return;
       const { environment, receipt, link } = current;
       const recovered = receipt.deployment.state === 'succeeded';
+      // The rollout owner captures the eligible incumbent before attempting effects.
+      const rollbackChoice = receipt.deployment.state === 'failed' ? deploymentNoticeRollbackChoice(environment, receipt) : null;
       const healthyIncumbent = link.activeDeploymentId !== undefined && link.members.length > 0 && link.members.every(member =>
         receipt.content.machineResults.some(row => row.machineId === member.machineId && row.installationId === member.installationId
           && row.currentDeploymentId === link.activeDeploymentId && row.health === 'healthy'));
@@ -123,8 +143,9 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
       const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({
         accountId, source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
           environmentId: environment.environment.id, targetLinkId: link.id, condition: 'deployment_failed' } },
-        page: { kind: 'host', page: 'environment', targetLinkId: link.id, environment: { serverId: host.serverId,
+        page: { kind: 'host', page: 'environment', targetLinkId: link.id, deploymentId: receipt.deployment.id, environment: { serverId: host.serverId,
           projectSourceId: environment.environment.projectSourceId, environmentId: environment.environment.id } },
+        ...(rollbackChoice ? { recoveryChoices: [rollbackChoice] } : {}),
         title: `${environment.content.name}: ${recovered ? 'deployment recovered' : receipt.deployment.state === 'outcome_unknown'
           ? 'deployment outcome unknown' : 'deployment failed'}`,
         type: !recovered && environment.environment.protection === 'production'

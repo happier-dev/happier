@@ -1,4 +1,5 @@
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createBackupFreshnessObserver } from '@/deployments/backups/freshnessObserver';
 import { randomBytes } from 'node:crypto';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { listAutomationDefinitionDetails, updateAutomationDefinition } from '@/api/automations';
@@ -198,6 +199,14 @@ export function startAutomationWorker(params: {
         : {}),
     });
   let maxActiveRunsPerMachine = DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE;
+  const observeBackupFreshness = createBackupFreshnessObserver({ credentials: params.credentials,
+    serverId: configuration.activeServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+    machineId: params.machineId, signal: workerCancellation.signal }, actionExecutor);
+  const publishBackupFreshness = (automationId: string) => {
+    void observeBackupFreshness(automationId).catch(error => {
+      if (!workerCancellation.signal.aborted) logAutomationWarn('Backup freshness notice unavailable', error, { automationId });
+    });
+  };
   const sourceObservers = createAutomationRunLifecycleObservers({
     executor: actionExecutor,
     report: (occurrence, signal) => claimClient.reportRunLifecycle(params.machineId, occurrence, signal),
@@ -431,6 +440,9 @@ export function startAutomationWorker(params: {
             maxActiveRunsPerMachine = response.settings.maxActiveRunsPerMachine;
             wakeCapacityWaiters();
             assignments.replace(response.assignments);
+            for (const automationId of new Set(response.assignments.map(assignment => assignment.automationId))) {
+              publishBackupFreshness(automationId);
+            }
             directRunClaimDeadlines.clear();
             // Omission never installs a fallback poll for an older server.
             for (const deadline of response.directRunClaimDeadlines ?? []) {
@@ -859,6 +871,9 @@ export function startAutomationWorker(params: {
       if (stopped) return;
       const body = update?.body;
       if (!body || typeof body !== 'object') return;
+      if ((body.t === 'automation-upsert' || body.t === 'automation-run-updated') && body.automationId !== null) {
+        publishBackupFreshness(body.automationId);
+      }
       if (body.t === 'automation-upsert' || body.t === 'automation-delete') {
         scheduleAssignmentsRefreshSoon('socket-run-source-changed');
       }

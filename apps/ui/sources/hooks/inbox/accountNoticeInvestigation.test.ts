@@ -8,6 +8,22 @@ import { createAccountNoticeInvestigation, failureInvestigationSubjectKey } from
 import { TriageFailureSubjectV1Schema } from '@happier-dev/triage-protocol/v1';
 
 describe('private notice investigation through the Action front door', () => {
+    it('offers the authored restart on a retained service notice in its Home', () => {
+        const scope = { serverId: 'srv-health-home', accountId: 'account-a' };
+        const service = { kind: 'deployment', machineId: 'machine', environmentId: 'environment',
+            environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } as const;
+        const choice = { actionId: 'deployments.restart', label: 'Restart service', input: {
+            serverId: scope.serverId, environmentId: service.environmentId, deploymentId: 'current',
+            targetLinkId: 'runtime', machineId: service.machineId, installationId: 'installation', service,
+            expectedGeneration: 'native-generation' } } as const;
+        const artifact = createServiceHealthNoticeArtifactFixture(scope.serverId, { header: { recoveryChoices: [choice] } });
+        const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
+        const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture()));
+        const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true, execute });
+        expect(owner.readRecoveryChoices(entry)).toEqual([choice]);
+        const foreign = createAccountNoticeInvestigation({ scope: { ...scope, serverId: 'other-home' }, isCurrent: () => true, execute });
+        expect(foreign.readRecoveryChoices(entry)).toEqual([]);
+    });
     it('keeps pending investigations distinct for exact Workflow Runs and Homes', () => {
         const subject = TriageFailureSubjectV1Schema.parse({ kind: 'workflowRun', serverId: 'home', runId: 'run-a' });
         expect(failureInvestigationSubjectKey(subject)).not.toBe(failureInvestigationSubjectKey(

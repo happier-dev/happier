@@ -9,4 +9,6 @@ it('routes a saved Environment check before target selection and preserves a sel
   expect(ServiceHealthNoticePageV1Schema.parse({ ...page, targetLinkId: 'runtime' }))
     .toEqual({ ...page, targetLinkId: 'runtime' });
   expect(ServiceHealthNoticePageV1Schema.safeParse({ ...page, targetLinkId: '' }).success).toBe(false);
+  expect(ServiceHealthNoticePageV1Schema.parse({ ...page, deploymentId: 'failed-receipt' }))
+    .toEqual({ ...page, deploymentId: 'failed-receipt' });
 });

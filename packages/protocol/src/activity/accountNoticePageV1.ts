@@ -27,7 +27,8 @@ const machineServicePage = lazyZodSchema(() => z.strictObject({
 export const ServiceHealthNoticePageV1Schema = lazyZodSchema(() => z.discriminatedUnion('page', [
   machineServicePage,
   z.strictObject({ kind: z.literal('host'), page: z.literal('environment'),
-    environment: DeploymentEnvironmentRefV1Schema, targetLinkId: z.optional(z.string().check(z.minLength(1))) }),
+    environment: DeploymentEnvironmentRefV1Schema, targetLinkId: z.optional(z.string().check(z.minLength(1))),
+    deploymentId: z.optional(z.string().check(z.minLength(1))) }),
 ]));
 export type ServiceHealthNoticePageV1 = z.infer<typeof ServiceHealthNoticePageV1Schema>;
 export const ServiceHealthNoticePageV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ServiceHealthNoticePageV1Schema));

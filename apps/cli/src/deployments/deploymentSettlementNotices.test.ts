@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,9 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { runDeploymentBackupV1 } from '@happier-dev/deployments';
+import { publishBackupFreshnessNotices } from './backups/freshness';
+import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { DeploymentBackupTargetV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { createBackupSettlementNotices, createDeploymentSettlementNotices, readEnvironmentAlertDeliveryForHost } from './deploymentSettlementNotices';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
@@ -32,7 +36,8 @@ describe('settlement notice admission and arrival cost', () => {
     const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
     const triggerId = AutomationTriggerIdSchema.parse('11111111-1111-4111-8111-111111111111');
     const binding = { v: 1 as const, automationId: 'saved-health', triggerId, triggerRevision: 0,
-      triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: 'c79a9957-537c-4f21-a08d-289245801c05' };
+      triggerKind: 'pluginEvent' as const, eventRef,
+      sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('c79a9957-537c-4f21-a08d-289245801c05') };
     const source = AutomationDefinitionDetailSchema.parse({ id: binding.automationId, name: 'Saved health',
       description: null, enabled: true, targetType: null, existingSessionId: null, templateVersion: 1,
       lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
@@ -129,24 +134,38 @@ describe('settlement notice admission and arrival cost', () => {
         .toEqual({ environmentReads: expectedReads, receiptReads: expectedReads });
     };
     receipt.deployment.state = 'failed'; receipt.deployment.revision++;
+    receipt.content.ownServer = { ...receipt.content.ownServer!, rollbackTarget: {
+      deploymentId: 'prior-good', revision: { kind: 'repository', sha: 'a'.repeat(40) },
+    } };
     await arrive(false);
     expect(mutations).toBe(1);
+    const store = createCredentialedAccountArtifactStore(credentials);
+    const failedArtifact = await runWithServerHttpBaseUrl(baseUrl,
+      () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
+    expect(failedArtifact && readOwnedNoticeArtifactV1(failedArtifact, 'account-owner')).toMatchObject({
+      page: { deploymentId: receipt.deployment.id },
+      recoveryChoices: [{ actionId: 'deployments.rollback', label: expect.stringContaining('aaaaaaa'),
+        input: { serverId: host.serverId, environmentId: environment.environment.id,
+          targetLinkId: link.id, deploymentId: 'prior-good', contentArtifactId: environment.environment.contentArtifactId } }],
+    });
     receipt.deployment.state = 'succeeded'; receipt.deployment.revision++;
     await arrive();
     expect(mutations).toBe(2);
-    const store = createCredentialedAccountArtifactStore(credentials);
     const artifact = await runWithServerHttpBaseUrl(baseUrl, () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
     expect(artifact && readOwnedNoticeArtifactV1(artifact, 'account-owner')).toMatchObject({ healthPhase: 'recovered' });
     await arrive();
     await arrive();
     expect(mutations, 'equal settled arrivals publish nothing and do not reopen Source content').toBe(2);
     receipt.deployment.state = 'failed'; receipt.deployment.revision++;
+    receipt.content.ownServer.rollbackTarget = null;
     advanceDuringNoticeRead = true;
     await arrive();
     expect(mutations, 'an admitted private notice may finish after the receipt revision changes').toBe(3);
     const lateArtifact = await runWithServerHttpBaseUrl(baseUrl,
       () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
-    expect(lateArtifact && readOwnedNoticeArtifactV1(lateArtifact, 'account-owner')).toMatchObject({ healthPhase: 'open' });
+    const firstFailure = lateArtifact && readOwnedNoticeArtifactV1(lateArtifact, 'account-owner');
+    expect(firstFailure).toMatchObject({ healthPhase: 'open', page: { deploymentId: receipt.deployment.id } });
+    expect(firstFailure).not.toHaveProperty('recoveryChoices');
 
     environment.environment.protection = 'production';
     link.activeDeploymentId = undefined;
@@ -158,6 +177,9 @@ describe('settlement notice admission and arrival cost', () => {
     }
 
     const publishBackup = createBackupSettlementNotices(host);
+    const retryTarget = DeploymentBackupTargetV1Schema.parse({ serverId: host.serverId,
+      environmentId: environment.environment.id, targetLinkId: link.id, deploymentId: receipt.deployment.id,
+      machineId: link.members[0]!.machineId, installationId: link.members[0]!.installationId });
     for (const terminal of ['cancelled', 'backup_failed', 'outcome_unknown'] as const) {
       rows.clear();
       const caller = new AbortController();
@@ -168,7 +190,7 @@ describe('settlement notice admission and arrival cost', () => {
           sources: [{ kind: 'dump', sourceId: 'main', service: 'db', consistency: 'logical' }],
           ownership: { environmentId: environment.environment.id, prefix: environment.environment.id },
           retention: { kind: 'keepEverything' } },
-        data: { engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } },
+        data: [{ engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } }],
         access: { repository: 's3:https://storage.invalid/recovery', passwordFilePath: '/run/secrets/repository-password',
           credentialFiles: [], environmentVariableNames: [], s3: { region: 'us-east-1', addressing: 'path' } },
         signal: caller.signal,
@@ -183,7 +205,7 @@ describe('settlement notice admission and arrival cost', () => {
           return { kind: 'completed', exitCode: 7, stdout: '', stdoutTruncated: false };
         },
         onSettled: (outcome, configRevision) => publishBackup({ environment, targetLinkId: link.id,
-          operationId: `backup-${terminal}`, check: 'run', outcome, configRevision,
+          operationId: `backup-${terminal}`, check: 'run', outcome, configRevision, retryTarget,
           delivery: { kind: 'available', alerts: { channels: [], phases: ['open', 'recovered'] } } }),
       });
       await expect(backup).rejects.toMatchObject({ code: terminal });
@@ -198,7 +220,49 @@ describe('settlement notice admission and arrival cost', () => {
             subject: { kind: 'backup', environmentId: environment.environment.id, check: 'run' } },
         });
         expect(caller.signal.aborted).toBe(terminal === 'outcome_unknown');
+        const notice = artifact && readOwnedNoticeArtifactV1(artifact, 'account-owner');
+        if (terminal === 'backup_failed') expect(notice).toMatchObject({ recoveryChoices: [
+          { actionId: 'deployments.backups.run', input: { ...retryTarget,
+            expectedRevision: environment.environment.revision, configRevision: 1 } },
+        ] });
+        else expect(notice).not.toHaveProperty('recoveryChoices');
       }
     }
+
+    rows.clear();
+    const freshness = WorkflowTriggerListResultV1Schema.parse({ sets: [{ automationId: 'backup-automation',
+      revision: 1, enabled: true, health: 'available', triggers: [],
+      missedSchedules: [{ triggerId: '11111111-1111-4111-8111-111111111111', dueAt: 100, lastRunAt: null },
+        { triggerId: '22222222-2222-4222-8222-222222222222', dueAt: 90, lastRunAt: null }] }],
+      backupEnvironments: [{ serverId: host.serverId, environmentId: environment.environment.id }] });
+    const freshnessHost = { ...host, async readEnvironment() {
+      return { ...environment, backupTarget: { ...retryTarget, expectedRevision: environment.environment.revision, configRevision: 1 } };
+    } };
+    await publishBackupFreshnessNotices(freshnessHost, freshness, { kind: 'available', alerts: { channels: [], phases: ['open', 'recovered'] } });
+    expect(rows.size, 'a missed occurrence opens the backup/run condition without native settlement').toBe(1);
+    const missedId = [...rows.keys()][0]!;
+    const missedArtifact = await runWithServerHttpBaseUrl(baseUrl, () => store.read(missedId, { includeSharedAudience: false }));
+    expect(missedArtifact && readOwnedNoticeArtifactV1(missedArtifact, 'account-owner')).toMatchObject({
+      recoveryChoices: [{ actionId: 'deployments.backups.run', label: 'Run backup now', input: retryTarget }],
+    });
+    const afterMissed = mutations;
+    await publishBackupFreshnessNotices(freshnessHost, freshness, { kind: 'available', alerts: { channels: [], phases: ['open', 'recovered'] } });
+    expect(mutations, 'unchanged Automation wake publishes nothing').toBe(afterMissed);
+    const successfulHistoryHost = { ...freshnessHost, async readEnvironment() {
+      return { ...await freshnessHost.readEnvironment(), backupHistory: { kind: 'history' as const,
+        environmentId: environment.environment.id, configRevision: 1, history: { entries: [] },
+        lastSuccessfulBackup: { operationId: 'actual-later-success', completedAt: 101,
+          configRevision: 1, snapshotIds: ['successful-snapshot'] } } };
+    } };
+    await publishBackupFreshnessNotices(successfulHistoryHost, freshness, { kind: 'available', alerts: { channels: [], phases: ['open', 'recovered'] } });
+    const historyRecovered = await runWithServerHttpBaseUrl(baseUrl,
+      () => store.read(missedId, { includeSharedAudience: false }));
+    expect(historyRecovered && readOwnedNoticeArtifactV1(historyRecovered, 'account-owner')).toMatchObject({ healthPhase: 'recovered' });
+    await publishBackup({ environment, targetLinkId: link.id, operationId: 'actual-later-success',
+      check: 'run', outcome: 'succeeded', delivery: { kind: 'available', alerts: { channels: [], phases: ['open', 'recovered'] } } });
+    expect([...rows.keys()]).toEqual([missedId]);
+    const recoveredBackup = await runWithServerHttpBaseUrl(baseUrl,
+      () => store.read(missedId, { includeSharedAudience: false }));
+    expect(recoveredBackup && readOwnedNoticeArtifactV1(recoveredBackup, 'account-owner')).toMatchObject({ healthPhase: 'recovered' });
   });
 });

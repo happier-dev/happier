@@ -8685,6 +8685,12 @@ condition. This adds no timer, poller or second schedule/history store.
 The Environment page's optional `deploymentId` selects the existing receipt
 route. Failed deployment settlements take their rollback choice from the rollout
 owner's recorded `rollbackTarget`; a first failure without that target offers none.
+Deployment service-health notices use the same ordered choices for the existing
+`deployments.restart` input and that rollout-owned rollback target. Restart
+operands are bound to the notice Home, Environment and native service identity;
+the service owner's current row supplies its generation and restart capability.
+The existing Machine metadata projection supplies display names. Unavailable
+names are shown as unavailable rather than exposing raw Machine identifiers.
 These closed routing and Action operands require matching development Protocol,
 CLI and UI readers under the unreleased 0.3 direct cut; no new epoch or adapter
 is introduced. The recovery-choice renderer remains separate UI integration.
@@ -8878,6 +8884,23 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Setup reports add a closed bound-target branch addressed by the
+existing managed resource and controller installation. Its Retry facts extend
+the existing admitted preset's private content; opaque Home state remains
+lifecycle-only. Protocol, controller CLI and Home reload together under the
+development direct cut; older strict development readers reject the new branch
+or private field. The inspected `../0.2` frontier
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no managed-machine Protocol or server
+directory. No released wire epoch, database migration, enrollment identity or
+compatibility adapter is added.
+
+Unreleased 0.3 auth-switch diagnostics retain the existing
+`continuity_unsupported` cause in `ConnectedServiceUxDiagnosticV1`, including its
+existing fresh-session recovery Action. Matching Protocol, daemon and UI source
+reload together under the development direct cut; older strict readers reject
+the added diagnostic variant. Action failures carry the domain result in the
+existing `details` field. No persisted format, epoch or adapter is added.
 
 Unreleased 0.3 `session.spawn_new` adds optional `agentArgs: string[]` for
 foreground-to-daemon launch fidelity. The closed request preserves each string
