@@ -46,7 +46,6 @@ import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow'
 import type { MemorySearchResultV1, MemoryWindowV1, SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import { createSessionStateSyncEngine } from '@happier-dev/agents';
 import {
-  createMcpActionApprovalRequirement,
   createMcpActionEnablementWithServerFeatureAvailability,
   createMcpActionSettingsProvider,
 } from '@/mcp/server/createMcpActionEnablement';
@@ -210,10 +209,6 @@ export function createHappierMcpServer(
     authorityScope: opts?.authorityScope,
     readSessionMemoryEnabled: () => readSessionMemoryEnabledV1(client.getMetadataSnapshot?.()),
     readServerFeaturesSnapshot: () => client.getServerFeaturesSnapshot?.(),
-  });
-  const isActionApprovalRequired = createMcpActionApprovalRequirement({
-    actionSettingsProvider,
-    surface: toolSurface,
   });
   const ctx = sessionCredentials
     ? resolveSessionEncryptionContextFromCredentials(sessionCredentials)
@@ -578,7 +573,6 @@ export function createHappierMcpServer(
 
       resetGlobalVoiceAgent: async () => {},
       isActionEnabled: (id) => isActionEnabled(id),
-      isActionApprovalRequired,
     },
   );
 

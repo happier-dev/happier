@@ -15,8 +15,8 @@ import { ApiSessionClient } from './sessionClient';
 import { reloadConfiguration, configuration } from '@/configuration';
 import { createSessionClientDurableMutationPersistenceContext } from './client/transport/mutations/sessionClientDurableMutationPersistence';
 import { parseRuntimeSessionClientDurableMutation } from './client/transport/mutations/sessionClientDurableMutationPersistence';
-import { createMcpActionEnablementWithServerFeatureAvailability,
-    createMcpActionApprovalRequirement } from '@/mcp/server/createMcpActionEnablement';
+import { createMcpActionEnablementWithServerFeatureAvailability } from '@/mcp/server/createMcpActionEnablement';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SessionMetadataTuplePatchV1Schema, V2SessionByIdResponseSchema, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
@@ -180,8 +180,8 @@ describe('Session activity startup socket recovery', () => {
         await vi.waitFor(() => expect(policy('workflow.definition.list')).toBe(true));
         for (const id of ['workflow.definition.get', 'workflow.run.list', 'workflow.starters.list',
             'workflow.starters.resolve', 'boards.list'] as const) expect(policy(id), id).toBe(true);
-        const requiresApproval = createMcpActionApprovalRequirement({ actionSettingsProvider, surface: 'agent' });
-        expect(requiresApproval('workflow.definition.create', { surface: 'agent' })).toBe(true);
+        expect(isApprovalRequiredByActionsSettings('workflow.definition.create', actionSettingsProvider.getActionsSettings(),
+            { surface: 'agent' })).toBe(true);
         goOffline();
         expect(policy('workflow.definition.list')).toBe(false);
     });
