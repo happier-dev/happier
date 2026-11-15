@@ -1278,6 +1278,12 @@ export function readExternalActionSourceMachineRpcSigner(
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization);
   if (!parsed.success) return null;
   const binding = parsed.data.binding;
+  const admission = binding.handoffAdmission;
+  if (binding.handoffContinuation || binding.handoffPreflight) {
+    if (!admission || !(binding.machineId === admission.sourceMachineId && binding.installationId === admission.sourceInstallationId
+      || binding.machineId === admission.targetMachineId && binding.installationId === admission.targetInstallationId)) return null;
+    return { machineId: admission.sourceMachineId, installationId: admission.sourceInstallationId };
+  }
   if ((binding.actionId === 'session.spawn_new' || binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start'
     || isSessionStopChildRootV1(binding.actionId) || (binding.deploymentChildRoot === true)
     || isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })) && binding.target.kind === 'machine'
@@ -1285,11 +1291,7 @@ export function readExternalActionSourceMachineRpcSigner(
   if ('authentication' in binding && binding.sessionActionOrigin && binding.sessionActionSource) {
     return binding.sessionActionSource;
   }
-  const admission = binding.handoffAdmission;
-  if (!(binding.handoffContinuation || binding.handoffPreflight) || !admission
-    || !(binding.machineId === admission.sourceMachineId && binding.installationId === admission.sourceInstallationId
-      || binding.machineId === admission.targetMachineId && binding.installationId === admission.targetInstallationId)) return null;
-  return { machineId: admission.sourceMachineId, installationId: admission.sourceInstallationId };
+  return null;
 }
 
 export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
@@ -1321,6 +1323,8 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   const nativeCredentialChild = readSessionSpawnNativeCredentialChildV1({ rootActionId: binding.actionId,
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1),
     managedAdmission: input.managedAdmission, params: input.params });
+  const handoffResume = binding.handoffContinuation && binding.handoffAdmission
+    && input.effectActionId === 'session.spawn_new' && input.method === `${binding.machineId}:${RPC_METHODS.SPAWN_HAPPY_SESSION}`;
   const readinessProof = readHostAdmittedReviewedChildV1(input.context) ?? undefined;
   const creationEffect = readSessionActionChildCreationRpcEffectV1(input.method.slice(input.method.indexOf(':') + 1),
     binding, input.target.kind === 'machine' ? { machineId: input.target.machineId,
@@ -1332,7 +1336,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       { machineId: input.sourceMachineId, installationId: input.sourceInstallationId }, readinessProof) === readinessChild;
   if (!source || source.machineId !== input.sourceMachineId
     || source.installationId !== input.sourceInstallationId
-    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild
+    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild && !handoffResume
     || isSessionStopChildRootV1(binding.actionId) && !stopChild
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)

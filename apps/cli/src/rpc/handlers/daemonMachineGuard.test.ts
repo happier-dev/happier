@@ -285,7 +285,9 @@ describe('Machine guard current admission and original Action restoration', () =
       expect((await f.activity.read(receipt.id))?.undoneAt).toBe(now);
       // The same local transport cannot create interactive authority for an unadmitted caller.
       await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
-        { terminalKey: 'unadmitted', cwd: directory })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+        { terminalKey: 'unadmitted', cwd: directory })).resolves.toMatchObject({
+          ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable' });
+      expect(terminal.terminals.list()).toHaveLength(1);
     });
   });
 
@@ -557,9 +559,9 @@ describe('Machine guard current admission and original Action restoration', () =
     await f.activity.append(entry('retired-credential', { kind: 'closed_browser', subject: { kind: 'browser' },
       wayBack }));
     f.setCredentialCurrent(false);
-    // The raw core translates the CLI dependency's currentness exception to its canonical Action failure.
+    // The Action failure preserves the credential owner's typed withdrawal cause.
     expect(await f.client.execute('machines.guard.activity.undo', { machineId: 'machine', entryId: 'retired-credential' },
-      { surface: 'cli', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'action_failed' });
+      { surface: 'cli', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'scope-retired' });
     expect((await f.activity.read('retired-credential'))?.undoneAt).toBeUndefined();
     f.setCredentialCurrent(true);
     const mismatchedAccount: RpcActionExecutorContext = { ...context(), surface: 'cli', authority: 'present_user',

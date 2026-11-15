@@ -29,14 +29,14 @@ type MachineDatabaseBoundary<TMachine, TAccount> = {
 export function createInstalledMachineRpcDatabaseBoundary(input: Readonly<{
     machineId: string;
     ownerAccountId: string;
-    installation: MachineInstallationIdentityV1;
+    installation?: MachineInstallationIdentityV1;
     members?: readonly Readonly<{ accountId: string; accessLevel: 'view' | 'admin' }>[];
 }>) {
     const account = { id: input.ownerAccountId, status: 'active', encryptionMode: 'plain',
         publicKey: null, contentPublicKey: null, contentPublicKeySig: null };
     const machine = { id: input.machineId, kind: 'persistent', accountId: input.ownerAccountId,
-        account, installationId: input.installation.installationId,
-        installationPublicKey: Buffer.from(input.installation.publicKey, 'base64url'),
+        account, installationId: input.installation?.installationId ?? null,
+        installationPublicKey: input.installation ? Buffer.from(input.installation.publicKey, 'base64url') : null,
         metadata: encodePlainMachineStoredContent({}), metadataVersion: 0,
         daemonState: null, daemonStateVersion: 0,
         dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),

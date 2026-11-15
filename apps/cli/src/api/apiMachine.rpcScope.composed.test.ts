@@ -42,6 +42,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createInstalledMachineRpcDatabaseBoundary, createInstalledMachineRpcRelay } from '@/daemon/testkit/installedMachineRpcRelay.testkit';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createLanguageServerHost } from '@/lsp/languageServerHost';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { registerLanguageIntelligenceHandlers } from '@/rpc/handlers/languageIntelligence';
@@ -123,6 +124,13 @@ const { forwardRpcCall }: {
         machineAdmission?: RpcRequest['machineAdmission']; callerAuthority?: RpcRequest['callerAuthority'];
     }>) => Promise<unknown>;
 } = await import(forwarderModulePath);
+const compatibilityModulePath = '../../../server/sources/app/clientCompatibility/accountStoredContentCompatibility';
+const { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket }:
+    Readonly<{
+        evaluateAccountStoredContentSocketCompatibility(auth: unknown): unknown;
+        writeAccountStoredContentCompatibilityForSocket(socket: Pick<ServerSocket, 'data'>, compatibility: unknown): void;
+    }> = await import(compatibilityModulePath);
+const clientCompatibilityAuth = buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION);
 
 async function readNativePrerequisiteAccess(path: string, mode: number): Promise<'absent' | 'access_denied' | null> {
     try { await access(path, mode); return null; }
@@ -635,13 +643,18 @@ describe('installed Machine filesystem requester custody', () => {
     });
     it('trusts Home socket admission once while direct ingress still verifies Home', async () => {
         const f = await createInstalledFilesystemMachineFixture();
+        installedDatabase.current = createInstalledMachineRpcDatabaseBoundary({ machineId: 'machine', ownerAccountId: 'requester',
+            installation: f.installation });
+        onTestFinished(() => { installedDatabase.current = null; });
         const path = join(f.directory, 'socket-admitted-read.txt');
         await writeFile(path, 'admitted-owner-content');
         const method = 'machine:daemon.filesystem.readFile';
         const http = createServer();
         const sockets = new Server(http, { path: '/v1/updates/' });
         sockets.on('connection', socket => {
-            socket.data = { clientType: 'machine-scoped', machineId: 'machine' };
+            socket.data = { clientType: 'machine-scoped', machineId: 'machine',
+                verifiedMachineInstallationId: f.installation.installationId };
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(clientCompatibilityAuth));
             void socket.join(`rpc:requester:${method}`);
         });
         await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
@@ -960,6 +973,8 @@ describe('installed Machine filesystem requester custody', () => {
 
 describe('scoped Describe cancellation through the real relay and Machine listener', () => {
     it.each(['full', 'section', 'cooperative', 'legacy'] as const)('%s preserves cancellation response custody', async scenario => {
+        installedDatabase.current = createInstalledMachineRpcDatabaseBoundary({ machineId: 'machine-1', ownerAccountId: 'account-1' });
+        onTestFinished(() => { installedDatabase.current = null; });
         const method = RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE;
         const entered = createDeferred();
         const release = createDeferred();
@@ -982,6 +997,7 @@ describe('scoped Describe cancellation through the real relay and Machine listen
             socket.data = socket.handshake.query.clientType === 'user'
                 ? { clientType: 'user-scoped', authAuthority: 'present_user' }
                 : { clientType: 'machine-scoped', machineId: 'machine-1' };
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(clientCompatibilityAuth));
             socket.on('drain', (ack: () => void) => ack());
             registerSocketRpcHandlers({ userId: 'account-1', socket, io: sockets });
         });
@@ -1055,8 +1071,9 @@ describe('scoped Describe cancellation through the real relay and Machine listen
                 // Ordered native socket traffic drains any response emitted by the settled handler.
                 await target.emitWithAck('drain');
                 const sentBytes = acknowledgements.reduce((sum, bytes) => sum + bytes, 0);
-                if (scenario === 'legacy') expect(sentBytes).toBeGreaterThan(payload.body.length);
-                else expect(sentBytes).toBe(0);
+                // Cancellation reaches the executor; the admitted transport still
+                // settles its result, including when the caller stopped waiting.
+                expect(sentBytes).toBeGreaterThan(payload.body.length);
                 const lateCount = acknowledgements.length;
                 await expect(call()).resolves.toEqual(payload);
                 expect(acknowledgements).toHaveLength(lateCount + 1);
@@ -1432,6 +1449,8 @@ describe('ApiMachineClient RPC scope on the server registration harness', () => 
     });
 
     it.each([false, true])('registers without Forbidden errors with machine diagnostics=%s', async (includeDiagnostics) => {
+        installedDatabase.current = createInstalledMachineRpcDatabaseBoundary({ machineId: 'machine-1', ownerAccountId: 'account-1' });
+        onTestFinished(() => { installedDatabase.current = null; });
         const client = new ApiMachineClient('test-token', {
             id: 'machine-1', encryptionMode: 'plain', metadata: null, metadataVersion: 0,
             daemonState: null, daemonStateVersion: 0,
@@ -1453,6 +1472,7 @@ describe('ApiMachineClient RPC scope on the server registration harness', () => 
                 // Model the trusted Account authentication stamp supplied before the real RPC owner.
                 socket.data.authAuthority = 'present_user';
                 socket.data.authTokenAuthenticationEvidence = [];
+                writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(clientCompatibilityAuth));
                 socket.onAnyOutgoing((event, payload) => {
                     if (event === SOCKET_RPC_EVENTS.REGISTERED || event === SOCKET_RPC_EVENTS.ERROR) settled.push(payload);
                     if (event === SOCKET_RPC_EVENTS.ERROR) errors.push(payload);

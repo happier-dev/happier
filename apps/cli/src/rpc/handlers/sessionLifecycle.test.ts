@@ -147,7 +147,10 @@ describe('session lifecycle RPC handlers', () => {
             const launches: string[] = [];
             const { handlers, rpcHandlerManager } = createRpcHarness();
             registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager, handoffTargetResume: { prepareJobStore, machineId: 'target' },
-                spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({ spawnSession: async options => {
+                spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({
+                    awaitAgentSessionOpen: async () => ({ status: 'opened' }),
+                    stopSession: async () => true,
+                    spawnSession: async options => {
                     if (stateTransfer === 'existing' && options.resume === 'native-original') expect(options.handoffStateTransfer).toBe('existing');
                     const before = Reflect.get(options, 'beforeSessionRunnerLaunch');
                     if (typeof before === 'function' && !await before()) return { type: 'error',
@@ -171,7 +174,8 @@ describe('session lifecycle RPC handlers', () => {
             ]) await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({ ...input, ...replacement }, context))
                 .resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
             expect(launches).toEqual([]);
-            await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.(input, context)).resolves.toMatchObject({ type: 'success' });
+            const result = await handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.(input, context);
+            expect(result, JSON.stringify(result)).toMatchObject({ type: 'success' });
             expect(launches).toEqual(['native-original']);
             if (protectedResume) expect(await prepareJobStore.findByHandoffId(status.handoffId)).toMatchObject({ schemaVersion: 2,
                 recordKind: 'prepared_target', sessionId, resume: { status: 'attempted', attemptId: input.spawnNonce } });
@@ -268,6 +272,7 @@ describe('session lifecycle RPC handlers', () => {
         expect(handoff).toHaveBeenCalledWith(input, {
             signal: controller.signal,
             callerAuthority: 'present_user',
+            localActionContext: { surface: 'rpc' },
         });
     });
 
@@ -325,7 +330,7 @@ describe('session lifecycle RPC handlers', () => {
                     disposition: 'created' as const,
                     sessionId: 'session-1',
                     executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-                    organizationPlacement: { folderId: null, tagIds: [] },
+                    organizationPlacement: { sectionId: null, tagIds: [] },
                     initialInput: { status: 'notRequested' as const },
                 },
             }));
@@ -368,7 +373,7 @@ describe('session lifecycle RPC handlers', () => {
         });
         expect(actionExecutor.execute).toHaveBeenCalledWith(
             'session.spawn_new',
-            input,
+            { ...input, organizationPlacement: { sectionId: null, tagIds: [] } },
             { surface: 'rpc', authority: 'account_automation', signal: controller.signal },
         );
         expect(rawSpawnLifecycleHandler).not.toHaveBeenCalled();

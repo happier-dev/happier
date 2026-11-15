@@ -65,6 +65,7 @@ vi.mock('@/configuration', async () => {
     serverUrl: 'https://api.example.test', apiServerUrl: 'https://api.example.test',
     activeServerId: 'home', activeServerDir: join(tmpdir(), 'happier-machine-rpc-test'),
     happyHomeDir: join(tmpdir(), 'happier-machine-rpc-test'),
+    organizationPolicy: { status: 'absent' },
   } };
 });
 
@@ -121,6 +122,7 @@ import { ScmPullRequestOpenComposeResponseSchema } from '@happier-dev/protocol/s
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { logger } from '@/ui/logger';
 import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
+import { createDaemonApprovalExecutionOriginCurrentness } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 
 /** Account content material exactly as the CLI persists it: a box seed plus its own public key. */
 function accountDataKeyCredentials(seedByte: number) {
@@ -175,25 +177,19 @@ async function responseForRequest(key: Uint8Array, request: { method: string; pa
 
 describe('callMachineRpc', () => {
   it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('delivers only the signed approved storage subset to the real cleanup receiver', async () => {
-    const [{ mkdtemp, realpath, mkdir, writeFile, lstat, rm }, { tmpdir }, { join, resolve }, { execFile }, { promisify },
-      artifacts, { createDaemonStorageRoutes, registerDaemonStorageRpcHandlers }, { createActivityLog },
+    const [{ mkdtemp, realpath, mkdir, writeFile, lstat, rm }, { tmpdir }, { join },
+      { createProcessCustodyFixture }, { createDaemonStorageRoutes, registerDaemonStorageRpcHandlers }, { createActivityLog },
       { createMachineVitalsSampler }, { createMinuteHistoryStore }, { createMachineResourceSummary }] = await Promise.all([
-      import('node:fs/promises'), import('node:os'), import('node:path'), import('node:child_process'), import('node:util'),
-      import('@happier-dev/cli-common/componentArtifacts'), import('@/rpc/handlers/storage'), import('@/daemon/guard/activityLog'),
+      import('node:fs/promises'), import('node:os'), import('node:path'),
+      import('@/testkit/processCustodyFixture'), import('@/rpc/handlers/storage'), import('@/daemon/guard/activityLog'),
       import('@/daemon/vitals/createMachineVitalsSampler'), import('@/daemon/vitals/history/minuteHistoryStore'),
       import('@/daemon/resources/machineResourceSummary'),
     ]);
     const scratch = await realpath(await mkdtemp(join(tmpdir(), 'storage-signed-subset-')));
-    const executable = Object.getOwnPropertyDescriptor(process, 'execPath')!;
-    const execute = promisify(execFile);
+    let disposeNative = async () => {};
     let retire = async () => {};
     try {
-      const payload = join(scratch, 'payload');
-      await artifacts.stageProcessCustodyRuntime({ repoRoot: resolve('../..'), payloadDir: payload,
-        target: artifacts.resolveCurrentBinaryTarget({ availableTargets: artifacts.CLI_BINARY_TARGETS }),
-        runCommand: async (command, args, options) => { await execute(command, args, { cwd: options?.cwd, env: options?.env }); },
-      });
-      Object.defineProperty(process, 'execPath', { ...executable, value: join(payload, 'happier') });
+      disposeNative = await createProcessCustodyFixture();
       const home = join(scratch, 'home'); const server = join(home, 'server');
       const chosenPath = join(home, 'logs', 'chosen.log'); const retainedPath = join(home, 'logs', 'retained.log');
       await mkdir(join(home, 'logs'), { recursive: true }); await mkdir(server, { recursive: true });
@@ -361,7 +357,7 @@ describe('callMachineRpc', () => {
       const revokedSummary = await recipientInvoke(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, { machineId: identity.machineId });
       expect(revokedSummary).toMatchObject({ pile: { count: 0, droppedSinceLastView: [] } });
       expect(JSON.stringify(revokedSummary)).not.toContain(own.directory);
-    } finally { await retire(); Object.defineProperty(process, 'execPath', executable); await rm(scratch, { recursive: true, force: true }); }
+    } finally { await retire(); await disposeNative(); await rm(scratch, { recursive: true, force: true }); }
   });
   it.each(['success', 'error', 'abandon'] as const)('recovers the original accepted spawn observation after disconnect (%s)', async (kind) => {
     if (kind === 'abandon') vi.stubEnv('HAPPIER_SPAWN_ABANDON_TIMEOUT_MS', '5000');
@@ -587,6 +583,8 @@ describe('callMachineRpc', () => {
       if (url === `${home}/v1/artifacts/${artifactId}`) return { status: 200, data: row };
       if (url === `${home}/v1/machines/${machineId}`) return { status: 200, data: { machine: { id: machineId,
         active: true, kind: 'persistent', installationId: 'consent-installation', storageMode: 'plain',
+        access: { custodian: { accountId: mode === 'foreign-custody' ? 'account-custodian' : 'account-consent', displayName: 'Owner' },
+          role: mode === 'foreign-custody' ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
         installationPublicKey: encodeBase64(mode === 'replaced'
           ? tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(24)).publicKey : peerKeys.publicKey, 'base64'),
         dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null } } };
@@ -603,12 +601,24 @@ describe('callMachineRpc', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
       capabilities: { serverIdentity: { serverIdentityId: 'srv_consent' } } }))));
     const result = { ok: true, result: { ok: true, status: 'executed' } };
-    socket.emit.mockImplementation((event, packet, ack) => {
+    // The receiving daemon owns signed replay currentness. Keep that owner
+    // real behind the Socket.IO boundary, including installation replacement.
+    const isReplayCurrent = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-consent', machineId,
+      serverId: 'creator-profile', resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_consent', machineId }),
+      resolveTarget: async () => target, isAccountCurrent: async () => true,
+      listAccountApiTokens: async () => { throw new Error('Unexpected PAT lookup'); },
+      externalActionMachinePublicKey: mode === 'replaced'
+        ? tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(24)).publicKey : peerKeys.publicKey,
+      verifyExternalExecutionAuthorization: async () => true });
+    socket.emit.mockImplementation(async (event, packet, ack) => {
       expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
       expect(packet).toMatchObject({ method: `${machineId}:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}`,
         params: { artifactId } });
       expect(storedRequest()).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
-      ack({ ok: true, result });
+      const replay = storedRequest();
+      const current = await isReplayCurrent({ origin: replay.executionOriginV1!, request: replay });
+      ack({ ok: true, result: current ? result : { ok: true, result: { status: 'failed', execution: {
+        ok: false, errorCode: 'approval_stale' } } } });
     });
     try {
       const executor = createCliActionExecutorFromCredentials({ credentials, machineId, serverId: 'deciding-profile',
@@ -628,7 +638,7 @@ describe('callMachineRpc', () => {
       if (mode === 'replaced' || mode === 'tampered') {
         expect(decision).toMatchObject({ ok: true, result: { status: 'failed', execution: {
           ok: false, errorCode: 'approval_stale' } } });
-        expect(socket.emit).not.toHaveBeenCalled();
+        expect(socket.emit).toHaveBeenCalledTimes(1);
         return;
       }
       expect(decision).toEqual(result);
@@ -810,7 +820,9 @@ describe('callMachineRpc', () => {
       expect(effects).toEqual([]);
       expect(socket.emit).not.toHaveBeenCalled();
     } else if (callerKind === 'unbound-agent') {
-      expect(result).toMatchObject({ ok: false, errorCode: 'causal_permission_authority_invalid' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        details: { code: 'target_unavailable', reason: 'caller_session_unavailable' } });
+      expect(effects).toEqual([]);
       expect(socket.emit).not.toHaveBeenCalled();
     } else {
       expect(result).toMatchObject({ ok: false });
