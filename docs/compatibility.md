@@ -8673,6 +8673,15 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, a `session.message.send` wait reply whose accepted turn failed returns
+`replied` with outcome `{ kind: 'failed', runtimeIssueV1 }`, which is a new strict variant of
+the inline `SessionMessageReplyResolvedOutcomeV1`. The cause is the accepted turn's
+typed `SessionRuntimeIssueV1`, taken from the same exact-turn reader as
+`session.input.result.get`. The persisted reply-progress outcome stays code-only
+`{ kind: 'failed' }`. Matching Protocol, CLI and UI source reload together under the
+direct cut; an older strict reader rejects the added variant. The inspected `../0.2`
+frontier has no inline reply projection.
+
 Unreleased 0.3 runner activity notifications add
 optional `providerInputAdmissionReady`, decided by the Session client's installed
 handler and usable local publication or Home registration receipt. Matching CLI,

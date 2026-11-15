@@ -708,6 +708,8 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
           // without ever producing a committed transcript input or answer.
           if (outcome && !('result' in outcome)
             && !(original.status === 'available' && isPublishedWorkflowDiscussionAnswer(original.progress))) {
+            // A committed input settles through its accepted turn, which owns the input ref and typed cause.
+            if (materialized) return { kind: 'materialized', message: materialized };
             return { kind: 'fulfilled', outcome };
           }
         } catch {
@@ -917,10 +919,12 @@ async function readAssistantTurnOutcomeAfterCurrentUserTurn(params: Readonly<{
       purpose: 'invocation', ...candidate.workflowInvocation,
     }) === params.localId);
   const turn = params.hostTurn ?? projection?.turns.find(candidate => params.acceptedTurnId
-    ? candidate.turnId === params.acceptedTurnId && matchesWorkflowInput(candidate)
-      && (inputAuthority?.producer === 'workflow'
+    ? candidate.turnId === params.acceptedTurnId && (workflowInput || isSessionContextOnlyHostInput(input)
+      ? matchesWorkflowInput(candidate) && (inputAuthority?.producer === 'workflow'
         ? deriveWorkflowSessionInputLocalIdV2(inputAuthority.workflow) === params.localId
         : isSessionContextOnlyHostInput(input))
+      // An ordinary input's accepted turn is named by its original custody alone.
+      : true)
     : candidate.transcriptAnchors?.userMessageSeqs?.includes(params.materializedSeq)
       || candidate.transcriptAnchors?.startUserMessageSeq === params.materializedSeq || matchesWorkflowInput(candidate));
   // A queued input can be materialized before the current provider turn ends.

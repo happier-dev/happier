@@ -11,6 +11,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { encodeBase64 } from '../../crypto/base64.js';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../../messages/structured/participantMessageV1.js';
 import { SessionMessageRefV1Schema } from './sessionMessageRefV1.js';
+import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import { ActionRequestAttributionV1Schema } from '../../actions/actionRequestAttributionV1.js';
 import { DiscussionAddressingV1Schema, DiscussionAddressV1Schema } from '../../discussions/references.js';
 import { SessionMessageReplyPublicationV1Schema } from './sessionMessageReplyPublicationV1.js';
@@ -42,6 +43,8 @@ export const SessionMessageReplyResolvedOutcomeV1Schema = lazyZodSchema(() => z.
   z.strictObject({ kind: z.literal('answer'), text: z.string(), messageRef: SessionMessageRefV1Schema }),
   z.strictObject({ kind: z.literal('answer'), publicationRef: CoordinationMessageRefV1Schema }),
   z.strictObject({ kind: z.literal('cancelled'), partialText: z.string(), messageRef: SessionMessageRefV1Schema }),
+  // The accepted turn's typed cause; persisted reply custody stays code-only.
+  z.strictObject({ kind: z.literal('failed'), runtimeIssueV1: SessionRuntimeIssueV1Schema }),
   SessionMessageReplyTerminalOutcomeV1Schema,
 ]));
 export type SessionMessageReplyResolvedOutcomeV1 = z.infer<typeof SessionMessageReplyResolvedOutcomeV1Schema>;

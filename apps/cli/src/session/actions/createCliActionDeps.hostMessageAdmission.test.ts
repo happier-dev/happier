@@ -10,6 +10,7 @@ import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionDeps } from './createCliActionDeps';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const sockets = vi.hoisted(() => ({ connect: vi.fn() }));
@@ -323,6 +324,59 @@ describe('CLI host Message admission', () => {
           ? { kind: 'cancelled', partialText: 'Stopped partial', messageRef: { messageId: 'partial-row' } } : { kind: 'pass' } });
     expect(observations).toEqual([{ kind: 'inline' }]);
     expect(content).toMatchObject({ t: 'plain', v: { meta: { happierInputRequestV1: { replyIntent: { mode: 'wait' } } } } });
+  });
+
+  it('returns the accepted failed turn typed runtime cause with an ordinary CLI wait reply', async () => {
+    // Live shape (QA-WAVE-A r3, Gemini invalid key): custody fulfils `failed` on the accepted
+    // ordinary turn, whose projection and transcript both carry the typed authentication issue.
+    const sessionId = 'cmv3hostadmissionfailedaaa';
+    const localId = 'original-failed-wait';
+    const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'auth_error', source: 'auth_error',
+      occurredAt: 1794715969620, agentId: 'gemini', sanitizedPreview: 'Authentication failed',
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required' } } as const;
+    const runtimeMeta = { sentFrom: 'cli', source: 'runtime', runtimeIssueCode: 'auth_error', runtimeIssueSource: 'auth_error',
+      runtimeIssueV1, runtimeIssueProvider: 'gemini' };
+    let content: unknown;
+    const progress = { v: 1, mode: 'wait', acceptedTurnId: 'native-turn-1', disposition: 'observing', outcome: { kind: 'failed' } } as const;
+    const socket = createApiSessionSocketStub({ connected: true });
+    sockets.connect.mockImplementation(() => ({ socket, transport: createSocketTransportAdapter(socket as never) }));
+    const row = (seq: number, id: string, v: unknown) => ({ id, seq, localId: null, content: { t: 'plain', v }, createdAt: seq, updatedAt: seq });
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (url.endsWith('/messages/reply-capability')) return { status: 200, data: { v: 1, protocolVersions: [1] } };
+      if (url.endsWith(`/messages/by-local-id/${localId}/reply`)) return { status: 200,
+        data: { v: 1, status: 'available', progress } };
+      if (url.endsWith(`/messages/by-local-id/${localId}`)) return { status: 200, data: { message: {
+        id: 'committed-input', seq: 2, localId, sidechainId: null, content, createdAt: 2, updatedAt: 2 } } };
+      if (url.endsWith('/turns')) return { status: 200, data: { v: 1, sessionId, updatedAt: 5, turns: [{
+        turnId: 'native-turn-1', status: 'failed', startedAt: 3, updatedAt: 5, terminalAt: 5, lastRuntimeIssue: runtimeIssueV1,
+        transcriptAnchors: { startUserMessageSeq: 2, userMessageSeqs: [2], startSeqInclusive: 2, endSeqInclusive: 5 } }] } };
+      if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [
+        row(4, 'issue-row', { role: 'agent', content: { type: 'acp', agentId: 'gemini',
+          data: { type: 'message', message: 'gemini turn failed: Authentication failed' } }, meta: runtimeMeta }),
+        row(5, 'failed-marker', { role: 'agent', content: { type: 'acp', agentId: 'gemini',
+          data: { type: 'turn_failed', id: 'native-turn-1' } }, meta: { ...runtimeMeta, runtimeEventKind: 'turn-failed', runtimeTurnId: 'native-turn-1' } }),
+      ] } };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: {
+        id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        metadata: JSON.stringify({ permissionMode: 'default', permissionModeUpdatedAt: 1 }), metadataVersion: 1,
+        agentState: null, agentStateVersion: 0, dataEncryptionKey: null, encryptionMode: 'plain',
+      } } };
+      throw new Error(`Unexpected HTTP read: ${url}`);
+    });
+    http.post.mockImplementation(async (url: string, body: { content?: unknown }) => {
+      if (url.endsWith('/pending')) { content = body.content; return { status: 200, data: { didWrite: true, terminal: false } }; }
+      return { status: 200, data: { v: 1, ok: true, progress: { ...progress, disposition: 'inline' } } };
+    });
+    const deps = createCliActionDeps({ token: 'test-account-token', sessionId, mode: 'plain', ctx: null,
+      credentials: { token: 'test-account-token', encryption: null } });
+    const sent = await deps.sessionSendMessage({ sessionId, localId, message: 'No tools. Reply A_CP2_OK.', reply: 'wait',
+      callerSurface: 'cli', actionCaller: { kind: 'host' }, context: { surface: 'cli', authority: 'present_user' },
+      requestedAction: { v: 1, kind: 'enqueue' } });
+    expect(sent).toEqual({ status: 'replied', localId, inputMessageRef: expect.objectContaining({ messageId: 'committed-input' }),
+      outcome: { kind: 'failed', runtimeIssueV1 } });
+    expect(SessionMessageSendResultV1Schema.parse(sent)).toEqual(sent);
   });
 
   it.each(['wait', 'return'] as const)('settles sourceful %s through the existing authenticated SessionAction transport', async reply => {

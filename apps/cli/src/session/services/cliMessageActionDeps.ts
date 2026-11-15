@@ -533,6 +533,8 @@ export function createCliMessageActionDeps(
               && saved?.kind === 'cancelled' && 'result' in saved
               && saved.result.sessionId === result.messageRef.session.sessionId && saved.result.messageId === result.messageRef.messageId
               ? { kind: 'cancelled' as const, partialText: result.partialText, messageRef: result.messageRef }
+            : result.kind === 'failed' && saved?.kind === 'failed'
+              ? (result.runtimeIssueV1 ? { kind: 'failed' as const, runtimeIssueV1: result.runtimeIssueV1 } : { kind: 'failed' as const })
             : result.kind === 'fulfilled' && !('result' in result.outcome)
               ? result.outcome : null;
           if (!outcome) { await release(); return admission; }
