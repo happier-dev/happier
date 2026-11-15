@@ -84,12 +84,20 @@ export function createOwnServerTeardownForHost(host: Host) {
         if (!link) return failure('target_mismatch');
         if ('errorCode' in link) return link;
         const deployments = new Set<string>();
+        const activatedVolumes = new Map<string, Set<string>>();
         let deployed = link.activeDeploymentId !== undefined;
         for await (const receipt of host.readBuildHistory!({ environmentId: input.environmentId,
             targetLinkId: link.id, environment, context })) {
             if (receipt.deployment.operation === 'teardown') continue;
             deployed = true;
             deployments.add(receipt.deployment.id);
+            for (const source of receipt.content.ownServer?.sources ?? []) {
+                if (source.role !== 'runtime') continue;
+                const key = JSON.stringify([source.machineId, source.installationId]);
+                const names = activatedVolumes.get(key) ?? new Set<string>();
+                for (const binding of source.namedVolumes ?? []) names.add(binding.physicalName);
+                activatedVolumes.set(key, names);
+            }
         }
         if (!deployed) return [];
         const resources: DeploymentTeardownResourceV1[] = [];
@@ -112,7 +120,9 @@ export function createOwnServerTeardownForHost(host: Host) {
             const projects = new Set([identity.projectName,
                 ...[...deployments].map(id => resolveNativeComposeCandidateProjectName(identity.projectName, id))]);
             const runtime = await host.runtime.acquireTeardownReview({ ...member, request: { input, context } }, async () => {});
-            try { resources.push(...await readOwnServerTeardownVolumes({ projects, machineId: member.machineId, run: nativeRunner(runtime, context) })); }
+            try { resources.push(...await readOwnServerTeardownVolumes({ projects, machineId: member.machineId,
+                activatedVolumes: [...(activatedVolumes.get(JSON.stringify([member.machineId, member.installationId])) ?? [])],
+                run: nativeRunner(runtime, context) })); }
             finally { await runtime.release(); }
         }
         return resources;

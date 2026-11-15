@@ -2,6 +2,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
+import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
+import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { exportWorkspaceCommit, fetchWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
@@ -140,6 +142,8 @@ export type DeploymentSourceAdmissionForHost = Readonly<{
     materializationRole?: 'build';
     /** Existing parent receipt owns fresh compensation placement, never an overwrite of a serving release. */
     restorationForDeploymentId?: string;
+    /** Already activated restoration captured by the generation receipt. */
+    retainedRestoration?: OwnServerDeploymentSourceV1;
     /** Finite backup work borrows a generation without occupying its runtime source placement. */
     maintenanceOperationId?: string;
     /** Retain the pinned operation log admitted on this exact installation. */
@@ -233,6 +237,25 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                 try {
                     await assertCurrent();
                     const manifestFingerprint = exported.workspaceExportArtifacts.manifest.fingerprint!;
+                    const retained = admitted.retainedRestoration;
+                    if (retained && admitted.restorationForDeploymentId && !admitted.maintenanceOperationId) {
+                        const unavailable = () => Object.assign(new Error('Retained restoration source changed'), { code: 'deployment_source_unavailable' });
+                        const assertRetained = async () => {
+                            if (retained.role !== 'runtime' || retained.machineId !== admitted.machineId
+                                || retained.installationId !== admitted.installationId || retained.deploymentId !== admitted.deploymentId
+                                || retained.restorationForDeploymentId !== admitted.restorationForDeploymentId
+                                || retained.manifestFingerprint !== manifestFingerprint
+                                || await computeWorkspaceSyncRootFingerprint(await realpath(targetPath)) !== retained.rootFingerprint) throw unavailable();
+                        };
+                        await assertRetained();
+                        if (!await isDeploymentManifestInputUnchanged({ rootPath: targetPath, path: targetPath,
+                            manifest: exported.workspaceExportArtifacts.manifest.entries })) throw unavailable();
+                        return observeRetainedDeploymentSourceForHost({ environmentId: admitted.environmentId,
+                            environmentInstanceId: admitted.environmentInstanceId, deploymentId: admitted.deploymentId,
+                            machineId: admitted.machineId, installationId: admitted.installationId, rootPath: targetPath,
+                            manifestFingerprint, manifest: exported.workspaceExportArtifacts.manifest.entries,
+                            assertCurrent: assertRetained });
+                    }
                     if (admitted.operationLog && (admitted.materializationRole || admitted.restorationForDeploymentId)) {
                         throw Object.assign(new Error('Operation log has a different release placement'), { code: 'deployment_log_unavailable' });
                     }

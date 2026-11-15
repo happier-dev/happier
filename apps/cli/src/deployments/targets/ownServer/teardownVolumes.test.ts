@@ -64,6 +64,16 @@ describe('native teardown volume disposition', () => {
         expect(await settleOwnServerTeardownVolumes({ resources: [{ id: 'app_data', kind: 'data',
             machineId: 'machine', ownership: 'owned', disposition: 'remove' }], run })).toBeNull();
     });
+    it('inventories an activated restore volume as retained data without claiming an external binding', async () => {
+        const resources = await readOwnServerTeardownVolumes({ projects: ['app'], machineId: 'machine',
+            activatedVolumes: ['restore-stage', 'external-data'], async run(args) {
+                if (args[1] === 'ls') return { exitCode: 0,
+                    stdout: args.includes('label=happier.operation') ? 'restore-stage\nunrelated-stage' : '', stderr: '' };
+                throw new Error('Unexpected native command');
+            } });
+        expect(resources).toEqual([{ id: 'restore-stage', kind: 'data', machineId: 'machine', ownership: 'owned', disposition: 'retain' }]);
+    });
+
     it('does not turn a failed native volume deletion into successful teardown', async () => {
         expect(await settleOwnServerTeardownVolumes({ resources: [{ id: 'app_data', kind: 'data',
             ownership: 'owned', disposition: 'remove' }], run: async () => ({ exitCode: 1, stdout: '', stderr: 'in use' }) }))

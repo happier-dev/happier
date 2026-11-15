@@ -152,7 +152,6 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             || receipt.content.machines[0] !== host.machineId || receipt.content.buildMachineId !== host.machineId)) refuse('unsupported');
         if (request.context.operationAcceptance?.operationId !== receipt.deployment.actionOperationId) refuse('operation_unavailable');
         const servingReceipt = phase === 'activate' && snapshot.link.activeDeploymentId
-            && snapshot.link.members.some(member => member.state === 'joining')
             ? await host.readReceipt({ environmentId: request.input.environmentId,
                 deploymentId: snapshot.link.activeDeploymentId, context: request.context }) : null;
         const retainedSourceIntent = selectOwnServerRetainedServingSource({ actionId: request.actionId,
@@ -274,7 +273,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 || !link.members.some(member => member.machineId === host.machineId && member.installationId === runtime.source.installationId)) refuse('target_mismatch');
             stageOutput = await captureOutput?.(runtime);
             const sourceOutput = stageOutput;
+            const retainedRestoration = runtime.source.restorationForDeploymentId && !runtime.source.maintenanceOperationId
+                ? content.ownServer?.sources?.find(value => value.role === 'runtime' && value.machineId === host.machineId
+                    && value.installationId === runtime.source.installationId && value.deploymentId === runtime.source.deploymentId
+                    && value.restorationForDeploymentId === runtime.source.restorationForDeploymentId) : undefined;
             const sourcePort = createDeploymentSourceMaterializationPort({ admit: async () => ({ ...runtime.source,
+                ...(retainedRestoration ? { retainedRestoration } : {}),
                 ...(stageOutput && request.materialization.kind === 'deployment' ? { operationLog: true } : {}),
                 assertCurrent: runtime.assertSourceCurrent }),
                 ...(sourceOutput ? { onProgress: phase => recordDeploymentSourceProgress(sourceOutput, request.context, phase) } : {}),
@@ -312,7 +316,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     images: content.images, io: runtime.nativeIo, settleNative: runtime.settleNative,
                     ...(stageOutput ? { stageOutput } : {}),
                     storage: { runtimeMachineCount: link.machines.length,
-                        namedVolumes: content.ownServer?.sources?.filter(value => value.role === 'runtime'
+                        namedVolumes: [...(request.materialization.kind !== 'restoration'
+                            ? snapshot.servingReceipt?.content.ownServer?.sources ?? [] : []), ...(content.ownServer?.sources ?? [])]
+                            .filter(value => value.role === 'runtime'
                             && value.machineId === host.machineId && value.installationId === source.installationId)
                             .flatMap(value => value.namedVolumes ?? []),
                         ...(isOwnServerPreviewDataEnvironment(environment.environment) ? { previewDataVolumes: environment.content.template?.volumes

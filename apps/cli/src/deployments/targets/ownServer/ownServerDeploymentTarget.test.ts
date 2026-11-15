@@ -1816,6 +1816,20 @@ describe('own-server target at the Action host boundary', () => {
                         content: receipt.content, context: sourceContext });
                     serving.content.ownServer = { approvedInputBasis: sourceReview.inputBasis };
                 }
+                if (uploadedVolume) {
+                    // Ordinary redeploy keeps the same data binding before any restore.
+                    const ordinaryVolumes = receipt.content.ownServer?.sources?.flatMap(source => source.namedVolumes ?? []);
+                    receipt.deployment.id = 'ordinary-redeploy-before-restore';
+                    receipt.content.ownServer = { approvedInputBasis: serving.content.ownServer!.approvedInputBasis };
+                    request = { ...request, receipt: { ...request.receipt, deploymentId: receipt.deployment.id } };
+                    expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                        phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true });
+                    expect(receipt.content.ownServer?.sources?.flatMap(source => source.namedVolumes ?? []))
+                        .toEqual(ordinaryVolumes);
+                    Object.assign(serving, structuredClone(receipt));
+                    serving.deployment.state = 'succeeded';
+                    environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
+                }
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
                 const boundary = await installRestoreBoundary(root, uploadedVolume ? 'volumeUpload' : scenario.startsWith('standalone_public_restore') ? 'safety' : 'success',
                     { toolDirectory: join(root, 'docker'), environmentId: captureEnvironment.environment.id });
@@ -3110,6 +3124,25 @@ describe('own-server target at the Action host boundary', () => {
                                     async assertCurrent() { caller.signal.throwIfAborted(); },
                                 });
                                 await expect(readSource(restorationRoot)).resolves.toMatchObject({ rootPath: restorationRoot });
+                                Object.assign(serving, structuredClone(restoredReceipt));
+                                const activatedVolumes = restoredReceipt.content.ownServer?.sources
+                                    ?.filter(source => source.restorationForDeploymentId === serving.deployment.id)
+                                    .flatMap(source => source.namedVolumes ?? []);
+                                expect(activatedVolumes).toHaveLength(1);
+                                receipt.deployment.id = 'redeploy-after-volume-restore';
+                                receipt.deployment.state = 'running';
+                                receipt.content.ownServer = { approvedInputBasis: restoredReceipt.content.ownServer!.approvedInputBasis };
+                                request = { ...request, receipt: { ...request.receipt, deploymentId: receipt.deployment.id } };
+                                const redeployed = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                                    phase: 'activate', selectedDeploymentId: receipt.deployment.id });
+                                expect(redeployed, JSON.stringify(redeployed)).toMatchObject({ ok: true });
+                                const state = JSON.parse(await readFile(join(root, 'docker', 'docker-state.json'), 'utf8')) as {
+                                    containers: Array<{ Mounts: Array<{ Type: string; Name?: string }> }> };
+                                expect(state.containers.flatMap(container => container.Mounts)
+                                    .filter(mount => mount.Type === 'volume').map(mount => mount.Name))
+                                    .toContain(activatedVolumes![0].physicalName);
+                                expect(receipt.content.ownServer?.sources?.flatMap(source => source.namedVolumes ?? []))
+                                    .toEqual(activatedVolumes);
                             }
                         }
                         expect(nativeSnapshots).toBe(1);

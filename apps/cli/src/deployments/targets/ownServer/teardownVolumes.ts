@@ -3,7 +3,7 @@ import { DeploymentPreviewCleanupV1Schema, type DeploymentPreviewCleanupV1 } fro
 import type { NativeComposeActivatedProject, NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { readNativeComposeProjectVolumeNames, selectNativeComposePreviewVolumeNames, settleNativeComposeVolumeRemoval } from '@/daemon/local/services/launch/nativeComposeVolumes';
 
-export type TeardownNativeRun = (args: readonly string[]) => Promise<Readonly<{ exitCode: number; stdout: string; stderr: string }>>;
+export type TeardownNativeRun = Parameters<typeof readNativeComposeProjectVolumeNames>[0]['run'];
 
 export function isOwnServerPreviewDataEnvironment(environment: DeploymentEnvironmentDetailV1['environment']): boolean {
     return environment.purpose === 'preview' || environment.previewCompanionOfEnvironmentId !== undefined;
@@ -12,6 +12,7 @@ export function isOwnServerPreviewDataEnvironment(environment: DeploymentEnviron
 /** Compose labels, rather than caller supplied names or prefixes, own native volume membership. */
 export async function readOwnServerTeardownVolumes(input: Readonly<{
     projects: Iterable<string>; machineId: string; run: TeardownNativeRun;
+    activatedVolumes?: readonly string[];
 }>): Promise<DeploymentTeardownResourceV1[]> {
     const names = await readNativeComposeProjectVolumeNames(input);
     return names.map(id => ({ id, kind: 'data', machineId: input.machineId, ownership: 'owned', disposition: 'retain' }));
@@ -21,7 +22,7 @@ export async function readOwnServerTeardownVolumes(input: Readonly<{
 export async function readOwnServerPreviewCleanup(input: Readonly<{
     environment: DeploymentEnvironmentDetailV1;
     services?: readonly string[];
-    render: Pick<NativeComposeProjectRender, 'projectName' | 'review'>;
+    render: Pick<NativeComposeProjectRender, 'projectName' | 'review'> & Partial<Pick<NativeComposeProjectRender, 'namedVolumes'>>;
     activation: Pick<NativeComposeActivatedProject, 'nativeIdsForService'>;
     machineId: string;
     run: TeardownNativeRun;
@@ -33,9 +34,9 @@ export async function readOwnServerPreviewCleanup(input: Readonly<{
         new Set(input.environment.content.template?.volumes?.filter(volume => volume.service === service && volume.persistent)
             .map(volume => volume.target))]));
     const targets = input.render.review.services.filter(service => dataServices.has(service.name)).flatMap(service =>
-        service.mounts.filter(mount => mount.type === 'volume' && mount.source && mount.target && !mount.readOnly
-            && dataTargets.get(service.name)?.has(mount.target))
-            .map(mount => ({ service: service.name, target: mount.target })));
+        service.mounts.flatMap(mount => mount.type === 'volume' && mount.source && mount.target && !mount.readOnly
+            && dataTargets.get(service.name)?.has(mount.target)
+            ? [{ service: service.name, target: mount.target }] : []));
     const expected = new Map(input.services.flatMap(service => input.activation.nativeIdsForService(service).map(id => [id, service] as const)));
     const unavailable = (): never => { throw Object.assign(new Error('volume_observation_unavailable'), { code: 'volume_observation_unavailable' }); };
     if (!expected.size) return unavailable();
@@ -43,7 +44,8 @@ export async function readOwnServerPreviewCleanup(input: Readonly<{
     if (inspected.exitCode !== 0) return unavailable();
     let rows: unknown;
     try { rows = JSON.parse(inspected.stdout); } catch { return unavailable(); }
-    const ownedNames = await readNativeComposeProjectVolumeNames({ projects: [input.render.projectName], run: input.run });
+    const ownedNames = await readNativeComposeProjectVolumeNames({ projects: [input.render.projectName], run: input.run,
+        activatedVolumes: input.render.namedVolumes?.map(binding => binding.physicalName) });
     const names = selectNativeComposePreviewVolumeNames({ projectName: input.render.projectName, targets, expected, observations: rows, ownedNames });
     return DeploymentPreviewCleanupV1Schema.parse({ machines: [input.machineId], volumes: names
         .map(name => ({ name, disposition: 'delete', confirmation: name })) });

@@ -22,6 +22,7 @@ import { readDeploymentSourceIdentityForHost, resolveDeploymentSourcePathForHost
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import axios from 'axios';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { captureOwnServerDeploymentSource } from './sourceProvenance';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -545,6 +546,26 @@ describe('exact deployment source through the public port', () => {
             expect(await readFile(join(runtime.rootPath, 'compose.yaml'), 'utf8')).toContain('example/commit-A');
             await runtime.abort();
             expect(await readFile(join(built.rootPath, 'compose.yaml'), 'utf8')).toContain('example/commit-A');
+        });
+    });
+
+    it('adopts the committed identical restoration on a second restore and refuses changed bytes', async () => {
+        await withCommittedSource(async admitted => {
+            const admission = { ...admitted, restorationForDeploymentId: admitted.deploymentId };
+            const first = await createDeploymentSourceMaterializationPort({ registry: createDeploymentGitRegistry(),
+                async admit() { return admission; } }).materialize(request);
+            await first.commit();
+            const retainedRestoration = await captureOwnServerDeploymentSource({ source: first, admission });
+            const port = createDeploymentSourceMaterializationPort({ registry: createDeploymentGitRegistry(),
+                async admit() { return { ...admission, retainedRestoration }; } });
+            const second = await port.materialize(request);
+            expect(second.rootPath).toBe(first.rootPath);
+            await second.commit();
+            await second.abort();
+            expect(await readFile(join(first.rootPath, 'compose.yaml'), 'utf8')).toContain('example/commit-A');
+            await writeFile(join(first.rootPath, 'compose.yaml'), 'different source');
+            await expect(port.materialize(request)).rejects.toMatchObject({ code: 'deployment_source_unavailable' });
+            expect(await readFile(join(first.rootPath, 'compose.yaml'), 'utf8')).toBe('different source');
         });
     });
 

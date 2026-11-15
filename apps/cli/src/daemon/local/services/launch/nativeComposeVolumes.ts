@@ -9,12 +9,20 @@ function unavailable(): never {
 /** Compose labels, rather than supplied names or prefixes, own volume membership. */
 export async function readNativeComposeProjectVolumeNames(input: Readonly<{
     projects: Iterable<string>; run: NativeVolumeRun;
+    /** Receipt-captured service data activated from a Happier-owned restore stage. */
+    activatedVolumes?: readonly string[];
 }>): Promise<string[]> {
     const names = new Set<string>();
     for (const project of input.projects) {
         const listed = await input.run(['volume', 'ls', '--filter', `label=com.docker.compose.project=${project}`, '--format', '{{.Name}}']);
         if (listed.exitCode !== 0) return unavailable();
         for (const name of listed.stdout.trim().split('\n').filter(Boolean)) names.add(name);
+    }
+    if (input.activatedVolumes?.length) {
+        const listed = await input.run(['volume', 'ls', '--filter', 'label=happier.operation', '--format', '{{.Name}}']);
+        if (listed.exitCode !== 0) return unavailable();
+        const owned = new Set(listed.stdout.trim().split('\n').filter(Boolean));
+        for (const name of input.activatedVolumes) if (owned.has(name)) names.add(name);
     }
     return [...names].sort();
 }
