@@ -14,6 +14,7 @@ import type { LocalBrowserWindowSurface } from './localWindow';
 import type { BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createBrowserViewportOwner, type BrowserViewportOwner } from './viewport';
 import { SIDECAR_CDP_DIAGNOSTICS_FIDELITY } from './diagnostics/cdpEventSource';
+import { readSidecarFrameAddress } from './frame';
 
 import {
     browserCommandDispatchFailure,
@@ -385,7 +386,7 @@ export function createBrowserSidecarCdpControlAdapter(
         const changedDocument = !bootstrap && loaderId !== undefined && loaderId !== view.loaderId;
         view.loaderId = loaderId ?? view.loaderId;
         view.frameId = typeof frame.id === 'string' ? frame.id : view.frameId;
-        const url = BrowserHttpUrlV1Schema.safeParse(frame.url);
+        const url = BrowserHttpUrlV1Schema.safeParse(readSidecarFrameAddress(frame));
         view.state = { ...view.state, navigationGeneration: view.state.navigationGeneration + (changedDocument ? 1 : 0),
             ...(url.success ? { currentUrl: url.data } : {}),
             loadingState: bootstrap ? view.state.loadingState : navigationType === 'BackForwardCacheRestore' ? 'ready' : 'loading' };

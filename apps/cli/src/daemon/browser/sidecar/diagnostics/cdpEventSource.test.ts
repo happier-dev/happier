@@ -104,6 +104,11 @@ describe('translateSidecarCdpNotification', () => {
             params: { frame: { id: 'sub', parentId: 'frame_1', url: 'https://ads.test/x' } },
         })).toBeNull();
     });
+    it('reports the attempted page URL rather than Chromium\'s internal error document', () => {
+        expect(translateSidecarCdpNotification({ method: 'Page.frameNavigated', params: { frame: {
+            id: 'frame_1', url: 'chrome-error://chromewebdata/', unreachableUrl: 'http://q94-unavailable.invalid/',
+        } } })).toMatchObject({ kind: 'page.info', url: 'http://q94-unavailable.invalid/' });
+    });
 });
 
 describe('createSidecarCdpDiagnosticsEventSource', () => {

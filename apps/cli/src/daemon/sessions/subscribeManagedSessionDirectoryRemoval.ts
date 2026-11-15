@@ -19,6 +19,7 @@ type ManagedSessionDirectoryRemovalParams = Readonly<{
     'listRecords' | 'bind' | 'removeForSession' | 'retryPendingRemovals'>;
   token: string;
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
+  purgeBrowserStorageForSessionDeleted?: (sessionId: string) => Promise<void>;
   onSessionDeletedChange: Subscribe<Readonly<{ sessionId: string }>>;
   onSessionAccessReset: Subscribe<Readonly<{ cursor: number }>>;
   lookupCreationSessions?: CreationSessionLookup;
@@ -55,6 +56,8 @@ export async function subscribeManagedSessionDirectoryRemoval(
       if (stopped.status !== 'stopped' && stopped.status !== 'not_found') {
         throw new Error('deleted_session_runner_retirement_incomplete');
       }
+      // Inactive Sessions have no child-exit signal to release their Browser storage.
+      await params.purgeBrowserStorageForSessionDeleted?.(sessionId);
       if (params.requesterCustody
         && !await retireRequesterSessionCredentialCustody({ ...params.requesterCustody, sessionId })) {
         throw new Error('requester_session_custody_unavailable');

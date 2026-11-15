@@ -6,6 +6,7 @@ import type {
 import type { SidecarCdpDiagnosticEventInput, SidecarDiagnosticSource, SidecarNetworkResponse } from './mapEvents';
 import type { BrowserDiagnosticFamilyV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { capturePrivateNetworkRequest } from './requestDetails';
+import { readSidecarFrameAddress } from '../frame';
 import type {
     SidecarDiagnosticsEventSource,
     SidecarDiagnosticsEventSourceSubscriber,
@@ -254,7 +255,7 @@ export function translateSidecarCdpNotification(
             const frame = record(params.frame);
             // Only the main frame (no parent) is a page-level navigation; subframes are ignored.
             if (!frame || stringField(frame.parentId)) return null;
-            const url = stringField(frame.url);
+            const url = stringField(readSidecarFrameAddress(frame));
             return {
                 kind: 'page.info',
                 ...(url ? { url } : {}),

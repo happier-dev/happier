@@ -35,6 +35,12 @@ const localSettingInputs = {
         description: 'Whether the session composer stays focused after sending a message',
         storageScope: 'local',
     },
+    composerTypeToFocusEnabled: {
+        schema: z.catch(z.boolean(), true),
+        default: true,
+        description: 'Typing outside a text field on web moves into the session composer',
+        storageScope: 'local',
+    },
     screenCaptureSound: {
         schema: z.catch(z.boolean(), true),
         default: true,

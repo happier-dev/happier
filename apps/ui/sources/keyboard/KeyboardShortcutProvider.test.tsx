@@ -490,6 +490,54 @@ describe('KeyboardShortcutProvider', () => {
         expect(ask).toHaveBeenCalledOnce();
         expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
     });
+    it('focuses the browser address before a pointed streamed page consumes its keys, preserving rebinding and guest typing', async () => {
+        const dom = new JSDOM('<input id="address"><div id="page" tabindex="0"></div>', { url: 'https://happier.test/' });
+        vi.stubGlobal('window', dom.window);
+        vi.stubGlobal('document', dom.window.document);
+        vi.stubGlobal('navigator', { platform: 'Win32' });
+        const address = dom.window.document.querySelector<HTMLInputElement>('#address')!;
+        const page = dom.window.document.querySelector<HTMLDivElement>('#page')!;
+        const guestKeys: string[] = [];
+        page.addEventListener('pointerdown', () => page.focus());
+        page.addEventListener('keydown', event => {
+            guestKeys.push(event.key);
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        function Browser() {
+            useBrowserKeyboardShortcuts({ model: { ...selectBrowserToolbarModel(null), canNavigate: true },
+                onFocusAddress: () => address.focus(), onBack() {}, onForward() {}, onReload() {}, onStop() {} });
+            return null;
+        }
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><Browser /></KeyboardShortcutProvider>);
+        const press = async (key: string) => {
+            await act(async () => { page.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true })); });
+            expect(dom.window.document.activeElement).toBe(page);
+            await act(async () => { page.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+                key, code: `Key${key.toUpperCase()}`, altKey: true, bubbles: true, cancelable: true,
+            })); });
+        };
+        try {
+            await press('l');
+            expect(dom.window.document.activeElement).toBe(address);
+            expect(guestKeys).toEqual([]);
+            await act(async () => { storage.setState({ settings: { ...storage.getState().settings,
+                keyboardShortcutOverridesV1: { 'browser.address.focus': [{ binding: 'Alt+B' }] } } }); });
+            await press('l');
+            expect(dom.window.document.activeElement).toBe(page);
+            expect(guestKeys).toEqual(['l']);
+            await press('b');
+            expect(dom.window.document.activeElement).toBe(address);
+            await act(async () => { storage.setState({ settings: { ...storage.getState().settings,
+                keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: ['browser.address.focus'] } }); });
+            await press('l');
+            expect(dom.window.document.activeElement).toBe(page);
+            expect(guestKeys).toEqual(['l', 'l']);
+        } finally {
+            await screen.unmount();
+            dom.window.close();
+        }
+    });
     it('opens the exact selected Inbox source anchor through its registered command without settling Needs you', async () => {
         const focus = { kind: 'session', serverId: 'home-a', id: 'source', jumpSeq: 18 } as const;
         const items: readonly InboxItem[] = [{ key: 'source', producer: 'live', type: 'decision', view: 'needs_you',
@@ -628,6 +676,78 @@ describe('KeyboardShortcutProvider', () => {
         expect(nativeKeyboardState.listeners.size).toBe(0);
         expect(nativeKeyboardState.enabled).toBe(false);
         storage.setState({ settings: initialSettings });
+    });
+
+    it('moves unhandled printable typing into the current composer on every web platform without cancelling the key', async () => {
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false } });
+        let focused = '';
+        function Composer({ name }: { name: string }) {
+            useKeyboardShortcutHandlers({ 'composer.focus': () => { focused = name; } });
+            return <Child />;
+        }
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><Composer name="first" /></KeyboardShortcutProvider>);
+        try {
+            const firstKey = createKeyboardEvent({ key: 'H', shiftKey: true });
+            window.dispatchEvent(firstKey);
+            expect(focused).toBe('first');
+            expect(firstKey.preventDefault).not.toHaveBeenCalled();
+            expect(firstKey.stopPropagation).not.toHaveBeenCalled();
+
+            await screen.update(<KeyboardShortcutProvider handlers={{}}><Composer name="second" /></KeyboardShortcutProvider>);
+            focused = '';
+            // AltGr reports Ctrl+Alt on Windows but still types a character such as "@".
+            window.dispatchEvent(createKeyboardEvent({
+                key: '@', ctrlKey: true, altKey: true,
+                getModifierState: (modifier: string) => modifier === 'AltGraph',
+            }));
+            expect(focused).toBe('second');
+
+            // macOS Option types characters such as "{" on a French layout.
+            focused = '';
+            window.dispatchEvent(createKeyboardEvent({ key: '{', altKey: true }));
+            expect(focused).toBe('second');
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('leaves typing alone in editors, open overlays, IME, shortcuts, Space scrolling and when turned off', async () => {
+        vi.stubGlobal('navigator', { platform: 'Win32' });
+        const focus = vi.fn();
+        const initialLocalSettings = storage.getState().localSettings;
+        const handlers = { 'composer.focus': focus };
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={handlers}><Child /></KeyboardShortcutProvider>);
+        const transcript = { tagName: 'DIV', closest: () => null } as unknown as EventTarget;
+        try {
+            for (const event of [
+                { key: 'a', ctrlKey: true }, { key: 'a', metaKey: true }, { key: 'a', altKey: true },
+                { key: 'a', isComposing: true }, { key: 'Dead' }, { key: 'Enter' }, { key: 'ArrowDown' },
+                { key: ' ', target: transcript }, { key: ' ', shiftKey: true, target: transcript },
+                { key: 'a', target: { tagName: 'INPUT' } },
+                { key: 'a', target: { tagName: 'TEXTAREA' } },
+                { key: 'a', target: { isContentEditable: true } },
+                { key: 'a', target: { tagName: 'DIV', closest: (selector: string) => selector.includes('dialog') ? {} : null } },
+                { key: 'a', defaultPrevented: true },
+            ]) {
+                window.dispatchEvent(createKeyboardEvent(event as Partial<KeyboardEvent>));
+            }
+
+            const closePopover = registerEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.popover, onEscape: () => true });
+            window.dispatchEvent(createKeyboardEvent({ key: 'a', target: transcript }));
+            closePopover();
+
+            await act(async () => storage.setState({ localSettings: { ...initialLocalSettings, composerTypeToFocusEnabled: false } }));
+            window.dispatchEvent(createKeyboardEvent({ key: 'a', target: transcript }));
+            expect(focus).not.toHaveBeenCalled();
+
+            await act(async () => storage.setState({ localSettings: initialLocalSettings }));
+            window.dispatchEvent(createKeyboardEvent({ key: 'a', target: transcript }));
+            expect(focus).toHaveBeenCalledTimes(1);
+        } finally {
+            storage.setState({ localSettings: initialLocalSettings });
+            await screen.unmount();
+        }
     });
 
     it('captures handled Find before terminal input, passes the second Find and never steps during composition', async () => {

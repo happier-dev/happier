@@ -196,6 +196,7 @@ export function createDaemonMachineBootstrapRuntime(
     spawnSessionForInternalResume: BootstrapRuntime['spawnSessionForInternalResume'];
     onActivationRejected?: BootstrapRuntime['onActivationRejected'];
     stopSession: BootstrapRuntime['stopSession'];
+    purgeBrowserStorageForSessionDeleted?: BootstrapRuntime['purgeBrowserStorageForSessionDeleted'];
     sessionRunnerStatus?: BootstrapRuntime['sessionRunnerStatus'];
     awaitAgentSessionOpen: BootstrapRuntime['awaitAgentSessionOpen'];
     isSessionAlreadyRunning: BootstrapRuntime['isSessionAlreadyRunning'];
@@ -801,6 +802,7 @@ export function createDaemonMachineBootstrapRuntime(
     spawnSessionForInternalResume: params.spawnSessionForInternalResume,
     ...(params.onActivationRejected ? { onActivationRejected: params.onActivationRejected } : {}),
     stopSession: params.stopSession,
+    purgeBrowserStorageForSessionDeleted: params.purgeBrowserStorageForSessionDeleted,
     ...(params.sessionRunnerStatus ? { sessionRunnerStatus: params.sessionRunnerStatus } : {}),
     awaitAgentSessionOpen: params.awaitAgentSessionOpen,
     isSessionAlreadyRunning: params.isSessionAlreadyRunning,

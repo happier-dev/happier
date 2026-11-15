@@ -36,10 +36,11 @@ it.each(['actionPopup', 'optionsPage'] as const)('captures an admitted persisten
         source: { kind: 'unpacked' as const, directory: '/fixture' }, directory: join(root, 'extension'),
         permissions: [], hostPermissions: [], actionPopup: 'popup.html', optionsPage: 'options.html' };
     await profiles.setExtension(profile.profileId, extension);
+    let managedPackageAvailable = false;
     const factory = createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles,
-        resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
+        resolveManagedCandidate: async () => managedPackageAvailable ? ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
             discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
-                pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
+                pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }) : null,
         createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
             // Only OS process and Chromium/CDP boundaries are substituted.
             spawnProcess: () => {
@@ -76,7 +77,14 @@ it.each(['actionPopup', 'optionsPage'] as const)('captures an admitted persisten
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
     try {
         await publication.refreshBrowserRouteOwners();
-        expect(control?.extensions).toBeDefined();
+        expect(await control?.extensions?.execute('browser.extensions.list', { machineId: 'machine' }))
+            .toMatchObject({ status: 'ready', entries: [{ profileId: profile.profileId, extension }] });
+        expect(await control?.extensions?.execute('browser.extensions.openActionPopup',
+            { machineId: 'machine', browserSessionId: 'session', viewId: 'before-install',
+                profileId: profile.profileId, extensionId: extension.id, commandId: 'before-install' }))
+            .toMatchObject({ status: 'unavailable', code: 'managed_browser_required' });
+        managedPackageAvailable = true;
+        await publication.refreshBrowserRouteOwners();
         const view = { browserSessionId: 'session', viewId: 'extension-view' };
         expect(await control?.extensions?.execute(kind === 'actionPopup' ? 'browser.extensions.openActionPopup' : 'browser.extensions.openOptions',
             { machineId: 'machine', ...view, profileId: profile.profileId, extensionId: extension.id, commandId: 'open' }))

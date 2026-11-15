@@ -6,7 +6,7 @@ import { useFindSurfaceRegistrationWithHost, type FindSurfaceRegistrationHost } 
 import { Platform } from 'react-native';
 
 import { Modal } from '@/modal';
-import { useSettingsValues } from '@/sync/store/settingsReadHooks';
+import { useLocalSetting, useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { t } from '@/text';
 import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { FocusReturnProvider } from './focusReturn';
@@ -31,7 +31,8 @@ import * as nativeKeyboardBridge from '@/components/sessions/agentInput/subscrib
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { createFindSurfaceRegistry, type FindSurfaceRegistration, type FindSurfaceRegistry } from './findSurfaceRegistry';
 import { registerFindActionRuntime } from './findActionRuntime';
-import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from './escape';
+import { ESCAPE_LAYER_PRIORITIES, getMaxEscapeKeyBlockerPriority, useEscapeLayer } from './escape';
+import { isComposerTypeToFocusKey } from './composer';
 import { focusPaneRegion } from '@/components/appShell/panes/paneRegionFocus';
 import { selectEmbeddedKeyboardHandlers } from './embeddedKeyboard';
 
@@ -398,6 +399,8 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     ]);
     const dispatcherOptionsRef = React.useRef(dispatcherOptions);
     dispatcherOptionsRef.current = dispatcherOptions;
+    const composerTypeToFocusEnabledRef = React.useRef(true);
+    composerTypeToFocusEnabledRef.current = useLocalSetting('composerTypeToFocusEnabled');
     const executeCommand = React.useCallback((commandId: KeyboardCommandId): boolean => {
         const handler = dispatcherOptionsRef.current.handlers[commandId];
         if (!handler) return false;
@@ -477,21 +480,24 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
-        const dispatchEvent = (event: KeyboardEvent, captureEditor: boolean) => {
+        const dispatchEvent = (event: KeyboardEvent, captureEmbedded: boolean) => {
             if (event.defaultPrevented === true) return;
             const currentOptions = dispatcherOptionsRef.current;
-            const editorHandlers = selectEmbeddedKeyboardHandlers(currentOptions.handlers, 'editor');
-            const hiddenReviewTarget = captureEditor && isKeyboardTargetHidden(event.target);
+            const capturedHandlers = {
+                ...selectEmbeddedKeyboardHandlers(currentOptions.handlers, 'editor'),
+                ...selectEmbeddedKeyboardHandlers(currentOptions.handlers, 'browser'),
+            };
+            const hiddenReviewTarget = captureEmbedded && isKeyboardTargetHidden(event.target);
             if (hiddenReviewTarget) {
                 for (const id of Object.keys(currentOptions.handlers) as KeyboardCommandId[]) {
-                    if (id.startsWith('review.')) editorHandlers[id] = currentOptions.handlers[id];
+                    if (id.startsWith('review.')) capturedHandlers[id] = currentOptions.handlers[id];
                 }
             }
             const ordinaryHandlers = { ...currentOptions.handlers };
-            for (const id of Object.keys(editorHandlers) as KeyboardCommandId[]) delete ordinaryHandlers[id];
+            for (const id of Object.keys(capturedHandlers) as KeyboardCommandId[]) delete ordinaryHandlers[id];
             const dispatcher = createKeyboardShortcutDispatcher({
                 ...currentOptions,
-                handlers: captureEditor ? editorHandlers : ordinaryHandlers,
+                handlers: captureEmbedded ? capturedHandlers : ordinaryHandlers,
                 getContext: () => ({
                     ...readKeyboardContextFromEventTarget(event.target),
                     ...(hiddenReviewTarget ? { isEditableTarget: false, isInteractiveTarget: false } : {}),
@@ -499,18 +505,40 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
                 }),
             });
             const normalized = normalizeKeyboardEvent(event);
-            if (!dispatcher(normalized)) return;
+            if (!dispatcher(normalized)) {
+                if (!captureEmbedded) focusComposerForTyping(event);
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
-            if (captureEditor) event.stopImmediatePropagation();
+            if (captureEmbedded) event.stopImmediatePropagation();
         };
-        const captureEditor = (event: KeyboardEvent) => dispatchEvent(event, true);
+        // Unhandled typing outside a text field moves into the current composer. Focus moves during
+        // keydown and the default action stays, so the browser types this first character there.
+        const focusComposerForTyping = (event: KeyboardEvent) => {
+            if (!composerTypeToFocusEnabledRef.current) return;
+            if (!isComposerTypeToFocusKey({
+                key: event.key,
+                ctrlKey: event.ctrlKey,
+                altKey: event.altKey,
+                metaKey: event.metaKey,
+                isComposing: event.isComposing,
+                altGraph: event.getModifierState?.('AltGraph') === true,
+            })) return;
+            if (readKeyboardContextFromEventTarget(event.target).isEditableTarget) return;
+            // Modals trap focus inside their dialog; popovers, menus and Find register on the escape stack.
+            if ((event.target as HTMLElement | null)?.closest?.('[role="dialog"], [aria-modal="true"]')) return;
+            if (getMaxEscapeKeyBlockerPriority() > ESCAPE_LAYER_PRIORITIES.overlay) return;
+            executeCommand('composer.focus');
+        };
+        // Streamed pages and editors consume their own keydown events before the bubble listener.
+        const captureEmbedded = (event: KeyboardEvent) => dispatchEvent(event, true);
         const handleKeyDown = (event: KeyboardEvent) => dispatchEvent(event, false);
         const recordInteraction = (event: Event) => {
             find.recordInteraction(event.target);
             refreshFindAvailability();
         };
-        window.addEventListener('keydown', captureEditor, true);
+        window.addEventListener('keydown', captureEmbedded, true);
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('pointerdown', recordInteraction, true);
         // Native click focus may move to a pane ancestor outside the registered
@@ -519,14 +547,14 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         window.addEventListener('focusin', recordInteraction);
         window.addEventListener('focusout', refreshFindAvailability);
         return () => {
-            window.removeEventListener('keydown', captureEditor, true);
+            window.removeEventListener('keydown', captureEmbedded, true);
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('pointerdown', recordInteraction, true);
             window.removeEventListener('click', recordInteraction, true);
             window.removeEventListener('focusin', recordInteraction);
             window.removeEventListener('focusout', refreshFindAvailability);
         };
-    }, [find]);
+    }, [executeCommand, find]);
 
     React.useEffect(() => {
         if (Platform.OS === 'web') return;

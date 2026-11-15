@@ -2552,6 +2552,7 @@ export async function startDaemon(
       retireEndedRunnerOwnedState,
       requestManagedServiceRecovery: requestManagedServiceRecoveryFromSessionControl,
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
+      purgeBrowserStorageForSessionDeleted,
       processLeftBehindPass: sessionControlLeftBehindPass,
     } = await startDaemonSessionControlRuntime({
       acquireServiceExportForward,
@@ -4232,6 +4233,7 @@ export async function startDaemon(
           return result;
         },
         stopSession,
+        purgeBrowserStorageForSessionDeleted,
         sessionRunnerStatus,
         awaitAgentSessionOpen,
         installExternalSessionHostOperations,

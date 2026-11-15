@@ -633,6 +633,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   spawnSessionForInternalResume: PendingSessionResumePort;
   onActivationRejected?: (event: PendingInactiveSessionActivationRejected) => Promise<void>;
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
+  purgeBrowserStorageForSessionDeleted?: (sessionId: string) => Promise<void>;
   sessionRunnerStatus?: MachineRpcHandlerDeps['sessionRunnerStatus'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
   isSessionAlreadyRunning: (sessionId: string) => Promise<boolean>;
@@ -1059,6 +1060,7 @@ export async function bootstrapMachineSyncRuntime(
         directories: createManagedSessionDirectories(),
         token: storedCredentials.token,
         stopSession: params.stopSession,
+        purgeBrowserStorageForSessionDeleted: params.purgeBrowserStorageForSessionDeleted,
         onSessionDeletedChange: (listener) => connectedApiMachine.onSessionDeletedChange(listener),
         onSessionAccessReset: (listener) => connectedApiMachine.onSessionAccessReset(listener),
         requesterCustody: {

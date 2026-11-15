@@ -348,10 +348,7 @@ setBrowserRecordingRoutesProvider?: (
           disposeBrowserSidecarControlAdapter =
             browserSidecarControlAdapterResult.dispose ?? null;
           stopBrowserSidecarSession = browserSidecarControlAdapterResult.stopSession;
-          if (
-            browserControlBroker.hasExecutableAdapters() &&
-            !browserControlRoutes
-          ) {
+          if (browserControlBroker.hasExecutableAdapters()) {
             if (browserSidecarControlAdapterResult.contextCapture) {
               browserProfilePasskeys = createBrowserProfilePasskeyAuthenticator({
                 capture: browserSidecarControlAdapterResult.contextCapture,
@@ -360,10 +357,8 @@ setBrowserRecordingRoutesProvider?: (
             }
             browserControlRoutes = createBrowserDaemonControlRoutes({
               profiles: browserProfileStore,
-              ...(browserSidecarControlAdapterResult.extensions ? {
-                extensions: createBrowserExtensionService({ profileStore: browserProfileStore,
-                  runtime: browserSidecarControlAdapterResult.extensions }),
-              } : {}),
+              extensions: createBrowserExtensionService({ profileStore: browserProfileStore,
+                runtime: browserSidecarControlAdapterResult.extensions }),
               importCookies: createBrowserProfileCookieImporter(browserSidecarControlAdapterResult.contextCapture, {
                 getNativeClient: params.getApiMachineForSessions,
               }),
@@ -376,6 +371,7 @@ setBrowserRecordingRoutesProvider?: (
               captureRegistry: params.liveStreamCaptureRegistry,
               automation: () => browserAutomationServiceForCapture,
             });
+            browserControlRoutesPublished = false;
           }
           if (
             browserControlBroker.hasExecutableAdapters() &&
@@ -718,6 +714,15 @@ setBrowserRecordingRoutesProvider?: (
     emitAudit: (record) => {
       logger.debug('[DAEMON RUN] Browser profile purge audit', record);
     },
+  });
+  // Saved profiles and extension records belong to the disk store, even before
+  // managed Chromium is installed. The adapter success path upgrades these same routes.
+  browserControlRoutes = createBrowserDaemonControlRoutes({
+    profiles: browserProfileStore,
+    extensions: createBrowserExtensionService({ profileStore: browserProfileStore }),
+    broker: browserControlBroker,
+    captureRegistry: params.liveStreamCaptureRegistry,
+    automation: () => browserAutomationServiceForCapture,
   });
   const purgeBrowserStorageForSessionDeleted = async (
     sessionId: string,

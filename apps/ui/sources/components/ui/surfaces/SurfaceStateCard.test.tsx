@@ -8,7 +8,11 @@ import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurr
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { CurrentUiContextWorkspaceBoundary, useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { resolveBrowseProjectionFailureCopy } from '@/components/sessions/external/browse/browseProjectionFailureCopy';
 import { lightTheme } from '@/theme';
@@ -44,6 +48,45 @@ vi.mock('react-native', async () => {
  * only).
  */
 describe('SurfaceStateCard', () => {
+    it('opens workspace diagnostics through the mounted command while withholding background page controls', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://workspace-details.test', accountId: 'a' }], route: () => undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        let reader: CurrentUiContextReader | null = null;
+        function Page() {
+            reader = useOptionalCurrentUiContextReader();
+            useCurrentUiContextLocalCommands([{ key: 'send', title: 'Send draft', invoke: () => true }]);
+            const dispatch = useAppPaneContext(value => value.dispatch);
+            React.useLayoutEffect(() => {
+                dispatch({ type: 'activateScope', scopeId: 'session:diagnostics' });
+                dispatch({ type: 'openDetailsTab', scopeId: 'session:diagnostics', tab: createSessionBoardDetailsTab(), openAs: 'pinned' });
+            }, [dispatch]);
+            return <CurrentUiContextWorkspaceBoundary>
+                <PluginSurfaceFocusEligibilityProvider active={false}>
+                    <SurfaceStateCard testID="underlay-details" kind="error" title="Underlay unavailable" diagnosticCode="underlay_failure" />
+                </PluginSurfaceFocusEligibilityProvider>
+                <PluginSurfaceFocusEligibilityProvider active>
+                    <SurfaceStateCard testID="workspace-details" kind="error" title="Simulator unavailable" diagnosticCode="helper_artifact_missing" />
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextWorkspaceBoundary>;
+        }
+        try {
+            const screen = await renderMountedCurrentUiContext(<Page />);
+            expect(reader!.readCurrentUiContext()?.navigation.area).toBe('workspace');
+            expect(reader!.readCurrentUiContext()?.commands.some(row => row.title === 'Send draft')).toBe(false);
+            expect(reader!.readCurrentUiContext()?.commands.some(row => row.title.startsWith('Underlay unavailable: '))).toBe(false);
+            await screen.pressByTestIdAsync('workspace-details-details-toggle');
+            expect(screen.findByTestId('workspace-details-details-code')?.props.children).toBe('helper_artifact_missing');
+            const command = reader!.readCurrentUiContext()!.commands.find(row => row.title.startsWith('Simulator unavailable: '));
+            expect(command).toBeDefined();
+            await screen.pressByTestIdAsync('workspace-details-details-toggle');
+            expect(screen.findByTestId('workspace-details-details-code')).toBeNull();
+            await screen.update(<View />);
+            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false });
+        } finally { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home.dispose(); }
+    });
+
     it.each([undefined, 'line'] as const)('shares the %s diagnostic disclosure state with mounted agent commands', async size => {
         const home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://state-details.test', accountId: 'a' }], route: () => undefined });
         const server = home.homes.a!;

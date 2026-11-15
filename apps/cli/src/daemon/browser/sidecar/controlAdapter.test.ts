@@ -248,6 +248,32 @@ describe('browser sidecar CDP control adapter', () => {
         listener?.({ method: 'Page.frameNavigated', sessionId: 'cdp_session_secret', params: { frame: { id: 'main', loaderId: 'late', url: 'https://late.test/' } } });
         expect(events).toHaveLength(count);
     });
+    it.each(['live', 'bootstrap'] as const)('publishes the attempted address for a Chromium error document (%s)', async admission => {
+        let listener!: BrowserSidecarCdpEventSubscriber;
+        const failedUrl = 'http://q94-unavailable.invalid/';
+        const frame = { id: 'main', loaderId: 'error_document', url: 'chrome-error://chromewebdata/', unreachableUrl: failedUrl };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
+            transport: { ...createTransport(), subscribeCdpEvents: callback => { listener = callback; return () => undefined; },
+                dispatchPageCommand: async command => command.method === 'Page.getFrameTree'
+                    ? { frameTree: { frame: admission === 'bootstrap' ? frame
+                        : { id: 'main', loaderId: 'original', url: 'https://browser.example.test/start' } } } : {},
+            },
+        });
+        try {
+            const opened = await adapter.dispatchCommand(externalOpenViewCommand());
+            const events: unknown[] = [];
+            adapter.subscribeBrowserEvents(event => events.push(event));
+            if (admission === 'live') listener({ method: 'Page.frameNavigated', sessionId: 'cdp_session_secret', params: { frame } });
+            listener({ method: 'Page.frameStoppedLoading', sessionId: 'cdp_session_secret', params: { frameId: 'main' } });
+            expect(adapter.getNavigationState({ browserSessionId: 'browser_session_1', viewId: 'view_1' }))
+                .toMatchObject({ currentUrl: failedUrl, loadingState: 'ready', navigationGeneration: admission === 'live' ? 1 : 0 });
+            expect(events.at(-1)).toMatchObject({ kind: 'navigationStateChanged', currentUrl: failedUrl });
+            if (admission === 'bootstrap') expect(opened).toMatchObject({ events: expect.arrayContaining([
+                expect.objectContaining({ kind: 'navigationStateChanged', currentUrl: failedUrl }),
+            ]) });
+        } finally { adapter.dispose(); }
+    });
+
     it.each([
         { completion: 'BackForwardCacheRestore', readyState: 'complete' },
         { completion: 'loadEventFired', readyState: 'complete' },
