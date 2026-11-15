@@ -1,6 +1,7 @@
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import type { DeploymentRestoreActivationReferenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveDeploymentRestoreCaptureV1, type DeploymentRestoreResolvedCaptureV1 } from '@happier-dev/deployments';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { join } from 'node:path';
@@ -41,6 +42,7 @@ import { isOwnServerPreviewDataEnvironment, readOwnServerPreviewCleanup } from '
 import { captureOwnServerDeploymentSource, createOwnServerSourceCustodyReader, replaceOwnServerDeploymentSource } from './sourceProvenance';
 import { executeOwnServerNativeRestore, observeOwnServerNativeRestoreDestination, observeOwnServerNativeVolumeRestoreDestination, prepareOwnServerNativeRestore,
     confirmOwnServerNativeRestore, recoverOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput, type OwnServerNativeUploadRestoreInput,
+    type OwnServerNativeRestoreRecoveryInput,
     type OwnServerReceiptContentTransition } from './nativeRestore';
 import { executeOwnServerBackupForHost } from './backup';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
@@ -390,10 +392,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         context?: MachineNativeEffectContext; onStopPending?: () => void;
         onIncumbentServicesChanged?(services: readonly string[]): Promise<void>;
     }>, effect: (native: Readonly<{
-        native: Parameters<typeof observeOwnServerNativeRestoreDestination>[0];
+        native: Omit<OwnServerNativeRestoreRecoveryInput, 'onStopPending' | 'operationProgress'>;
         createInput(capture: Pick<DeploymentRestoreResolvedCaptureV1, 'configuration' | 'repository'>): Promise<OwnServerNativeRestoreInput>;
         createUploadInput(upload: NonNullable<OwnServerRestoreRequestForHost['upload']>, destination: Parameters<typeof prepareOwnServerNativeRestore>[1]['destination']): Promise<OwnServerNativeUploadRestoreInput>;
         runtime: OwnServerDeploymentRuntimeAcquisition;
+        readActivation(): DeploymentRestoreActivationReferenceV1;
+        recordActivation(): Promise<void>;
         createBackupInput(operands: Pick<OwnServerNativeRestoreInput, 'execEnv' | 'readAccess'>): Promise<OwnServerNativeRestoreInput>;
     }>) => Promise<T>): Promise<T> {
         const generationBasis = input.generation.content.ownServer?.approvedInputBasis;
@@ -478,6 +482,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         onStopPending: () => input.onStopPending?.() };
                 };
                 return effect({ native, createInput, runtime: recovery.runtime,
+                    readActivation: () => ({ deploymentId: generation.deployment.id, revision: generation.deployment.revision }),
+                    async recordActivation() {
+                        generation = await publishOwnServerDeploymentReceiptContentForHost(generation,
+                            generation.content, input.request.context, host.writeTransition);
+                    },
                     async createUploadInput(upload, destination) { return { ...native, upload,
                         ...(destination.adapter !== 'postgres-v1' ? { runtimeImage: await project.prepareResticRuntime({ render, context }) } : {}), operationProgress: input.request.context.operationProgress,
                         onStopPending: () => input.onStopPending?.() }; },
@@ -585,7 +594,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const copy = input.mode === 'recover' ? undefined : repositorySource?.origin;
         const upload = input.source.kind === 'upload' ? request.upload : undefined;
         if (input.mode !== 'recover' && input.source.kind === 'upload' && (!upload || upload.transferId !== input.source.transferId)) refuse('restore_upload_unavailable');
-        const snapshot = await readEnvironment(request, input.expectedRevision);
+        const snapshot = await readEnvironment(request, input.mode === 'recover' ? undefined : input.expectedRevision);
         if (input.machineId !== host.machineId || !snapshot.link.members.some(member => member.machineId === input.machineId
             && member.installationId === input.installationId)) refuse('target_mismatch');
         const generationId = snapshot.link.activeDeploymentId;
@@ -593,6 +602,22 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const operationId = context.operationAcceptance?.operationId;
         if (!operationId) refuse('operation_unavailable');
         const generation = await host.readReceipt({ environmentId: input.environmentId, deploymentId: generationId, context });
+        if (input.mode === 'recover') {
+            const point = request.recovery;
+            if (!point) refuse('restore_recovery_required');
+            const evidence = projectNativeJsonValueForTransport(point);
+            const steps = point.steps ? { steps: [...point.steps] } : {};
+            if (!point.activation) return { kind: 'recoveryRequired', verified: false,
+                nextAction: 'inspectStagingVolume', evidence, ...steps };
+            if (point.activation.deploymentId !== generation.deployment.id
+                || point.activation.revision !== generation.deployment.revision) {
+                return { kind: 'superseded', verified: false, nextAction: 'none', evidence, ...steps,
+                    newerActivation: { deploymentId: generation.deployment.id, revision: generation.deployment.revision } };
+            }
+            // Apply the usual reviewed revision check to this already-read snapshot,
+            // after the receipt owner has named a superseding activation if present.
+            await readEnvironmentSnapshot(request, input.expectedRevision, snapshot.environment);
+        }
         const copySourceEnvironment = copy ? await host.readEnvironment({ environmentId: copy.environmentId, context }) : undefined;
         const captureReceipt = repositorySource && (copy || input.mode === 'prepare' && !repositorySource.backupOperationId) ? await host.readReceipt({ environmentId: copy?.environmentId ?? input.environmentId,
             deploymentId: input.deploymentId, context }) : undefined;
@@ -605,16 +630,20 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 contentArtifactId: generation.deployment.contentArtifactId,
                 contentHeaderVersion: generation.deployment.contentHeaderVersion, contentBodyVersion: generation.deployment.contentBodyVersion },
             materialization: { kind: 'restoration', deploymentId: generationId, sourceDeploymentId: generationId } };
-        const execute = (backupDelivery: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>) => withNativeRestoreRuntime<OwnServerRestoreResultForHost>({ request: runtimeRequest, backupDelivery,
+        const execute = (backupDelivery: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>) => withNativeRestoreRuntime<Exclude<OwnServerRestoreResultForHost, { evidence: unknown }>>({ request: runtimeRequest, backupDelivery,
             snapshot: { ...snapshot, content: generation.content, deployment: generation.deployment },
             generation, installationId: input.installationId,
             ...(copySourceEnvironment && captureReceipt ? { copySource: { environment: copySourceEnvironment, receipt: captureReceipt } } : {}),
             operationKind: 'deployments.backups.restore' },
-        async ({ native, createInput, createUploadInput, runtime, createBackupInput }) => {
+        async ({ native, createInput, createUploadInput, runtime, createBackupInput, readActivation, recordActivation }) => {
+            const activated = async (effect: Promise<Awaited<ReturnType<typeof confirmOwnServerNativeRestore>>>) => {
+                const result = await effect;
+                return { ...result, activation: readActivation() };
+            };
             if (input.mode === 'recover') {
                 if (!request.recovery) refuse('restore_recovery_required');
-                return recoverOwnServerNativeRestore({ ...native, onStopPending() {},
-                    operationProgress: context.operationProgress }, request.recovery);
+                return activated(recoverOwnServerNativeRestore({ ...native, onStopPending() {},
+                    operationProgress: context.operationProgress }, request.recovery));
             }
             const reviewSnapshot = async (destination: Parameters<NonNullable<OwnServerRestoreRequestForHost['reviewNativeSnapshot']>>[0]['destination']) => {
                 if (!request.reviewNativeSnapshot) return;
@@ -642,8 +671,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const source = { kind: 'upload' as const, transferId: upload.transferId, sizeBytes: upload.sizeBytes, sha256: upload.sha256 };
                 if (input.mode === 'confirm') {
                     if (!retained || 'configuration' in retained || retained.prepared.source.kind !== 'upload') refuse('stale_input');
-                    return confirmOwnServerNativeRestore(await createUploadInput(upload, destination), { prepare: retained.prepared,
-                        source, sourceFormat: retained.prepared.sourceFormat, destination });
+                    return activated(confirmOwnServerNativeRestore({ ...await createUploadInput(upload, destination),
+                        beforeActivation: recordActivation }, { prepare: retained.prepared,
+                        source, sourceFormat: retained.prepared.sourceFormat, destination }));
                 }
                 const safety = destination.hasMeaningfulData ? destination.adapter !== 'postgres-v1'
                     ? await runtime.prepareBackupRunOperands?.() : await runtime.preparePreMigrationBackupOperands?.() : undefined;
@@ -725,8 +755,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const prepared = retained.prepared;
                 const capture: DeploymentRestoreResolvedCaptureV1 = { source: prepared.source, sourceFormat: prepared.sourceFormat,
                     destination, repository: prepared.repository, configuration: retained.configuration };
-                return confirmOwnServerNativeRestore(await createInput(capture), { prepare: prepared, source: prepared.source,
-                    sourceFormat: prepared.sourceFormat, destination });
+                return activated(confirmOwnServerNativeRestore({ ...await createInput(capture),
+                    beforeActivation: recordActivation }, { prepare: prepared, source: prepared.source,
+                    sourceFormat: prepared.sourceFormat, destination }));
             } finally {
                 try { if (safetyOperands && hasOwnServerBackupDataOperands(safetyOperands)) await safetyOperands.dispose(); }
                 finally { if (operands) await operands.dispose(); }

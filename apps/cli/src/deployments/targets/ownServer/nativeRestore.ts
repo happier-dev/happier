@@ -45,6 +45,8 @@ export type OwnServerNativeRestoreInput = Readonly<{
     /** Native activation can retain this source even when its reply fails or is cancelled. */
     retainSource(): Promise<void>;
     onStopPending(status: 'stop_pending'): void;
+    /** The serving receipt CAS records this admitted activation before writers stop. */
+    beforeActivation?(): Promise<void>;
     /** Planned interruption, published before stop; actual custody remains separate. */
     onExpectedDownServicesChanged?(services: readonly string[]): Promise<void>;
     onIncumbentServicesChanged?(services: readonly string[]): Promise<void>;
@@ -375,7 +377,10 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
         }
         return await effect({ access, signal, execute, executeBackup, onBackupSettled: input.onBackupSettled,
             onStep: step => input.operationProgress?.update(deploymentRestoreStepProgressV1(step)),
-            runProtectedStage: effect => machineNativeEffectAdmission.runStage(input.context, effect,
+            runProtectedStage: effect => machineNativeEffectAdmission.runStage(input.context, async () => {
+                await input.beforeActivation?.();
+                return effect();
+            },
                 { protected: true, onStopPending: input.onStopPending }) });
     } finally {
         // runProtectedStage joins its children before returning. Native custody

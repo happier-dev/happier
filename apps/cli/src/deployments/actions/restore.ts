@@ -136,8 +136,9 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             const acceptance = context.operationAcceptance;
             if (!acceptance || acceptance.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) return refuse('service_operation_unavailable');
             const projectResult = (result: Exclude<Awaited<ReturnType<typeof host.restore>>, { kind: 'prepared' }>) => {
+                if ('evidence' in result) return DeploymentBackupRestoreResultV1Schema.parse(result);
                 const recovery = result.kind === 'recoveryRequired' ? buildDeploymentRestoreRecoveryActionV1(input,
-                    input.mode === 'recover' ? input.operationId : acceptance.operationId, result.nextAction) : undefined;
+                    acceptance.operationId, result.nextAction) : undefined;
                 return DeploymentBackupRestoreResultV1Schema.parse({ kind: result.kind, steps: result.steps,
                     verified: result.verified, nextAction: result.nextAction, ...(recovery ? { recovery } : {}),
                     evidence: normalizeStrictJsonValue({ ...result, ...(snapshot ? { snapshot } : {}) }) });

@@ -19,6 +19,7 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResult
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentBackupRestoreResultV1Schema,
     DeploymentTeardownNothingDeployedInputV1Schema, DeploymentTeardownResultV1Schema,
     DeploymentEnvironmentAccessInputV1Schema, DeploymentEnvironmentAccessResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployment-protocol';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { configuration } from '@/configuration';
 import { prepareProjectOpenReceiptPersistence } from '@/daemon/actionOperations/projectOpenReceiptPersistence';
@@ -320,6 +321,7 @@ describe('own-server target at the Action host boundary', () => {
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
         ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
+        { scenario: 'standalone_public_restore_volume_upload_activation_failure_superseded' as const, sourceKind: 'repository' as const },
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -332,7 +334,8 @@ describe('own-server target at the Action host boundary', () => {
             || scenario === 'public_preview_configure_failure';
         const publicCopy = scenario === 'public_copy' || scenario === 'public_restore_drill' || previewCopy;
         const uploadedVolume = scenario.startsWith('standalone_public_restore_volume_upload');
-        const restoreActivationFailure = scenario === 'standalone_public_restore_volume_upload_activation_failure';
+        const restoreActivationFailure = scenario.startsWith('standalone_public_restore_volume_upload_activation_failure');
+        const restoreSuperseded = scenario === 'standalone_public_restore_volume_upload_activation_failure_superseded';
         const retainedBackupTransport = scenario === 'public_backup_restore_local' ? 'local'
             : scenario === 'public_backup_restore_sftp' ? 'sftp' : undefined;
         const runtimeRead = scenario === 'runtime_reads' || scenario === 'runtime_health';
@@ -3102,7 +3105,8 @@ describe('own-server target at the Action host boundary', () => {
                             const originalDirectory = join(root, 'docker', `volume-${destination.currentVolume}`);
                             await mkdir(originalDirectory, { recursive: true });
                             await writeFile(join(originalDirectory, 'original.txt'), 'MODIFIED1115\n');
-                            await writeFile(statePath, JSON.stringify({ ...state, activationCommandFailure: 'afterCreate' }));
+                            await writeFile(statePath, JSON.stringify({ ...state,
+                                activationCommandFailure: restoreSuperseded ? true : 'afterCreate' }));
                         }
                         const beforeRestoreService = uploadedVolume ? mounted.registry.projectManagedServices.listProjectServices()
                             .find(handle => handle.kind === 'environment' && handle.environmentId === environment.environment.id) : undefined;
@@ -3121,14 +3125,66 @@ describe('own-server target at the Action host boundary', () => {
                             if (restoreActivationFailure) {
                                 const state = JSON.parse(await readFile(join(root, 'docker', 'docker-state.json'), 'utf8')) as {
                                     containers: Array<{ Config: { Labels: Record<string, string> } }> };
-                                expect(state.containers.map(container => container.Config.Labels['com.docker.compose.project.working_dir']))
+                                if (!restoreSuperseded) expect(state.containers.map(container => container.Config.Labels['com.docker.compose.project.working_dir']))
                                     .toContain(restorationRoot);
-                                if (!observedRestore.snapshot || !restored.ok) throw new Error('Expected retained restore failure');
+                                if (!observedRestore.snapshot || !restored?.ok) throw new Error('Expected retained restore failure');
                                 const failed = DeploymentBackupRestoreResultV1Schema.parse(restored.result);
                                 expect(failed).toMatchObject({ kind: 'recoveryRequired', nextAction: 'restorePreviousVolume' });
                                 const recoveryInput = { ...input, mode: 'recover', operationId: observedRestore.snapshot.operationId };
                                 expect(failed).toMatchObject({ recovery: { actionId: 'deployments.backups.restore', input: recoveryInput } });
                                 const statePath = join(root, 'docker', 'docker-state.json');
+                                if (restoreSuperseded) {
+                                    const failedState = JSON.parse(await readFile(statePath, 'utf8'));
+                                    // The Engine becomes available on the preserved original binding.
+                                    // Only its process observation changes; volume identities stay intact.
+                                    await writeFile(statePath, JSON.stringify({ ...failedState, activationCommandFailure: undefined,
+                                        containers: failedState.containers.map((container: { State: { Status: string } }) => ({
+                                            ...container, State: { ...container.State, Status: 'running' } })) }));
+                                    const laterPrepared = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', input,
+                                        { ...context, actionRequestId: 'later-restore-prepare' }), accountId, caller.signal);
+                                    if (!laterPrepared.ok) throw new Error(JSON.stringify(laterPrepared));
+                                    const laterPreparation = DeploymentBackupRestoreResultV1Schema.parse(laterPrepared.result);
+                                    if (laterPreparation.kind !== 'prepared') throw new Error('Expected later preparation');
+                                    const later = await completedNativeAction(operations, await executor.execute('deployments.backups.restore',
+                                        { ...confirm, prepareOperationId: laterPreparation.operationId, snapshot: false },
+                                        { ...context, actionRequestId: 'later-restore-confirm' }), accountId, caller.signal);
+                                    expect(later, JSON.stringify(later)).toMatchObject({ ok: true, result: { kind: 'restored' } });
+                                    const laterPoint = isRecord(laterPreparation.evidence) && isRecord(laterPreparation.evidence.native)
+                                        ? OwnServerRestorePreparationForHostSchema.parse(laterPreparation.evidence.native).prepared.destination : undefined;
+                                    if (laterPoint?.adapter !== 'volume-v1') throw new Error('Expected later volume activation');
+                                    await writeFile(join(root, 'docker', `volume-${laterPoint.stagingVolume}`, 'newer.txt'), 'NEWER-N1\n');
+                                    const newerState = await readFile(statePath, 'utf8');
+                                    const superseded = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
+                                        { ...context, actionRequestId: 'recover-superseded-restore' }), accountId, caller.signal);
+                                    expect(superseded, JSON.stringify(superseded)).toMatchObject({ ok: true, result: {
+                                        kind: 'superseded', nextAction: 'none', newerActivation: {
+                                            deploymentId: serving.deployment.id, revision: receipt.deployment.revision,
+                                        }, evidence: { failureCause: isRecord(failed.evidence) ? failed.evidence.failureCause : undefined } } });
+                                    expect(await readFile(statePath, 'utf8')).toBe(newerState);
+                                    expect(execFileSync(process.execPath, [docker.executablePath, 'compose', 'exec', '-T', 'app',
+                                        'cat', '/data/newer.txt'], { encoding: 'utf8' })).toBe('NEWER-N1\n');
+                                    // Home's active-generation boundary may also advance with a deploy,
+                                    // including an Environment edit since the failed restore's review.
+                                    receipt.deployment = { ...receipt.deployment, id: 'later-deployment', revision: 1 };
+                                    environment.targetLinks[0]!.targetLink.activeDeploymentId = receipt.deployment.id;
+                                    environment.environment.revision++;
+                                    const afterDeploy = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
+                                        { ...context, actionRequestId: 'recover-superseded-deploy' }), accountId, caller.signal);
+                                    expect(afterDeploy, JSON.stringify(afterDeploy)).toMatchObject({ ok: true, result: {
+                                        kind: 'superseded', nextAction: 'none', newerActivation: {
+                                            deploymentId: 'later-deployment', revision: 1 } } });
+                                    expect(await readFile(statePath, 'utf8')).toBe(newerState);
+                                } else {
+                                // Old operation evidence cannot prove which generation it failed on.
+                                const legacy = DeploymentRestoreRecoveryPointV1Schema.parse(isRecord(failed.evidence)
+                                    ? { ...failed.evidence, activation: undefined } : null);
+                                if (legacy.destination.adapter !== 'volume-v1') throw new Error('Expected legacy volume point');
+                                const beforeLegacy = await readFile(statePath, 'utf8');
+                                expect(await target.restore({ input: { ...input, mode: 'recover', operationId: observedRestore.snapshot.operationId },
+                                    recovery: { ...legacy, destination: legacy.destination }, context: { ...context,
+                                        operationAcceptance: { operationId: 'recover-legacy-reference', accept() {} } } }))
+                                    .toMatchObject({ kind: 'recoveryRequired', nextAction: 'inspectStagingVolume' });
+                                expect(await readFile(statePath, 'utf8')).toBe(beforeLegacy);
                                 const beforeInvalidRecovery = await readFile(statePath, 'utf8');
                                 const invalidRecovery = await completedNativeAction(operations, await executor.execute('deployments.backups.restore',
                                     { ...recoveryInput, operationId: preparation.operationId },
@@ -3138,14 +3194,24 @@ describe('own-server target at the Action host boundary', () => {
                                 const failedRecovery = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
                                     { ...context, actionRequestId: 'recover-still-unavailable' }), accountId, caller.signal);
                                 expect(failedRecovery).toMatchObject({ ok: true, result: { kind: 'recoveryRequired',
-                                    recovery: failed.recovery, evidence: { failureCause: isRecord(failed.evidence) ? failed.evidence.failureCause : undefined,
+                                    recovery: { actionId: 'deployments.backups.restore', input: { ...recoveryInput, operationId: expect.any(String) } },
+                                    evidence: { failureCause: isRecord(failed.evidence) ? failed.evidence.failureCause : undefined,
                                         recoveryFailureCause: expect.any(Object) } } });
                                 // Clear only the Docker boundary's injected activation failure.
                                 const failedState = JSON.parse(await readFile(statePath, 'utf8'));
                                 await writeFile(statePath, JSON.stringify({ ...failedState, activationCommandFailure: undefined }));
+                                await docker.changeNativeHealth('app', 'not_reported');
+                                const unverifiedRecovery = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
+                                    { ...context, actionRequestId: 'recover-binding-published-health-unknown' }), accountId, caller.signal);
+                                expect(unverifiedRecovery).toMatchObject({ ok: true, result: { kind: 'recoveryRequired',
+                                    evidence: { failureCause: isRecord(failed.evidence) ? failed.evidence.failureCause : undefined } } });
+                                if (!unverifiedRecovery.ok) throw new Error('Expected retained recovery result');
+                                const retry = DeploymentBackupRestoreResultV1Schema.parse(unverifiedRecovery.result);
+                                if (retry.kind !== 'recoveryRequired' || !retry.recovery) throw new Error('Expected executable recovery retry');
+                                await docker.changeNativeHealth('app', 'healthy');
                                 // Recovery must not need the source upload again.
                                 await uploads.cleanupExpired(Number.MAX_SAFE_INTEGER);
-                                const recovered = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', recoveryInput,
+                                const recovered = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', retry.recovery.input,
                                     { ...context, actionRequestId: 'recover-original-volume' }), accountId, caller.signal);
                                 expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: true, result: {
                                     kind: 'rolledBack', nextAction: 'none', evidence: { failureCause: expect.any(Object) } } });
@@ -3158,6 +3224,7 @@ describe('own-server target at the Action host boundary', () => {
                                     .toContain(original);
                                 expect(execFileSync(process.execPath, [docker.executablePath, 'compose', 'exec', '-T', 'app',
                                     'cat', '/data/original.txt'], { encoding: 'utf8' })).toBe('MODIFIED1115\n');
+                                }
                             }
                             if (!restoreActivationFailure) {
                                 // The fixture's Home transition boundary persists into receipt;

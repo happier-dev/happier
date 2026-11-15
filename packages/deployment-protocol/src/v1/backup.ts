@@ -4,7 +4,7 @@ import type { BackupDestinationContributionV1 } from '@happier-dev/protocol/plug
 import { DeploymentEnvironmentUpdateInputV1BaseSchema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocolComposableSchema';
-import { DeploymentRestoreStepV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentRestoreStepV1Schema, DeploymentRestoreActivationReferenceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 export { DeploymentRestoreStepV1Schema, deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1,
     type DeploymentRestoreStepV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -76,6 +76,7 @@ export type DeploymentRestorePreparationV1 = z.infer<typeof DeploymentRestorePre
 /** Read existing operation evidence, including receipts written before recovery was callable.
  * Native names come from the scoped host operation, never from public Action input. */
 export const DeploymentRestoreRecoveryPointV1Schema = lazyZodSchema(() => z.object({
+    activation: z.optional(DeploymentRestoreActivationReferenceV1Schema),
     source: z.union([DeploymentBackupManifestV1Schema, DeploymentRestoreUploadSourceV1Schema]),
     destination: restoreDestination,
     steps: restorePreparedFields.steps, safetyBackup: restorePreparedFields.safetyBackup,

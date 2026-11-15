@@ -1,4 +1,5 @@
-import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentBackupRestoreInputV1, DeploymentBackupRestoreResultV1,
+    DeploymentRestoreActivationReferenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentRestoreDestinationV1, DeploymentRestoreResultV1 } from '@happier-dev/deployments';
 import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1,
     DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
@@ -250,7 +251,8 @@ export type OwnServerRestoreRequestForHost = Readonly<{
     }>): Promise<void>;
 }>;
 export type OwnServerRestoreResultForHost = (Readonly<{ kind: 'prepared' }> & OwnServerRestorePreparationForHost)
-    | DeploymentRestoreResultV1;
+    | (DeploymentRestoreResultV1 & Readonly<{ activation?: DeploymentRestoreActivationReferenceV1 }>)
+    | Extract<DeploymentBackupRestoreResultV1, { kind: 'superseded' | 'recoveryRequired' }>;
 
 type OwnServerNativeBackupActionId = Exclude<DeploymentBackupActionIdV1, 'deployments.backups.history'>;
 export type OwnServerBackupRequestForHost = {

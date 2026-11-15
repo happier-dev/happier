@@ -287,7 +287,10 @@ writes and owned-key removal use the same provider adapter roles.
 ## Platform runtime logs (0.3 development)
 
 The canonical `deployments.logs.read` Action uses the retained provider deployment
-and admitted controller; platform logs need no fabricated Compose service.
+and admitted controller. Platform callers supply `serverId`, `environmentId`,
+`deploymentId` and `kind`; the receipt supplies the target and controller routing.
+Machine log callers retain their target link, Machine and installation coordinates.
+Platform logs need no fabricated Machine coordinates or Compose service.
 Vercel's adapter incrementally reads its first complete runtime frame, returns a
 finite page marked incomplete, and disposes the provider body. A quiet response
 remains cancellable by the containing read. The existing `readResource` path
@@ -313,6 +316,14 @@ stream can overlap or leave gaps; neither identity nor Follow promises replay.
 Provider tenants, permissions, stream framing and retention remain release checks.
 
 ## Platform upload evidence (0.3 development)
+
+Cloudflare Workers observations report a `workers.dev` URL only when the script's
+subdomain is enabled, using the account's actual subdomain. An explicitly disabled
+route records an empty URL list; an unavailable address read leaves addresses
+unknown without changing proven deployment success. Happier does not enable the
+route implicitly. A serving platform receipt with no provider URL leads to the
+Environment's Domains page. Platform receipts use platform outcome copy and do
+not show Machine execution or Docker image-retention facts.
 
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
 
@@ -3424,8 +3435,13 @@ without taking a fresh snapshot, reading backup credentials or reopening an uplo
 It reuses native activation and health checks, publishes the original volume
 binding on the serving generation, and returns `rolledBack` with the original
 failure evidence, or `recoveryRequired` with both causes if recovery fails.
-Historical receipts without a recorded cause remain readable; recovery cannot
-reconstruct that missing cause. Database/SQLite inspection next actions remain
+Follow the newly returned recovery reference after a failed recovery: its
+operation retains the updated binding receipt even when health is unverified.
+Recovery is admitted against the failed operation's recorded serving receipt and
+revision. A later restore or deploy makes it `superseded`, with the newer
+activation identified and no native changes. Historical receipts without this
+activation reference remain readable but require `inspectStagingVolume` instead
+of automatic recovery; a missing cause is not reconstructed. Database/SQLite inspection next actions remain
 operator recovery instructions and do not advertise an automatic Action reference.
 This is a development-source 0.3 contract: reload matching Home, CLI and client
 sources before invoking the new mode; no released 0.2 restore input is migrated.
@@ -3962,12 +3978,20 @@ and creates no second notice or separate expectation record.
 
 For a contributed target whose installed descriptor declares no teardown role,
 the development teardown Action prepares the existing plain detach disposition.
+Agents use the same compact intents as the UI: rollback names the Environment
+and retained `deploymentId`; teardown names the Environment and `reason` (plus
+the target link when selecting one). Both include `serverId`. The preparation
+owner supplies artifact and revision operands. CLI input refusals preserve the
+canonical schema's typed issue paths, including a missing field inside a union.
 Its review says remote resources, data and costs remain; an unavailable descriptor
 is a typed refusal rather than evidence that the role is absent. Home executes
 the same manager-only unlink owner and returns its typed `detached: true` result.
 It creates no cleanup receipt or provider-absence claim. Explicit Detach keeps
 that behavior. Stop and remove requests Environment removal and refuses this
-keep-running fallback with a typed missing fact and remedy; it cannot claim
+keep-running fallback with a typed missing fact and a remedy naming Detach and
+provider-side deletion. The Delete/Unlink dialog consumes the target's declared
+teardown capability and omits Stop and remove when the target cannot perform it.
+Its Detach copy names the provider where the workload stays running. It cannot claim
 that the workload stopped or the Environment was removed. Retained/data links
 keep the disposition owner's existing inventory and revision rules.
 
@@ -4593,7 +4617,7 @@ For email and password on Happier Cloud once it runs 0.3:
   - `HAPPIER_AUTH_EMAIL_SMTP_USERNAME` and `HAPPIER_AUTH_EMAIL_SMTP_PASSWORD` from the mail provider;
   - optionally `HAPPIER_AUTH_EMAIL_FROM_NAME=Happier`.
 - Mail links also need an application origin and a published Home connection descriptor:
-  `HAPPIER_WEBAPP_URL` (for example `https://app.happier.dev`) and the public HTTPS ingress
+  `HAPPIER_WEBAPP_URL` (for example `https://cloud.happier.dev`) and the public HTTPS ingress
   (`HAPPIER_PUBLIC_SERVER_URL`). Without them the mail-dependent actions are reported unavailable
   (one readiness owner: `resolveAuthEmailReadiness`, SMTP **and** a buildable link), so clients do
   not offer them.

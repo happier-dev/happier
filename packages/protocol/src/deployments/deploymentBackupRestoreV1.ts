@@ -111,6 +111,9 @@ const restoreSteps = () => ({ steps: z.optional(z.array(DeploymentRestoreStepV1S
 const recoveryAction = z.strictObject({ actionId: z.literal(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1),
   input: DeploymentBackupRestoreRecoverInputV1Schema });
 const restoreRecovery = () => ({ recovery: z.optional(recoveryAction) });
+/** The existing serving receipt owns activation currentness, including data restores. */
+export const DeploymentRestoreActivationReferenceV1Schema = z.strictObject({ deploymentId: id, revision });
+export type DeploymentRestoreActivationReferenceV1 = z.infer<typeof DeploymentRestoreActivationReferenceV1Schema>;
 /** One mapping from a native next action to the public UI/agent invocation.
  * Inspection-only next actions do not promise an executable recovery. */
 export function buildDeploymentRestoreRecoveryActionV1(input: DeploymentBackupRestoreInputV1, operationId: string,
@@ -126,5 +129,7 @@ export const DeploymentBackupRestoreResultV1Schema = lazyZodSchema(() => z.discr
   z.strictObject({ kind: z.literal('rolledBack'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
   z.strictObject({ kind: z.literal('outcome_unknown'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
   z.strictObject({ kind: z.literal('recoveryRequired'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps(), ...restoreRecovery() }),
+  z.strictObject({ kind: z.literal('superseded'), verified: z.literal(false), nextAction: z.literal('none'),
+    newerActivation: DeploymentRestoreActivationReferenceV1Schema, evidence: StrictJsonValueSchema, ...restoreSteps() }),
 ]));
 export type DeploymentBackupRestoreResultV1 = z.infer<typeof DeploymentBackupRestoreResultV1Schema>;
