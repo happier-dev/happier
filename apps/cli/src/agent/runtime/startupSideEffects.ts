@@ -283,7 +283,7 @@ async function runDaemonSessionReport(
         const metadata = state.latestMetadata;
         const sessionCreationOutcome = state.latestSessionCreationOutcome;
         const startedBy = String(metadata?.startedBy ?? '').trim().toLowerCase();
-        const policy = resolveSessionReportRetryPolicy(process.env, startedBy);
+        const policy = resolveSessionReportRetryPolicy(sessionProcessEnvironment(), startedBy);
         const retryTimeoutMs = deps.retryTimeoutMs ?? policy.retryTimeoutMs;
         const retryIntervalMs = deps.retryIntervalMs ?? policy.retryIntervalMs;
         const reportAttemptTimeoutMs = deps.reportAttemptTimeoutMs ?? policy.reportAttemptTimeoutMs;

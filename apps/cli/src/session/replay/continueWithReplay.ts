@@ -3,11 +3,13 @@ import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
+import { readReplayTextLimitFromEnv } from '@/session/replay/readReplayTextLimitFromEnv';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
-import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -26,7 +28,7 @@ type ContinueWithReplayReplayParams = Readonly<{
     recentMessagesCount?: number;
     maxSeedChars?: number;
     seedMode?: 'draft' | 'daemon_initial_prompt' | string;
-    summaryRunner?: LlmTaskRunnerConfigV1;
+    summaryRunner?: LlmTaskRunnerChoiceV1;
 }>;
 
 export type ContinueSessionWithReplayParams = Readonly<{
@@ -47,18 +49,6 @@ export type ContinueSessionWithReplayDeps = Readonly<{
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     runReplaySummaryForDialog?: RunReplaySummaryForDialogFn;
 }>;
-
-function parseEnvBoundedInt(
-    name: string,
-    bounds: Readonly<{ min: number; max: number }>,
-    fallback: number | null,
-): number | null {
-    const rawValue = process.env[name];
-    if (typeof rawValue !== 'string' || rawValue.trim().length === 0) return fallback;
-    const parsedValue = Number.parseInt(rawValue, 10);
-    if (!Number.isFinite(parsedValue)) return fallback;
-    return Math.min(bounds.max, Math.max(bounds.min, parsedValue));
-}
 
 export async function continueSessionWithReplay(
     params: ContinueSessionWithReplayParams,
@@ -84,7 +74,7 @@ export async function continueSessionWithReplay(
         };
     }
 
-    const maxTextCharsEnv = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
+    const maxTextCharsEnv = readReplayTextLimitFromEnv();
     const maxTextChars = maxTextCharsEnv ?? undefined;
 
     if (deps.isCurrent && !await deps.isCurrent()) return { type: 'error',

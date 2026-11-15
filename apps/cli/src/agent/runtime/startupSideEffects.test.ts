@@ -12,6 +12,7 @@ import {
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects';
 import type { Metadata } from '@/api/types';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const metadataStub = {} as Metadata;
 const publisherPrecondition = {
@@ -21,6 +22,22 @@ const publisherPrecondition = {
 } as const;
 
 describe('startup side effects: daemon session reporting retry', () => {
+  it('uses each hosted Session report policy at the daemon HTTP boundary', async () => {
+    const timeouts = await Promise.all([321, 654].map(timeoutMs => runInHostedSessionScope({
+      environment: { HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS: String(timeoutMs) },
+    }, async () => {
+      let observed: number | undefined;
+      await reportSessionToDaemonIfRunning({ sessionId: `scoped-report-${timeoutMs}`, metadata: metadataStub }, {
+        notifyDaemonSessionStartedFn: async (_sessionId, _metadata, options) => {
+          observed = options?.timeoutMs;
+          return {};
+        },
+      });
+      return observed;
+    })));
+    expect(timeouts).toEqual([321, 654]);
+  });
+
   it.each([
     ['herdr', 'terminal', 3],
     ['herdr', 'daemon', 2],

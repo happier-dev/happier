@@ -4,7 +4,7 @@ import { writeSessionExitReportSync } from '@/session/diagnostics/sessionExitRep
 import { logger } from '@/ui/logger';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 
-import { readHostedSessionScope, type HostedSessionScope } from './hostedSessionScope';
+import { readHostedSessionScope, sessionProcessEnvironment, type HostedSessionScope } from './hostedSessionScope';
 
 import {
   computeRunnerTerminationOutcome,
@@ -211,7 +211,7 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
     resolveWhenTerminated = resolve;
   });
 
-  const terminationTimeoutMs = readRunnerTerminationTimeoutMs(process.env);
+  const terminationTimeoutMs = readRunnerTerminationTimeoutMs(sessionProcessEnvironment());
   const ownsProcessLifecycle = params.processLifecycleOwnership !== 'caller';
   const sessionScope = ownsProcessLifecycle ? readHostedSessionScope() : undefined;
 

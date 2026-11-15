@@ -24,7 +24,7 @@ import { attemptNativeForkOpen } from './fork/attemptNativeForkOpen';
 import { attemptProviderNativeFork } from './fork/attemptProviderNativeFork';
 import { createReplayForkSession } from './fork/createReplayForkSession';
 import type { ForkLifecycleResult } from './fork/forkLifecycleTypes';
-import { readReplayTextLimitFromEnv } from './fork/readReplayTextLimitFromEnv';
+import { readReplayTextLimitFromEnv } from '@/session/replay/readReplayTextLimitFromEnv';
 import type {
     SessionLifecycleActionHandler,
     SessionLifecycleMachineDeps,

@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/selection/v1';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('Voice selected-model context fact', () => {
+  it('probes native models in each hosted Session directory when cwd is omitted', async () => {
+    const directories: string[] = [];
+    await Promise.all(['/work/session-a', '/work/session-b'].map(workingDirectory =>
+      runAddedHostedSession({ environment: {}, workingDirectory, end: () => {} }, () =>
+        readExecutionRunOfferedModel({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          modelId: 'native-model', readNativeOfferedModel: async request => {
+            directories.push(request.cwd);
+            return { id: 'native-model', name: 'Native model' };
+          } }))));
+    expect(directories.sort()).toEqual(['/work/session-a', '/work/session-b']);
+  });
+
   it.each([undefined, 32_768])('reads only the prepared Provider model fact (window: %s)', async contextWindowTokens => {
     const backendTarget = { kind: 'builtInAgent' as const, agentId: 'codex' };
     const model = { id: 'catalog-model', name: 'Catalog model',

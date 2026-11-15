@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { FeaturesResponseSchema, readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
-import { createNativeAgentSessionHostServiceOwners } from './nativeAgentSessionHostServiceOwners';
+import { createNativeAgentFeatureService, createNativeAgentSessionHostServiceOwners } from './nativeAgentSessionHostServiceOwners';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import { resolveBackendRuntimeCore } from './runtimeCore';
 import { createEmptyBackendExecutionSurfaces } from '../engineRegistryTypes';
@@ -19,6 +20,24 @@ import { createCurrentSessionPresentationHost } from '@/session/presentation/cur
 import { createBundledFirstPartyPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 
 describe('createNativeAgentSessionHostServiceOwners', () => {
+    it('reads plugin feature policy from its Session without restoring a stripped host key', async () => {
+        const key = 'HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED';
+        const previous = process.env[key];
+        process.env[key] = '0';
+        try {
+            const features = createNativeAgentFeatureService(null);
+            const decisions = await Promise.all([{}, { [key]: '0' }, { [key]: '1' }].map(environment =>
+                runInHostedSessionScope({ environment }, async () => {
+                    await Promise.resolve();
+                    return features.isEnabled('execution.runs');
+                })));
+            expect(decisions).toEqual([true, false, true]);
+        } finally {
+            if (previous === undefined) delete process.env[key];
+            else process.env[key] = previous;
+        }
+    });
+
     it('admits a Session-owned Claude Run transcript from authenticated statusline before SessionStart and refuses other paths', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-run-follow-grant-'));
         const transcriptPath = join(root, 'run-native.jsonl');

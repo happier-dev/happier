@@ -5,8 +5,34 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createBoundedTextFileAppender, createSubprocessStderrAppender } from './subprocessArtifacts';
+import { runAddedHostedSession } from './lifecycle/hostedSessionScope';
 
 describe('subprocessArtifacts', () => {
+  it('keeps concurrent hosted Sessions diagnostic selection and byte budgets isolated', async () => {
+    const artifactsRoot = mkdtempSync(join(tmpdir(), 'happier-scoped-artifacts-'));
+    try {
+      const run = (name: string, enabled: string) => runAddedHostedSession({
+        environment: { HAPPIER_DEBUG_ARTIFACTS_DIR: join(artifactsRoot, name),
+          HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED: enabled, HAPPIER_SUBPROCESS_STDERR_MAX_BYTES: '5' },
+        workingDirectory: artifactsRoot, end: () => {},
+      }, async () => {
+        const appender = await createSubprocessStderrAppender({ agentName: 'test', pid: 123, label: name });
+        if (appender) {
+          appender.append('hello');
+          appender.append('world');
+          await appender.close();
+        }
+        return appender;
+      });
+      const [enabled, disabled] = await Promise.all([run('enabled', 'true'), run('disabled', 'false')]);
+      expect(disabled).toBeNull();
+      expect(enabled?.path).toContain(join(artifactsRoot, 'enabled', 'subprocess', 'test'));
+      expect(readFileSync(enabled!.path, 'utf8')).toBe('hello\n...[truncated]\n');
+    } finally {
+      rmSync(artifactsRoot, { recursive: true, force: true });
+    }
+  });
+
   it('returns null when HAPPIER_SUBPROCESS_STDERR_MAX_BYTES=0', async () => {
     const artifactsRoot = mkdtempSync(join(tmpdir(), 'happier-debug-artifacts-'));
 

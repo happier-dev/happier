@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
+import { sessionProcessEnvironment } from './lifecycle/hostedSessionScope';
 
 function sanitizePathSegment(value: string): string {
   return String(value ?? '')
@@ -25,7 +26,7 @@ function sanitizeEnvKeySegment(value: string): string {
 }
 
 function parseEnvBoundedInt(name: string, opts: Readonly<{ min: number; max: number; fallback: number }>): number {
-  const raw = process.env[name];
+  const raw = sessionProcessEnvironment()[name];
   if (typeof raw !== 'string' || raw.trim().length === 0) return opts.fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return opts.fallback;
@@ -48,13 +49,13 @@ export function resolveSubprocessArtifactsDir(params: Readonly<{
   const perAgentKey = `HAPPIER_${upper}_DEBUG_ARTIFACTS_DIR`;
   const overrideKeys = [perAgentKey, ...(params.envOverrides ?? [])];
   for (const key of overrideKeys) {
-    const raw = process.env[key];
+    const raw = sessionProcessEnvironment()[key];
     if (typeof raw === 'string' && raw.trim().length > 0) {
       return raw.trim();
     }
   }
 
-  const globalRoot = process.env.HAPPIER_DEBUG_ARTIFACTS_DIR;
+  const globalRoot = sessionProcessEnvironment().HAPPIER_DEBUG_ARTIFACTS_DIR;
   if (typeof globalRoot === 'string' && globalRoot.trim().length > 0) {
     return join(globalRoot.trim(), 'subprocess', agentName);
   }
@@ -116,7 +117,7 @@ export async function createSubprocessStderrAppender(params: Readonly<{
   label: string;
   envOverrides?: ReadonlyArray<string>;
 }>): Promise<BoundedTextFileAppender | null> {
-  const enabledRaw = process.env.HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED;
+  const enabledRaw = sessionProcessEnvironment().HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED;
   if (typeof enabledRaw === 'string' && ['0', 'false', 'no'].includes(enabledRaw.trim().toLowerCase())) {
     return null;
   }

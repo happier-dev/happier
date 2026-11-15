@@ -15,6 +15,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { configuration } from '@/configuration';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
@@ -129,14 +130,14 @@ export function createNativeAgentFeatureService(
 ): AgentSessionHostServices['features'] {
     return Object.freeze({
         // Decided at every read through the canonical CLI feature-decision owner.
-        // An unknown id is permanently unsupported, but a known id's decision is a
-        // property of the current environment and policy, not of one Session or Run.
+        // An unknown id is permanently unsupported; known ids use the invoking
+        // Session's current environment and the registry's server policy.
         isEnabled: (featureId: string): boolean => {
             if (!isFeatureId(featureId)) return false;
             const serverSnapshot = runtimeRegistry?.resolveServerFeaturesSnapshot?.();
             return resolveCliFeatureDecision({
                 featureId,
-                env: process.env,
+                env: sessionProcessEnvironment(),
                 ...(serverSnapshot ? { serverSnapshot } : {}),
             }).state === 'enabled';
         },

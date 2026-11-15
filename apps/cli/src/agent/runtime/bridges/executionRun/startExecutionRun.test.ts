@@ -56,6 +56,8 @@ import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { runWithScmCommandRunner } from '@/scm/runtime';
 
 const TEST_BACKEND_ID = `${'summary'}.${'backend'}` as never;
 
@@ -889,18 +891,24 @@ describe('startExecutionRun', () => {
     const createRuntime = vi.fn<StartExecutionRunArgs['createRuntime']>(() => createProvisioningRuntime());
     const executeBoundedRun = vi.fn<StartExecutionRunArgs['executeBoundedRun']>(async () => {});
     const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });
+    const scmDirectories: string[] = [];
     try {
-      const started = await startExecutionRun({
+      // The incumbent SCM process port is the OS boundary; all Role preparation stays real.
+      const started = await runWithScmCommandRunner(async input => {
+        scmDirectories.push(input.cwd);
+        return { success: false, stdout: '', stderr: 'Not a repository', exitCode: 1 };
+      }, () => runAddedHostedSession({ environment: {}, workingDirectory: tmpdir(), end: () => {} }, () => startExecutionRun({
         params: { sessionId: 'parent_session_1', intent: 'task', roleId: 'second_opinion', resolvedRole: role.selection,
           promptCredentials: { token: 'synthetic-account-token', encryption: null },
           backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID }, instructions: 'Assess this change.',
-          cwd: tmpdir(), accountSettings: {}, permissionMode: 'yolo', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' },
+          accountSettings: {}, permissionMode: 'yolo', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' },
         resolveAccountSettingsSnapshot: async () => { throw new Error('An accepted Role must not demand later Account authority'); },
         parentProvider: TEST_BACKEND_ID, sendAcp: async () => {}, streamedTranscriptSession: null,
         createRuntime, getNowMs: () => 1, budgetRegistry: null, runs, controllers: new Map(),
         enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun,
         send: async () => ({ ok: true }), voiceAgentManager,
-      });
+      })));
+      expect(scmDirectories).toEqual([tmpdir(), tmpdir()]);
       const run = runs.get(started.runId)!;
       expect(run.instructions).toContain(BUILT_IN_ROLES_V1.second_opinion.instructions);
       expect(run.instructions).toContain('<happier_role');

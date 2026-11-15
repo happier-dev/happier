@@ -8,6 +8,7 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import { readExecutionRunErrorCode } from './errors';
 import type { AgentModelDescriptor } from '@happier-dev/protocol/models/descriptor';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type ModelAdmissionParams = Pick<ExecutionRunManagerStartParams,
   'backendTarget' | 'modelId' | 'modelSelection' | 'teamCredentialModel' | 'cwd'
@@ -86,7 +87,7 @@ export async function readExecutionRunOfferedModel(params: ModelAdmissionParams)
   // grant that distinct source the Agent's native JSON contract.
   if (!params.teamCredentialModel && !params.modelSelection?.providerConnectionId) {
     try {
-      const request = { backendTarget: params.backendTarget, modelId, cwd: params.cwd ?? process.cwd(),
+      const request = { backendTarget: params.backendTarget, modelId, cwd: params.cwd ?? sessionWorkingDirectory(),
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
         ...(params.secretReferenceOverlay ? { secretReferenceOverlay: params.secretReferenceOverlay } : {}),
         ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}) };

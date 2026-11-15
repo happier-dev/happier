@@ -82,6 +82,7 @@ import { assertExecutionRunStructuredOutputModelAllowed, readExecutionRunOffered
 import { executionRunChildSelectionNeedsAppliedParent, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
 import { projectExecutionRunError } from './errors';
 import { resolveExecutionRunInitialInputLocalId } from './initialInput';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type SendAcp = ExecutionRunTranscriptPublisher;
 
@@ -457,11 +458,12 @@ async function startAdmittedExecutionRun(
       let secondOpinionInput: Readonly<Record<string, unknown>> | undefined;
       if (role?.roleId === 'second_opinion') {
         const intentInput = readRecord(args.params.intentInput) ?? {};
-        const fingerprint = await readWorktreeChangeFingerprint(args.params.cwd ?? process.cwd());
+        const cwd = args.params.cwd ?? sessionWorkingDirectory();
+        const fingerprint = await readWorktreeChangeFingerprint(cwd);
         const supplied = readRecord(intentInput.input) ?? {};
         const diff = supplied.diff === undefined ? await runScmCommand({
           bin: 'git',
-          cwd: args.params.cwd ?? process.cwd(),
+          cwd,
           args: ['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--'],
         }) : null;
         secondOpinionInput = {
