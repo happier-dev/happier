@@ -4894,6 +4894,88 @@ describe('first layout (web)', () => {
 });
 
 describe('grid', () => {
+  // The physical page scroller is the platform boundary: its window and the grid's place in it.
+  function pageTracker(viewportHeight = 900) {
+    const listeners = new Set<() => void>();
+    let window = { top: 0, bottom: viewportHeight };
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0,
+      getWindow: () => window,
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      measureSpan: async () => ({ top: 0 }),
+      scrollToOffset: (offset) => { window = { top: offset, bottom: offset + viewportHeight }; listeners.forEach((listener) => listener()); },
+    };
+    return tracker as PluginUiScrollActivityTracker & { scrollToOffset(offset: number): void };
+  }
+  const library = (count: number): readonly Entry[] => Array.from({ length: count }, (_, index) => ({
+    id: `art-${index}`, title: `Artifact ${index + 1}`, group: 'rest', repo: 'notes', reason: '', age: '1d',
+  }));
+
+  it('mounts only the cards near the page window, however large the library (page scroll)', async () => {
+    const mountedCards = async (count: number) => {
+      const tracker = pageTracker();
+      const view = mount({ presentation: 'grid', grouped: false, detail: 'none', scroll: 'page', items: library(count), scrollTracker: tracker });
+      try {
+        view.measure(1440);
+        await act(async () => {});
+        const cards = () => view.container.querySelectorAll('[data-testid$=":card"]').length;
+        const atTop = cards();
+        expect(view.query('row:art-0:card')).not.toBeNull();
+        expect(view.query(`row:art-${count - 1}:card`)).toBeNull();
+        if (count < 500) return atTop;
+        // Scrolled down page by page to the end, the last cards stand in the window and the first ones are gone.
+        for (let page = 1; page < 400 && view.query(`row:art-${count - 1}:card`) === null; page += 1) {
+          await act(async () => { tracker.scrollToOffset(page * 900); });
+          expect(cards()).toBeLessThanOrEqual(atTop + 12);
+        }
+        expect(view.query(`row:art-${count - 1}:card`)).not.toBeNull();
+        // The tab stop's line (the first card) stays drawn; the lines after it scrolled away are gone.
+        expect(view.query(`row:art-${Math.floor(count / 4)}:card`)).toBeNull();
+        return atTop;
+      } finally {
+        view.unmount();
+      }
+    };
+    const fifty = await mountedCards(50);
+    const fiveHundred = await mountedCards(500);
+    expect(fiveHundred).toBe(fifty);
+    expect(fiveHundred).toBeLessThan(50);
+  });
+
+  it('keeps a windowed card in its place, never reparented, when the columns re-flow', async () => {
+    const view = mount({ presentation: 'grid', grouped: false, detail: 'none', scroll: 'page', items: library(200), scrollTracker: pageTracker() });
+    try {
+      view.measure(1440);
+      await act(async () => {});
+      const card = view.query('row:art-3:card')!;
+      const parent = card.parentElement;
+      view.measure(700);
+      await act(async () => {});
+      expect(view.query('row:art-3:card')).toBe(card);
+      expect(card.parentElement).toBe(parent);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps the Collection mounted when a page-scrolled view switches between grid and list', async () => {
+    const view = mount({ presentation: 'grid', grouped: false, detail: 'none', scroll: 'page', items: library(60), scrollTracker: pageTracker() });
+    try {
+      view.measure(1440);
+      await act(async () => {});
+      const root = view.query('collection')!;
+      await view.update({ presentation: 'list' });
+      expect(view.query('collection')).toBe(root);
+      await view.update({ presentation: 'grid' });
+      await act(async () => {});
+      expect(view.query('collection')).toBe(root);
+      expect(view.query('row:art-0:card')).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('lands its first cards with the grid on the first paint, before any layout callback (web)', () => {
     // The stage reads its layout box before the browser paints; the platform layout callback comes a frame or more later.
     const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1440);

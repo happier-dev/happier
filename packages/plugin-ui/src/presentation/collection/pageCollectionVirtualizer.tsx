@@ -21,22 +21,13 @@ function sameMeasuredGeometry(left: PageGeometry, right: PageGeometry) {
     && left.directory?.columns === right.directory?.columns;
 }
 
-/** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
-export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, tabStopKey, retainedKeys }: Readonly<{
-  request: CollectionVirtualizerRequest<Item>;
-  geometry: PageGeometry;
-  tracker: PluginUiScrollActivityTracker;
-  tabStopKey: string | null;
-  /** Rows a live interaction anchors to (a deep link's popover); they stay mounted wherever the viewport is. */
-  retainedKeys?: ReadonlySet<string>;
-}>) {
+/**
+ * Where a windowed block stands in its owning physical page, and that page's window: the block's top is measured
+ * again after every page layout change. Shared by the page List and the page grid, so both window the same way.
+ */
+export function usePageWindow(tracker: PluginUiScrollActivityTracker) {
   const root = useRef<View | null>(null);
   const [span, setSpan] = useState<Readonly<{ top: number }> | null>(null);
-  const [measurements, setMeasurements] = useState<Readonly<{ geometry: PageGeometry; heights: ReadonlyMap<string, number> }>>(
-    () => ({ geometry, heights: NO_MEASUREMENTS }),
-  );
-  // Recomposition and text scaling change the owning geometry; old cell measurements no longer describe it.
-  const measuredHeights = sameMeasuredGeometry(measurements.geometry, geometry) ? measurements.heights : NO_MEASUREMENTS;
   const window = useSyncExternalStore(tracker.subscribe, tracker.getWindow, tracker.getWindow);
   const revision = useSyncExternalStore(tracker.subscribe, tracker.getLayoutRevision, tracker.getLayoutRevision);
   const measure = useCallback(async () => {
@@ -46,6 +37,24 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
     setSpan(current => current?.top === measured.top ? current : measured);
   }, [tracker]);
   useLayoutEffect(() => { void measure(); }, [measure, revision]);
+  return { root, span, window, measure };
+}
+
+/** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
+export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, tabStopKey, retainedKeys }: Readonly<{
+  request: CollectionVirtualizerRequest<Item>;
+  geometry: PageGeometry;
+  tracker: PluginUiScrollActivityTracker;
+  tabStopKey: string | null;
+  /** Rows a live interaction anchors to (a deep link's popover); they stay mounted wherever the viewport is. */
+  retainedKeys?: ReadonlySet<string>;
+}>) {
+  const { root, span, window, measure } = usePageWindow(tracker);
+  const [measurements, setMeasurements] = useState<Readonly<{ geometry: PageGeometry; heights: ReadonlyMap<string, number> }>>(
+    () => ({ geometry, heights: NO_MEASUREMENTS }),
+  );
+  // Recomposition and text scaling change the owning geometry; old cell measurements no longer describe it.
+  const measuredHeights = sameMeasuredGeometry(measurements.geometry, geometry) ? measurements.heights : NO_MEASUREMENTS;
   const cells = useMemo(() => {
     const result: Cell<Item>[] = [];
     let offset = 0;

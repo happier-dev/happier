@@ -1,7 +1,9 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
+import { useOptionalPluginUiScrollActivityTracker, type PluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
+import { usePageWindow } from '../presentation/collection/pageCollectionVirtualizer.js';
 
 import {
   resolveHappierUiPalette,
@@ -23,7 +25,7 @@ import { Button } from './Button.js';
 import { DropTarget } from './EntityDragDrop.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_WIDGET_FRAME_METRICS, HappierWidgetFrame } from '../presentation/layout/WidgetFrame.js';
-import type { HappierFocusable, HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
+import type { HappierFocusable, HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_WORK_STATUS_SEMANTIC_TONE } from '../presentation/work/workStatus.js';
 import { resolveHappierTypeRoleStyle } from '../presentation/text/typeRole.js';
@@ -664,6 +666,8 @@ function GridCardView<Item>(props: Readonly<{
   /** Remaining cells in this logical row, kept as layout space without reparenting keyed cards. */
   rowEndSpace: number;
   register: (key: string, target: HappierFocusable | null) => void;
+  /** A windowed grid's content-sized card reports its drawn height, so the page window places the lines below it. */
+  onHeight?: (key: string, height: number) => void;
 }>): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const cardLayout = useCardLayout();
@@ -722,6 +726,7 @@ function GridCardView<Item>(props: Readonly<{
       ref={cardRef}
       style={[gridCardStyle, { width: geometry.cardWidth, marginEnd: props.rowEndSpace, ...(geometry.fitContent ? {} : { minHeight: geometry.cardHeight }) }]}
       testID={testID === undefined ? undefined : `${testID}:card`}
+      {...(props.onHeight === undefined ? {} : { onLayout: (event: HappierLayoutChangeEvent) => props.onHeight!(itemKey, event.nativeEvent.layout.height) })}
     >
       <ListItemSelectionContext.Provider value={{
         itemKey, multiSelectable: selectable, selected: cardSelected,
@@ -845,6 +850,10 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
     ...(single === undefined ? {} : { onValueChange: chooseOrOpen }),
   }), [chooseOrOpen, rowColumns, gridRowKeys, model.actions, props.eligibleKeys, props.selection?.multiple?.store, single === undefined]);
   const focusRequest = props.focusRequest ?? model.focusRequest;
+  // A grid that scrolls with its page draws only the lines near the page's window (a library of hundreds of cards
+  // mounts what is on screen, not every card). A paging shelf is one line: it has nothing to window.
+  const pageTracker = useOptionalPluginUiScrollActivityTracker();
+  const windowTracker = props.pageScroll === true && !paged ? pageTracker : null;
   useEffect(() => {
     if (focusRequest === null) return;
     if (!keys.includes(focusRequest.key)) return;
@@ -900,6 +909,36 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
         const group = section.group;
         const shelf = group !== null && group.title !== '';
         const rows = gridRows[sectionIndex] ?? [];
+        const renderCard = (row: readonly Item[], rowIndex: number, item: Item, itemIndex: number, onHeight?: (key: string, height: number) => void): ReactElement => {
+          const key = keyOf(item);
+          const rowGeometry = rowGeometries[sectionIndex]?.[rowIndex] ?? geometry;
+          return (
+            <GridCard
+              key={key}
+              item={item}
+              itemKey={key}
+              anatomy={anatomy}
+              geometry={rowGeometry}
+              count={keys.length}
+              activatable={props.selection?.isItemActivatable?.(item) !== false && single?.isItemSelectable?.(item) !== false}
+              selectable={props.selection?.multiple !== undefined && props.selection.multiple.isItemSelectable?.(item) !== false}
+              multipleStore={props.selection?.multiple?.store ?? null}
+              singleChoice={single !== undefined}
+              unavailableReason={single?.unavailableReason?.(item)}
+              useRowActions={props.useRowActions}
+              useRowItem={props.useRowItem}
+              rowIndex={rowIndices.get(key)!}
+              rowEndSpace={!paged && itemIndex === row.length - 1 ? (geometry.columns - row.length) * (geometry.cardWidth + CARD_GAP) : 0}
+              selected={key === selectedKey}
+              tabStop={key === tabStopKey}
+              onOpen={chooseOrOpen}
+              onFocus={onFocus}
+              onKey={onKey}
+              register={register}
+              {...(onHeight === undefined || !rowGeometry.fitContent ? {} : { onHeight })}
+            />
+          );
+        };
         return (
           <View
             key={group?.key ?? `collection-${sectionIndex}`}
@@ -924,43 +963,116 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
                 />
               </View>
             )}
+            {windowTracker !== null ? (
+              <PageWindowedGridRow
+                tracker={windowTracker}
+                rows={rows}
+                keyOf={keyOf}
+                cardWidth={geometry.cardWidth}
+                estimate={(rowIndex) => (rowGeometries[sectionIndex]?.[rowIndex] ?? geometry).cardHeight}
+                pinnedKeys={[tabStopKey, selectedKey, focusRequest?.key ?? null]}
+                revealKey={focusRequest?.key ?? null}
+                renderCard={(item, rowIndex, itemIndex, onHeight) => renderCard(rows[rowIndex]!, rowIndex, item, itemIndex, onHeight)}
+                {...(props.testID === undefined ? {} : { testID: `${props.testID}:grid-row` })}
+              />
+            ) : (
             <GridRow paged={paged} snapInterval={geometry.cardWidth + CARD_GAP}
               {...(props.testID === undefined ? {} : { testID: `${props.testID}:grid-row` })}>
-            {rows.flatMap((row, rowIndex) => (
-                row.map((item, itemIndex) => {
-                  const key = keyOf(item);
-                  return (
-                    <GridCard
-                      key={key}
-                      item={item}
-                      itemKey={key}
-                      anatomy={anatomy}
-                      geometry={rowGeometries[sectionIndex]?.[rowIndex] ?? geometry}
-                      count={keys.length}
-                      activatable={props.selection?.isItemActivatable?.(item) !== false && single?.isItemSelectable?.(item) !== false}
-                      selectable={props.selection?.multiple !== undefined && props.selection.multiple.isItemSelectable?.(item) !== false}
-                      multipleStore={props.selection?.multiple?.store ?? null}
-                      singleChoice={single !== undefined}
-                      unavailableReason={single?.unavailableReason?.(item)}
-                      useRowActions={props.useRowActions}
-                      useRowItem={props.useRowItem}
-                      rowIndex={rowIndices.get(key)!}
-                      rowEndSpace={!paged && itemIndex === row.length - 1 ? (geometry.columns - row.length) * (geometry.cardWidth + CARD_GAP) : 0}
-                      selected={key === selectedKey}
-                      tabStop={key === tabStopKey}
-                      onOpen={chooseOrOpen}
-                      onFocus={onFocus}
-                      onKey={onKey}
-                      register={register}
-                    />
-                  );
-                })
-            ))}
+            {rows.flatMap((row, rowIndex) => row.map((item, itemIndex) => renderCard(row, rowIndex, item, itemIndex)))}
             </GridRow>
+            )}
           </View>
         );
       })}
     </GridScroller>
+  );
+}
+
+const NO_HEIGHTS: ReadonlyMap<string, number> = new Map();
+
+/**
+ * A group's cards wrapped into the grid's columns, drawn only where its lines are near the page's window (the page
+ * List's rule, `usePageWindow`): each run of far lines stands as one spacer of their exact height, so the page keeps
+ * its length and scroll position. Every drawn card stays a child of this one row, so a re-flow (a pane opening beside
+ * the grid) moves cards without remounting them. The open card, the tab stop and a focus target stay drawn wherever
+ * they are; a focus target out of the window is scrolled to.
+ */
+function PageWindowedGridRow<Item>(props: Readonly<{
+  tracker: PluginUiScrollActivityTracker;
+  rows: readonly (readonly Item[])[];
+  keyOf: (item: Item) => string;
+  /** The current card width: a content-sized card's measured height belongs to it. */
+  cardWidth: number;
+  /** A line's height before its cards are drawn: the grid's exact card geometry. */
+  estimate: (rowIndex: number) => number;
+  pinnedKeys: readonly (string | null)[];
+  revealKey: string | null;
+  renderCard: (item: Item, rowIndex: number, itemIndex: number, onHeight: (key: string, height: number) => void) => ReactElement;
+  testID?: string;
+}>): ReactElement {
+  const { rows, keyOf, estimate, cardWidth, tracker } = props;
+  const { root, span, window, measure } = usePageWindow(tracker);
+  const [measured, setMeasured] = useState<Readonly<{ cardWidth: number; heights: ReadonlyMap<string, number> }>>(
+    () => ({ cardWidth, heights: NO_HEIGHTS }),
+  );
+  const heights = measured.cardWidth === cardWidth ? measured.heights : NO_HEIGHTS;
+  const onHeight = useCallback((key: string, height: number) => {
+    setMeasured(current => {
+      const base = current.cardWidth === cardWidth ? current.heights : NO_HEIGHTS;
+      if (height <= 0 || base.get(key) === height) return current;
+      return { cardWidth, heights: new Map(base).set(key, height) };
+    });
+  }, [cardWidth]);
+  const lines = useMemo(() => {
+    let offset = 0;
+    return rows.map((row, rowIndex) => {
+      const height = Math.max(...row.map(item => heights.get(keyOf(item)) ?? estimate(rowIndex)));
+      const line = { offset, height };
+      offset += height + CARD_GAP;
+      return line;
+    });
+    // `estimate` is a new closure each render; the geometry it reads arrives through `rows` and `cardWidth`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, heights, keyOf, cardWidth]);
+  // Before the page has placed the grid, it stands at the page's top: the first window of cards paints at once.
+  const top = span?.top ?? 0;
+  const near = (line: Readonly<{ offset: number; height: number }>) => window === null
+    || (top + line.offset + line.height >= window.top && top + line.offset <= window.bottom);
+  const lineOf = (key: string | null) => key === null ? -1 : rows.findIndex(row => row.some(item => keyOf(item) === key));
+  const pinnedLines = new Set(props.pinnedKeys.map(lineOf).filter(index => index >= 0));
+  const revealLine = lineOf(props.revealKey);
+  useLayoutEffect(() => {
+    const line = lines[revealLine];
+    if (line === undefined || span === null || window === null || near(line)) return;
+    tracker.scrollToOffset?.(Math.max(0, span.top + line.offset));
+    // Only a new focus target asks for the page to move; scrolling never re-reveals it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.revealKey, span !== null]);
+
+  const content: ReactNode[] = [];
+  let skipFrom = -1;
+  const flush = (end: number) => {
+    if (skipFrom < 0) return;
+    const first = lines[skipFrom]!;
+    const last = lines[end - 1]!;
+    content.push(
+      <View key={`gap:${keyOf(rows[skipFrom]![0]!)}`} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+        style={{ width: '100%', height: last.offset + last.height - first.offset }} />,
+    );
+    skipFrom = -1;
+  };
+  rows.forEach((row, rowIndex) => {
+    if (near(lines[rowIndex]!) || pinnedLines.has(rowIndex)) {
+      flush(rowIndex);
+      row.forEach((item, itemIndex) => content.push(props.renderCard(item, rowIndex, itemIndex, onHeight)));
+    } else if (skipFrom < 0) skipFrom = rowIndex;
+  });
+  flush(rows.length);
+  return (
+    <View ref={root} onLayout={() => { void measure(); }} style={[gridRowStyle, GRID_ROW_WRAP_STYLE]}
+      {...(props.testID === undefined ? {} : { testID: props.testID })}>
+      {content}
+    </View>
   );
 }
 
@@ -1074,8 +1186,7 @@ const shelfStyle: HappierPortableStyle = { gap: GUTTER };
 const shelfHeaderStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx };
 // Row peers start on one edge. A card taller than its track (a body has no clipping cap) must not centre its shorter
 // neighbours' frames, which sit inside rows that centre their content, or leave their selection ring around empty room.
-const gridRowStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'flex-start', gap: CARD_GAP };
-// A paging shelf runs out through the grid's end gutter to the page edge, its last card ending on the gutter.
+const gridRowStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'flex-start', gap: CARD_GAP };// A paging shelf runs out through the grid's end gutter to the page edge, its last card ending on the gutter.
 const pagedRowStyle: HappierPortableStyle = { marginRight: -GUTTER, flexGrow: 0 };
 const pagedRowContentStyle: HappierPortableStyle = { paddingRight: GUTTER };
 const pagedSkeletonRowStyle: HappierPortableStyle = { overflow: 'hidden', marginRight: -GUTTER };
