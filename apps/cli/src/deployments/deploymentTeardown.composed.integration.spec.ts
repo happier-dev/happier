@@ -341,7 +341,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
             }, 180_000);
 
-        it.skipIf(process.platform === 'win32').each(['removed-environment', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-network-refused'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
+        it.skipIf(process.platform === 'win32').each(['removed-environment', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-network-refused', 'cancel-before-first-proof'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
             vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '1');
             const root = await mkdtemp(join(tmpdir(), 'happier-teardown-native-'));
             const previousHome = configuration.happyHomeDir;
@@ -360,7 +360,8 @@ describe('deployment teardown through the canonical Action front door', () => {
                     publicKey: encodeBase64(home.keys.publicKey, 'base64url'),
                     privateKey: encodeBase64(home.keys.secretKey, 'base64url') }), { mode: 0o600 });
                 const retainedRetry = caller === 'retained-retry-failed' || caller === 'retained-retry-network-refused';
-                const retainedDomain = retainedRetry || caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails';
+                const retainedDomain = retainedRetry || caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails'
+                    || caller === 'cancel-before-first-proof';
                 let refuseDomainRemoval = caller === 'reviewed-ingress-domain-retirement-fails' || caller === 'retained-retry-failed';
                 const domainRemovalReceiptStates: string[] = [];
                 const socketPath = join(socketDirectory, 'admin.sock');
@@ -421,7 +422,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                     } } satisfies OwnServerDeploymentRuntimeHostInput;
                 const runtime = createOwnServerDeploymentRuntimeForHost(nativeHost);
                 const fixture = await prepare(undefined, [], [], { runtime, definition,
-                    productionReplay: retainedDomain && !retainedRetry });
+                    productionReplay: retainedDomain && !retainedRetry && caller !== 'cancel-before-first-proof' });
                 await updateSettings(settings => ({ ...settings,
                     machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
                         [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
@@ -576,12 +577,29 @@ describe('deployment teardown through the canonical Action front door', () => {
                 let teardownAdmissions = 0;
                 const homeResponses: Array<{ method: string | undefined; path: string; status: number; error?: string }> = [];
                 const nativeRequest = axios.request;
+                let cancelledBeforeProof = false;
                 const admissionObserver = vi.spyOn(axios, 'request').mockImplementation(async request => {
                     if (request.method === 'POST' && request.url?.endsWith(`/environments/${detail.environment.id}/teardown`)) teardownAdmissions++;
                     const response = await nativeRequest(request);
                     const data: unknown = response.data;
                     homeResponses.push({ method: request.method, path: new URL(request.url!).pathname, status: response.status,
                         ...(data && typeof data === 'object' && 'error' in data && typeof data.error === 'string' ? { error: data.error } : {}) });
+                    if (caller === 'cancel-before-first-proof' && !cancelledBeforeProof && request.method === 'POST'
+                        && request.url?.endsWith(`/environments/${detail.environment.id}/teardown`)) {
+                        // Pause only the real Home transport response: admission has
+                        // committed, but its daemon has not entered Domain retirement.
+                        cancelledBeforeProof = true;
+                        const admitted = DeploymentReceiptResultV1Schema.parse(data);
+                        if (!admitted.ok) throw new Error(admitted.error);
+                        const row = await db.deployment.findUniqueOrThrow({ where: { id: admitted.deploymentId } });
+                        const retained = readDeploymentReceiptArtifactV1(row, await runWithServerHttpBaseUrl(home.baseUrl,
+                            () => fixture.artifacts.read(row.contentArtifactId, { prepareRecipients: false, includeSharedAudience: false })));
+                        if (!retained.ok) throw new Error(retained.error);
+                        expect(retained.content.teardown?.proofs).toEqual([]);
+                        expect(await fixture.invoke('deployments.cancel', { serverId: home.serverId,
+                            environmentId: detail.environment.id, deploymentId: row.id, expectedReceiptRevision: row.revision }))
+                            .toMatchObject({ ok: true, result: { state: 'outcome_unknown' } });
+                    }
                     return response;
                 });
                 onTestFinished(() => admissionObserver.mockRestore());
@@ -605,6 +623,35 @@ describe('deployment teardown through the canonical Action front door', () => {
                                     { name: keptVolume, disposition: 'keep' },
                                 ] } : {}) }
                         : input, caller === 'healthy' || retainedDomain);
+                    if (caller === 'cancel-before-first-proof') {
+                        expect(cancelledBeforeProof).toBe(true);
+                        expect(tornDown, JSON.stringify(tornDown)).toMatchObject({ ok: false, errorCode: 'cancelled' });
+                        const stopped = await db.deployment.findFirstOrThrow({ where: { environmentId: detail.environment.id, operation: 'teardown' } });
+                        expect(stopped).toMatchObject({ state: 'outcome_unknown', cancelRequestedAt: expect.any(Date) });
+                        expect(await db.deploymentDomain.findFirst({ where: { environmentId: detail.environment.id } }))
+                            .toMatchObject({ deletedAt: null });
+                        const stoppedEffects = await docker.readInvocations();
+                        const stoppedRoutes = caddyRequests.length;
+                        // Cancellation is not a reversible failure. Replaying its
+                        // admitted request must not restart destructive work.
+                        expect(await fixture.invoke('deployments.teardown', { serverId: home.serverId,
+                            environmentId: detail.environment.id, requestKey: input.requestKey, reason: 'manual', removeEnvironment: true }, true))
+                            .toMatchObject({ ok: false });
+                        expect(await docker.readInvocations()).toEqual(stoppedEffects);
+                        expect(caddyRequests).toHaveLength(stoppedRoutes);
+                        // The person can review Stop and remove again. This is a
+                        // fresh admission, not a continuation of the cancelled job.
+                        const recovered = await fixture.invoke('deployments.teardown', { serverId: home.serverId,
+                            environmentId: detail.environment.id, requestKey: randomUUID(), reason: 'manual', removeEnvironment: true }, true);
+                        expect(recovered, JSON.stringify({ recovered, homeResponses })).toMatchObject({ ok: true,
+                            result: { ok: true, state: 'succeeded', environmentRemoved: true } });
+                        expect(await db.deploymentDomain.count({ where: { environmentId: detail.environment.id, deletedAt: null } })).toBe(0);
+                        expect(nativeServer.routes).toEqual([]);
+                        expect(await docker.readRunningImageConfig('app')).toBeNull();
+                        expect(fixture.teardownReviews()).toBe(2);
+                        expect(teardownAdmissions).toBe(2);
+                        return;
+                    }
                     if (retainedRetry) {
                         expect(tornDown, JSON.stringify(tornDown)).toMatchObject({ ok: false });
                         const first = await db.deployment.findFirstOrThrow({ where: { environmentId: detail.environment.id, operation: 'teardown' } });
