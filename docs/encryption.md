@@ -1491,6 +1491,23 @@ recipient audience. A missing description remains null; update omission leaves
 it unchanged, while explicit null clears it. Clients promote readable legacy
 Group metadata on its next normal metadata save; reads never rewrite it.
 
+The `teams.groups.update` Action accepts authored text from UI, CLI and agent
+callers, for example:
+
+```json
+{ "v": 1, "teamId": "team-id", "groupId": "group-id", "name": "Builders", "description": null }
+```
+
+The existing Action executor prepares that intent through the private-label
+client bound to its captured Account. It validates the display values and seals
+all changed labels against one Team recipient census before the HTTP effect.
+The Home-facing update schema and stored records still contain private-label
+envelopes. E2EE intent and approvals stay in encrypted Account content; no
+plaintext label is sent in the Group HTTP mutation. Description omission leaves
+the stored value unchanged, and null clears it without authoring a label.
+Group creation retains its prepared-envelope input and caller-retained retry
+payload; this update contract does not alter creation idempotency.
+
 Group sorting and search run over the client's opened loaded collection. The
 server uses structural IDs for order and cursors; `nameKey` is removed. Credential
 audit subjects retain the resource binding and are opened by the client. Label
