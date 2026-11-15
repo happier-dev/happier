@@ -11,9 +11,11 @@ import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/m
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PLUGIN_CARD_MIN_WIDTH_PX, PluginsPageCollection } from '@/components/settings/plugins/collection/PluginsPageCollection';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
@@ -38,12 +40,14 @@ const groups = {
     axis: [{ key: 'first', title: 'First section' }, { key: 'second', title: 'Second section' }],
 };
 const keyOf = (item: Entry) => item.key;
+const neighborSection = <ItemGroup title="Neighbor section"><Item title="Neighbor item"
+    icon={<View testID="neighbor-mark" style={{ width: 18, height: 18 }} />} /></ItemGroup>;
 function PageContents({ children }: { children: React.ReactNode }) {
     const maxWidth = useLayoutMaxWidth();
     return <View style={{ width: '100%', maxWidth, alignSelf: 'center' }}>
         <PageHeader title="Collection page" />
         {children}
-        <ItemGroup title="Neighbor section" surface="none"><View /></ItemGroup>
+        {neighborSection}
     </View>;
 }
 const renderPageScroller = (children: React.ReactNode) => (
@@ -64,7 +68,7 @@ function PluginsList() {
     const model = useHappierCollection({ items, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
     return <PluginsPageCollection model={model} anatomy={anatomy} accessibilityLabel="Entries" presentation="list"
         header={<PageHeader title="Collection page" />}
-        footer={<ItemGroup title="Neighbor section" surface="none"><View /></ItemGroup>}
+        footer={neighborSection}
         testID="plugins-page" />;
 }
 
@@ -84,7 +88,9 @@ it.each([
             expect.soft(Math.abs(layout.textRects(heading)[0]!.left - edge), heading).toBeLessThanOrEqual(1);
         }
         for (const item of items) {
-            expect.soft(Math.abs(layout.rect(`mark:${item.key}`).left - edge), item.title).toBeLessThanOrEqual(1);
+            // Page lists now draw sheet rows (b65a1bf2dfc5), with their marks inside
+            // the sheet. Compare peer row marks, separately from section headings.
+            expect.soft(Math.abs(layout.rect(`mark:${item.key}`).left - layout.rect('neighbor-mark').left), item.title).toBeLessThanOrEqual(1);
         }
     } finally {
         await act(async () => root.unmount());
@@ -105,9 +111,9 @@ it.each([1440, 390])('keeps the Artifacts list sheet on the page edge at %i px',
     const root = createRoot(host);
     try {
         getStorage().setState({ localSettings: { ...initialState.localSettings, artifactsBrowserViewV1: { presentation: 'list' } } });
-        await act(async () => root.render(<View style={{ width }}><AppPaneProvider>
+        await act(async () => root.render(<InjectedAuthProvider credentials={null}><View style={{ width }}><AppPaneProvider>
             <ArtifactsBrowser artifacts={[artifact]} loaded loadFailed={false} onRetry={() => {}} usage={null} />
-        </AppPaneProvider></View>));
+        </AppPaneProvider></View></InjectedAuthProvider>));
         const title = t('artifacts.title');
         const layout = await measureWebLayout(host, { viewport: { width, height: 1200 }, texts: [title], settle: (replay) => act(replay) });
         // A row's border is one hairline before its mark, which shares the header's page edge.

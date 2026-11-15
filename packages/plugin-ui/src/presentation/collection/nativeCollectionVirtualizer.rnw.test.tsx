@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { act } from 'react';
-import { Text, View } from 'react-native';
+import { FlatList, SectionList, Text, View } from 'react-native';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { NATIVE_COLLECTION_VIRTUALIZER } from './nativeCollectionVirtualizer.js';
+import type { CollectionVirtualizerHandle } from './collectionVirtualizer.js';
 
 // Browser layout and scrolling are the boundary jsdom lacks. RNW's actual
 // FlatList/SectionList, render mask, spacers and window updates remain real.
@@ -17,6 +18,60 @@ const viewportHeight = 613;
 const rowHeight = 42;
 
 afterEach(() => { vi.useRealTimers(); });
+
+it.each(['flat', 'sections'] as const)('drops a removed unmeasured reveal in a shrinking %s window', async kind => {
+  const items = Array.from({ length: 200 }, (_, index) => ({ index }));
+  let handle: CollectionVirtualizerHandle | null = null;
+  const render = (rows: typeof items) => NATIVE_COLLECTION_VIRTUALIZER.render({
+    ...(kind === 'flat' ? { kind, items: rows } : {
+      kind, sections: [{ key: 'rows', data: rows }], renderSectionHeader: () => null,
+    }),
+    keyForItem: (item: typeof items[number]) => String(item.index),
+    renderItem: (item: typeof items[number]) => <Text>{item.index}</Text>,
+    role: 'list', testID: 'shrinking-window', onHandle: next => { handle = next; },
+  });
+  const view = mountThroughReactNativeWeb(render(items));
+  try {
+    act(() => { handle!.reveal({ index: 199, ...(kind === 'sections' ? { sectionIndex: 0 } : {}) }); });
+    await view.render(render(items.slice(0, 1)));
+    const scroll = view.container.querySelector<LayoutNode>('[data-testid="shrinking-window"]')!;
+    // RNW reports content measurement after filtering; this retries an unmeasured reveal.
+    expect(() => act(() => {
+      (scroll.firstElementChild as LayoutNode).__reactLayoutHandler?.({
+        nativeEvent: { layout: { x: 0, y: 0, width: 800, height: rowHeight } },
+      });
+    })).not.toThrow();
+  } finally { view.unmount(); }
+});
+
+it.each(['flat', 'sections'] as const)('re-resolves a retained unmeasured reveal in a shrinking %s window', async kind => {
+  const items = Array.from({ length: 200 }, (_, index) => ({ index }));
+  // Observe the real RNW positioning boundary; its unmeasured failure stays real.
+  const flatReveal = vi.spyOn(FlatList.prototype, 'scrollToIndex');
+  const sectionReveal = vi.spyOn(SectionList.prototype, 'scrollToLocation');
+  let handle: CollectionVirtualizerHandle | null = null;
+  const render = (rows: typeof items) => NATIVE_COLLECTION_VIRTUALIZER.render({
+    ...(kind === 'flat' ? { kind, items: rows } : {
+      kind, sections: [{ key: 'rows', data: rows }], renderSectionHeader: () => null,
+    }),
+    keyForItem: (item: typeof items[number]) => String(item.index),
+    renderItem: (item: typeof items[number]) => <Text>{item.index}</Text>,
+    role: 'list', testID: 'retained-window', onHandle: next => { handle = next; },
+  });
+  const view = mountThroughReactNativeWeb(render(items));
+  try {
+    act(() => { handle!.reveal({ index: 199, ...(kind === 'sections' ? { sectionIndex: 0 } : {}) }); });
+    await view.render(render(items.slice(190)));
+    const scroll = view.container.querySelector<LayoutNode>('[data-testid="retained-window"]')!;
+    act(() => {
+      (scroll.firstElementChild as LayoutNode).__reactLayoutHandler?.({
+        nativeEvent: { layout: { x: 0, y: 0, width: 800, height: rowHeight * 10 } },
+      });
+    });
+    if (kind === 'flat') expect(flatReveal).toHaveBeenLastCalledWith(expect.objectContaining({ index: 9 }));
+    else expect(sectionReveal).toHaveBeenLastCalledWith(expect.objectContaining({ sectionIndex: 0, itemIndex: 9 }));
+  } finally { view.unmount(); flatReveal.mockRestore(); sectionReveal.mockRestore(); }
+});
 
 it.each(['flat', 'sections'] as const)('keeps the %s mounted window independent of total entry count', async kind => {
   vi.useFakeTimers();

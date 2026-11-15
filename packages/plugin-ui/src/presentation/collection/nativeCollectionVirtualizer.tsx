@@ -24,14 +24,19 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   const tracker = useMemo(() => Platform.OS === 'web' || !observesScroll ? null : createTracker?.(scrollRef, false) ?? null,
     [createTracker, observesScroll, scrollRef]);
   const pendingReveal = useRef<{
-    location: Parameters<CollectionVirtualizerHandle['reveal']>[0];
+    key: string;
     failed: boolean;
   } | null>(null);
+  const requestRef = useRef(request);
+  requestRef.current = request;
   const handle = useMemo<CollectionVirtualizerHandle>(() => ({
     reveal: (location) => {
-      const attempt = { location, failed: false };
-      pendingReveal.current = attempt;
       const { index, sectionIndex } = location;
+      const current = requestRef.current;
+      const item = current.kind === 'sections' ? current.sections[sectionIndex ?? 0]?.data[index] : current.items[index];
+      if (item === undefined) { pendingReveal.current = null; return; }
+      const attempt = { key: current.keyForItem(item, index), failed: false };
+      pendingReveal.current = attempt;
       if (sectioned) {
         grouped.current?.scrollToLocation({ sectionIndex: sectionIndex ?? 0, itemIndex: index, animated: false, viewPosition: 0.5 });
       } else {
@@ -60,7 +65,20 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
     tracker?.onContentSizeChange(width, height);
     request.onContentSizeChange?.(width, height);
     const pending = pendingReveal.current;
-    if (pending?.failed) handle.reveal(pending.location);
+    if (!pending?.failed) return;
+    // Measurement may arrive after filtering, sorting or regrouping. Retain the
+    // row's identity, never the position it occupied in the previous window.
+    const current = requestRef.current;
+    if (current.kind === 'sections') {
+      for (const [sectionIndex, section] of current.sections.entries()) {
+        const index = section.data.findIndex((item, index) => current.keyForItem(item, index) === pending.key);
+        if (index !== -1) { handle.reveal({ sectionIndex, index }); return; }
+      }
+    } else {
+      const index = current.items.findIndex((item, index) => current.keyForItem(item, index) === pending.key);
+      if (index !== -1) { handle.reveal({ index }); return; }
+    }
+    pendingReveal.current = null;
   }, [handle, request.onContentSizeChange, tracker]);
   const renderItem = request.renderItem;
   const renderFlatItem = useCallback(({ item, index }: ListRenderItemInfo<Item>) => (
