@@ -95,6 +95,8 @@ import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/
 export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   cold?: true;
   role: 'use' | 'manage';
+  /** A Manage requester on a separate-users Machine (Use always gets one). */
+  separateUsers?: true;
   sourceCustodianAccountId?: string;
   installedCredentials?: StoredCredentials;
   requesterCredentials?: StoredCredentials;
@@ -134,7 +136,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   let memberReads = 0;
   const agentIsolation: HostAgentIsolationLaunchContext = {
     managedHappierBinaryPath: '/opt/happier/cli/current/happier',
-    read: () => role === 'use' ? ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+    read: () => role === 'use' || options.separateUsers ? ({ enabled: true, memberProvisioning: 'linuxUsersV1',
       status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [workspaceRoot] })
       : ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
     readMember: async input => { memberReads++; if (!preparation) throw new Error('Native member fixture is not ready'); return preparation.members.read(input); },

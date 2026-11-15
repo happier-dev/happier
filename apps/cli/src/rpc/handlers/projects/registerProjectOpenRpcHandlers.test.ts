@@ -44,6 +44,8 @@ import { workspaceSyncTargetBootstrap } from '@/workspaces/sync/workspaceSyncTar
 import type { MutagenSessionSummaryV1 } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { BrokerProtocolError } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { materializeWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { FeaturesResponseSchema, ScmHostingProviderContributionSchema } from '@happier-dev/protocol';
@@ -1095,33 +1097,48 @@ describe('Project Open RPC', () => {
       runtime = { ...runtime, callWorkspaceSource: async request => {
         expect(request.machineId).toBe('remote-source');
         const capture = productionSync.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
-        if (!capture?.input.sourceWorkspaceRefId || !capture.input.targetWorkspaceRefId || !context.machineAdmission)
+        if (!capture?.input.sourceWorkspaceRefId || !context.machineAdmission)
           throw new Error('Missing real private TARGET capture');
+        // The remote SOURCE never sees this host's capture: its relationship
+        // owner names TARGET by root in the requester's Account rows, minting
+        // an id when none exists (createWorkspaceSyncRelationshipOwner.materializeEndpoints).
+        const sourceView = rows.flatMap(row => {
+          if (row.key.kind !== 'workspace-ref' || !row.content) return [];
+          const parsed = WorkspaceRefV1Schema.safeParse(cipher.open(row.key, row.content).value);
+          return parsed.success ? [parsed.data] : [];
+        });
+        const targetWorkspaceRefId = materializeWorkspaceRefForMachineRoot(sourceView, { serverId: homeId, machineId: 'machine',
+          rootPath: targetRoot, nowMs: 1, createId: () => 'source-minted-target' }).workspaceRef.id;
         const relationshipId = deriveWorkspaceSyncRelationshipId(request.operationId);
         // The remote transport supplies SOURCE's admitted prepare packet. The
         // real TARGET receiver binds custody and runs its native authority.
         const prepare = { v: 1 as const, bootstrapOperationId: relationshipId,
           owner: { kind: 'relationship' as const, relationshipId },
           transientRelationship: { v: 1 as const, relationshipId, controllerMachineId: 'remote-source',
-            alphaWorkspaceRefId: capture.input.sourceWorkspaceRefId, betaWorkspaceRefId: capture.input.targetWorkspaceRefId,
+            alphaWorkspaceRefId: capture.input.sourceWorkspaceRefId, betaWorkspaceRefId: targetWorkspaceRefId,
             mode: 'keep_synced' as const, contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-          targetWorkspaceRefId: capture.input.targetWorkspaceRefId, endpointRole: 'beta' as const,
+          targetWorkspaceRefId: targetWorkspaceRefId, endpointRole: 'beta' as const,
           policyDigest: contentPolicy.policyDigest, createIfMissing: true, targetBootstrap: 'use_existing' as const };
         const admitted = resolvePrivateWorkspaceSyncTargetExecution(productionSync.handoffAdapter, {
           context: context.machineAdmission, receivingMachine: { machineId: 'machine', installationId: installed.installation.installationId },
-          request: prepare, targetWorkspaceRefId: capture.input.targetWorkspaceRefId,
+          request: prepare, targetWorkspaceRefId: targetWorkspaceRefId,
           routing: { v: 1, phase: 'prepare', operationId: request.operationId, accountServerId: homeId,
             targetMachineId: 'machine', targetRootPath: targetRoot },
         });
         if (admitted.kind !== 'matched') throw new Error(`TARGET admission failed: ${admitted.kind}`);
         // Production order: the remote SOURCE's relationship owner stages both
         // endpoints and the graph at Home before it signs TARGET prepare.
-        const targetKey = { kind: 'workspace-ref' as const, serverId: homeId, id: capture.input.targetWorkspaceRefId };
+        const targetKey = { kind: 'workspace-ref' as const, serverId: homeId, id: targetWorkspaceRefId };
         const graphKey = { kind: 'relationship-graph' as const };
-        rows.push({ key: targetKey, revision: 0, content: cipher.seal({ key: targetKey, value: { id: targetKey.id, serverId: homeId,
-          machineId: 'machine', rootPath: targetRoot, createdAtMs: 1 } }) },
-        { key: graphKey, revision: 0, content: cipher.seal({ key: graphKey,
-          value: { relationships: [{ ...prepare.transientRelationship, enabled: false }] } }) });
+        // materializeEndpoints keeps an existing row at this root unchanged.
+        if (!sourceView.some(ref => ref.id === targetWorkspaceRefId)) rows.push({ key: targetKey, revision: 0,
+          content: cipher.seal({ key: targetKey, value: { id: targetKey.id, serverId: homeId,
+            machineId: 'machine', rootPath: targetRoot, createdAtMs: 1 } }) });
+        // A graph row may already exist (the TARGET row publication commits an empty one); SOURCE CAS-replaces it.
+        const graphIndex = rows.findIndex(row => row.key.kind === 'relationship-graph');
+        const graphRow = { key: graphKey, revision: graphIndex < 0 ? 0 : rows[graphIndex]!.revision + 1, content: cipher.seal({ key: graphKey,
+          value: { relationships: [{ ...prepare.transientRelationship, enabled: false }] } }) };
+        if (graphIndex < 0) rows.push(graphRow); else rows[graphIndex] = graphRow;
         const handler = targetHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE);
         if (!handler) throw new Error('TARGET prepare was not registered');
         await handler(prepare, { ...context, workspaceSyncPrivateExecution: admitted.capture });
@@ -1281,6 +1298,8 @@ describe('Project Open RPC', () => {
         if (!retained?.relationshipId) throw new Error('The remote SOURCE must bind real TARGET custody');
         expect(retained.relationshipId).toBe(deriveWorkspaceSyncRelationshipId(retained.input.operationId));
         expect(retained.phase).toBe('relationship');
+        // A retry of an unconfirmed Open names the same private root, so it adopts this row.
+        expect(retained.input.targetWorkspaceRefId).toBe('bob-sync');
         return;
       }
       if (fault === 'endpoint_write_failure') {

@@ -2014,10 +2014,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const identity = selectRequesterIdentity(context);
     if (identity.kind === 'unknown') return { kind: 'unavailable', reason: 'requester_authority_unavailable' };
     const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
-    const placement = memberRequester.kind === 'isolated'
-      ? resolveHostRequesterAgentPlacementForHost({ identity: memberRequester, snapshot: input.agentIsolation?.read() }) : undefined;
-    if (placement === 'member') {
-      if (memberRequester.kind !== 'isolated' || !input.agentIsolation?.readMember) return { kind: 'unavailable', reason: 'agent_isolation_unavailable' };
+    if (context.machineAdmission && requiresRequesterWorkspaceCapture(context.machineAdmission)) {
+      if (memberRequester.kind !== 'isolated' || !input.agentIsolation?.readMember || resolveHostRequesterAgentPlacementForHost({
+        identity: memberRequester, snapshot: input.agentIsolation.read() }) !== 'member') return { kind: 'unavailable', reason: 'agent_isolation_unavailable' };
       try {
         const member = await readAgentIsolationMemberDirectories(input.agentIsolation, { requesterIdentity: { ...memberRequester,
           homeServerIdentityId: semanticServerId }, rpcContext: context, signal: context.signal });
@@ -2051,8 +2050,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     if (executionIdentity.kind !== 'isolated') {
       throw compositionError('agent_isolation_unavailable', 'Requester native Sync execution is unavailable');
     }
-    const member = resolveHostRequesterAgentPlacementForHost({ identity: executionIdentity, snapshot: input.agentIsolation?.read() }) === 'member';
-    if (!member && admission.role !== 'manage' || member && !input.privateCheckout) {
+    // The shared capture decider, not Agent placement: the custodian and Manage keep native placement.
+    const member = requiresRequesterWorkspaceCapture(admission);
+    if (member && (!input.privateCheckout || resolveHostRequesterAgentPlacementForHost({ identity: executionIdentity,
+      snapshot: input.agentIsolation?.read() }) !== 'member')) {
       throw compositionError('agent_isolation_unavailable', 'Requester native Sync execution is unavailable');
     }
     const custody = requester.retainCustody();

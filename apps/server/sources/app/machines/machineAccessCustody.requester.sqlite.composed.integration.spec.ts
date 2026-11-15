@@ -360,6 +360,74 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         expect(await syncNative.identity.run('member', () => filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8'))).toBe('before quiesce');
     });
 
+    it.skipIf(process.platform !== 'linux')('syncs a real Manage grant natively outside its member root on a separate-users Machine', async () => {
+        // MEMBER-LIVE-1115: Manage keeps native placement (requiresRequesterWorkspaceCapture); a
+        // separate-users policy must not route it into member private-checkout review.
+        await db.machine.deleteMany({ where: { id: { in: ['machine', 'target-parent'] } } });
+        await db.account.deleteMany({ where: { id: { in: ['requester', 'member-a'] } } });
+        const custodian = await db.account.create({ data: { id: 'requester', encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { id: 'member-a', encryptionMode: 'plain' } });
+        const custodianToken = await createAccountTokenForTests(custodian.id, { kind: 'account', authority: 'present_user' });
+        const memberToken = await createAccountTokenForTests(member.id, { kind: 'account', authority: 'present_user' });
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        machinesRoutes(app);
+        registerExternalActionRoutes(app);
+        syncNativeActive.value = true;
+        onTestFinished(async () => { syncNativeActive.value = false; syncNative.reset(); await app.close(); });
+        const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', separateUsers: true, socketIo: syncSocketIo,
+            readHomePost: async (url, body, config) => {
+                if (url.endsWith('/v1/machines/machine/admission/verify')) {
+                    const response = await app.inject({ method: 'POST', url: '/v1/machines/machine/admission/verify',
+                        headers: { authorization: `Bearer ${custodianToken}` }, payload: body });
+                    return { status: response.statusCode, data: response.json() };
+                }
+                if (!url.endsWith('/execution-authorization/verify')) return undefined;
+                const headers = Object.fromEntries(Object.entries(config?.headers ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+                const response = await app.inject({ method: 'POST', url: new URL(url).pathname, headers, payload: body });
+                return { status: response.statusCode, data: response.json() };
+            } });
+        const { installed } = setup;
+        const machine = await db.machine.create({ data: { id: installed.machineId, accountId: custodian.id,
+            installationId: installed.installation.installationId,
+            installationPublicKey: decodeBase64(installed.installation.publicKey, 'base64url'), active: true,
+            metadata: encodePlainMachineStoredContent({ host: 'shared-sync', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/custodian', happyHomeDir: '/home/custodian/.happier' }),
+            daemonState: encodePlainMachineStoredContent({ status: 'running' }),
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] }, externalActionExecutionAuthorization: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1,
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: installed.machineId,
+            principal: { kind: 'account', accountId: member.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+        const rpcMethod = RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE;
+        const receiver = { id: 'shared-sync-daemon', data: { clientType: 'machine-scoped', userId: custodian.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
+            accountStoredContentCompatibility: evaluateAccountStoredContentCompatibility(parseAccountStoredContentCompatibilitySocketAuthV1({
+                accountStoredContentCompatibility: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+            })) }, timeout: () => ({ emitWithAck: async (_event: string, request: SocketRpcRequestPayload) => setup.rpc.handleRequest(request) }) };
+        const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id || room.startsWith(`rpc:${custodian.id}:`) ? [receiver] : []);
+        const request = WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(setup.request);
+        const admission = await resolveMachineAdmission({ actorAccountId: member.id, machineId: installed.machineId, rpcMethod, requireOnline: true });
+        expect(admission).toMatchObject({ kind: 'admitted', actorAccountId: member.id, custodianAccountId: custodian.id, role: 'manage' });
+        if (admission.kind !== 'admitted') throw new Error('Expected real Manage Sync admission');
+        const envelope = { v: 1 as const, requestId: request.operationId,
+            target: { kind: 'machine' as const, machineId: machine.id }, input: request.actionInput };
+        const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('workspace.sync.relationship.create'),
+            headers: { authorization: `Bearer ${memberToken}` }, payload: { v: 1, machineId: machine.id, envelope } });
+        expect(issued.statusCode, issued.body).toBe(200);
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+        const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root,
+            purpose: { kind: 'machine_rpc', method: rpcMethod, params: request }, credentials: encodeStoredCredentials(setup.credentials),
+            installationPublicKey: decodeBase64(installed.installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+        expect(setup.targetPath.startsWith(`${setup.member.workspaceRoot}/`)).toBe(false);
+        const result = await forwardRpcCall({ io, targetUserId: custodian.id, method: `${installed.machineId}:${rpcMethod}`, callParams: request,
+            callerAuthority: 'present_user', createCallerInputAuthorization: async () => authorization, originalActionEnvelope: envelope,
+            machineAdmission: { actorAccountId: member.id, custodianAccountId: custodian.id, machineId: installed.machineId,
+                installationId: admission.installationId!, role: admission.role, encryptionMode: 'plain' } });
+        expect(result, JSON.stringify(setup.rpcDiagnostics)).toMatchObject({ ok: true, result: { v: 1, created: true,
+            sourceWorkspaceRefId: setup.sourceRef.id, targetWorkspaceRefId: setup.targetRef.id } });
+        expect(await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+        expect(setup.custodianRows).toEqual(setup.custodianBefore);
+    });
+
     it.skipIf(process.platform !== 'linux').each([false, true])('previews and retires the retained requester copy through MCP, person approval and real Home after a cross-Account native create (foreign SOURCE=%s)', async foreignSource => {
         await db.machine.deleteMany({ where: { id: { in: ['machine', 'target-parent'] } } });
         await db.account.deleteMany({ where: { id: { in: ['requester', 'member-a'] } } });

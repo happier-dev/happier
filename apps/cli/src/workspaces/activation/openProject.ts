@@ -395,6 +395,20 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         });
       }
       context.signal.throwIfAborted();
+      if (remoteSyncSource && privateSync && privateCheckout) {
+        // The remote SOURCE names TARGET by its root in these Account rows. Publish
+        // this host's private checkout identity first so it adopts it rather than
+        // minting another; an unconfirmed attempt's retry adopts the same row.
+        const prepared = privateCheckout.prepared;
+        effectsIssued = true;
+        const published = await createProjectAccountSnapshotMutation(requester.rows)(async current => {
+          privateCheckout!.validateCurrentRows(current.workspaceRefs);
+          return { ...current, workspaceRefs: materializeWorkspaceRefForMachineRoot(current.workspaceRefs, {
+            serverId: runtime.serverId, machineId: runtime.machineId, rootPath: prepared.rootPath, ...facts,
+            nowMs: Date.now(), createId: () => prepared.workspaceRefId }).workspaceRefs };
+        }, context.signal);
+        if (published.status !== 'applied' && published.status !== 'unchanged') return outcomeUnknown(`Private target row returned ${published.status}`);
+      }
       if (remoteSyncSource) {
         if (requester.rows.authorization && (!runtime.callWorkspaceSource || !admittedSyncSource || !sync)) {
           return refused('workspace_sync_update_required');
