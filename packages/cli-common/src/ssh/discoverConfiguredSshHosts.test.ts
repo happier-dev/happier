@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { ConfiguredSshHostsV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
 
 import { discoverConfiguredSshHosts } from './discoverConfiguredSshHosts.js';
 
@@ -44,6 +45,7 @@ Host web-*,db?
 `);
 
     const hosts = await discoverConfiguredSshHosts({ homeDir });
+    expect(ConfiguredSshHostsV1Schema.parse(hosts)).toEqual(hosts);
 
     expect(hosts.map(({ alias, hostname, username, port, source, sourcePath }) => ({
       alias,

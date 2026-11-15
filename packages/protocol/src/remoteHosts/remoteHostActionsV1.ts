@@ -7,8 +7,8 @@ import { RelayAccessConfigV1Schema } from '../system/tasks/relayAccessConfigV1.j
 import { SystemTaskResultSchema } from '../system/tasks/spec.js';
 import { NativeSshTunnelSnapshotSchema } from '../ssh/tunnels.js';
 
-import type { RemoteHostActionIdV1 } from './remoteHostActionIdsV1.js';
-export { REMOTE_HOST_ACTION_IDS_V1, isRemoteHostActionIdV1, type RemoteHostActionIdV1 } from './remoteHostActionIdsV1.js';
+import { REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1, type RemoteHostActionIdV1 } from './remoteHostActionIdsV1.js';
+export { REMOTE_HOST_ACTION_IDS_V1, REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1, isRemoteHostActionIdV1, type RemoteHostActionIdV1 } from './remoteHostActionIdsV1.js';
 
 const Id = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const Revision = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
@@ -18,6 +18,14 @@ const Address = lazyZodSchema(() => z.strictObject({ hostId: Id, expectedRevisio
 const ResourceRevision = lazyZodSchema(() => z.strictObject({ resourceId: Id, revision: Revision }));
 const TrustedKey = lazyZodSchema(() => z.strictObject({ host: Id, port: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
   algorithm: Id, fingerprintSha256: Id }));
+export const ConfiguredSshHostV1Schema = lazyZodSchema(() => z.strictObject({
+  id: Id, alias: Id, hostname: Id,
+  port: z.nullable(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
+  username: z.nullable(Id), source: z.enum(['ssh-config', 'known-hosts']),
+  sourcePath: z.optional(z.nullable(Id)),
+}));
+export const ConfiguredSshHostsV1Schema = lazyZodSchema(() => z.array(ConfiguredSshHostV1Schema));
+export type ConfiguredSshHostV1 = z.output<typeof ConfiguredSshHostV1Schema>;
 
 export const RemoteHostSaveActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   host: RemoteHostRecordV1Schema,
@@ -66,6 +74,7 @@ export const REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1 = {
   'remote_hosts.personal_home.erase': Address,
   'remote_hosts.trusted_keys.list': Empty,
   'remote_hosts.tunnel.list': Empty,
+  'remote_hosts.ssh.discover': Empty,
   'remote_hosts.trusted_keys.remove': lazyZodSchema(() => z.strictObject({ key: TrustedKey })),
   'remote_hosts.trusted_keys.clear': lazyZodSchema(() => z.strictObject({ keys: z.array(TrustedKey) })),
   'remote_hosts.tunnel.stop': lazyZodSchema(() => z.strictObject({ target: z.discriminatedUnion('kind', [
@@ -91,6 +100,11 @@ const TaskResult = lazyZodSchema(() => z.union([Refusal,
   z.strictObject({ status: z.literal('connected') }),
 ]));
 export const REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1 = {
+  'remote_hosts.ssh.discover': lazyZodSchema(() => z.union([Refusal,
+    z.strictObject({ status: z.literal('task_started'), taskId: Id }),
+    z.strictObject({ status: z.literal('outcome_unknown'), taskId: Id }),
+    z.strictObject({ status: z.literal('listed'), hosts: ConfiguredSshHostsV1Schema }),
+  ])),
   'remote_hosts.list': lazyZodSchema(() => z.union([Refusal, z.strictObject({ status: z.literal('listed'), hosts: z.array(RemoteHostRecordV1Schema), revision: ExpectedRevision, complete: z.boolean() })])),
   'remote_hosts.read': lazyZodSchema(() => z.union([Refusal, z.strictObject({ status: z.literal('present'), host: RemoteHostRecordV1Schema, revision: ExpectedRevision })])),
   'remote_hosts.add': OpenedResult,
@@ -149,6 +163,7 @@ export function changeRemoteHostCredentialForActionV1(host: RemoteHostRecordV1,
 }
 export function parseRemoteHostActionRequestV1(actionId: RemoteHostActionIdV1, input: unknown): RemoteHostActionRequestV1 {
   switch (actionId) {
+    case REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1: return { actionId, input: REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'remote_hosts.tunnel.list': return { actionId, input: REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'remote_hosts.trusted_keys.list': return { actionId, input: REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'remote_hosts.trusted_keys.remove': return { actionId, input: REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };

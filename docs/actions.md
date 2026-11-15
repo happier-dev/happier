@@ -879,6 +879,8 @@ approval.request.list --input-json '{"status":"open"}' --json`, or MCP's
 `action_execute` with that Action id and input. The read validates each approval's
 Artifact header and body before returning metadata for built-in and plugin
 approvals; it does not hydrate transcripts or return approval bodies.
+The status filter uses the current approval lifecycle schema, including
+`executing` and `outcome_unknown`; these selections do not broaden to all statuses.
 The existing page bound is 1–100 matching entries (default 32). Optional
 `actionId` filters built-in approvals by Action id; plugin Action approvals use
 `action.invoke`. `workflowRunId` selects open requests whose admitted execution
@@ -902,6 +904,19 @@ redacted. Older plugin requests without disclosure metadata withhold their input
 Both reads are discoverable through Action search. Their
 approval-control admission remains separate from deciding or executing an
 approval; listing pending work grants no decision authority.
+
+Both policy-generated and explicit approval creation resolve the requesting
+Session through one owner: the calling context first, then valid transcript
+origin metadata, then the target Session. Supplied transcript metadata cannot
+replace an already known caller.
+
+Successful plugin-install and Discussion approval creation consumes the Artifact
+returned by the create acknowledgement, including an existing same-id winner;
+a conflict fetches the incumbent. Live-only target settlement uses its admitted
+executing request and the existing transition writer, without an extra pre-settlement
+read. Deployment Environment removal selects its open approvals by the existing
+private subject index before reading their bodies; body admission and the
+open-status compare-and-swap still decide each cancellation.
 
 Restricted API-token reads also enforce the approval subject's granted Session
 or Machine, using private headers to narrow body reads and the admitted body to
@@ -1237,6 +1252,21 @@ other external origins keep the executor's floor.
 A host-discovered consequence uses `defaultUiConfirmation`
 through the shared approval owner and still asks unless that exact consequence
 was already confirmed or the person waived it.
+In 0.3 development (owner ruling 2026-11-15, option A), a bare own-UI press
+admits only the pressed Action and that Action's own host effects (for example
+Triage Save defaults writing a Profile). When its plugin reaches another
+contributed Action, such as the selected Tasks source for Create, Edit or Status,
+that Action's own policy decides as the person's UI press in
+`executeContributedAction`. A Happier-task write is direct by declaration. A
+designed confirmation (Linear, GitHub), an explicit Contextual UI or Trusted
+plugins Ask, all ask. Off on either row refuses before any effect, including for
+admitted reviewed children. A required review never creates a self-approval
+Artifact: the child refuses with `action_interactive_review_required`, the plugin
+passes it up, and the pressed Action's executor returns its own review and
+`reviewDigest`. The digest-bound re-press is a completed review, so the same
+child is admitted once without another policy read. A Machine-placed source
+receives `presentUserIntent: 'confirmed'` only for such a reviewed child. A bare
+press keeps its UI origin there, and the receiving daemon's own policy decides.
 In unreleased 0.3 source, reversible own-Session Board upserts and layout writes
 default to Allow on Agent, MCP and CLI surfaces. A visual with no network or
 host Actions therefore needs no approval by default. Visual preparation retains
@@ -1510,6 +1540,14 @@ waits for the original approval's terminal receipt before exposing domain data. 
 adapter throws a typed `HappyError` for pending custody or a failed Action, preserving its code and
 details rather than passing an approval request to a domain-result parser. Neither adapter replays
 an effect; the approval execution owner retains that authority.
+
+In 0.3 development, every `approval_execution_outcome_unknown` result is built by
+`projectApprovalExecutionOutcomeUnknownV1` (`packages/protocol/src/actions/actionExecutionResult.ts`).
+It keeps the producer failure's `failureCause`, `details` and `requestId`, records the
+producer's own code as `details.reasonCode`, and never carries a no-effect fact
+(`effectAttempted` survives only when it is `true`). The protocol executor, the CLI
+target-action receipt settlement and recorded target receipts use it, so the cause a
+person sees after an unknown outcome is the one the effect produced.
 
 In 0.3 development, a lost terminal approval-write acknowledgement triggers one
 read of the original approval receipt. Only an exact persisted terminal request
@@ -3250,6 +3288,15 @@ trust and stop Actions do not require the Home’s remote host management
 service. Key destruction and tunnel stop use canonical dangerous
 Action admission, with private addresses and tunnel identities redacted from
 observations and exact operands kept in live-only custody.
+
+Development `remote_hosts.ssh.discover` reads the answering desktop device's
+configured SSH hosts through its existing discovery task. Account callers use
+the read Action's disabled and approval policy. UI callers retain the task snapshot; agent and MCP callers
+receive a typed `listed` host result after settlement, or the task's failure
+reason. It accepts no arbitrary configuration path or SSH credentials.
+The Remote host form and pre-sign-in SSH onboarding read the same task directly
+for the local person, sharing its task specification and typed result. Pre-sign-in
+discovery does not require an Account or consume an Account's Action policy.
 
 These are development-source contracts. Collection/editor entry-point cutover,
 retained-source cleanup and composed loaded-runtime validation remain in
@@ -5827,6 +5874,18 @@ UI and CLI retain their existing observation behavior. Native finite Project
 Actions and Project open retain their existing domain admission receipts and
 operation addresses, owned by those domain runtimes.
 
+The operation owner captures private `actor` references at root admission and
+replaces them with the actual approving person at the normal pre-dispatch
+boundary when approval arrives later. An accepted approval without a deciding
+Account records unknown (`null`), so the initiating Agent is not shown as the
+approver. Observation, retries and recovery retain the captured historical fact.
+Current V2 reads carry it; the supported V1 compatibility projection omits it.
+Deployment receipts consume this same accepted fact at their first execution
+transition. `deriveActionActorV1` owns provenance selection, and
+`useDeploymentActorPresentations` resolves names through the existing person,
+Session Agent and Workflow/Automation readers. Qualified `onBehalfOf` references
+keep their own Home; missing historical references stay unknown.
+
 Ordinary replayable Agent/MCP approval requests return
 `approval_request_created` with their existing Artifact handle before a person
 answers. Read `approval.request.get` for their status and settled receipt. This
@@ -5840,6 +5899,25 @@ Actions without an operation declaration retain their existing result contracts.
 A long arbitrary command, contributed effect, explicit wait or external transport
 may still outlast a vendor's tool timeout. Such paths require an owner decision
 about their existing lifecycle; MCP does not manufacture an operation record.
+
+### Transport and header refusals (0.3 development source)
+
+`not_authenticated` means Home answered an authentication refusal (HTTP 401/403).
+Two other cases keep their own typed result:
+
+- A caller with no Session Action transport (a detached native run, a CLI process
+  outside a Session, an Agent call outside Session MCP) gets
+  `action_transport_unavailable` from `sessionActionTransportUnavailable`
+  (`apps/cli/src/mcp/runtime/sessionMcpLocalContext.ts`). Detached runs have no
+  Action transport today; giving them a requester-Account transport is an open
+  owner decision.
+- A local external-Action header refusal (missing signing key or installation id,
+  missing target, Home identity mismatch, an external credential without signed
+  admission, or a port with no signed external carrier) returns the existing
+  `action_failed` carrier with `details.authorizationRefusalReason`, built once by
+  `externalActionHeaderRefusalFailure` (`apps/cli/src/api/externalActionHeaderRefusal.ts`).
+  Ports that return failures call it; null-only adapters throw the same carrier
+  through `requireExternalActionHeaders`.
 
 ## Operations outcome links (0.3 development source)
 
@@ -7352,6 +7430,15 @@ launches a Session nor creates a directory, and it preserves the prompt. Browse/
 `sessions.external.*` and the exact Session's Home and Machine operation owners;
 they are not alternate import or takeover implementations.
 
+`session.draft.agent.set` addresses an existing New Session composer by its
+draft reference. It applies the Agent target together with its model, mode and
+configuration through the picker's existing selection writer, without opening
+another draft or sending the prompt. A closed or unavailable composer returns
+the existing unavailable result.
+Mode and individual configuration edits use the same Action and retain the
+authoring owner's typed overrides. These closed development Action inputs
+require matching 0.3 hosts; the existing persisted draft format is unchanged.
+
 The development Channels plugin declares Agent and MCP access for all management
 Actions: connection setup, transfer, policy, deletion, pairing and recovery, plus
 binding read, resolution, creation, update, enable/disable and deletion.
@@ -8107,10 +8194,10 @@ or Allowed policy. Unsupported or retired terminal control returns
 `session_control_unavailable`. Submission's existing composed switch and the
 predecessor `switch` RPC retain that same effect owner and boolean wire reply.
 
-The development `session.permission_mode.set` Action applies immediately;
-`applyTiming`, when supplied, must be `immediate`. A `next_prompt` request returns
-`invalid_parameters` with instructions to use `session.message.send` and its
-`permissionModeOverride` field. The same schema governs CLI, MCP and API calls.
+The development `session.permission_mode.set` Action defaults to `immediate`.
+With `applyTiming: 'next_prompt'`, it stages the permission choice on the existing
+Session draft without sending input, through the same client-hosted draft writer
+as the permission picker. CLI, MCP and API calls use this same Action contract.
 
 The composer's “From the next prompt” choice is retained with its draft. Send
 enters the Send Action with that permission intent; selection alone does not
@@ -8119,7 +8206,8 @@ composers use the same owner. A refused or unconfirmed Send retains the draft;
 accepted Send clears only its captured intent revision, preserving a newer selection.
 Recovered armed Agent-continuation custody performs the same revision-sensitive
 clear after a delayed response or composer remount.
-Agents get the same effect by calling Send with `permissionModeOverride`.
+Agents can stage that intent through `session.permission_mode.set`, or explicitly
+send with `permissionModeOverride`.
 There is no daemon-retained pending permission mode.
 
 ## The three host-stamped facts
@@ -10622,6 +10710,10 @@ durable approvals, both built-in and target Actions, and settles them through
 their existing transition writers after acquiring the daemon lock, before
 opening ingress. The Account/Home-bound Artifact store owns this one startup
 read; `resolveApprovalExecutor` identifies the claims owned by this daemon.
+Daemon startup does not scan open approvals to repair development-era duplicates
+or backfill list facts, and writes no per-Account migration settlement file.
+Older 0.3 development rows with obsolete headers can be removed through their
+Artifact deletion flow; no startup migration is provided.
 Recovery invokes no Action and adds no polling lifecycle. App and live-invocation
 claims remain with their original executor, whose process may outlive the daemon.
 An unknown outcome means the effect may have happened. Decisions on that

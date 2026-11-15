@@ -47,6 +47,32 @@ afterEach(async () => {
     vi.unstubAllGlobals(); vi.unstubAllEnvs(); await home.reset();
 });
 
+it('discovers configured SSH hosts through the agent-visible Action and the existing desktop task owner', async () => {
+    const hosts = [{ id: 'ssh-config:builder', alias: 'builder', hostname: 'builder.test', port: 2222,
+        username: 'dev', source: 'ssh-config', sourcePath: '/home/dev/.ssh/config' }];
+    vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
+    installDesktopOsBoundary(async (command, args) => {
+        if (command === 'start_system_task') {
+            expect(JSON.parse(String(args.specJson))).toEqual({ protocolVersion: 1, kind: 'local.ssh.discoverConfiguredHosts.v1', params: {} });
+            return { taskId: 'configured-ssh-discovery' };
+        }
+        if (command === 'get_system_task_snapshot') return { events: [], result: {
+            protocolVersion: 1, taskId: 'configured-ssh-discovery', ok: true, data: hosts,
+        } };
+        throw new Error(`Unexpected desktop command: ${command}`);
+    });
+    const serverId = await home.addHome({ name: 'SSH discovery', serverUrl: 'https://ssh-discovery.test', accountId: 'owner' });
+    const account = await captureLazyActionAccountContext(serverId);
+    try {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            remoteHostActionExecute: createUiRemoteHostActionExecuteV1(account),
+        }));
+        expect(await executor.execute('remote_hosts.ssh.discover', {}, { surface: 'agent',
+            authority: 'account_automation', bypassApprovals: true }))
+            .toMatchObject({ ok: true, result: { status: 'listed', hosts } });
+    } finally { account.dispose(); }
+});
+
 async function mountDesktopTunnelControl(fixtureId: string, policy: unknown) {
     await loadSyncSingletonForTests();
     const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
@@ -87,6 +113,32 @@ it('admits initial and explicit desktop tunnel Refresh through the disabled list
         expect(specs).toEqual([]);
         expect(hook.getCurrent().lastErrorMessage).toMatch(/disabled/);
     } finally { await hook.unmount(); }
+});
+
+it('keeps Account SSH discovery behind its disabled Action', async () => {
+    const specs: unknown[] = [];
+    vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
+    installDesktopOsBoundary(async (command, args) => {
+        if (command === 'start_system_task') {
+            specs.push(JSON.parse(String(args.specJson)));
+            return { taskId: 'disabled-discovery' };
+        }
+        if (command === 'get_system_task_snapshot') return { events: [], result: {
+            protocolVersion: 1, taskId: 'disabled-discovery', ok: true, data: [],
+        } };
+        throw new Error(`Unexpected desktop command: ${command}`);
+    });
+    const mounted = await mountDesktopTunnelControl('discovery-disabled', { v: 1, actions: {
+        'remote_hosts.tunnel.list': { enabled: false }, 'remote_hosts.ssh.discover': { enabled: false },
+    } });
+    const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    try {
+        const result = await createFrontDoorActionExecute()('remote_hosts.ssh.discover', {}, {
+            surface: 'agent', authority: 'account_automation', serverId: mounted.serverId,
+        });
+        expect(specs).toEqual([]);
+        expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/disabled/) });
+    } finally { await mounted.hook.unmount(); }
 });
 
 it('keeps desktop tunnel inventory behind an explicit Ask-first list Action', async () => {

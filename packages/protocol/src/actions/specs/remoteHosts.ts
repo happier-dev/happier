@@ -79,7 +79,7 @@ function remoteHostSpec<Id extends RemoteHostActionIdV1>(id: Id, title: string, 
     bindings: { mcpToolName: id.replaceAll('.', '_'), ...(!options.client ? { rpcMethod: id } : {}) },
     inputSchema: inputs[id], outputSchema: outputs[id],
     projectObservationInput: projectRemoteHostObservation, projectObservationOutput: projectRemoteHostObservation,
-    ...(!liveOnly ? { approvalPresentation: { summary: () => null, projectInput: (input: unknown) => {
+    ...(!liveOnly ? { approvalPresentation: { summary: () => summary, projectInput: (input: unknown) => {
       const value = readRecord(input);
       return { ...readRecord(projectRemoteHostObservation(input)),
         ...(typeof value.expectedRevision === 'number' || value.expectedRevision === 'absent'
@@ -106,6 +106,7 @@ function createRemoteHostActionSpecsV1() {
   remoteHostSpec('remote_hosts.trusted_keys.clear', 'Clear trusted SSH host keys', 'Remove only the reviewed set of trusted keys from this device.', { client: true, danger: true }),
   remoteHostSpec('remote_hosts.tunnel.stop', 'Stop SSH tunnel', 'Release the exact native lease or stop the exact desktop tunnel.', { client: true, danger: true }),
   remoteHostSpec('remote_hosts.tunnel.list', 'List active SSH tunnels', 'Read the active SSH tunnels on this device.', { client: true, read: true }),
+  remoteHostSpec('remote_hosts.ssh.discover', 'Discover configured SSH hosts', 'Read SSH hosts configured on this device.', { client: true, read: true }),
   remoteHostSpec('remote_hosts.list', 'List remote hosts',
     'See the remote hosts saved in your account.', { read: true,  }),
   remoteHostSpec('remote_hosts.read', 'Read remote host',

@@ -1,18 +1,10 @@
 import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
+import type { ConfiguredSshHostV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
 
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 
-export type SshConfiguredHostSuggestionSource = 'ssh-config' | 'known-hosts';
-
-export type SshConfiguredHostSuggestion = Readonly<{
-    id: string;
-    alias: string;
-    hostname: string;
-    port: number | null;
-    username: string | null;
-    source: SshConfiguredHostSuggestionSource;
-    sourcePath?: string | null;
-}>;
+export type SshConfiguredHostSuggestion = Readonly<ConfiguredSshHostV1>;
+export type SshConfiguredHostSuggestionSource = SshConfiguredHostSuggestion['source'];
 
 type FilterConfiguredSshHostSuggestionsParams = Readonly<{
     suggestions: readonly SshConfiguredHostSuggestion[];

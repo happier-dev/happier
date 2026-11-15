@@ -366,6 +366,9 @@ export type RemoteHostsActionInputById = {
     readonly "remote_hosts.tunnel.list": Record<string, never> & {
         clientId?: string | undefined;
     };
+    readonly "remote_hosts.ssh.discover": Record<string, never> & {
+        clientId?: string | undefined;
+    };
 };
 export type RemoteHostsActionResultById = {
     readonly "remote_hosts.list": {
@@ -1178,6 +1181,32 @@ export type RemoteHostsActionResultById = {
                 message: string;
             }[];
         };
+    } | {
+        status: 'outcome_unknown';
+        taskId: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    };
+    readonly "remote_hosts.ssh.discover": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'listed';
+        hosts: {
+            id: string;
+            alias: string;
+            hostname: string;
+            port: null | number;
+            username: null | string;
+            source: 'known-hosts' | 'ssh-config';
+            sourcePath?: null | string | undefined;
+        }[];
     } | {
         status: 'outcome_unknown';
         taskId: string;

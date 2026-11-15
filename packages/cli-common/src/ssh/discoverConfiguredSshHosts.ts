@@ -3,18 +3,10 @@ import { Dirent } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
+import type { ConfiguredSshHostV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
 
-export type DiscoveredSshHostSource = 'ssh-config' | 'known-hosts';
-
-export type DiscoveredSshHost = Readonly<{
-  id: string;
-  alias: string;
-  hostname: string;
-  port: number | null;
-  username: string | null;
-  source: DiscoveredSshHostSource;
-  sourcePath: string | null;
-}>;
+export type DiscoveredSshHost = Readonly<ConfiguredSshHostV1>;
+export type DiscoveredSshHostSource = DiscoveredSshHost['source'];
 
 export type DiscoverConfiguredSshHostsFs = Readonly<{
   readFile: (path: string, encoding: BufferEncoding) => Promise<string> | string;

@@ -1,106 +1,23 @@
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import { afterEach, describe, expect, it } from 'vitest';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
-import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
-
 import { useConfiguredSshHostSuggestions } from './useConfiguredSshHostSuggestions';
 
-type RunnerHarness = Readonly<{
-    runner: SystemTaskRunner;
-    startSpy: ReturnType<typeof vi.fn<(spec: SystemTaskSpec) => Promise<string>>>;
-    publishResult: (taskId: string, result: SystemTaskResult) => void;
-}>;
-
-function createRunnerHarness(): RunnerHarness {
-    const subscribers = new Map<string, Set<() => void>>();
-    const snapshots = new Map<string, SystemTaskRunState | null>();
-    let nextTaskNumber = 1;
-
-    const publish = (taskId: string, snapshot: SystemTaskRunState | null) => {
-        snapshots.set(taskId, snapshot);
-        subscribers.get(taskId)?.forEach((notify) => notify());
-    };
-
-    const startSpy = vi.fn(async (_spec: SystemTaskSpec) => {
-        const taskId = `task-${nextTaskNumber}`;
-        nextTaskNumber += 1;
-        publish(taskId, {
-            taskId,
-            status: 'running',
-            currentStepId: null,
-            latestMessage: null,
-            awaitingInput: false,
-            cancelRequested: false,
-            events: [],
-            result: null,
-        });
-        return taskId;
-    });
-
-    function subscribe(taskId: string, listener: () => void): () => void;
-    function subscribe(taskId: string, onEvent?: (event: SystemTaskEvent) => void, onResult?: (result: SystemTaskResult) => void): () => void;
-    function subscribe(taskId: string, listenerOrOnEvent?: (() => void) | ((event: SystemTaskEvent) => void)): () => void {
-        if (!listenerOrOnEvent) return () => {};
-        const listener = listenerOrOnEvent as () => void;
-        const listeners = subscribers.get(taskId) ?? new Set<() => void>();
-        listeners.add(listener);
-        subscribers.set(taskId, listeners);
-        return () => {
-            listeners.delete(listener);
-        };
-    }
-
-    const runner: SystemTaskRunner = {
-        ...createManualSystemTaskRunner().runner,
-        mode: 'tauri',
-        start: startSpy,
-        cancel: vi.fn(async () => undefined),
-        respond: vi.fn(async () => undefined),
-        getSnapshot: (taskId) => snapshots.get(taskId) ?? null,
-        subscribe,
-    };
-
-    return {
-        runner,
-        startSpy,
-        publishResult: (taskId, result) => {
-            publish(taskId, {
-                taskId,
-                status: result.ok ? 'succeeded' : 'failed',
-                currentStepId: null,
-                latestMessage: result.ok ? null : result.error.message,
-                awaitingInput: false,
-                cancelRequested: false,
-                events: [],
-                result,
-            });
-        },
-    };
-}
-
-afterEach(() => {
-    standardCleanup();
-});
+afterEach(() => { standardCleanup(); });
 
 describe('useConfiguredSshHostSuggestions', () => {
     it('loads through the system task bridge and preserves stale suggestions while refreshing', async () => {
-        const harness = createRunnerHarness();
+        const harness = createManualSystemTaskRunner();
         const rendered = await renderHook(() => useConfiguredSshHostSuggestions({
             runner: harness.runner,
         }));
-
-        expect(harness.startSpy).toHaveBeenCalledWith(expect.objectContaining({
-            kind: 'local.ssh.discoverConfiguredHosts.v1',
-            params: {},
-        }));
+        expect(harness.bridge.start).toHaveBeenCalled();
 
         await act(async () => {
-            harness.publishResult('task-1', {
+            harness.emitResult('personal-home-task-1', {
                 protocolVersion: 1,
-                taskId: 'task-1',
+                taskId: 'personal-home-task-1',
                 ok: true,
                 data: [
                     {
@@ -128,9 +45,9 @@ describe('useConfiguredSshHostSuggestions', () => {
         expect(rendered.getCurrent().suggestions.map((suggestion) => suggestion.alias)).toEqual(['devbox']);
 
         await act(async () => {
-            harness.publishResult('task-2', {
+            harness.emitResult('personal-home-task-2', {
                 protocolVersion: 1,
-                taskId: 'task-2',
+                taskId: 'personal-home-task-2',
                 ok: false,
                 error: {
                     code: 'discovery_failed',

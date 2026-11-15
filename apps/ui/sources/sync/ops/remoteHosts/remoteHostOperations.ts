@@ -1,6 +1,8 @@
 import { router } from 'expo-router';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
-import { duplicateRemoteHostForActionV1, changeRemoteHostCredentialForActionV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
+import { duplicateRemoteHostForActionV1, changeRemoteHostCredentialForActionV1, ConfiguredSshHostsV1Schema, REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
+import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { buildConfiguredSshHostsSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildConfiguredSshHostsSystemTaskSpec';
 import type { RemoteHostRecordV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
@@ -109,7 +111,8 @@ export async function runRemoteHostRelayAccessTask<T>(input: Readonly<{
 }
 /** Typed automation and menus consume the same catalog and existing admitted SSH task owner. */
 export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountContext,
-    openRoute: (route: string) => void | Promise<void> = route => router.push(route as never)): NonNullable<ActionExecutorDeps['remoteHostActionExecute']> {
+    openRoute: (route: string) => void | Promise<void> = route => router.push(route as never),
+    taskRunner?: SystemTaskRunner): NonNullable<ActionExecutorDeps['remoteHostActionExecute']> {
     return async (request, context) => {
         const scope = account.accountLifetime.scope;
         const assertCurrent = () => { context.signal?.throwIfAborted(); account.assertCurrent(); };
@@ -128,6 +131,16 @@ export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountCont
             : { status: 'unavailable' as const, reason: result.reason };
         try {
             assertCurrent();
+            if (request.actionId === REMOTE_HOST_SSH_DISCOVER_ACTION_ID_V1) {
+                const runner = taskRunner ?? getDefaultSystemTaskRunner();
+                if (runner.mode !== 'tauri') throw new RemoteHostOperationError('desktop_host_required');
+                const taskId = await runner.start(buildConfiguredSshHostsSystemTaskSpec());
+                const settled = await settleClientSystemTaskAction(runner,
+                    { status: 'task_started', taskId }, context, account.assertAccountCurrent);
+                if (settled.status !== 'completed') return { ok: true, result: settled };
+                if (!settled.result.ok) throw new RemoteHostOperationError(settled.result.error.code);
+                return { ok: true, result: { status: 'listed', hosts: ConfiguredSshHostsV1Schema.parse(settled.result.data) } };
+            }
             if (request.actionId === 'remote_hosts.tunnel.list') {
                 const runner = getDefaultSystemTaskRunner();
                 if (runner.mode === 'native') return { ok: true, result: { status: 'listed', native: getNativeSshTunnelRuntime().listTunnels() } };
