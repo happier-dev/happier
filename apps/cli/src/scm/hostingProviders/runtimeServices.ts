@@ -275,6 +275,7 @@ function createHostScmHostingProviderRegistry(
     input: ScmHostingProviderRuntimeRegistryInput,
     configuredDeploymentsByProviderId: ReadonlyMap<string, ScmHostingProviderConfiguredDeployments> | undefined,
     signal: AbortSignal,
+    runtimeServices: ScmHostingProviderRuntimeServices,
 ): ResolvedScmHostingProviderRegistry {
     const providers: ScmHostingProviderDescriptor[] = (input.contributes.scmHostingProviders ?? [])
         .flatMap((provider) => {
@@ -297,6 +298,7 @@ function createHostScmHostingProviderRegistry(
     return createScmHostingProviderRegistry({
         providers,
         runtimeRegistrations,
+        runtimeServices,
         async prepareHostingProviderOperation({ action, input: actionInput }) {
             const execute = readScmHostingActionExecutor();
             const providerId = readRecord(readRecord(actionInput).provider).id;
@@ -350,6 +352,7 @@ export function createHostScmHostingProviderRuntimeServices(
             input,
             await resolveScmHostingConfiguredDeployments(input, signal),
             signal,
+            services,
         );
     };
     const captureHostingAuthAuthority = (providerId: string) => {
