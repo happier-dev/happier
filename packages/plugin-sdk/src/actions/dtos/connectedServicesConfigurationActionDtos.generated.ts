@@ -269,7 +269,13 @@ export type ConnectedServicesConfigurationActionInputById = {
         };
         cleanupGroupReferences: boolean;
         expectedCredentialRevision?: string | undefined;
-        managedResourceDispositions?: undefined | {
+        managedResourceDispositions?: ({
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            opaquePreset: true;
+            responsibility: 'manual';
+        } | {
             managedId: string;
             expectedIntentRevision: number;
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
@@ -309,7 +315,7 @@ export type ConnectedServicesConfigurationActionInputById = {
                 reason: string;
                 consoleUrl?: string | undefined;
             };
-        }[];
+        })[] | undefined;
         emergencyRevoke?: boolean | undefined;
         machineId?: string | undefined;
     };
@@ -524,8 +530,8 @@ export type ConnectedServicesConfigurationActionInputById = {
         };
         connectedAccountId: string;
         expectedGeneration: number;
-        enabled?: boolean | undefined;
         priority?: number | undefined;
+        enabled?: boolean | undefined;
         expectedIncarnation?: string | undefined;
         expectedRuntimeStateRevision?: number | undefined;
     };
@@ -542,8 +548,8 @@ export type ConnectedServicesConfigurationActionInputById = {
         };
         connectedAccountId: string;
         expectedGeneration: number;
-        enabled?: boolean | undefined;
         priority?: number | undefined;
+        enabled?: boolean | undefined;
         expectedIncarnation?: string | undefined;
         expectedRuntimeStateRevision?: number | undefined;
     };
@@ -2429,6 +2435,13 @@ export type ConnectedServicesConfigurationActionResultById = {
                     supported: true;
                 };
                 billingUrl?: string | undefined;
+                nativeLoginRequiredBy?: readonly {
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    title: string;
+                }[] | undefined;
             };
             canAdd: boolean;
             reason: null | string;
@@ -5389,8 +5402,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             bases: {
                 v: 1;
                 source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
-                state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
                 providerId: string;
+                state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
                 confidence: 'confirmed' | 'estimated' | 'unknown';
                 recordId: string;
                 staleAfterMs: number;
@@ -5420,7 +5433,6 @@ export type ConnectedServicesConfigurationActionResultById = {
                     appliesToProviderLimitIds: string[];
                     unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
                 }> | undefined;
-                accountLabel?: null | string | undefined;
                 recoveryCredits?: undefined | {
                     availableCount: number;
                     credits: {
@@ -5441,6 +5453,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                     confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 };
+                accountLabel?: null | string | undefined;
                 planLabel?: null | string | undefined;
             }[];
             meterDefinitions: {
@@ -5462,8 +5475,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                 providerLimitId?: string | undefined;
                 confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 currency?: string | undefined;
-                resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 windowDurationMs?: number | undefined;
+                resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 isExhausted?: boolean | undefined;
                 isSoftLimited?: boolean | undefined;
                 isCapacityLimited?: boolean | undefined;
@@ -6104,15 +6117,36 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
-        resources: {
+        resources: ({
+            opaquePreset: true;
             managedId: string;
             homeId: string;
             custodianAccountId: string;
             intentRevision: number;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        } | {
             provider: {
                 pluginId: string;
                 localId: string;
             };
+            managedId: string;
+            homeId: string;
+            custodianAccountId: string;
+            intentRevision: number;
             allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             controller?: undefined | {
                 machineId: string;
@@ -6156,8 +6190,6 @@ export type ConnectedServicesConfigurationActionResultById = {
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
-                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 billing?: undefined | {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -6239,12 +6271,14 @@ export type ConnectedServicesConfigurationActionResultById = {
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                 };
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             cleanup?: undefined | {
                 disposition: 'pending' | 'unavailable';
                 reason: string;
             };
-        }[];
+        })[];
     } | {
         status: 'revoked';
         account: {

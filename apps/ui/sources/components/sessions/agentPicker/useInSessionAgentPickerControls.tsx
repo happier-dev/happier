@@ -456,8 +456,8 @@ function resolveTargetRowUnavailableText(
  * Choosing an Agent, or one of its models, *is* the choice — the same commit-on-select
  * contract every other model picker in the product follows. There is no confirm step.
  *
- * What that choice does is arm the next message, and nothing else: no request, no
- * stop, no start, no write happens until the reader actually sends. Hovering or
+ * What that choice does is inspect and persist the next-message intent; the
+ * running Agent stops or starts only when the reader actually sends. Hovering or
  * travelling over a row does nothing at all; only deliberate activation — tap, click,
  * Enter or Space — selects.
  */
@@ -570,8 +570,8 @@ export function useInSessionAgentPickerControls(
             : []
     ), [featureEnabled, sessionReason, targetEntries, targetSelectionByTargetKey]);
 
-    // Opening is the demand boundary. Pending disabled rows already identify
-    // the shared picker, so choosing that surface never requires an eager RPC.
+    // Opening demands the offered rows; an explicit draft Action requests only
+    // its exact selection through the same inspection owner below.
     const inspections = useSessionContinuationInspections({
         sessionId,
         machine: params.machine,

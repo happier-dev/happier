@@ -1,8 +1,11 @@
+import { publishSessionDraftPickerFixture, useSessionDraftPickerPresentation } from '@/dev/testkit/harness/sessionDraftPickerPresentation';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '../agentInput/agentInputTestHelpers';
@@ -10,7 +13,7 @@ import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHub
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
-import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createProviderModelProjectionFixture, createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 
 installDisconnectedServerSocketBoundary();
 
@@ -24,11 +27,16 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn<(_request: unknown) => Prom
     ok: true, result: { availableModels: [{ id: 'probed-model', name: 'Probed model' }], supportsFreeform: false },
 })) }));
 
-// Only machine capability and continuation-inspection transports are replaced.
+// Machine capability, Provider projection and continuation-inspection transports.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: async (params: { method: string; payload: { selections?: readonly unknown[] } }) => params.method === 'capabilities.invoke'
-        ? invoke(params.payload)
-        : { v: 1, inspections: params.payload.selections!.map(() => ({ type: 'available', protocolVersion: 1, sameSessionTransition: true })) },
+    machineRpcWithServerScope: async (params: { method: string; payload: { agentTargetKey?: string; selections?: readonly unknown[] } }) => {
+        if (params.method === RPC_METHODS.CAPABILITIES_INVOKE) return invoke(params.payload);
+        if (params.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createProviderModelProjectionFixture({
+            agentTargetKey: params.payload.agentTargetKey, groups: [],
+        });
+        if (!params.payload.selections) throw new Error(`Unexpected machine RPC: ${params.method}`);
+        return { v: 1, inspections: params.payload.selections.map(() => ({ type: 'available', protocolVersion: 1, sameSessionTransition: true })) };
+    },
 }));
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({ announceAccessibilityMessage: () => {} }));
 vi.mock('expo-image', () => ({ Image: 'Image' }));
@@ -93,7 +101,9 @@ describe('continuation target account discovery', () => {
         applyConnectedAccountCatalogSnapshot(accountScope, 'purposes', profileId === 'unavailable'
             ? { status: 'unavailable', reason: 'account-mode-mismatch' }
             : { status: 'ready', revision: 3, record: { key: 'purposes', value } }, true);
-        const hook = await renderHook(() => useInSessionAgentPickerControls({
+        publishSessionDraftPickerFixture(accountScope, 'qualified-account-discovery');
+        const hook = await renderHook(() => {
+            const controls = useInSessionAgentPickerControls({
             sessionId: 'qualified-account-discovery', accountScope,
             currentAgentId: 'claude', currentAgentLabel: 'Claude', projectionCurrent: true,
             entries: getResolvedBackendCatalogEntries({
@@ -110,7 +120,10 @@ describe('continuation target account discovery', () => {
             source: { currentBackendTargetKey: 'agent:happier.agent.claude/claude', storageKind: 'persisted', canEditSession: true, machinePresence: 'online', hasConversationToCarry: true },
             machine: { machineId: 'machine-1', serverId: connection.home.id, connectionGeneration: 1, daemonGeneration: 1 },
             detail: { capabilityServerId: connection.home.id, machineId: 'machine-1', cwd: '/repo' },
-        }));
+        });
+            useSessionDraftPickerPresentation(controls, accountScope, 'qualified-account-discovery');
+            return controls;
+        });
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
         await act(async () => { hook.getCurrent().onAgentPickerVisibilityChange(true); });
@@ -139,6 +152,7 @@ describe('continuation target account discovery', () => {
     });
 
     it('does not reuse a prior personal-account catalog or start a native probe for an exact Team binding', async () => {
+        invoke.mockClear();
         resetDynamicModelProbeCacheForTests();
         const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache');
         resetDynamicConfigOptionsProbeCacheForTests();
@@ -147,13 +161,13 @@ describe('continuation target account discovery', () => {
         const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
         const serviceKey = 'happier.agent.codex/openai-codex';
         invoke.mockImplementation(async (request) => {
-            const probe = request as { method: string; params: { connectedServices?: unknown } };
-            const bindings = ConnectedServiceBindingsV2Schema.parse(probe.params.connectedServices);
-            if (bindings.bindingsByServiceId[serviceKey]?.source === 'team_resource') {
+            const probe = request as { method: string; params?: { connectedServices?: unknown } };
+            const bindings = ConnectedServiceBindingsV2Schema.safeParse(probe.params?.connectedServices);
+            if (bindings.success && bindings.data.bindingsByServiceId[serviceKey]?.source === 'team_resource') {
                 return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Sessionless Team probe unavailable' } };
             }
             return { ok: true, result: probe.method === 'probeModels'
-                ? { availableModels: [{ id: 'personal-model', name: 'Personal account model' }], supportsFreeform: false }
+                ? AgentModelsProbeObservationSchema.parse({ source: 'dynamic', availableModels: [{ id: 'personal-model', name: 'Personal account model' }], supportsFreeform: false })
                 : { configOptions: [] } };
         });
         const detail = (connectedServices: ReturnType<typeof ConnectedServiceBindingsV2Schema.parse>) => React.createElement(NewSessionEngineOptionDetail, {
@@ -165,8 +179,7 @@ describe('continuation target account discovery', () => {
             [serviceKey]: { source: 'connected', selection: 'profile', profileId: 'work' },
         } });
         const screen = await renderScreen(detail(personal));
-        await act(async () => { await Promise.resolve(); });
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('Personal account model');
+        await vi.waitFor(() => expect(JSON.stringify(screen.tree.toJSON())).toContain('Personal account model'));
 
         const team = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
             [serviceKey]: { source: 'team_resource', resourceId: 'team-resource', deliveryMode: 'brokered' },

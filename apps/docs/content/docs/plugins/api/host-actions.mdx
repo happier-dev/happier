@@ -205,7 +205,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `operation` (text, required): Continuation step
 - `commandId` (text, required): Current mounted command
 - `homeServerIdentityId` (text): Chosen Home identity (choose only)
-- `clientId` (json): Client Id
+- `clientId` (text): Client Id
 
 ## `account.name.set`
 
@@ -625,6 +625,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `states` (json): Operation states
 - `sessionId` (text): Session id
 - `cursor` (text): Page cursor
+- `actorAccountId` (text): Actor Account Id
+- `createdAtFromMs` (integer): Created At From Ms
+- `createdAtToMs` (integer): Created At To Ms
 - `requestIdentity` (json): Request Identity
 - `managed` (json): Managed
 
@@ -697,7 +700,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `actionId` (text, required): Action id
 - `audience` (text, required): Audience
 - `scope` (json): Scope
-- `profiles` (json): Profiles
 
 ## `actions.policy.reset`
 
@@ -1570,6 +1572,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `transport` (json, required): Transport
+- `source` (json): Source
 - `pageSize` (integer): Page Size
 - `cursor` (text): Cursor
 - `knownRevision` (text): Known Revision
@@ -5227,7 +5230,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `explicit` (json): Explicit
 - `backupBindings` (json): Backup Bindings
 - `destinationSetup` (json): Destination Setup
-- `replacement` (json): Replacement
 
 ## `deployments.backups.history`
 
@@ -5402,10 +5404,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedRevision` (number, required): Environment revision
 - `set` (json, required): Bindings to set
 - `remove` (json, required): Bindings to remove
-- `contentArtifactId` (json): Content Artifact Id
-- `contentHeaderVersion` (json): Content Header Version
-- `contentBodyVersion` (json): Content Body Version
-- `referencedSavedSecretRevisions` (json): Referenced Saved Secret Revisions
 - `providerVariables` (json): Provider Variables
 
 ## `deployments.cancel`
@@ -5787,6 +5785,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Machine
 - `environmentIds` (json): Exact Environment headers
 - `includeDeleted` (boolean): Include Deleted
+- `includeTotal` (boolean): Include Total
 - `projection` (text): Projection
 - `previewRepositoryId` (text): Preview Repository Id
 - `previewRepository` (json): Preview Repository
@@ -5981,10 +5980,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contentArtifactId` (text): Prepared content
 - `contentHeaderVersion` (number): Content header revision
 - `contentBodyVersion` (number): Content body revision
-- `expectedRevision` (json): Expected Revision
-- `targetLinkId` (json): Target Link Id
-- `expectedTargetLinkRevision` (json): Expected Target Link Revision
-- `destinationContent` (json): Destination Content
+- `expectedRevision` (integer, required): Expected Revision
+- `targetLinkId` (text, required): Target Link Id
+- `expectedTargetLinkRevision` (integer, required): Expected Target Link Revision
+- `destinationContent` (json, required): Destination Content
 
 ## `deployments.publish.prepare`
 
@@ -6042,6 +6041,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `environmentId` (text, required): Environment
 - `state` (select): State
 - `actorAccountId` (text): Actor Account Id
+- `requestedAtFromMs` (integer): Requested At From Ms
+- `requestedAtToMs` (integer): Requested At To Ms
 - `operation` (select): Operation
 - `inProgressOnly` (boolean): In Progress Only
 - `cursor` (text): Cursor
@@ -6102,11 +6103,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contentArtifactId` (text): Prepared content
 - `contentHeaderVersion` (number): Content header revision
 - `contentBodyVersion` (number): Content body revision
-- `expectedRevision` (json): Expected Revision
-- `requestKey` (json): Request Key
-- `targetLinkId` (json): Target Link Id
-- `expectedTargetLinkRevision` (json): Expected Target Link Revision
-- `restoreBackupId` (json): Restore Backup Id
+- `expectedRevision` (integer, required): Expected Revision
+- `requestKey` (text, required): Request Key
+- `targetLinkId` (text, required): Target Link Id
+- `expectedTargetLinkRevision` (integer, required): Expected Target Link Revision
+- `restoreBackupId` (text): Restore Backup Id
 
 ## `deployments.targets.link`
 
@@ -6125,23 +6126,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contentArtifactId` (text): Prepared content
 - `contentHeaderVersion` (number): Content header revision
 - `contentBodyVersion` (number): Content body revision
-- `expectedRevision` (json, required): Expected Revision
-- `requestKey` (json, required): Request Key
-- `managedRetention` (json): Managed Retention
-- `targetId` (json, required): Target Id
-- `role` (json, required): Role
-- `provisioned` (json): Provisioned
+- `expectedRevision` (integer, required): Expected Revision
+- `requestKey` (text, required): Request Key
+- `managedRetention` (select): Managed Retention
+- `targetId` (text, required): Target Id
+- `role` (select, required): Role
+- `provisioned` (boolean): Provisioned
 - `source` (json): Source
-- `targetKind` (json): Target Kind
-- `machineId` (json): Machine Id
-- `installationId` (json): Installation Id
-- `replacesLinkId` (json): Replaces Link Id
-- `drainedDeploymentId` (json): Drained Deployment Id
-- `expectedTargetLinkRevision` (json): Expected Target Link Revision
+- `targetKind` (text): Target Kind
+- `machineId` (text): Machine Id
+- `installationId` (text): Installation Id
+- `replacesLinkId` (text): Replaces Link Id
+- `drainedDeploymentId` (text): Drained Deployment Id
+- `expectedTargetLinkRevision` (integer): Expected Target Link Revision
 - `machines` (json, required): Machines
-- `provider` (json): Provider
-- `title` (json): Title
-- `providerCreate` (json): Provider Create
 
 ## `deployments.targets.unlink`
 
@@ -6181,19 +6179,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contentArtifactId` (text): Prepared content
 - `contentHeaderVersion` (number): Content header revision
 - `contentBodyVersion` (number): Content body revision
-- `expectedRevision` (json): Expected Revision
-- `requestKey` (json): Request Key
-- `targetLinkId` (json): Target Link Id
-- `expectedTargetLinkRevision` (json): Expected Target Link Revision
-- `reason` (json, required): Reason
+- `expectedRevision` (integer, required): Expected Revision
+- `requestKey` (text, required): Request Key
+- `targetLinkId` (text, required): Target Link Id
+- `expectedTargetLinkRevision` (integer, required): Expected Target Link Revision
+- `reason` (select, required): Reason
 - `volumes` (json): Volumes
-- `removeEnvironment` (json): Remove Environment
-- `machines` (json): Machines
-- `detachKeepRunning` (json): Detach Keep Running
-- `teardownDeploymentId` (json): Teardown Deployment Id
-- `nothingDeployed` (json): Nothing Deployed
-- `dataCreation` (json): Data Creation
-- `mode` (json): Mode
+- `removeEnvironment` (boolean): Remove Environment
+- `machines` (text_list): Machines
 
 ## `deployments.templates.instantiate`
 
@@ -7635,9 +7628,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `receiver` (json): Receiver
 - `source` (json): Source
 - `direction` (text, required): Direction
-- `cursor` (json): Cursor
-- `limit` (json): Limit
-- `sourceKinds` (json): Source Kinds
+- `cursor` (text): Cursor
+- `limit` (integer): Limit
+- `sourceKinds` (multiselect): Source Kinds
 
 ## `follow.preferences.get`
 
@@ -8237,9 +8230,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `authenticationPolicy.anonymousSignup` (boolean): Anonymous sign-up
 - `authenticationPolicy.storagePolicy` (text): Storage policy
 - `confirmWidening` (boolean): Widening confirmed
-- `authenticationPolicy.v` (json): V
-- `teamProviderPolicy.v` (json): V
-- `identityNetworkPolicy.v` (json): V
+- `authenticationPolicy.v` (number): V
+- `teamProviderPolicy.v` (number): V
+- `identityNetworkPolicy.v` (number): V
 
 ## `home.public_profiles.handle_reclaim`
 
@@ -9577,8 +9570,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `port` (text): SSH port
 - `authMode` (text): SSH authentication
 - `identityFilePath` (text): Identity file
-- `clientId` (json): Client Id
 - `enrollmentIdentity` (json): Enrollment Identity
+- `clientId` (text): Client Id
 
 ## `machines.add.local.cancel`
 
@@ -10433,7 +10426,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `size.cpuCores` (number): CPU cores
 - `size.memoryBytes` (integer): Memory (bytes)
 - `size.diskBytes` (integer): Disk (bytes)
-- `presetContentOverride` (json): Preset Content Override
 
 ## `machines.managed.retention.update`
 
@@ -10452,7 +10444,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedIntentRevision` (integer, required): Expected intent revision
 - `retention` (json, required): Retention policy
 - `wakeOnAcceptedMessage` (boolean, required): Wake on accepted message
-- `creationScopeRetention` (json): Creation Scope Retention
 
 ## `machines.managed.retire`
 
@@ -11088,6 +11079,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedMetadataVersion` (number, required): Expected metadata version
 - `expectedPolicy` (json, required): Roles you read
 - `policy` (json, required): New roles
+- `isolation` (json): Isolation
 
 ## `machines.runs.list`
 
@@ -11371,12 +11363,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text, required): Machine id
 - `sources.0.setup.items.0.selection.ref` (select): Software
 - `exclusions` (json): Exclusions
-- `removeItemKeys` (json): Remove Item Keys
-- `mode` (json): Mode
+- `removeItemKeys` (text_list): Remove Item Keys
+- `mode` (select): Mode
 - `appChildren` (json): App Children
 - `updates` (json): Updates
-- `selectedMachineId` (json): Selected Machine Id
-- `targets` (json): Targets
 
 ## `machines.setup.remove`
 
@@ -12068,15 +12058,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `suggestionId` (select): Suggested MCP server
-- `entry` (json): Entry
-- `where` (json): Where
 - `expectedRevision` (json, required): Expected Revision
-- `entries` (json): Entries
-- `from` (json): From
-- `name` (json): Name
-- `title` (json): Title
-- `inputs` (json): Inputs
-- `remote` (json): Remote
+- `where` (json): Where
 
 ## `mcp.servers.delete`
 
@@ -12550,7 +12533,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -14309,6 +14292,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `selectedTarget` (json, required): Selected Target
 - `setupReview` (json): Setup Review
 
+## `projects.services.pin`
+
+**Pin or unpin a service** — Pin an Environment to the top of the person's Services column on a Home, or unpin it. Personal and private to the Account; the Environment, its deploys and other people's pins are unchanged. Returns the Home's pinned Environment ids, newest first.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home id
+- `environmentId` (text, required): Environment id
+- `pinned` (boolean, required): Pinned
+
 ## `projects.sources.create`
 
 **Save repository source** — Save credential-free repository metadata for its selected audience. Code, setup commands and credentials remain separate.
@@ -15289,22 +15288,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `agentTargetKey` (json): Agent Target Key
-- `application` (json): Application
-- `includeDirectMaterialization` (json): Include Direct Materialization
-- `includeTeamCredentialRequestPolicySupport` (json): Include Team Credential Request Policy Support
-- `providerConnection` (json): Provider Connection
-- `connectedAccountTarget` (json): Connected Account Target
-- `connectedServices` (json): Connected Services
-- `sourceCatalog` (json): Source Catalog
-- `nativeSource` (json): Native Source
-- `teamCredentialResources` (json): Team Credential Resources
-- `mode` (json): Mode
-- `sourceConnectionId` (json): Source Connection Id
-- `favoriteSelections` (json): Favorite Selections
-- `refreshPolicy` (json): Refresh Policy
-- `forceRefresh` (json, required): Force Refresh
-- `currentSelection` (json): Current Selection
+- `forceRefresh` (boolean, required): Force Refresh
 
 ## `providers.models.source_visibility.set`
 
@@ -16328,6 +16312,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedRevision` (json, required): Expected Revision
 - `clientId` (text): Client Id
 
+## `remote_hosts.ssh.discover`
+
+**Discover configured SSH hosts** — No additional description is published.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `clientId` (text): Client Id
+
 ## `remote_hosts.trusted_keys.clear`
 
 **Clear trusted SSH host keys** — No additional description is published.
@@ -17291,10 +17289,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `path` (text): path
 - `area` (text): area
 - `backendPreference` (json): Backend Preference
-- `outcomeVersion` (json): Outcome Version
+- `outcomeVersion` (number): Outcome Version
+- `previousPath` (json): Previous Path
 - `captured` (json): Captured
 - `renamed` (json): Renamed
-- `previousPath` (json): Previous Path
 
 ## `scm.diffSummary.addOutputs`
 
@@ -19288,7 +19286,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `seed` (json): New Session seed
 - `sourceSession` (json): Source Session address
-- `clientId` (json): Client Id
+- `replay` (json): Replay cutoff
+- `connectedServices` (json): Connected service selection
+- `clientId` (text): Client Id
 
 ## `session.board.get`
 
@@ -19306,7 +19306,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `itemIds` (text_list): Exact item ids
 - `cursor` (text): Page cursor
 - `limit` (integer): Page size
-- `projection` (json): Projection
 
 ## `session.board.item.remove`
 
@@ -19543,10 +19542,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.continuation.inspect`
 
-**Inspect Agent continuation** — Inspect one exact Agent selection for this Session through the hosting machine. Eligibility grants no mutation authority; switching rechecks it.
+**Inspect Agent continuation** — Inspect one exact Agent selection or a batch for this Session through the hosting machine. Eligibility grants no mutation authority; switching rechecks it.
 
 - Safety: `safe`; side effect: `read`.
-- Approval: `required` result; `blocking` flow.
+- Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
@@ -19554,7 +19553,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `sessionId` (text, required): Session id
-- `selection` (json, required): Exact target Agent selection
+- `selection` (json): Exact target Agent selection
+- `selections` (json): Exact target Agent selections
 
 ## `session.continue_with_replay`
 
@@ -19671,6 +19671,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `receiver` (json, required): Receiver
 - `scope` (json, required): Mute scope
 
+## `session.draft.agent.set`
+
+**Set draft Agent** — Select an Agent, model, mode and config on one exact mounted editable New Session draft or arm a Session continuation through its existing Agent picker owner. Does not send input or change the running Agent.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `ref` (json, required): Exact mounted composer
+- `agent` (json, required): Agent selection
+- `clientId` (text): Client Id
+
 ## `session.draft.append`
 
 **Append to a Session draft** — Append to the exact Session repository draft on the invoking Home. Preserves existing draft text and never submits a message.
@@ -19722,7 +19738,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.draft.model.set`
 
-**Set New Session draft model** — Select a model on one exact mounted editable New Session draft through its existing model and Team credential disclosure owners.
+**Set draft model** — Select a model on one exact mounted editable New Session draft or armed Session continuation through its existing picker owner. Does not send input or change the running Agent.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -19732,7 +19748,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `ref` (json, required): Exact New Session composer
+- `ref` (json, required): Exact mounted composer
 - `model` (json, required): Model selection
 - `clientId` (text): Client Id
 
@@ -19794,7 +19810,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `originInputLocalId` (text, required): Original input id
 - `decision` (select, required): Control
 - `additionalTurns` (number): Additional turns
-- `observedRevision` (json): Observed Revision
+- `observedRevision` (text): Observed Revision
 
 ## `session.fork`
 
@@ -20134,16 +20150,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `timeoutSeconds` (text): Timeout seconds (optional)
 - `structuredInput` (json): Structured Input
 - `requestedAction` (json): Requested Action
-- `localId` (json): Local Id
-- `idempotencyKey` (json): Idempotency Key
+- `localId` (text): Local Id
+- `idempotencyKey` (text): Idempotency Key
 - `source` (json): Source
 - `attachments` (json): Attachments
 - `forgeEvidence` (json): Forge Evidence
 - `toolAnswerDelivery` (json): Tool Answer Delivery
-- `returnToSessionId` (json): Return To Session Id
-- `kind` (json): Kind
-- `launch` (json): Launch
-- `command` (json): Command
+- `returnToSessionId` (text): Return To Session Id
 
 ## `session.messages.pins`
 
@@ -20675,7 +20688,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.permission_mode.set`
 
-**Set session permission mode** — Immediately update the permission intent (read_only/default/auto/yolo) for the specified session. Compatible aliases are accepted. To apply a mode with the next prompt, use session.message.send with permissionModeOverride.
+**Set session permission mode** — Update the permission intent (read_only/default/auto/yolo) for the specified session immediately, or use applyTiming next_prompt to stage it in the Session draft without sending input. Staging requires a connected Happier client. Compatible aliases are accepted.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
@@ -20688,6 +20701,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `permissionMode` (text, required): Permission mode
 - `applyTiming` (select): Apply timing
+- `clientId` (text): Client Id
 
 ## `session.public_link.create`
 
@@ -21279,7 +21293,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text): Home id
 - `sessionId` (text): Session id (or null)
-- `clientId` (json): Client Id
+- `clientId` (text): Client Id
 
 ## `session.target.tracked.set`
 
@@ -21294,8 +21308,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `sessionIds` (text_list, required): Session ids
-- `sessionAddresses` (json): Session Addresses
-- `clientId` (json): Client Id
+- `clientId` (text): Client Id
 
 ## `session.targets.resolve`
 
@@ -22665,6 +22678,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamCredentialSessionBindingConsent` (json): Team Credential Session Binding Consent
 - `sessionConfigOptionOverrides` (json): Session Config Option Overrides
 - `target` (json): Target
+- `previousRoundContext` (json): Previous Round Context
 
 ## `tasks.internal.create`
 
@@ -23692,7 +23706,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `teams.groups.update`
 
-**Update Team Group** — Change a Group's name or description.
+**Update Team Group** — Change a Group's name or description using authored text. The captured Account client seals labels before the Home mutation.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -23704,8 +23718,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
-- `name` (json): Group name
-- `description` (json): Description
+- `name` (text): Group name
+- `description` (textarea): Description
 - `v` (number, required): V
 
 ## `teams.identity.connections.create`
@@ -26967,9 +26981,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedContentRevision` (text, required): Observed invocation content revision — Use the decimal-string content revision from workflow.run.invocations.get for this exact invocation. It is distinct from the Run revision.
 - `value` (json): Reviewed result — With mode use_result, omit to accept the current stored draft, or supply a value matching the invocation’s frozen result contract. Only a present person can complete this review.
 - `followUp` (json): Reviewed follow-up — Optional canonical Workflow follow-up when accepting a result. Generate mode uses the held invocation instead.
-- `runId` (json, required): Run Id
-- `mode` (json, required): Mode
-- `acknowledgeUncertainPriorEffects` (json): Acknowledge Uncertain Prior Effects
+- `runId` (text, required): Run Id
+- `mode` (text, required): Mode
 
 ## `workflow.run.invocations.get`
 
@@ -27005,6 +27018,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `parentRecordId` (json): Parent Record Id
 - `parentRecordIds` (text_list): Parent Record Ids
 - `invocationId` (text): Invocation Id
+- `knownContentRevisions` (json): Known Content Revisions
 - `memberOrdinal` (text): Member Ordinal
 - `lifecycles` (multiselect): Lifecycles
 
@@ -27065,6 +27079,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `runId` (text): Run Id
 - `runIds` (text_list): Run Ids
 - `invocationProvenance` (json): Invocation Provenance
+- `starter` (text): Starter
 - `origin` (select): Origin
 - `states` (multiselect): States
 - `attention` (text): Attention
@@ -27120,8 +27135,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `expectedRevision` (number, required): Observed Run revision — Use run.revision from the current workflow.run.get response. A stale revision is refused; reread before deciding again.
 - `invocations` (json): Reviewed recovery choices — For mode recover, supply the canonical recovery choices from the held invocations: reattach, continue or restore_workspace. Boundary resume has no invocation choices.
-- `mode` (json, required): Mode
-- `runId` (json, required): Run Id
+- `mode` (text, required): Mode
+- `runId` (text, required): Run Id
 
 ## `workflow.run.review.draft.set`
 

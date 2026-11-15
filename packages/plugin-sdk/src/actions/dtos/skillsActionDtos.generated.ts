@@ -21,6 +21,7 @@ export type SkillsActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -34,7 +35,6 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -96,6 +96,7 @@ export type SkillsActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -109,7 +110,6 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -194,6 +194,7 @@ export type SkillsActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -207,7 +208,6 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -707,6 +707,9 @@ export type SkillsActionResultById = {
         inclusion?: undefined | {
             ok: false;
             code: 'applies_to_new_sessions_only' | 'conflict' | 'not_found' | 'session_unavailable';
+            diagnostic?: undefined | {
+                reason: 'authority_path_absent' | 'caller_fallback_unsupported' | 'capability_identity_unresolved' | 'channels_operation_mismatch' | 'channels_result_invalid' | 'channels_session_mismatch' | 'execution_run_not_current' | 'execution_run_turn_mismatch' | 'explicit_machine_target_absent' | 'native_realtime_caller_invalid' | 'own_reachable_machine_absent' | 'plugin_action_declaration_absent' | 'plugin_options_declaration_absent' | 'runner_authority_refused' | 'scm_workspace_invalid' | 'session_absent' | 'session_machine_absent' | 'session_transport_absent' | 'turn_witness_absent' | 'turn_witness_projection_invalid';
+            };
         } | {
             ok: true;
             state: 'inherit' | 'off' | 'on';
@@ -747,6 +750,9 @@ export type SkillsActionResultById = {
         inclusion?: undefined | {
             ok: false;
             code: 'applies_to_new_sessions_only' | 'conflict' | 'not_found' | 'session_unavailable';
+            diagnostic?: undefined | {
+                reason: 'authority_path_absent' | 'caller_fallback_unsupported' | 'capability_identity_unresolved' | 'channels_operation_mismatch' | 'channels_result_invalid' | 'channels_session_mismatch' | 'execution_run_not_current' | 'execution_run_turn_mismatch' | 'explicit_machine_target_absent' | 'native_realtime_caller_invalid' | 'own_reachable_machine_absent' | 'plugin_action_declaration_absent' | 'plugin_options_declaration_absent' | 'runner_authority_refused' | 'scm_workspace_invalid' | 'session_absent' | 'session_machine_absent' | 'session_transport_absent' | 'turn_witness_absent' | 'turn_witness_projection_invalid';
+            };
         } | {
             ok: true;
             state: 'inherit' | 'off' | 'on';

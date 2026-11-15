@@ -87,6 +87,7 @@ export type ProjectReadinessActionResultById = {
                             cause: 'certificate' | 'dns' | 'http' | 'network';
                             reason: string;
                             vantage: 'outside' | 'sameMachine' | null;
+                            httpStatus?: number | undefined;
                         };
                     };
                 }[];

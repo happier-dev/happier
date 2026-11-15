@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionTargetingActionInputById = {
     readonly "session.list": {
@@ -305,6 +305,7 @@ export type SessionTargetingActionResultById = {
                 failureCause?: undefined | {
                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                    actionCause?: ActionFailureCauseV1 | undefined;
                     code?: string | undefined;
                     retryable?: boolean | undefined;
                     requestId?: string | undefined;
@@ -312,6 +313,10 @@ export type SessionTargetingActionResultById = {
                         code: string;
                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                         requestId?: string | undefined;
+                    };
+                    carrierFailure?: undefined | {
+                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                     };
                     connectedServicesDefault?: undefined | {
                         v: 1;

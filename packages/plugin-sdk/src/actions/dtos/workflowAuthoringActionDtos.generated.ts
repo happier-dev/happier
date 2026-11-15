@@ -35,7 +35,7 @@ export type WorkflowAuthoringActionInputById = {
             accountId: string;
         };
         draftId: string;
-        ops?: ((WorkflowSelectionEdit<'set_default', {
+        ops?: (WorkflowSelectionEdit<'set_default', {
             allowedTools?: string[] | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
             agentTarget?: null | undefined | {
@@ -180,8 +180,83 @@ export type WorkflowAuthoringActionInputById = {
                     connectedServiceGroupId?: string | undefined;
                 };
             };
+            title?: string | undefined;
+            primaryTeamId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
+            memoryEnabled?: boolean | undefined;
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            teamCredentialBindings?: ({
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: null;
+            } | {
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                teamId?: string | undefined;
+                providerModelSelection?: undefined | {
+                    agentTargetKey: string;
+                    modelId: string;
+                    application?: undefined | {
+                        implementationIdentity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        endpointTemplateId: string;
+                        protocol: string;
+                        agentTargetKey: string;
+                    };
+                    executionMachineId?: string | undefined;
+                    nativeSource?: undefined | {
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            launchEnvironment?: unknown;
+            environmentVariables?: Record<string, string> | undefined;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -256,7 +331,7 @@ export type WorkflowAuthoringActionInputById = {
             } | {
                 kind: 'project_checkout';
             };
-        }, true> & object) | (WorkflowSelectionEdit<'set_step_setting', {
+        }, object, true> | WorkflowSelectionEdit<'set_step_setting', {
             allowedTools?: string[] | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
             agentTarget?: null | undefined | {
@@ -401,8 +476,83 @@ export type WorkflowAuthoringActionInputById = {
                     connectedServiceGroupId?: string | undefined;
                 };
             };
+            title?: string | undefined;
+            primaryTeamId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
+            memoryEnabled?: boolean | undefined;
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            teamCredentialBindings?: ({
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: null;
+            } | {
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                teamId?: string | undefined;
+                providerModelSelection?: undefined | {
+                    agentTargetKey: string;
+                    modelId: string;
+                    application?: undefined | {
+                        implementationIdentity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        endpointTemplateId: string;
+                        protocol: string;
+                        agentTargetKey: string;
+                    };
+                    executionMachineId?: string | undefined;
+                    nativeSource?: undefined | {
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            launchEnvironment?: unknown;
+            environmentVariables?: Record<string, string> | undefined;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -477,9 +627,9 @@ export type WorkflowAuthoringActionInputById = {
             } | {
                 kind: 'project_checkout';
             };
-        }, true> & {
+        }, {
             blockId: string;
-        }) | {
+        }, true> | {
             kind: 'insert_block';
             list: {
                 kind: 'ifOtherwise';

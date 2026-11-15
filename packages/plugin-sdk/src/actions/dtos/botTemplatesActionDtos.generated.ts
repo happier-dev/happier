@@ -1663,11 +1663,83 @@ export type BotTemplatesActionInputById = {
                                     connectedServiceGroupId?: string | undefined;
                                 };
                             };
-                            permissionModeUpdatedAt?: number | undefined;
-                            launchEnvironment?: undefined | {
-                                values: Record<string, string>;
-                                unset: string[];
+                            title?: string | undefined;
+                            primaryTeamId?: null | string | undefined;
+                            organizationPlacement?: undefined | {
+                                folderId: null | string;
+                                tagIds: string[];
                             };
+                            memoryEnabled?: boolean | undefined;
+                            secretReferenceOverlay?: undefined | {
+                                v: 1;
+                                bindings: Record<string, {
+                                    ref: string;
+                                    revision?: number | undefined;
+                                }>;
+                            };
+                            teamCredentialBindings?: ({
+                                v: 1;
+                                slot: {
+                                    kind: 'connected_service_purpose';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                } | {
+                                    kind: 'provider_model';
+                                };
+                                resourceId: null;
+                            } | {
+                                v: 1;
+                                slot: {
+                                    kind: 'connected_service_purpose';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                } | {
+                                    kind: 'provider_model';
+                                };
+                                resourceId: string;
+                                expectedResourceRevision: number;
+                                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                teamId?: string | undefined;
+                                providerModelSelection?: undefined | {
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                    application?: undefined | {
+                                        implementationIdentity: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        protocol: string;
+                                        agentTargetKey: string;
+                                    };
+                                    executionMachineId?: string | undefined;
+                                    nativeSource?: undefined | {
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    };
+                                };
+                                nativeDelivery?: undefined | {
+                                    managedId: string;
+                                    controllerInstallationId: string;
+                                    guestInstallationId: string;
+                                    bindingKey: string;
+                                    placeholderRef: string;
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            })[] | undefined;
+                            permissionModeUpdatedAt?: number | undefined;
+                            environmentVariables?: Record<string, string> | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -1742,30 +1814,8 @@ export type BotTemplatesActionInputById = {
                             } | {
                                 kind: 'project_checkout';
                             };
+                            roleId?: string | undefined;
                             engine?: undefined | {
-                                agentTarget: {
-                                    kind: 'agent';
-                                    identity: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    definitionId?: string | undefined;
-                                };
-                                modelSelection?: null | undefined | {
-                                    v: 1;
-                                    ref: {
-                                        agentTargetKey: string;
-                                        providerConnectionId: null;
-                                        modelId: string;
-                                    } | {
-                                        agentTargetKey: string;
-                                        providerConnectionId: string;
-                                        modelId: string;
-                                    };
-                                    updatedAt: number;
-                                };
-                                effort?: string | undefined;
-                            } | {
                                 kind: 'input';
                                 name: string;
                                 path?: (number | string)[] | undefined;
@@ -1773,8 +1823,6 @@ export type BotTemplatesActionInputById = {
                                 kind: 'item';
                                 field: 'value';
                                 path?: (number | string)[] | undefined;
-                            } | {
-                                role: string;
                             };
                             participant?: undefined | {
                                 kind: 'input';
@@ -1858,13 +1906,13 @@ export type BotTemplatesActionInputById = {
                     name: string;
                     description: null | string;
                 };
-                approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
+                approvalProfileId?: null | string | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2849,6 +2897,7 @@ export type BotTemplatesActionResultById = {
         code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
         retryable: boolean;
         failureCause?: ActionFailureCauseV1 | undefined;
+        effectAttempted?: boolean | undefined;
         agentId?: string | undefined;
         providerError?: undefined | {
             v: 1;
@@ -2858,6 +2907,26 @@ export type BotTemplatesActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -2910,6 +2979,10 @@ export type BotTemplatesActionResultById = {
                     code: string;
                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                     requestId?: string | undefined;
+                };
+                carrierFailure?: undefined | {
+                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                 };
                 connectedServicesDefault?: undefined | {
                     v: 1;
@@ -2991,11 +3064,9 @@ export type BotTemplatesActionResultById = {
                 agentId?: string | undefined;
                 profileId?: string | undefined;
                 groupId?: string | undefined;
-                diagnostics?: undefined | ({
-                    [x: string]: boolean | null | number | string;
-                } & {
+                diagnostics?: (Record<string, boolean | null | number | string> & {
                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                });
+                }) | undefined;
             };
             connectedAccountPool?: undefined | {
                 serviceId: string;

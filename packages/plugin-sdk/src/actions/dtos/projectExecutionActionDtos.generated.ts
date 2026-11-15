@@ -214,6 +214,25 @@ export type ProjectExecutionActionResultById = {
             title: string;
             createdAt: number;
             cancellation: 'supported' | 'unsupported';
+            actor?: null | undefined | {
+                actorKind: 'agent';
+                sessionId: string;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            } | {
+                actorKind: 'person';
+                accountId: string;
+            } | {
+                actorKind: 'workflow';
+                runId: string;
+                automationId?: string | undefined;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            };
             requestId?: string | undefined;
             startedAt?: number | undefined;
             settledAt?: number | undefined;
@@ -291,17 +310,6 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     environmentId: string;
                     domainId: string;
-                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-                    remedy?: string | undefined;
-                    operation?: undefined | {
-                        serverId: string;
-                        machineId: string;
-                        operationId: string;
-                    };
-                } | {
-                    environmentId: string;
-                    domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
                     requiredFact?: string | undefined;
@@ -338,6 +346,11 @@ export type ProjectExecutionActionResultById = {
                         serverId: string;
                         machineId: string;
                         operationId: string;
+                    };
+                    tunnelId?: string | undefined;
+                    recovery?: undefined | {
+                        kind: 'adopt';
+                        tunnelId: string;
                     };
                 } | {
                     environmentId: string;
@@ -485,6 +498,7 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     kind: 'managedGuestHome';
                     homeOrigin: string;
+                    reason?: 'authored_network' | undefined;
                 } | {
                     kind: 'managedNative';
                     nativeCause: {
@@ -687,17 +701,6 @@ export type ProjectExecutionActionResultById = {
                     failure?: undefined | {
                         environmentId: string;
                         domainId: string;
-                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-                        remedy?: string | undefined;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    } | {
-                        environmentId: string;
-                        domainId: string;
                         step: 'native_execution';
                         providerOutput?: string | undefined;
                         requiredFact?: string | undefined;
@@ -735,6 +738,11 @@ export type ProjectExecutionActionResultById = {
                             machineId: string;
                             operationId: string;
                         };
+                        tunnelId?: string | undefined;
+                        recovery?: undefined | {
+                            kind: 'adopt';
+                            tunnelId: string;
+                        };
                     } | {
                         environmentId: string;
                         domainId: string;
@@ -743,6 +751,22 @@ export type ProjectExecutionActionResultById = {
                         requiredFact: string;
                         remedy: string;
                         domainHostname?: string | undefined;
+                    } | {
+                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                        environmentId: string;
+                        domainId: string;
+                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                        tunnelId?: string | undefined;
+                        recovery?: undefined | {
+                            kind: 'adopt';
+                            tunnelId: string;
+                        };
                     };
                     deployment?: undefined | {
                         deploymentId: string;
@@ -1423,6 +1447,20 @@ export type ProjectExecutionActionResultById = {
                                 };
                                 preparedNative?: undefined | {
                                     projectName: string;
+                                    productionBranchOutcome?: undefined | {
+                                        status: 'defaultKept';
+                                        branch: string;
+                                        requestedBranch: string;
+                                        failureCause: ActionFailureCauseV1;
+                                    } | {
+                                        status: 'set';
+                                        branch: string;
+                                    } | {
+                                        status: 'unconfirmed';
+                                        requestedBranch: string;
+                                        failureCause: ActionFailureCauseV1;
+                                        previousBranch?: string | undefined;
+                                    };
                                     reviewNotice?: string | undefined;
                                     gitSource?: undefined | {
                                         type: 'github';
@@ -1583,6 +1621,7 @@ export type ProjectExecutionActionResultById = {
                             };
                         };
                     };
+                    setupOutcome?: 'applied' | undefined;
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -1607,6 +1646,22 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
+                } | {
+                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                    environmentId: string;
+                    domainId: string;
+                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                    tunnelId?: string | undefined;
+                    recovery?: undefined | {
+                        kind: 'adopt';
+                        tunnelId: string;
+                    };
                 } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
@@ -2270,6 +2325,25 @@ export type ProjectExecutionActionResultById = {
             title: string;
             createdAt: number;
             cancellation: 'supported' | 'unsupported';
+            actor?: null | undefined | {
+                actorKind: 'agent';
+                sessionId: string;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            } | {
+                actorKind: 'person';
+                accountId: string;
+            } | {
+                actorKind: 'workflow';
+                runId: string;
+                automationId?: string | undefined;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            };
             requestId?: string | undefined;
             startedAt?: number | undefined;
             settledAt?: number | undefined;
@@ -2347,17 +2421,6 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     environmentId: string;
                     domainId: string;
-                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-                    remedy?: string | undefined;
-                    operation?: undefined | {
-                        serverId: string;
-                        machineId: string;
-                        operationId: string;
-                    };
-                } | {
-                    environmentId: string;
-                    domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
                     requiredFact?: string | undefined;
@@ -2394,6 +2457,11 @@ export type ProjectExecutionActionResultById = {
                         serverId: string;
                         machineId: string;
                         operationId: string;
+                    };
+                    tunnelId?: string | undefined;
+                    recovery?: undefined | {
+                        kind: 'adopt';
+                        tunnelId: string;
                     };
                 } | {
                     environmentId: string;
@@ -2541,6 +2609,7 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     kind: 'managedGuestHome';
                     homeOrigin: string;
+                    reason?: 'authored_network' | undefined;
                 } | {
                     kind: 'managedNative';
                     nativeCause: {
@@ -2743,17 +2812,6 @@ export type ProjectExecutionActionResultById = {
                     failure?: undefined | {
                         environmentId: string;
                         domainId: string;
-                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-                        remedy?: string | undefined;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    } | {
-                        environmentId: string;
-                        domainId: string;
                         step: 'native_execution';
                         providerOutput?: string | undefined;
                         requiredFact?: string | undefined;
@@ -2791,6 +2849,11 @@ export type ProjectExecutionActionResultById = {
                             machineId: string;
                             operationId: string;
                         };
+                        tunnelId?: string | undefined;
+                        recovery?: undefined | {
+                            kind: 'adopt';
+                            tunnelId: string;
+                        };
                     } | {
                         environmentId: string;
                         domainId: string;
@@ -2799,6 +2862,22 @@ export type ProjectExecutionActionResultById = {
                         requiredFact: string;
                         remedy: string;
                         domainHostname?: string | undefined;
+                    } | {
+                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                        environmentId: string;
+                        domainId: string;
+                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                        tunnelId?: string | undefined;
+                        recovery?: undefined | {
+                            kind: 'adopt';
+                            tunnelId: string;
+                        };
                     };
                     deployment?: undefined | {
                         deploymentId: string;
@@ -3479,6 +3558,20 @@ export type ProjectExecutionActionResultById = {
                                 };
                                 preparedNative?: undefined | {
                                     projectName: string;
+                                    productionBranchOutcome?: undefined | {
+                                        status: 'defaultKept';
+                                        branch: string;
+                                        requestedBranch: string;
+                                        failureCause: ActionFailureCauseV1;
+                                    } | {
+                                        status: 'set';
+                                        branch: string;
+                                    } | {
+                                        status: 'unconfirmed';
+                                        requestedBranch: string;
+                                        failureCause: ActionFailureCauseV1;
+                                        previousBranch?: string | undefined;
+                                    };
                                     reviewNotice?: string | undefined;
                                     gitSource?: undefined | {
                                         type: 'github';
@@ -3639,6 +3732,7 @@ export type ProjectExecutionActionResultById = {
                             };
                         };
                     };
+                    setupOutcome?: 'applied' | undefined;
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -3663,6 +3757,22 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
+                } | {
+                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                    environmentId: string;
+                    domainId: string;
+                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                    tunnelId?: string | undefined;
+                    recovery?: undefined | {
+                        kind: 'adopt';
+                        tunnelId: string;
+                    };
                 } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
@@ -4326,6 +4436,25 @@ export type ProjectExecutionActionResultById = {
             title: string;
             createdAt: number;
             cancellation: 'supported' | 'unsupported';
+            actor?: null | undefined | {
+                actorKind: 'agent';
+                sessionId: string;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            } | {
+                actorKind: 'person';
+                accountId: string;
+            } | {
+                actorKind: 'workflow';
+                runId: string;
+                automationId?: string | undefined;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            };
             requestId?: string | undefined;
             startedAt?: number | undefined;
             settledAt?: number | undefined;
@@ -4403,17 +4532,6 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     environmentId: string;
                     domainId: string;
-                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-                    remedy?: string | undefined;
-                    operation?: undefined | {
-                        serverId: string;
-                        machineId: string;
-                        operationId: string;
-                    };
-                } | {
-                    environmentId: string;
-                    domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
                     requiredFact?: string | undefined;
@@ -4450,6 +4568,11 @@ export type ProjectExecutionActionResultById = {
                         serverId: string;
                         machineId: string;
                         operationId: string;
+                    };
+                    tunnelId?: string | undefined;
+                    recovery?: undefined | {
+                        kind: 'adopt';
+                        tunnelId: string;
                     };
                 } | {
                     environmentId: string;
@@ -4597,6 +4720,7 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     kind: 'managedGuestHome';
                     homeOrigin: string;
+                    reason?: 'authored_network' | undefined;
                 } | {
                     kind: 'managedNative';
                     nativeCause: {
@@ -4799,17 +4923,6 @@ export type ProjectExecutionActionResultById = {
                     failure?: undefined | {
                         environmentId: string;
                         domainId: string;
-                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
-                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
-                        remedy?: string | undefined;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    } | {
-                        environmentId: string;
-                        domainId: string;
                         step: 'native_execution';
                         providerOutput?: string | undefined;
                         requiredFact?: string | undefined;
@@ -4847,6 +4960,11 @@ export type ProjectExecutionActionResultById = {
                             machineId: string;
                             operationId: string;
                         };
+                        tunnelId?: string | undefined;
+                        recovery?: undefined | {
+                            kind: 'adopt';
+                            tunnelId: string;
+                        };
                     } | {
                         environmentId: string;
                         domainId: string;
@@ -4855,6 +4973,22 @@ export type ProjectExecutionActionResultById = {
                         requiredFact: string;
                         remedy: string;
                         domainHostname?: string | undefined;
+                    } | {
+                        requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                        environmentId: string;
+                        domainId: string;
+                        step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                        remedy?: string | undefined;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                        tunnelId?: string | undefined;
+                        recovery?: undefined | {
+                            kind: 'adopt';
+                            tunnelId: string;
+                        };
                     };
                     deployment?: undefined | {
                         deploymentId: string;
@@ -5535,6 +5669,20 @@ export type ProjectExecutionActionResultById = {
                                 };
                                 preparedNative?: undefined | {
                                     projectName: string;
+                                    productionBranchOutcome?: undefined | {
+                                        status: 'defaultKept';
+                                        branch: string;
+                                        requestedBranch: string;
+                                        failureCause: ActionFailureCauseV1;
+                                    } | {
+                                        status: 'set';
+                                        branch: string;
+                                    } | {
+                                        status: 'unconfirmed';
+                                        requestedBranch: string;
+                                        failureCause: ActionFailureCauseV1;
+                                        previousBranch?: string | undefined;
+                                    };
                                     reviewNotice?: string | undefined;
                                     gitSource?: undefined | {
                                         type: 'github';
@@ -5695,6 +5843,7 @@ export type ProjectExecutionActionResultById = {
                             };
                         };
                     };
+                    setupOutcome?: 'applied' | undefined;
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -5719,6 +5868,22 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
+                } | {
+                    requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
+                    environmentId: string;
+                    domainId: string;
+                    step: 'container_identity' | 'route_upstreams' | 'service_docker' | 'service_replicas';
+                    remedy?: string | undefined;
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                    tunnelId?: string | undefined;
+                    recovery?: undefined | {
+                        kind: 'adopt';
+                        tunnelId: string;
+                    };
                 } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;

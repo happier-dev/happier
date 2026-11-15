@@ -6,7 +6,13 @@ import type { PluginJsonValueV2 } from '../../identity.js';
 export type AccountPluginDataActionInputById = {
     readonly "account.plugins.data.erase": {
         pluginId: string;
-        managedResourceDispositions?: undefined | {
+        managedResourceDispositions?: ({
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            opaquePreset: true;
+            responsibility: 'manual';
+        } | {
             managedId: string;
             expectedIntentRevision: number;
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
@@ -46,7 +52,7 @@ export type AccountPluginDataActionInputById = {
                 reason: string;
                 consoleUrl?: string | undefined;
             };
-        }[];
+        })[] | undefined;
     };
 };
 export type AccountPluginDataActionResultById = {
@@ -73,15 +79,36 @@ export type AccountPluginDataActionResultById = {
             reason: 'outcome-unknown' | 'transition-cleanup' | 'unavailable';
         } | {
             status: 'reviewRequired';
-            resources: {
+            resources: ({
+                opaquePreset: true;
                 managedId: string;
                 homeId: string;
                 custodianAccountId: string;
                 intentRevision: number;
+                allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                observation?: undefined | {
+                    observedAt: number;
+                    availability: 'absent' | 'present' | 'unavailable';
+                    power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                    storage?: 'lost' | 'retained' | 'unknown' | undefined;
+                };
+                cleanup?: undefined | {
+                    disposition: 'pending' | 'unavailable';
+                    reason: string;
+                };
+            } | {
                 provider: {
                     pluginId: string;
                     localId: string;
                 };
+                managedId: string;
+                homeId: string;
+                custodianAccountId: string;
+                intentRevision: number;
                 allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
                 controller?: undefined | {
                     machineId: string;
@@ -125,8 +152,6 @@ export type AccountPluginDataActionResultById = {
                 observation?: undefined | {
                     observedAt: number;
                     availability: 'absent' | 'present' | 'unavailable';
-                    power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                    storage?: 'lost' | 'retained' | 'unknown' | undefined;
                     billing?: undefined | {
                         location: 'cloud' | 'local' | 'unknown';
                         stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -208,24 +233,47 @@ export type AccountPluginDataActionResultById = {
                     } | {
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                     };
+                    power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                    storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 };
                 cleanup?: undefined | {
                     disposition: 'pending' | 'unavailable';
                     reason: string;
                 };
-            }[];
+            })[];
         };
     } | {
         status: 'reviewRequired';
-        resources: {
+        resources: ({
+            opaquePreset: true;
             managedId: string;
             homeId: string;
             custodianAccountId: string;
             intentRevision: number;
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            observation?: undefined | {
+                observedAt: number;
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
+                reason: string;
+            };
+        } | {
             provider: {
                 pluginId: string;
                 localId: string;
             };
+            managedId: string;
+            homeId: string;
+            custodianAccountId: string;
+            intentRevision: number;
             allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             controller?: undefined | {
                 machineId: string;
@@ -269,8 +317,6 @@ export type AccountPluginDataActionResultById = {
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
-                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 billing?: undefined | {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -352,11 +398,13 @@ export type AccountPluginDataActionResultById = {
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                 };
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             cleanup?: undefined | {
                 disposition: 'pending' | 'unavailable';
                 reason: string;
             };
-        }[];
+        })[];
     };
 };

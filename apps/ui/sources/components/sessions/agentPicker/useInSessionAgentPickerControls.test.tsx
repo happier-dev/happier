@@ -1,3 +1,4 @@
+import { publishSessionDraftPickerFixture, useSessionDraftPickerPresentation } from '@/dev/testkit/harness/sessionDraftPickerPresentation';
 import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -162,7 +163,10 @@ type HookProps = Readonly<{
 
 async function renderControls(props: HookProps = {}) {
     await hydratePurposeCatalog(props.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : props.accountScope);
-    const hook = await renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
+    const fixtureScope = props.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : props.accountScope;
+    if (fixtureScope) publishSessionDraftPickerFixture(fixtureScope, props.sessionId ?? 'session-1');
+    const hook = await renderHook((hookProps: HookProps) => {
+        const controls = useInSessionAgentPickerControls({
         sessionId: hookProps.sessionId ?? 'session-1',
         accountScope: hookProps.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : hookProps.accountScope,
         currentAgentId: hookProps.currentAgentId ?? 'claude',
@@ -174,13 +178,18 @@ async function renderControls(props: HookProps = {}) {
             ? { state: 'enabled' }
             : hookProps.featureDecision,
         source: hookProps.source ?? supportedSource,
-        machine: hookProps.machine ?? onlineMachine,
+        machine: { ...(hookProps.machine ?? onlineMachine), serverId: (hookProps.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : hookProps.accountScope)?.serverId ?? DEFAULT_DRAFT_SCOPE.serverId },
         detail: detailContext,
-    }), { initialProps: props });
+    });
+        useSessionDraftPickerPresentation(controls, hookProps.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : hookProps.accountScope, hookProps.sessionId ?? 'session-1');
+        return controls;
+    }, { initialProps: props });
     return {
         ...hook,
         async rerender(next: HookProps) {
             await hydratePurposeCatalog(next.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : next.accountScope);
+            const fixtureScope = next.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : next.accountScope;
+            if (fixtureScope) publishSessionDraftPickerFixture(fixtureScope, next.sessionId ?? 'session-1');
             return hook.rerender(next);
         },
     };
@@ -279,7 +288,7 @@ describe('useInSessionAgentPickerControls', () => {
         await act(async () => {
             const targetOption = optionsOf(hook.getCurrent()).find((option) => option.id === target.backendTargetKey);
             expect(targetOption).toBeDefined();
-            targetOption!.onSelectImmediate?.();
+            await targetOption!.onSelectImmediate?.();
         });
 
         expect(hook.getCurrent().armedContinuation).toEqual({
@@ -369,7 +378,7 @@ describe('useInSessionAgentPickerControls', () => {
         expect(optionsOf(hook.getCurrent())[0]?.statusMarker).toBeUndefined();
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         // The checkmark has travelled, so the running row takes the marker the model
@@ -391,7 +400,7 @@ describe('useInSessionAgentPickerControls', () => {
         const hook = await renderControls({ sessionActive: false });
         await openPicker(hook);
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         const [currentOption] = optionsOf(hook.getCurrent());
@@ -443,7 +452,7 @@ describe('useInSessionAgentPickerControls', () => {
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId: DEFAULT_DRAFT_SCOPE.serverId,
             method: 'session.continuation.inspectBatch',
             payload: { v: 1, sourceSessionId: 'session-1', selections: [{ v: 1, agentId: 'codex' }] },
         }));
@@ -546,7 +555,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         expect(hook.getCurrent().armedContinuation).toEqual({
@@ -569,12 +578,35 @@ describe('useInSessionAgentPickerControls', () => {
         );
     });
 
+    it('arms a target Agent on the Account default model for that Agent, not a hard-coded default', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const hook = await renderControls();
+        await openPicker(hook);
+        const previous = getStorage().getState().settings;
+        try {
+            // The Account's settings change after the restored Account has loaded them.
+            await act(async () => {
+                getStorage().setState((state) => ({ settings: { ...state.settings, providerDefaultModelSelectionsByAgentTargetKeyV1: {
+                    [agentTargetKey]: { v: 1, updatedAt: 5, ref: { agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.5' } },
+                } } }));
+            });
+            await act(async () => {
+                await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            });
+
+            expect(hook.getCurrent().armedContinuation?.selection).toEqual({ v: 1, agentId: 'codex', modelId: 'gpt-5.5' });
+        } finally {
+            getStorage().setState({ settings: previous });
+        }
+    });
+
     it('moves the checkmark to the armed row while the running row keeps its name', async () => {
         const hook = await renderControls();
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         const [currentOption] = optionsOf(hook.getCurrent());
@@ -593,7 +625,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         const firstLocalId = hook.getCurrent().armedContinuationLocalId;
         expect(announceAccessibilityMessage).toHaveBeenCalledTimes(1);
@@ -601,7 +633,7 @@ describe('useInSessionAgentPickerControls', () => {
         // Choosing a model IS part of the same choice, so it must reach the armed
         // intent rather than waiting for a confirm step that no longer exists.
         await act(async () => {
-            detailPropsOf(hook.getCurrent()).onSelectionChange({
+            await detailPropsOf(hook.getCurrent()).onSelectionChange({
                 modelId: 'opus-5',
                 modelSelection: null,
                 sessionModeId: null,
@@ -620,7 +652,7 @@ describe('useInSessionAgentPickerControls', () => {
         const hook = await renderControls();
         await openPicker(hook);
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         const firstLocalId = hook.getCurrent().armedContinuationLocalId;
 
@@ -662,8 +694,8 @@ describe('useInSessionAgentPickerControls', () => {
 
         // The default-selection answer is not a proxy for this choice. While
         // the exact selection is unanswered, the old arm cannot redirect a send.
+        await vi.waitFor(() => expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1));
         expect(hook.getCurrent().armedContinuation).toBeNull();
-        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             resolveChangedSelection?.({ v: 1, inspections: [AVAILABLE] });
@@ -686,7 +718,7 @@ describe('useInSessionAgentPickerControls', () => {
         const hook = await renderControls();
         await openPicker(hook);
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         let resolveChangedSelection: ((value: unknown) => void) | null = null;
@@ -725,7 +757,7 @@ describe('useInSessionAgentPickerControls', () => {
             await Promise.resolve();
         });
 
-        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1));
         await act(async () => {
             resolveChangedSelection?.({ v: 1, inspections: [AVAILABLE] });
             await Promise.resolve();
@@ -744,7 +776,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         const codexOption = optionsOf(hook.getCurrent())[1];
@@ -762,7 +794,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         const [currentOption] = optionsOf(hook.getCurrent());
@@ -770,7 +802,7 @@ describe('useInSessionAgentPickerControls', () => {
         expect(currentOption?.onDetailAction).toBeUndefined();
 
         await act(async () => {
-            currentOption?.onSelectImmediate?.();
+            await currentOption?.onSelectImmediate?.();
         });
 
         expect(hook.getCurrent().armedContinuation).toBeNull();
@@ -824,7 +856,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
@@ -848,7 +880,7 @@ describe('useInSessionAgentPickerControls', () => {
         const hook = await renderControls({ accountScope });
         await openPicker(hook);
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         const localId = hook.getCurrent().armedContinuationLocalId;
 
@@ -872,7 +904,7 @@ describe('useInSessionAgentPickerControls', () => {
         const hook = await renderControls({ accountScope: accountA });
         await openPicker(hook);
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         const accountALocalId = hook.getCurrent().armedContinuationLocalId;
 
@@ -894,7 +926,7 @@ describe('useInSessionAgentPickerControls', () => {
         const hook = await renderControls();
         await openPicker(hook);
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         const localId = hook.getCurrent().armedContinuationLocalId;
         if (!localId) throw new Error('expected an armed localId');
@@ -936,7 +968,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
@@ -950,7 +982,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
 
         await hook.rerender({
@@ -972,7 +1004,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
@@ -1013,7 +1045,7 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         await act(async () => {
-            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
@@ -1029,7 +1061,7 @@ describe('useInSessionAgentPickerControls', () => {
 
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
         await act(async () => {
-            optionsOf(hook.getCurrent())[0]?.onSelectImmediate?.();
+            await optionsOf(hook.getCurrent())[0]?.onSelectImmediate?.();
         });
         expect(hook.getCurrent().armedContinuation).toBeNull();
     });
@@ -1241,9 +1273,9 @@ describe('useInSessionAgentPickerControls', () => {
             for (const option of rows().slice(1)) {
                 expect(option).toMatchObject({
                     disabled: true,
-                    subtitle: t('session.agentContinuation.unavailable.updateOrReconnect'),
+                    sectionLabel: t('session.agentContinuation.unavailable.updateOrReconnect'),
                 });
-                expect(option.detailDescription).toBe(option.subtitle);
+                expect(option.accessibilityLabel).toContain(t('session.agentContinuation.unavailable.updateOrReconnect'));
                 expect(option.onSelectImmediate).toBeUndefined();
             }
             expect(hook.getCurrent().armedContinuation).toBeNull();

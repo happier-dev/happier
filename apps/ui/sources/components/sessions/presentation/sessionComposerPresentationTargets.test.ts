@@ -1146,7 +1146,7 @@ describe('composer presentation targets', () => {
             hasActionChip: (chipKey) => chipKey === 'session-goal',
         }));
         // Registered but not on screen yet: the request stays pending.
-        expect(openActionChip).toHaveBeenCalledWith('session-goal');
+        expect(openActionChip.mock.calls.map(([chipKey]) => chipKey)).toContain('session-goal');
         expect(readSessionComposerActionChipOffer(address, 'session-goal')).toBe('offered');
         expect(readSessionComposerActionChipOffer(address, 'other-chip')).toBe('not_offered');
 

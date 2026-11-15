@@ -12,6 +12,7 @@ export type MachineVitalsActionInputById = {
     readonly "machines.vitals.history.get": {
         range: '1h' | '24h' | '7d';
         machineId: string;
+        serviceId?: string | undefined;
         serverId?: string | undefined;
     };
     readonly "machines.vitals.summaries.list": {
@@ -234,6 +235,16 @@ export type MachineVitalsActionResultById = {
         today: {
             rxBytes: number;
             txBytes: number;
+        };
+        service?: undefined | {
+            serviceId: string;
+            points: (null | {
+                t: number;
+                cpuPercent: null | number;
+                cpuMaxPercent: null | number;
+                memoryBytes: null | number;
+                memoryMaxBytes: null | number;
+            })[];
         };
     };
     readonly "machines.vitals.summaries.list": {

@@ -42,7 +42,13 @@ export type PluginDevLoopActionInputById = {
     readonly "plugins.uninstall": {
         pluginId: string;
         machineId?: string | undefined;
-        managedResourceDispositions?: undefined | {
+        managedResourceDispositions?: ({
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            opaquePreset: true;
+            responsibility: 'manual';
+        } | {
             managedId: string;
             expectedIntentRevision: number;
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
@@ -82,7 +88,7 @@ export type PluginDevLoopActionInputById = {
                 reason: string;
                 consoleUrl?: string | undefined;
             };
-        }[];
+        })[] | undefined;
         deleteData?: boolean | undefined;
     };
     readonly "plugins.enable": {
@@ -92,7 +98,13 @@ export type PluginDevLoopActionInputById = {
     };
     readonly "plugins.disable": {
         pluginId: string;
-        managedResourceDispositions?: undefined | {
+        managedResourceDispositions?: ({
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            opaquePreset: true;
+            responsibility: 'manual';
+        } | {
             managedId: string;
             expectedIntentRevision: number;
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
@@ -132,7 +144,7 @@ export type PluginDevLoopActionInputById = {
                 reason: string;
                 consoleUrl?: string | undefined;
             };
-        }[];
+        })[] | undefined;
         scope?: 'account' | 'machine' | undefined;
         machineId?: string | undefined;
     };

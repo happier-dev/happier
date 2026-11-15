@@ -29,31 +29,37 @@ export type WorkflowsActionInputById = {
                 agentOverride?: undefined | {
                     sourceKey: string;
                     blockId: string;
-                    engine: {
-                        agentTarget: {
-                            kind: 'agent';
-                            identity: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            definitionId?: string | undefined;
+                    roleId?: string | undefined;
+                    agentTarget?: null | undefined | {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
                         };
-                        modelSelection?: null | undefined | {
-                            v: 1;
-                            ref: {
-                                agentTargetKey: string;
-                                providerConnectionId: null;
-                                modelId: string;
-                            } | {
-                                agentTargetKey: string;
-                                providerConnectionId: string;
-                                modelId: string;
-                            };
+                        definitionId?: string | undefined;
+                    };
+                    modelSelection?: null | undefined | {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                    sessionConfigOptionOverrides?: null | undefined | {
+                        [x: string]: unknown;
+                        v: 1;
+                        updatedAt: number;
+                        overrides: Record<string, {
+                            [x: string]: unknown;
                             updatedAt: number;
-                        };
-                        effort?: string | undefined;
-                    } | {
-                        role: string;
+                            value: boolean | null | number | string;
+                        }>;
                     };
                 };
             };
@@ -573,7 +579,7 @@ export type WorkflowsActionInputById = {
             headerVersion: number;
             bodyVersion: number;
         };
-        ops: ((WorkflowSelectionEdit<'set_default', {
+        ops: (WorkflowSelectionEdit<'set_default', {
             allowedTools?: string[] | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
             agentTarget?: null | undefined | {
@@ -718,8 +724,83 @@ export type WorkflowsActionInputById = {
                     connectedServiceGroupId?: string | undefined;
                 };
             };
+            title?: string | undefined;
+            primaryTeamId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
+            memoryEnabled?: boolean | undefined;
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            teamCredentialBindings?: ({
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: null;
+            } | {
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                teamId?: string | undefined;
+                providerModelSelection?: undefined | {
+                    agentTargetKey: string;
+                    modelId: string;
+                    application?: undefined | {
+                        implementationIdentity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        endpointTemplateId: string;
+                        protocol: string;
+                        agentTargetKey: string;
+                    };
+                    executionMachineId?: string | undefined;
+                    nativeSource?: undefined | {
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            launchEnvironment?: unknown;
+            environmentVariables?: Record<string, string> | undefined;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -794,7 +875,7 @@ export type WorkflowsActionInputById = {
             } | {
                 kind: 'project_checkout';
             };
-        }, true> & object) | (WorkflowSelectionEdit<'set_step_setting', {
+        }, object, true> | WorkflowSelectionEdit<'set_step_setting', {
             allowedTools?: string[] | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
             agentTarget?: null | undefined | {
@@ -939,8 +1020,83 @@ export type WorkflowsActionInputById = {
                     connectedServiceGroupId?: string | undefined;
                 };
             };
+            title?: string | undefined;
+            primaryTeamId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
+            memoryEnabled?: boolean | undefined;
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            teamCredentialBindings?: ({
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: null;
+            } | {
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                teamId?: string | undefined;
+                providerModelSelection?: undefined | {
+                    agentTargetKey: string;
+                    modelId: string;
+                    application?: undefined | {
+                        implementationIdentity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        endpointTemplateId: string;
+                        protocol: string;
+                        agentTargetKey: string;
+                    };
+                    executionMachineId?: string | undefined;
+                    nativeSource?: undefined | {
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            launchEnvironment?: unknown;
+            environmentVariables?: Record<string, string> | undefined;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -1015,9 +1171,9 @@ export type WorkflowsActionInputById = {
             } | {
                 kind: 'project_checkout';
             };
-        }, true> & {
+        }, {
             blockId: string;
-        }) | {
+        }, true> | {
             kind: 'insert_block';
             list: {
                 kind: 'ifOtherwise';
@@ -2785,11 +2941,83 @@ type WorkflowsActionDefinition1 = Readonly<{
                 connectedServiceGroupId?: string | undefined;
             };
         };
-        permissionModeUpdatedAt?: number | undefined;
-        launchEnvironment?: undefined | {
-            values: Record<string, string>;
-            unset: string[];
+        title?: string | undefined;
+        primaryTeamId?: null | string | undefined;
+        organizationPlacement?: undefined | {
+            folderId: null | string;
+            tagIds: string[];
         };
+        memoryEnabled?: boolean | undefined;
+        secretReferenceOverlay?: undefined | {
+            v: 1;
+            bindings: Record<string, {
+                ref: string;
+                revision?: number | undefined;
+            }>;
+        };
+        teamCredentialBindings?: ({
+            v: 1;
+            slot: {
+                kind: 'connected_service_purpose';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+            } | {
+                kind: 'provider_model';
+            };
+            resourceId: null;
+        } | {
+            v: 1;
+            slot: {
+                kind: 'connected_service_purpose';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+            } | {
+                kind: 'provider_model';
+            };
+            resourceId: string;
+            expectedResourceRevision: number;
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            teamId?: string | undefined;
+            providerModelSelection?: undefined | {
+                agentTargetKey: string;
+                modelId: string;
+                application?: undefined | {
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                    agentTargetKey: string;
+                };
+                executionMachineId?: string | undefined;
+                nativeSource?: undefined | {
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
+            nativeDelivery?: undefined | {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            };
+        })[] | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        environmentVariables?: Record<string, string> | undefined;
         providerSessionResume?: undefined | {
             kind: 'provider_session.v1';
             providerSessionId: string;
@@ -2864,30 +3092,8 @@ type WorkflowsActionDefinition1 = Readonly<{
         } | {
             kind: 'project_checkout';
         };
+        roleId?: string | undefined;
         engine?: undefined | {
-            agentTarget: {
-                kind: 'agent';
-                identity: {
-                    pluginId: string;
-                    localId: string;
-                };
-                definitionId?: string | undefined;
-            };
-            modelSelection?: null | undefined | {
-                v: 1;
-                ref: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                updatedAt: number;
-            };
-            effort?: string | undefined;
-        } | {
             kind: 'input';
             name: string;
             path?: (number | string)[] | undefined;
@@ -2895,8 +3101,6 @@ type WorkflowsActionDefinition1 = Readonly<{
             kind: 'item';
             field: 'value';
             path?: (number | string)[] | undefined;
-        } | {
-            role: string;
         };
         participant?: undefined | {
             kind: 'input';
@@ -3123,11 +3327,83 @@ export type WorkflowsActionResultById = {
                         connectedServiceGroupId?: string | undefined;
                     };
                 };
-                permissionModeUpdatedAt?: number | undefined;
-                launchEnvironment?: undefined | {
-                    values: Record<string, string>;
-                    unset: string[];
+                title?: string | undefined;
+                primaryTeamId?: null | string | undefined;
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
+                    tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
+                secretReferenceOverlay?: undefined | {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                };
+                teamCredentialBindings?: ({
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    teamId?: string | undefined;
+                    providerModelSelection?: undefined | {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: undefined | {
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                            agentTargetKey: string;
+                        };
+                        executionMachineId?: string | undefined;
+                        nativeSource?: undefined | {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                })[] | undefined;
+                permissionModeUpdatedAt?: number | undefined;
+                environmentVariables?: Record<string, string> | undefined;
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -3202,30 +3478,8 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'project_checkout';
                 };
+                roleId?: string | undefined;
                 engine?: undefined | {
-                    agentTarget: {
-                        kind: 'agent';
-                        identity: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        definitionId?: string | undefined;
-                    };
-                    modelSelection?: null | undefined | {
-                        v: 1;
-                        ref: {
-                            agentTargetKey: string;
-                            providerConnectionId: null;
-                            modelId: string;
-                        } | {
-                            agentTargetKey: string;
-                            providerConnectionId: string;
-                            modelId: string;
-                        };
-                        updatedAt: number;
-                    };
-                    effort?: string | undefined;
-                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -3233,8 +3487,6 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
-                } | {
-                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -4287,6 +4539,7 @@ export type WorkflowsActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
+                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -4637,6 +4890,7 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
+                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -4860,6 +5114,7 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
+                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -5193,11 +5448,83 @@ export type WorkflowsActionResultById = {
                             connectedServiceGroupId?: string | undefined;
                         };
                     };
-                    permissionModeUpdatedAt?: number | undefined;
-                    launchEnvironment?: undefined | {
-                        values: Record<string, string>;
-                        unset: string[];
+                    title?: string | undefined;
+                    primaryTeamId?: null | string | undefined;
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
+                        tagIds: string[];
                     };
+                    memoryEnabled?: boolean | undefined;
+                    secretReferenceOverlay?: undefined | {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    };
+                    teamCredentialBindings?: ({
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: null;
+                    } | {
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        teamId?: string | undefined;
+                        providerModelSelection?: undefined | {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: undefined | {
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                                agentTargetKey: string;
+                            };
+                            executionMachineId?: string | undefined;
+                            nativeSource?: undefined | {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    })[] | undefined;
+                    permissionModeUpdatedAt?: number | undefined;
+                    environmentVariables?: Record<string, string> | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -5272,30 +5599,8 @@ export type WorkflowsActionResultById = {
                     } | {
                         kind: 'project_checkout';
                     };
+                    roleId?: string | undefined;
                     engine?: undefined | {
-                        agentTarget: {
-                            kind: 'agent';
-                            identity: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            definitionId?: string | undefined;
-                        };
-                        modelSelection?: null | undefined | {
-                            v: 1;
-                            ref: {
-                                agentTargetKey: string;
-                                providerConnectionId: null;
-                                modelId: string;
-                            } | {
-                                agentTargetKey: string;
-                                providerConnectionId: string;
-                                modelId: string;
-                            };
-                            updatedAt: number;
-                        };
-                        effort?: string | undefined;
-                    } | {
                         kind: 'input';
                         name: string;
                         path?: (number | string)[] | undefined;
@@ -5303,8 +5608,6 @@ export type WorkflowsActionResultById = {
                         kind: 'item';
                         field: 'value';
                         path?: (number | string)[] | undefined;
-                    } | {
-                        role: string;
                     };
                     participant?: undefined | {
                         kind: 'input';
@@ -5628,6 +5931,7 @@ export type WorkflowsActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
+                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -5978,6 +6282,7 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
+                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -6201,6 +6506,7 @@ export type WorkflowsActionResultById = {
                                         updatedAtMs: number;
                                     }>;
                                     workspaceWrites?: 'allow' | 'deny' | undefined;
+                                    nativeSandbox?: 'off' | 'on' | undefined;
                                     providerSessionResume?: undefined | {
                                         kind: 'provider_session.v1';
                                         providerSessionId: string;
@@ -6534,11 +6840,83 @@ export type WorkflowsActionResultById = {
                             connectedServiceGroupId?: string | undefined;
                         };
                     };
-                    permissionModeUpdatedAt?: number | undefined;
-                    launchEnvironment?: undefined | {
-                        values: Record<string, string>;
-                        unset: string[];
+                    title?: string | undefined;
+                    primaryTeamId?: null | string | undefined;
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
+                        tagIds: string[];
                     };
+                    memoryEnabled?: boolean | undefined;
+                    secretReferenceOverlay?: undefined | {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    };
+                    teamCredentialBindings?: ({
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: null;
+                    } | {
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        teamId?: string | undefined;
+                        providerModelSelection?: undefined | {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: undefined | {
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                                agentTargetKey: string;
+                            };
+                            executionMachineId?: string | undefined;
+                            nativeSource?: undefined | {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    })[] | undefined;
+                    permissionModeUpdatedAt?: number | undefined;
+                    environmentVariables?: Record<string, string> | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -6613,30 +6991,8 @@ export type WorkflowsActionResultById = {
                     } | {
                         kind: 'project_checkout';
                     };
+                    roleId?: string | undefined;
                     engine?: undefined | {
-                        agentTarget: {
-                            kind: 'agent';
-                            identity: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            definitionId?: string | undefined;
-                        };
-                        modelSelection?: null | undefined | {
-                            v: 1;
-                            ref: {
-                                agentTargetKey: string;
-                                providerConnectionId: null;
-                                modelId: string;
-                            } | {
-                                agentTargetKey: string;
-                                providerConnectionId: string;
-                                modelId: string;
-                            };
-                            updatedAt: number;
-                        };
-                        effort?: string | undefined;
-                    } | {
                         kind: 'input';
                         name: string;
                         path?: (number | string)[] | undefined;
@@ -6644,8 +7000,6 @@ export type WorkflowsActionResultById = {
                         kind: 'item';
                         field: 'value';
                         path?: (number | string)[] | undefined;
-                    } | {
-                        role: string;
                     };
                     participant?: undefined | {
                         kind: 'input';
@@ -6947,11 +7301,83 @@ export type WorkflowsActionResultById = {
                         connectedServiceGroupId?: string | undefined;
                     };
                 };
-                permissionModeUpdatedAt?: number | undefined;
-                launchEnvironment?: undefined | {
-                    values: Record<string, string>;
-                    unset: string[];
+                title?: string | undefined;
+                primaryTeamId?: null | string | undefined;
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
+                    tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
+                secretReferenceOverlay?: undefined | {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                };
+                teamCredentialBindings?: ({
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    teamId?: string | undefined;
+                    providerModelSelection?: undefined | {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: undefined | {
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                            agentTargetKey: string;
+                        };
+                        executionMachineId?: string | undefined;
+                        nativeSource?: undefined | {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                })[] | undefined;
+                permissionModeUpdatedAt?: number | undefined;
+                environmentVariables?: Record<string, string> | undefined;
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -7026,30 +7452,8 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'project_checkout';
                 };
+                roleId?: string | undefined;
                 engine?: undefined | {
-                    agentTarget: {
-                        kind: 'agent';
-                        identity: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        definitionId?: string | undefined;
-                    };
-                    modelSelection?: null | undefined | {
-                        v: 1;
-                        ref: {
-                            agentTargetKey: string;
-                            providerConnectionId: null;
-                            modelId: string;
-                        } | {
-                            agentTargetKey: string;
-                            providerConnectionId: string;
-                            modelId: string;
-                        };
-                        updatedAt: number;
-                    };
-                    effort?: string | undefined;
-                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -7057,8 +7461,6 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
-                } | {
-                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -12147,11 +12549,83 @@ export type WorkflowsActionResultById = {
                         connectedServiceGroupId?: string | undefined;
                     };
                 };
-                permissionModeUpdatedAt?: number | undefined;
-                launchEnvironment?: undefined | {
-                    values: Record<string, string>;
-                    unset: string[];
+                title?: string | undefined;
+                primaryTeamId?: null | string | undefined;
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
+                    tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
+                secretReferenceOverlay?: undefined | {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                };
+                teamCredentialBindings?: ({
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    teamId?: string | undefined;
+                    providerModelSelection?: undefined | {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: undefined | {
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                            agentTargetKey: string;
+                        };
+                        executionMachineId?: string | undefined;
+                        nativeSource?: undefined | {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                })[] | undefined;
+                permissionModeUpdatedAt?: number | undefined;
+                environmentVariables?: Record<string, string> | undefined;
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -12226,30 +12700,8 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'project_checkout';
                 };
+                roleId?: string | undefined;
                 engine?: undefined | {
-                    agentTarget: {
-                        kind: 'agent';
-                        identity: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        definitionId?: string | undefined;
-                    };
-                    modelSelection?: null | undefined | {
-                        v: 1;
-                        ref: {
-                            agentTargetKey: string;
-                            providerConnectionId: null;
-                            modelId: string;
-                        } | {
-                            agentTargetKey: string;
-                            providerConnectionId: string;
-                            modelId: string;
-                        };
-                        updatedAt: number;
-                    };
-                    effort?: string | undefined;
-                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -12257,8 +12709,6 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
-                } | {
-                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -12545,11 +12995,83 @@ export type WorkflowsActionResultById = {
                         connectedServiceGroupId?: string | undefined;
                     };
                 };
-                permissionModeUpdatedAt?: number | undefined;
-                launchEnvironment?: undefined | {
-                    values: Record<string, string>;
-                    unset: string[];
+                title?: string | undefined;
+                primaryTeamId?: null | string | undefined;
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
+                    tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
+                secretReferenceOverlay?: undefined | {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                };
+                teamCredentialBindings?: ({
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    teamId?: string | undefined;
+                    providerModelSelection?: undefined | {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: undefined | {
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                            agentTargetKey: string;
+                        };
+                        executionMachineId?: string | undefined;
+                        nativeSource?: undefined | {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                })[] | undefined;
+                permissionModeUpdatedAt?: number | undefined;
+                environmentVariables?: Record<string, string> | undefined;
                 providerSessionResume?: undefined | {
                     kind: 'provider_session.v1';
                     providerSessionId: string;
@@ -12624,30 +13146,8 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'project_checkout';
                 };
+                roleId?: string | undefined;
                 engine?: undefined | {
-                    agentTarget: {
-                        kind: 'agent';
-                        identity: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        definitionId?: string | undefined;
-                    };
-                    modelSelection?: null | undefined | {
-                        v: 1;
-                        ref: {
-                            agentTargetKey: string;
-                            providerConnectionId: null;
-                            modelId: string;
-                        } | {
-                            agentTargetKey: string;
-                            providerConnectionId: string;
-                            modelId: string;
-                        };
-                        updatedAt: number;
-                    };
-                    effort?: string | undefined;
-                } | {
                     kind: 'input';
                     name: string;
                     path?: (number | string)[] | undefined;
@@ -12655,8 +13155,6 @@ export type WorkflowsActionResultById = {
                     kind: 'item';
                     field: 'value';
                     path?: (number | string)[] | undefined;
-                } | {
-                    role: string;
                 };
                 participant?: undefined | {
                     kind: 'input';
@@ -12822,6 +13320,7 @@ export type WorkflowsActionResultById = {
                             updatedAtMs: number;
                         }>;
                         workspaceWrites?: 'allow' | 'deny' | undefined;
+                        nativeSandbox?: 'off' | 'on' | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -13464,11 +13963,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -13543,30 +14114,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -13574,8 +14123,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -14320,11 +14867,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -14399,30 +15018,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -14430,8 +15027,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -15033,11 +15628,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -15112,30 +15779,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -15143,8 +15788,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -15750,11 +16393,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -15829,30 +16544,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -15860,8 +16553,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -16625,11 +17316,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -16704,30 +17467,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -16735,8 +17476,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -17496,11 +18235,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -17575,30 +18386,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -17606,8 +18395,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -18209,11 +18996,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -18288,30 +19147,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -18319,8 +19156,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -18922,11 +19757,83 @@ export type WorkflowsActionResultById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         };
-                        permissionModeUpdatedAt?: number | undefined;
-                        launchEnvironment?: undefined | {
-                            values: Record<string, string>;
-                            unset: string[];
+                        title?: string | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
                         };
+                        memoryEnabled?: boolean | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        environmentVariables?: Record<string, string> | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -19001,30 +19908,8 @@ export type WorkflowsActionResultById = {
                         } | {
                             kind: 'project_checkout';
                         };
+                        roleId?: string | undefined;
                         engine?: undefined | {
-                            agentTarget: {
-                                kind: 'agent';
-                                identity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                definitionId?: string | undefined;
-                            };
-                            modelSelection?: null | undefined | {
-                                v: 1;
-                                ref: {
-                                    agentTargetKey: string;
-                                    providerConnectionId: null;
-                                    modelId: string;
-                                } | {
-                                    agentTargetKey: string;
-                                    providerConnectionId: string;
-                                    modelId: string;
-                                };
-                                updatedAt: number;
-                            };
-                            effort?: string | undefined;
-                        } | {
                             kind: 'input';
                             name: string;
                             path?: (number | string)[] | undefined;
@@ -19032,8 +19917,6 @@ export type WorkflowsActionResultById = {
                             kind: 'item';
                             field: 'value';
                             path?: (number | string)[] | undefined;
-                        } | {
-                            role: string;
                         };
                         participant?: undefined | {
                             kind: 'input';
@@ -19325,11 +20208,83 @@ type WorkflowsActionDefinition2 = Readonly<{
                 connectedServiceGroupId?: string | undefined;
             };
         };
-        permissionModeUpdatedAt?: number | undefined;
-        launchEnvironment?: undefined | {
-            values: Record<string, string>;
-            unset: string[];
+        title?: string | undefined;
+        primaryTeamId?: null | string | undefined;
+        organizationPlacement?: undefined | {
+            folderId: null | string;
+            tagIds: string[];
         };
+        memoryEnabled?: boolean | undefined;
+        secretReferenceOverlay?: undefined | {
+            v: 1;
+            bindings: Record<string, {
+                ref: string;
+                revision?: number | undefined;
+            }>;
+        };
+        teamCredentialBindings?: ({
+            v: 1;
+            slot: {
+                kind: 'connected_service_purpose';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+            } | {
+                kind: 'provider_model';
+            };
+            resourceId: null;
+        } | {
+            v: 1;
+            slot: {
+                kind: 'connected_service_purpose';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+            } | {
+                kind: 'provider_model';
+            };
+            resourceId: string;
+            expectedResourceRevision: number;
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            teamId?: string | undefined;
+            providerModelSelection?: undefined | {
+                agentTargetKey: string;
+                modelId: string;
+                application?: undefined | {
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                    agentTargetKey: string;
+                };
+                executionMachineId?: string | undefined;
+                nativeSource?: undefined | {
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
+            nativeDelivery?: undefined | {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            };
+        })[] | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        environmentVariables?: Record<string, string> | undefined;
         providerSessionResume?: undefined | {
             kind: 'provider_session.v1';
             providerSessionId: string;
@@ -19404,30 +20359,8 @@ type WorkflowsActionDefinition2 = Readonly<{
         } | {
             kind: 'project_checkout';
         };
+        roleId?: string | undefined;
         engine?: undefined | {
-            agentTarget: {
-                kind: 'agent';
-                identity: {
-                    pluginId: string;
-                    localId: string;
-                };
-                definitionId?: string | undefined;
-            };
-            modelSelection?: null | undefined | {
-                v: 1;
-                ref: {
-                    agentTargetKey: string;
-                    providerConnectionId: null;
-                    modelId: string;
-                } | {
-                    agentTargetKey: string;
-                    providerConnectionId: string;
-                    modelId: string;
-                };
-                updatedAt: number;
-            };
-            effort?: string | undefined;
-        } | {
             kind: 'input';
             name: string;
             path?: (number | string)[] | undefined;
@@ -19435,8 +20368,6 @@ type WorkflowsActionDefinition2 = Readonly<{
             kind: 'item';
             field: 'value';
             path?: (number | string)[] | undefined;
-        } | {
-            role: string;
         };
         participant?: undefined | {
             kind: 'input';
@@ -19627,11 +20558,83 @@ type WorkflowsActionSelection1 = {
             connectedServiceGroupId?: string | undefined;
         };
     };
-    permissionModeUpdatedAt?: number | undefined;
-    launchEnvironment?: undefined | {
-        values: Record<string, string>;
-        unset: string[];
+    title?: string | undefined;
+    primaryTeamId?: null | string | undefined;
+    organizationPlacement?: undefined | {
+        folderId: null | string;
+        tagIds: string[];
     };
+    memoryEnabled?: boolean | undefined;
+    secretReferenceOverlay?: undefined | {
+        v: 1;
+        bindings: Record<string, {
+            ref: string;
+            revision?: number | undefined;
+        }>;
+    };
+    teamCredentialBindings?: ({
+        v: 1;
+        slot: {
+            kind: 'connected_service_purpose';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+        } | {
+            kind: 'provider_model';
+        };
+        resourceId: null;
+    } | {
+        v: 1;
+        slot: {
+            kind: 'connected_service_purpose';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+        } | {
+            kind: 'provider_model';
+        };
+        resourceId: string;
+        expectedResourceRevision: number;
+        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+        teamId?: string | undefined;
+        providerModelSelection?: undefined | {
+            agentTargetKey: string;
+            modelId: string;
+            application?: undefined | {
+                implementationIdentity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                endpointTemplateId: string;
+                protocol: string;
+                agentTargetKey: string;
+            };
+            executionMachineId?: string | undefined;
+            nativeSource?: undefined | {
+                sourceRevision: string;
+                providerTicket: string;
+            };
+        };
+        nativeDelivery?: undefined | {
+            managedId: string;
+            controllerInstallationId: string;
+            guestInstallationId: string;
+            bindingKey: string;
+            placeholderRef: string;
+            sourceRevision: string;
+            providerTicket: string;
+        };
+    })[] | undefined;
+    permissionModeUpdatedAt?: number | undefined;
+    environmentVariables?: Record<string, string> | undefined;
     providerSessionResume?: undefined | {
         kind: 'provider_session.v1';
         providerSessionId: string;
@@ -19858,6 +20861,13 @@ type WorkflowsActionExecution1 = undefined | {
                 connectedServiceProfileId?: string | undefined;
                 connectedServiceGroupId?: string | undefined;
             };
+        };
+        secretReferenceOverlay?: undefined | {
+            v: 1;
+            bindings: Record<string, {
+                ref: string;
+                revision?: number | undefined;
+            }>;
         };
     };
     turnId?: string | undefined;

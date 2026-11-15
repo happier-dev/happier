@@ -300,6 +300,363 @@ export type SessionAuthoringActionInputById = {
             serverId: string;
             sessionId: string;
         };
+        seed?: undefined | {
+            actionDefault?: undefined | {
+                pluginId: string;
+                configuredActionId: string;
+                label: string;
+                launchMode: 'review' | 'start';
+            };
+            sessionName?: string | undefined;
+            initialSessionFacts?: undefined | {
+                bot?: undefined | {
+                    kind: 'bot';
+                };
+                botFace?: undefined | {
+                    style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
+                    body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
+                    palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
+                    seed?: string | undefined;
+                    shape?: undefined | {
+                        v: 1;
+                        fill: string[];
+                        mouth: [
+                            number,
+                            number,
+                            number
+                        ];
+                        stroke?: [
+                            string,
+                            number
+                        ][] | undefined;
+                        cut?: ([
+                            string,
+                            number
+                        ] | string)[] | undefined;
+                        origin?: 'custom' | 'surprise' | undefined;
+                    };
+                };
+                createdAsBot?: true | undefined;
+            };
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
+            prompt?: string | undefined;
+            currentUiContext?: undefined | {
+                navigation: {
+                    area: string;
+                    screen: string;
+                    title?: string | undefined;
+                    presentation?: 'modal' | 'pane' | 'screen' | undefined;
+                };
+                commands: {
+                    id: string;
+                    title: string;
+                    description?: string | undefined;
+                }[];
+                entity?: undefined | {
+                    kind: string;
+                    label: string;
+                    summary?: string | undefined;
+                    reference?: JsonValue | undefined;
+                };
+                detail?: JsonValue | undefined;
+            };
+            profileId?: string | undefined;
+            agentTarget?: undefined | {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            };
+            origin?: undefined | {
+                kind: 'project';
+                accountId: string;
+                workspace: {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                };
+                page: 'changes' | 'code' | 'context' | 'overview' | 'scripts' | 'services';
+                purpose?: 'session' | undefined;
+                comparisonId?: string | undefined;
+                layoutId?: string | undefined;
+                attachedDashboard?: undefined | {
+                    sourceId: string;
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                codeLocation?: undefined | {
+                    kind: 'file';
+                    path: string;
+                } | {
+                    kind: 'folder';
+                    path: string;
+                };
+                resource?: undefined | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
+                    kind: 'file';
+                    path: string;
+                    anchor?: undefined | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    };
+                    anchorSource?: 'diff' | 'file' | undefined;
+                };
+                surface?: 'browse' | 'browser' | 'changes' | 'code' | 'context' | 'git' | 'overview' | 'scripts' | 'services' | 'tabs' | 'terminal' | undefined;
+                companion?: 'browser' | 'files' | 'git' | 'scripts' | 'services' | 'terminal' | undefined | {
+                    kind: 'plugin';
+                    destination: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    instanceKey?: string | undefined;
+                };
+            };
+            checkoutIntent?: 'ask' | 'createWorktree' | 'none' | 'preparedReviewWorkspace' | 'reuseWorkspace' | undefined;
+            placement?: undefined | {
+                kind: 'currentTarget';
+                directory: string;
+            } | {
+                kind: 'exactTarget';
+                serverId: string;
+                machineId: string;
+                directory?: string | undefined;
+            };
+            directoryIntent?: undefined | {
+                kind: 'managed';
+            } | {
+                kind: 'path';
+                path: string;
+            };
+            candidates?: readonly {
+                projectKey: {
+                    id: string;
+                    serverId?: string | undefined;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    rootPath: string;
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                };
+                serverId: string;
+                machineId: string;
+                rootPath: string;
+                reachable: boolean;
+                worktrees: {
+                    path: string;
+                    branch: null | string;
+                    isMain: boolean;
+                    isCurrent: boolean;
+                }[];
+                label?: string | undefined;
+            }[] | undefined;
+            attachments?: readonly {
+                attachmentLocalId: string;
+                value: {
+                    key: string;
+                    value: unknown;
+                    presentation: {
+                        label: string;
+                        description?: string | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        source?: undefined | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                };
+            }[] | undefined;
+        };
+        replay?: undefined | {
+            type: 'latest';
+        } | {
+            type: 'seq';
+            upToSeqInclusive: number;
+        };
+        connectedServices?: null | undefined | {
+            v: 1;
+            bindingsByServiceId: Record<string, {
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
+            } | {
+                source: 'connected';
+                selection: 'group';
+                groupId: string;
+                profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
+            } | {
+                source: 'native';
+            }>;
+        } | {
+            v: 1;
+            bindingsByServiceId: Record<string, {
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
+            } | {
+                source: 'connected';
+                selection: 'group';
+                groupId: string;
+                profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
+            } | {
+                source: 'native';
+            }>;
+        } | {
+            v: 2;
+            bindingsByServiceId?: Record<string, {
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
+            } | {
+                source: 'connected';
+                selection: 'group';
+                groupId: string;
+                profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
+            } | {
+                source: 'native';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'direct';
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            }> | undefined;
+        };
     }) & {
         clientId?: string | undefined;
     };

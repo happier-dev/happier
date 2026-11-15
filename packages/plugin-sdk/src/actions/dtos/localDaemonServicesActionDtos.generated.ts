@@ -131,6 +131,7 @@ export type LocalDaemonServicesActionInputById = {
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
+            buildMachineId?: string | undefined;
             newProject?: undefined | {
                 name: string;
                 requestKey: string;
@@ -146,7 +147,6 @@ export type LocalDaemonServicesActionInputById = {
                 principalKind: 'account' | 'teamGroup';
                 principalId: string;
             }[];
-            buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -174,10 +174,10 @@ export type LocalDaemonServicesActionInputById = {
                 resourceRevision: number;
                 kind: 'secret';
             };
-            grantRef: string;
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
+            grantRef?: string | undefined;
         }[];
         serverId: string;
         machineId: string;
@@ -572,6 +572,19 @@ export type LocalDaemonServicesActionResultById = {
             };
             observedAt: null | number;
             freshness: 'current' | 'unavailable';
+            configurationDetails?: undefined | {
+                nativeResourceId: string;
+                image: null | string;
+                imageDigest: null | string;
+                command: null | string[];
+                networks: null | string[];
+                networkMode: null | string;
+                variableNames: null | string[];
+                healthcheck: null | {
+                    test: string[];
+                    intervalNs: null | number;
+                };
+            }[];
             accounting?: undefined | {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;

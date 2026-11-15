@@ -257,6 +257,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -270,7 +271,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -543,6 +543,7 @@ export type McpServersActionInputById = {
             where?: undefined | {
                 kind: 'replace';
                 rules: {
+                    enabled: boolean;
                     target: {
                         t: 'allMachines';
                     } | {
@@ -556,7 +557,6 @@ export type McpServersActionInputById = {
                         machineId: string;
                         workspaceRoot: string;
                     };
-                    enabled: boolean;
                     agentId?: string | undefined;
                 }[];
             } | {
@@ -619,6 +619,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -632,7 +633,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -661,6 +661,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -674,7 +675,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -1086,6 +1086,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -1099,7 +1100,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -1492,6 +1492,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -1505,7 +1506,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {

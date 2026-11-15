@@ -250,6 +250,15 @@ export type SavedSecretSharingActionInputById = {
                 revision: 'absent' | number;
                 resourceRefs: string[];
             };
+            opaquePresetReferences?: undefined | {
+                presets: {
+                    presetId: string;
+                }[];
+                snapshots: {
+                    managedId: string;
+                    presetId: string;
+                }[];
+            };
         } | {
             scope: 'catalogs';
             accountMode: 'e2ee' | 'plain';
@@ -1760,6 +1769,51 @@ export type SavedSecretSharingActionInputById = {
             personalSecretId: string;
             resourceId: string;
         }[];
+        opaquePresetRewrites?: undefined | {
+            presets: {
+                presetId: string;
+                expectedRevision: number;
+                replacement: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: unknown;
+                    };
+                    recipients: {
+                        accountId: string;
+                        envelope: {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                    }[];
+                };
+            }[];
+            snapshots: {
+                managedId: string;
+                presetId: string;
+                expectedContentEncryptionMode: 'e2ee' | 'plain';
+                expectedContent: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+                expectedRecipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                replacementContent: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
+            }[];
+        };
         remoteHostMutation?: undefined | {
             expectedRevision: 'absent' | number;
             content: {
@@ -2092,8 +2146,23 @@ export type SavedSecretSharingActionInputById = {
                 revision: 'absent' | number;
                 resourceRefs: string[];
             };
+            opaquePresetReferences?: undefined | {
+                presets: {
+                    presetId: string;
+                }[];
+                snapshots: {
+                    managedId: string;
+                    presetId: string;
+                }[];
+            };
         };
-        managedResourceDispositions?: undefined | {
+        managedResourceDispositions?: ({
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            opaquePreset: true;
+            responsibility: 'manual';
+        } | {
             managedId: string;
             expectedIntentRevision: number;
             expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
@@ -2133,7 +2202,7 @@ export type SavedSecretSharingActionInputById = {
                 reason: string;
                 consoleUrl?: string | undefined;
             };
-        }[];
+        })[] | undefined;
     };
     readonly "secrets.shared.repair": {
         resourceId: string;
@@ -2179,7 +2248,25 @@ export type SavedSecretSharingActionResultById = {
                 teamId: string;
                 teamName: string;
                 groupId: string;
-                name: string;
+                name: {
+                    kind: 'available';
+                    label: {
+                        content: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: string;
+                        };
+                        recipientEnvelope: null | {
+                            encryptedDataKey: string;
+                            recipientContentPublicKeyFingerprint: string;
+                        };
+                        legacyPlaintext?: true | undefined;
+                    };
+                } | {
+                    kind: 'unavailable';
+                };
             } | {
                 kind: 'team';
                 teamId: string;
@@ -2205,7 +2292,25 @@ export type SavedSecretSharingActionResultById = {
                     teamId: string;
                     teamName: string;
                     groupId: string;
-                    name: string;
+                    name: {
+                        kind: 'available';
+                        label: {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: string;
+                            };
+                            recipientEnvelope: null | {
+                                encryptedDataKey: string;
+                                recipientContentPublicKeyFingerprint: string;
+                            };
+                            legacyPlaintext?: true | undefined;
+                        };
+                    } | {
+                        kind: 'unavailable';
+                    };
                 }[];
             };
             ownerAccountId: null | string;

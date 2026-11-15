@@ -683,6 +683,7 @@ export type ComputerControlActionResultById = {
             windowId: number | string;
         };
         sourceId: string;
+        code?: string | undefined;
         targetLabel?: string | undefined;
         provider?: 'agent-desktop' | 'cua' | undefined;
     } | {
@@ -816,6 +817,7 @@ export type ComputerControlActionResultById = {
             windowId: number | string;
         };
         sourceId: string;
+        code?: string | undefined;
         targetLabel?: string | undefined;
         provider?: 'agent-desktop' | 'cua' | undefined;
     } | {
@@ -903,6 +905,7 @@ export type ComputerControlActionResultById = {
             windowId: number | string;
         };
         sourceId: string;
+        code?: string | undefined;
         targetLabel?: string | undefined;
         provider?: 'agent-desktop' | 'cua' | undefined;
     } | {
@@ -990,6 +993,7 @@ export type ComputerControlActionResultById = {
             windowId: number | string;
         };
         sourceId: string;
+        code?: string | undefined;
         targetLabel?: string | undefined;
         provider?: 'agent-desktop' | 'cua' | undefined;
     } | {

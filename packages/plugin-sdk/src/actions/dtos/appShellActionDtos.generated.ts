@@ -116,6 +116,79 @@ export type AppShellActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "session.draft.agent.set": {
+        ref: {
+            kind: 'automationAuthoring';
+            sessionId: string;
+            instanceId: string;
+        } | {
+            kind: 'discussion';
+            discussionId: string;
+        } | {
+            kind: 'newSession';
+            instanceId: string;
+        } | {
+            kind: 'participantMessage';
+            sessionId: string;
+            instanceId: string;
+        } | {
+            kind: 'pendingMessage';
+            sessionId: string;
+            localId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'workflowAuthoring';
+            draftId: string;
+            blockId: string;
+            instanceId: string;
+        };
+        agent: {
+            kind: 'config';
+            configId: string;
+            value: string;
+        } | {
+            kind: 'mode';
+            sessionModeId: null | string;
+        } | {
+            kind: 'picker';
+            backendTarget: {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            } | {
+                kind: 'backend';
+                backendId: string;
+                configuredBackendId?: string | undefined;
+                sourceKind?: 'built_in' | 'configured' | undefined;
+            };
+            selection: {
+                modelId: string;
+                sessionModeId: null | string;
+                configOverrides: Record<string, string>;
+                modelSelection?: null | undefined | {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                };
+                modelLabel?: null | string | undefined;
+            };
+        };
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "session.draft.directory.set": {
         ref: {
             kind: 'automationAuthoring';
@@ -497,6 +570,9 @@ export type AppShellActionResultById = {
         status: 'deleted' | 'launch_custody' | 'missing' | 'unavailable';
     };
     readonly "session.draft.model.set": {
+        status: 'applied' | 'unavailable';
+    };
+    readonly "session.draft.agent.set": {
         status: 'applied' | 'unavailable';
     };
     readonly "session.draft.directory.set": {

@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ExecutionRunControlActionInputById = {
     readonly "execution.run.start": {
@@ -2355,6 +2356,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -2362,6 +2364,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -2394,11 +2400,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -2496,6 +2500,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -2503,6 +2508,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -2535,11 +2544,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -2780,6 +2787,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -2787,6 +2795,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -2819,11 +2831,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -3156,6 +3166,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -3163,6 +3174,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -3195,11 +3210,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -3297,6 +3310,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -3304,6 +3318,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -3336,11 +3354,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -3581,6 +3597,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -3588,6 +3605,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -3620,11 +3641,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -3956,6 +3975,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -3963,6 +3983,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -3995,11 +4019,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -4097,6 +4119,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -4104,6 +4127,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -4136,11 +4163,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -4381,6 +4406,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -4388,6 +4414,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -4420,11 +4450,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -4757,6 +4785,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -4764,6 +4793,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -4796,11 +4829,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -4898,6 +4929,7 @@ export type ExecutionRunControlActionResultById = {
                                     failureCause?: undefined | {
                                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        actionCause?: ActionFailureCauseV1 | undefined;
                                         code?: string | undefined;
                                         retryable?: boolean | undefined;
                                         requestId?: string | undefined;
@@ -4905,6 +4937,10 @@ export type ExecutionRunControlActionResultById = {
                                             code: string;
                                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                             requestId?: string | undefined;
+                                        };
+                                        carrierFailure?: undefined | {
+                                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                         };
                                         connectedServicesDefault?: undefined | {
                                             v: 1;
@@ -4937,11 +4973,9 @@ export type ExecutionRunControlActionResultById = {
                                     agentId?: string | undefined;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
-                                    diagnostics?: undefined | ({
-                                        [x: string]: boolean | null | number | string;
-                                    } & {
+                                    diagnostics?: (Record<string, boolean | null | number | string> & {
                                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                    });
+                                    }) | undefined;
                                 };
                             };
                         };
@@ -5182,6 +5216,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -5189,6 +5224,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -5221,11 +5260,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -5610,6 +5647,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -5617,6 +5655,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -5649,11 +5691,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -5751,6 +5791,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -5758,6 +5799,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -5790,11 +5835,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -6035,6 +6078,7 @@ export type ExecutionRunControlActionResultById = {
                     failureCause?: undefined | {
                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                        actionCause?: ActionFailureCauseV1 | undefined;
                         code?: string | undefined;
                         retryable?: boolean | undefined;
                         requestId?: string | undefined;
@@ -6042,6 +6086,10 @@ export type ExecutionRunControlActionResultById = {
                             code: string;
                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                             requestId?: string | undefined;
+                        };
+                        carrierFailure?: undefined | {
+                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                         };
                         connectedServicesDefault?: undefined | {
                             v: 1;
@@ -6074,11 +6122,9 @@ export type ExecutionRunControlActionResultById = {
                     agentId?: string | undefined;
                     profileId?: string | undefined;
                     groupId?: string | undefined;
-                    diagnostics?: undefined | ({
-                        [x: string]: boolean | null | number | string;
-                    } & {
+                    diagnostics?: (Record<string, boolean | null | number | string> & {
                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                    });
+                    }) | undefined;
                 };
             };
         }[];
@@ -6289,6 +6335,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -6296,6 +6343,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -6328,11 +6379,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -6430,6 +6479,7 @@ export type ExecutionRunControlActionResultById = {
                             failureCause?: undefined | {
                                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
                                 code?: string | undefined;
                                 retryable?: boolean | undefined;
                                 requestId?: string | undefined;
@@ -6437,6 +6487,10 @@ export type ExecutionRunControlActionResultById = {
                                     code: string;
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                 };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
@@ -6469,11 +6523,9 @@ export type ExecutionRunControlActionResultById = {
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: undefined | ({
-                                [x: string]: boolean | null | number | string;
-                            } & {
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
                                 reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                            });
+                            }) | undefined;
                         };
                     };
                 };
@@ -6714,6 +6766,7 @@ export type ExecutionRunControlActionResultById = {
                     failureCause?: undefined | {
                         phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                         failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                        actionCause?: ActionFailureCauseV1 | undefined;
                         code?: string | undefined;
                         retryable?: boolean | undefined;
                         requestId?: string | undefined;
@@ -6721,6 +6774,10 @@ export type ExecutionRunControlActionResultById = {
                             code: string;
                             stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                             requestId?: string | undefined;
+                        };
+                        carrierFailure?: undefined | {
+                            closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                            closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                         };
                         connectedServicesDefault?: undefined | {
                             v: 1;
@@ -6753,11 +6810,9 @@ export type ExecutionRunControlActionResultById = {
                     agentId?: string | undefined;
                     profileId?: string | undefined;
                     groupId?: string | undefined;
-                    diagnostics?: undefined | ({
-                        [x: string]: boolean | null | number | string;
-                    } & {
+                    diagnostics?: (Record<string, boolean | null | number | string> & {
                         reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                    });
+                    }) | undefined;
                 };
             };
         };
@@ -6989,6 +7044,7 @@ export type ExecutionRunControlActionResultById = {
                 failureCause?: undefined | {
                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                    actionCause?: ActionFailureCauseV1 | undefined;
                     code?: string | undefined;
                     retryable?: boolean | undefined;
                     requestId?: string | undefined;
@@ -6996,6 +7052,10 @@ export type ExecutionRunControlActionResultById = {
                         code: string;
                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                         requestId?: string | undefined;
+                    };
+                    carrierFailure?: undefined | {
+                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                     };
                     connectedServicesDefault?: undefined | {
                         v: 1;
@@ -7320,6 +7380,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -7327,6 +7388,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -7359,11 +7424,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -7461,6 +7524,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -7468,6 +7532,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -7500,11 +7568,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -7745,6 +7811,7 @@ export type ExecutionRunControlActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -7752,6 +7819,10 @@ export type ExecutionRunControlActionResultById = {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                             };
                             connectedServicesDefault?: undefined | {
                                 v: 1;
@@ -7784,11 +7855,9 @@ export type ExecutionRunControlActionResultById = {
                         agentId?: string | undefined;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
-                        diagnostics?: undefined | ({
-                            [x: string]: boolean | null | number | string;
-                        } & {
+                        diagnostics?: (Record<string, boolean | null | number | string> & {
                             reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                        });
+                        }) | undefined;
                     };
                 };
             };
@@ -8121,6 +8190,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -8128,6 +8198,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -8160,11 +8234,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -8262,6 +8334,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -8269,6 +8342,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -8301,11 +8378,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -8546,6 +8621,7 @@ export type ExecutionRunControlActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -8553,6 +8629,10 @@ export type ExecutionRunControlActionResultById = {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                             };
                             connectedServicesDefault?: undefined | {
                                 v: 1;
@@ -8585,11 +8665,9 @@ export type ExecutionRunControlActionResultById = {
                         agentId?: string | undefined;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
-                        diagnostics?: undefined | ({
-                            [x: string]: boolean | null | number | string;
-                        } & {
+                        diagnostics?: (Record<string, boolean | null | number | string> & {
                             reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                        });
+                        }) | undefined;
                     };
                 };
             };
@@ -8921,6 +8999,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -8928,6 +9007,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -8960,11 +9043,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -9062,6 +9143,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -9069,6 +9151,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -9101,11 +9187,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -9346,6 +9430,7 @@ export type ExecutionRunControlActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -9353,6 +9438,10 @@ export type ExecutionRunControlActionResultById = {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                             };
                             connectedServicesDefault?: undefined | {
                                 v: 1;
@@ -9385,11 +9474,9 @@ export type ExecutionRunControlActionResultById = {
                         agentId?: string | undefined;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
-                        diagnostics?: undefined | ({
-                            [x: string]: boolean | null | number | string;
-                        } & {
+                        diagnostics?: (Record<string, boolean | null | number | string> & {
                             reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                        });
+                        }) | undefined;
                     };
                 };
             };
@@ -9722,6 +9809,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -9729,6 +9817,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -9761,11 +9853,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -9863,6 +9953,7 @@ export type ExecutionRunControlActionResultById = {
                                 failureCause?: undefined | {
                                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                                     failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    actionCause?: ActionFailureCauseV1 | undefined;
                                     code?: string | undefined;
                                     retryable?: boolean | undefined;
                                     requestId?: string | undefined;
@@ -9870,6 +9961,10 @@ export type ExecutionRunControlActionResultById = {
                                         code: string;
                                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                         requestId?: string | undefined;
+                                    };
+                                    carrierFailure?: undefined | {
+                                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                                     };
                                     connectedServicesDefault?: undefined | {
                                         v: 1;
@@ -9902,11 +9997,9 @@ export type ExecutionRunControlActionResultById = {
                                 agentId?: string | undefined;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
-                                diagnostics?: undefined | ({
-                                    [x: string]: boolean | null | number | string;
-                                } & {
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
                                     reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                                });
+                                }) | undefined;
                             };
                         };
                     };
@@ -10147,6 +10240,7 @@ export type ExecutionRunControlActionResultById = {
                         failureCause?: undefined | {
                             phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                             failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
                             code?: string | undefined;
                             retryable?: boolean | undefined;
                             requestId?: string | undefined;
@@ -10154,6 +10248,10 @@ export type ExecutionRunControlActionResultById = {
                                 code: string;
                                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                 requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
                             };
                             connectedServicesDefault?: undefined | {
                                 v: 1;
@@ -10186,11 +10284,9 @@ export type ExecutionRunControlActionResultById = {
                         agentId?: string | undefined;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
-                        diagnostics?: undefined | ({
-                            [x: string]: boolean | null | number | string;
-                        } & {
+                        diagnostics?: (Record<string, boolean | null | number | string> & {
                             reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
-                        });
+                        }) | undefined;
                     };
                 };
             };

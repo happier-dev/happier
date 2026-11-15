@@ -1993,6 +1993,26 @@ export type LaunchProfilesActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -2014,6 +2034,26 @@ export type LaunchProfilesActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -2036,6 +2076,26 @@ export type LaunchProfilesActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;

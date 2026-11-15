@@ -3,7 +3,7 @@
 One Happier Session keeps its identity and transcript while the Agent running it is replaced. The
 product name is **Continue with another Agent**. In current 0.3 development source, mutation enters
 through the admitted `session.agent.transition` Account Action; the raw `session.agentTransition`
-machine mutation is retired. Inspection and brief preview remain read-only Machine RPCs.
+machine mutation is retired. Inspection and brief preview retain read-only Machine RPC transport.
 The admitted transition also carries its source Stop's metadata retirement: the server accepts
 the same owner-tuple PATCH as standalone Stop, bound to the transition's exact Session. Inspection
 cannot use that mutation phase, and the existing metadata writer retains content and owner access
@@ -45,6 +45,14 @@ their conditional persona-name policy.
 
 ## Wire contract
 
+In 0.3 development, selecting an Agent in the composer enters
+`session.draft.agent.set` with an exact Session composer reference. Agents and MCP
+use the same Action to arm the next message; `session.draft.model.set` edits an
+already armed choice. The mounted continuation picker owns eligibility and the
+Session draft write. Explicit Action demand awaits the inspection owner's exact
+selection without opening the picker. An unavailable inspection or stale Account
+scope leaves the choice unarmed. Sending later enters `session.agent.transition`.
+
 The cutover HTTP serializer keeps `legacy_v0` requests compatible with the moving
 0.2 server: it omits `usageTimingV1` from both the current view and divider, whose
 0.2 request objects reject unknown fields. Missing timing remains unknown to Usage.
@@ -56,7 +64,11 @@ it adds no server feature bit or retry after a 400 response.
 `packages/protocol/src/actions/sessionAgentTransitionActionFamily.ts` declares the mutation Action.
 Its input uses the request below without `v`. The composer operation invokes the real UI Action
 executor, which selects the Session Machine and admits requester custody before daemon execution.
-`session.continuation.inspect` remains declared in `packages/protocol/src/rpc/methods.ts`.
+In 0.3 development, picker inspection uses the read-only `session.continuation.inspect`
+Action without switch approval. It accepts either `selection` or `selections`; a batch
+returns ordered inspection queries through one Machine batch RPC. The hosting adapter
+retains `session.read` authorization and the existing single-target fallback for older
+daemons. Inspection never grants transition authority or decides eligibility in the UI.
 Action failures retain their typed owner code and use the existing Action failure presenter in the
 composer banner. Known refusals preserve the prompt and arm; the canonical Action unknown-outcome
 classification still blocks resend until reconciliation. No raw-RPC fallback is attempted.

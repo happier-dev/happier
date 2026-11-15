@@ -12,7 +12,7 @@ export type ProjectDefinitionsActionInputById = {
             rootPath: string;
         };
         read?: undefined | {
-            kind: 'create' | 'editor' | 'guidance' | 'imports' | 'placement' | 'scripts' | 'services' | 'setup' | 'tools';
+            kind: 'applications' | 'create' | 'editor' | 'guidance' | 'imports' | 'placement' | 'scripts' | 'services' | 'setup' | 'tools';
         } | {
             kind: 'detail';
             sources: {
@@ -275,6 +275,48 @@ export type ProjectDefinitionsActionResultById = {
                 file: string;
                 requestedVersion?: string | undefined;
             }[];
+            applications?: undefined | {
+                file: string;
+                framework: null | string;
+                runtime: null | {
+                    name: string;
+                    version: string;
+                };
+                build: null | {
+                    kind: 'native';
+                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                    file: string;
+                    target: string;
+                } | {
+                    kind: 'pluginNative';
+                    adapter: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    file: string;
+                    target: string;
+                };
+                start: null | {
+                    kind: 'native';
+                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                    file: string;
+                    target: string;
+                } | {
+                    kind: 'pluginNative';
+                    adapter: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    file: string;
+                    target: string;
+                };
+                port: null | number;
+            }[];
+            rootFiles?: undefined | {
+                dockerfile: 'absent' | 'present' | 'unknown';
+                compose: 'absent' | 'present' | 'unknown';
+            };
+            observedAtMs?: number | undefined;
         };
         importCandidates: {
             source: {

@@ -429,6 +429,11 @@ export type InventoryActionInputById = {
         pinned?: boolean | undefined;
         projectKey?: string | undefined;
     };
+    readonly "projects.services.pin": {
+        serverId: string;
+        environmentId: string;
+        pinned: boolean;
+    };
     readonly "projects.workspace.forget": {
         serverId: string;
         workspaceId: string;
@@ -883,6 +888,26 @@ export type InventoryActionResultById = {
                 sourceId: string;
                 revision: number;
             };
+            repositoryObservation?: undefined | {
+                observedAtMs: number;
+                coverage: 'complete' | 'partial';
+                rootFiles: {
+                    dockerfile: 'absent' | 'present' | 'unknown';
+                    compose: 'absent' | 'present' | 'unknown';
+                };
+                applications: {
+                    file: string;
+                    framework: null | string;
+                    runtime: null | {
+                        name: string;
+                        version: string;
+                    };
+                }[];
+                source: {
+                    sourceId: string;
+                    revision: number;
+                };
+            };
         };
         organization?: undefined | {
             atmosphere?: 'home' | undefined | {
@@ -935,6 +960,21 @@ export type InventoryActionResultById = {
             }[];
         };
     };
+    readonly "projects.services.pin": {
+        ok: false;
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        details?: unknown;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+    } | {
+        ok: true;
+        pinnedEnvironmentIds: string[];
+    };
     readonly "projects.workspace.forget": {
         ok: false;
         errorCode: string;
@@ -971,6 +1011,26 @@ export type InventoryActionResultById = {
             };
             label?: null | string | undefined;
             lastOpenedAtMs?: null | number | undefined;
+            repositoryObservation?: undefined | {
+                observedAtMs: number;
+                coverage: 'complete' | 'partial';
+                rootFiles: {
+                    dockerfile: 'absent' | 'present' | 'unknown';
+                    compose: 'absent' | 'present' | 'unknown';
+                };
+                applications: {
+                    file: string;
+                    framework: null | string;
+                    runtime: null | {
+                        name: string;
+                        version: string;
+                    };
+                }[];
+                source: {
+                    sourceId: string;
+                    revision: number;
+                };
+            };
         }[];
     } | {
         kind: 'opened';

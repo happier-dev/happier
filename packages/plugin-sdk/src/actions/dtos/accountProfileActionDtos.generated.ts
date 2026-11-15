@@ -49,8 +49,8 @@ export type AccountProfileActionInputById = {
             }[];
         };
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -696,8 +696,8 @@ export type AccountProfileActionInputById = {
             }[];
         };
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -1343,8 +1343,8 @@ export type AccountProfileActionInputById = {
             }[];
         };
         query?: undefined | {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;

@@ -64,12 +64,14 @@ afterEach(async () => {
     storage.setState(initialStorage, true);
 });
 
-async function mountPicker() {
+async function mountPicker(currentAgentId = 'claude') {
     return await renderHook((accountScope: ServerAccountScope | null) => {
         const picker = useInSessionAgentPickerControls({ sessionId: 'session-1', accountScope,
-            currentAgentId: 'claude', currentAgentLabel: 'Claude Code', projectionCurrent: true,
+            currentAgentId, currentAgentLabel: 'Claude Code', projectionCurrent: true,
             entries: getResolvedBackendCatalogEntries({ enabledAgentIds: ['claude', 'codex'] }),
-            featureDecision: { state: 'enabled' }, source,
+            featureDecision: { state: 'enabled' }, source: { ...source,
+                currentBackendTargetKey: getResolvedBackendCatalogEntries({ enabledAgentIds: [currentAgentId] })
+                    .find(entry => entry.agentId === currentAgentId)!.backendTargetKey },
             machine: { machineId: 'machine-1', serverId: scope.serverId, connectionGeneration: 1, daemonGeneration: 'daemon-1' },
             detail: { capabilityServerId: scope.serverId, machineId: 'machine-1', cwd: '/repo' } });
         useSessionDraftPickerPresentation(picker, accountScope, 'session-1');
@@ -143,29 +145,25 @@ describe('mounted Session draft Actions', () => {
     });
 
     it('refuses a new arm while the draft retains a submitted input snapshot', async () => {
-        const hook = await mountPicker();
+        const ref = { kind: 'session' as const, sessionId: 'session-1' };
+        const localId = 'submitted-input';
+        const submission = { localId, input: { localId, text: 'Submitted input', meta: {} },
+            currentness: { text: 'Submitted input', mentions: [], composerAttachments: [], attachmentDraftIds: [] } };
+        // The daemon has switched to Codex; the original Claude departure now
+        // retains submitted custody rather than a next-message arm.
+        writeExistingSessionDraft({ scope, sessionId: ref.sessionId, materializationIntent: 'userEdit', patch: {
+            routing: { agentContinuation: { backendTargetKey: 'agent:happier.agent.codex/codex',
+                intent: { v: 1, mode: 'same_session', sourceAgentId: 'claude',
+                    selection: { v: 1, agentId: 'codex', modelId: 'chosen-model' } }, submission } },
+        } });
+        const hook = await mountPicker('codex');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const executor = createDefaultActionExecutor();
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: scope.serverId, runtimeAccountId: scope.accountId };
-        const ref = { kind: 'session' as const, sessionId: 'session-1' };
         const agent = { kind: 'picker' as const,
-            backendTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            backendTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
             selection: { modelId: 'chosen-model', sessionModeId: null, configOverrides: {} } };
-        await act(async () => {
-            expect(await executor.execute('session.draft.agent.set', { ref, agent }, context))
-                .toMatchObject({ ok: true, result: { status: 'applied' } });
-        });
-        const localId = hook.getCurrent().armedContinuationLocalId;
-        if (!localId) throw new Error('Expected the arm submission identity');
-        const submission = { localId, input: { localId, text: 'Submitted input', meta: {} },
-            currentness: { text: 'Submitted input', mentions: [], composerAttachments: [], attachmentDraftIds: [] } };
-        await act(async () => expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true));
-        await act(async () => {
-            expect(await executor.execute('session.draft.agent.set', { ref, agent: { ...agent,
-                backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }, context))
-                .toMatchObject({ ok: true, result: { status: 'applied' } });
-        });
         expect(hook.getCurrent().armedContinuation).toBeNull();
         await act(async () => {
             expect(await executor.execute('session.draft.agent.set', { ref, agent }, context))

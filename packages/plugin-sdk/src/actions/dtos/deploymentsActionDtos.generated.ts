@@ -640,6 +640,7 @@ export type DeploymentsActionInputById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -711,6 +712,7 @@ export type DeploymentsActionInputById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -914,12 +916,12 @@ export type DeploymentsActionInputById = {
                 }> | undefined;
             };
             configuration?: unknown;
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            approvalProfileId?: null | string | undefined;
             manager?: undefined | {
                 sessionId: string;
             };
             primaryTeamId?: null | string | undefined;
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            approvalProfileId?: null | string | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -1459,10 +1461,7 @@ export type DeploymentsActionInputById = {
                                 };
                             })[] | undefined;
                             permissionModeUpdatedAt?: number | undefined;
-                            launchEnvironment?: undefined | {
-                                values: Record<string, string>;
-                                unset: string[];
-                            };
+                            environmentVariables?: Record<string, string> | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -1537,30 +1536,8 @@ export type DeploymentsActionInputById = {
                             } | {
                                 kind: 'project_checkout';
                             };
+                            roleId?: string | undefined;
                             engine?: undefined | {
-                                agentTarget: {
-                                    kind: 'agent';
-                                    identity: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    definitionId?: string | undefined;
-                                };
-                                modelSelection?: null | undefined | {
-                                    v: 1;
-                                    ref: {
-                                        agentTargetKey: string;
-                                        providerConnectionId: null;
-                                        modelId: string;
-                                    } | {
-                                        agentTargetKey: string;
-                                        providerConnectionId: string;
-                                        modelId: string;
-                                    };
-                                    updatedAt: number;
-                                };
-                                effort?: string | undefined;
-                            } | {
                                 kind: 'input';
                                 name: string;
                                 path?: (number | string)[] | undefined;
@@ -1568,8 +1545,6 @@ export type DeploymentsActionInputById = {
                                 kind: 'item';
                                 field: 'value';
                                 path?: (number | string)[] | undefined;
-                            } | {
-                                role: string;
                             };
                             participant?: undefined | {
                                 kind: 'input';
@@ -3072,6 +3047,8 @@ export type DeploymentsActionInputById = {
             };
             providerIdentity?: undefined;
             targetLinkId?: undefined;
+            expectedTargetLinkRevision?: undefined;
+            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             repositoryAccess?: undefined | {
                 status: 'needsGitAccess';
                 repository: {
@@ -3123,8 +3100,6 @@ export type DeploymentsActionInputById = {
                 };
             };
             productionBranch?: string | undefined;
-            expectedTargetLinkRevision?: undefined;
-            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
         };
         managedRetention?: 'keep' | 'until-delete' | undefined;
         provisioned?: true | undefined;
@@ -6307,6 +6282,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -6352,6 +6328,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7448,6 +7425,7 @@ export type DeploymentsActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -7498,6 +7476,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7576,6 +7555,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7621,6 +7601,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7756,6 +7737,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7836,6 +7818,7 @@ export type DeploymentsActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -7899,6 +7882,7 @@ export type DeploymentsActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -7963,6 +7947,7 @@ export type DeploymentsActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;

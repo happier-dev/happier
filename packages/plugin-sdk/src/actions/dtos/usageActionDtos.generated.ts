@@ -7,8 +7,8 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type UsageActionInputById = {
     readonly "usage.history.read": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -67,8 +67,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.deliver": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -126,8 +126,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.calendar.export": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -202,8 +202,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.export": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -262,8 +262,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.compose": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -312,8 +312,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.query": {
         queries: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -358,8 +358,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.export": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -406,8 +406,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.apply": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -455,8 +455,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.undo": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -650,8 +650,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.dismiss": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -700,8 +700,8 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.snooze": {
         query: {
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
@@ -7820,7 +7820,6 @@ export type UsageActionResultById = {
                     rankedPricing?: Record<string, {
                         value: {
                             key: string;
-                            eventCount: number;
                             tokens: {
                                 input: null | number;
                                 output: null | number;
@@ -7833,12 +7832,13 @@ export type UsageActionResultById = {
                                     fromParts: true;
                                 };
                             };
+                            eventCount: number;
                             label?: string | undefined;
-                            requestCount?: number | undefined;
                             context?: undefined | {
                                 usedTokens?: null | number | undefined;
                                 windowTokens?: null | number | undefined;
                             };
+                            requestCount?: number | undefined;
                             latestContextUsedTokens?: number | undefined;
                             latestContextWindowTokens?: number | undefined;
                         };
@@ -7913,7 +7913,6 @@ export type UsageActionResultById = {
                                 path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                 source: string;
                                 execution: 'happier' | 'outside' | 'unknown';
-                                eventCount: number;
                                 tokens: {
                                     input: null | number;
                                     output: null | number;
@@ -7926,6 +7925,7 @@ export type UsageActionResultById = {
                                         fromParts: true;
                                     };
                                 };
+                                eventCount: number;
                             };
                             population: {
                                 groups: {
@@ -10233,7 +10233,6 @@ export type UsageActionResultById = {
                             appliesToProviderLimitIds: string[];
                             unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
                         }> | undefined;
-                        accountLabel?: null | string | undefined;
                         recoveryCredits?: undefined | {
                             availableCount: number;
                             credits: {
@@ -10254,6 +10253,7 @@ export type UsageActionResultById = {
                             source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                             confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         };
+                        accountLabel?: null | string | undefined;
                         planLabel?: null | string | undefined;
                     }[];
                     meterDefinitions: {
@@ -12550,7 +12550,6 @@ export type UsageActionResultById = {
                         rankedPricing?: Record<string, {
                             value: {
                                 key: string;
-                                eventCount: number;
                                 tokens: {
                                     input: null | number;
                                     output: null | number;
@@ -12563,12 +12562,13 @@ export type UsageActionResultById = {
                                         fromParts: true;
                                     };
                                 };
+                                eventCount: number;
                                 label?: string | undefined;
-                                requestCount?: number | undefined;
                                 context?: undefined | {
                                     usedTokens?: null | number | undefined;
                                     windowTokens?: null | number | undefined;
                                 };
+                                requestCount?: number | undefined;
                                 latestContextUsedTokens?: number | undefined;
                                 latestContextWindowTokens?: number | undefined;
                             };
@@ -12643,7 +12643,6 @@ export type UsageActionResultById = {
                                     path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                     source: string;
                                     execution: 'happier' | 'outside' | 'unknown';
-                                    eventCount: number;
                                     tokens: {
                                         input: null | number;
                                         output: null | number;
@@ -12656,6 +12655,7 @@ export type UsageActionResultById = {
                                             fromParts: true;
                                         };
                                     };
+                                    eventCount: number;
                                 };
                                 population: {
                                     groups: {
@@ -16367,11 +16367,83 @@ export type UsageActionResultById = {
                                         connectedServiceGroupId?: string | undefined;
                                     };
                                 };
-                                permissionModeUpdatedAt?: number | undefined;
-                                launchEnvironment?: undefined | {
-                                    values: Record<string, string>;
-                                    unset: string[];
+                                title?: string | undefined;
+                                primaryTeamId?: null | string | undefined;
+                                organizationPlacement?: undefined | {
+                                    folderId: null | string;
+                                    tagIds: string[];
                                 };
+                                memoryEnabled?: boolean | undefined;
+                                secretReferenceOverlay?: undefined | {
+                                    v: 1;
+                                    bindings: Record<string, {
+                                        ref: string;
+                                        revision?: number | undefined;
+                                    }>;
+                                };
+                                teamCredentialBindings?: ({
+                                    v: 1;
+                                    slot: {
+                                        kind: 'connected_service_purpose';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                    } | {
+                                        kind: 'provider_model';
+                                    };
+                                    resourceId: null;
+                                } | {
+                                    v: 1;
+                                    slot: {
+                                        kind: 'connected_service_purpose';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                    } | {
+                                        kind: 'provider_model';
+                                    };
+                                    resourceId: string;
+                                    expectedResourceRevision: number;
+                                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                    teamId?: string | undefined;
+                                    providerModelSelection?: undefined | {
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                        application?: undefined | {
+                                            implementationIdentity: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            endpointTemplateId: string;
+                                            protocol: string;
+                                            agentTargetKey: string;
+                                        };
+                                        executionMachineId?: string | undefined;
+                                        nativeSource?: undefined | {
+                                            sourceRevision: string;
+                                            providerTicket: string;
+                                        };
+                                    };
+                                    nativeDelivery?: undefined | {
+                                        managedId: string;
+                                        controllerInstallationId: string;
+                                        guestInstallationId: string;
+                                        bindingKey: string;
+                                        placeholderRef: string;
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    };
+                                })[] | undefined;
+                                permissionModeUpdatedAt?: number | undefined;
+                                environmentVariables?: Record<string, string> | undefined;
                                 providerSessionResume?: undefined | {
                                     kind: 'provider_session.v1';
                                     providerSessionId: string;
@@ -16446,30 +16518,8 @@ export type UsageActionResultById = {
                                 } | {
                                     kind: 'project_checkout';
                                 };
+                                roleId?: string | undefined;
                                 engine?: undefined | {
-                                    agentTarget: {
-                                        kind: 'agent';
-                                        identity: {
-                                            pluginId: string;
-                                            localId: string;
-                                        };
-                                        definitionId?: string | undefined;
-                                    };
-                                    modelSelection?: null | undefined | {
-                                        v: 1;
-                                        ref: {
-                                            agentTargetKey: string;
-                                            providerConnectionId: null;
-                                            modelId: string;
-                                        } | {
-                                            agentTargetKey: string;
-                                            providerConnectionId: string;
-                                            modelId: string;
-                                        };
-                                        updatedAt: number;
-                                    };
-                                    effort?: string | undefined;
-                                } | {
                                     kind: 'input';
                                     name: string;
                                     path?: (number | string)[] | undefined;
@@ -16477,8 +16527,6 @@ export type UsageActionResultById = {
                                     kind: 'item';
                                     field: 'value';
                                     path?: (number | string)[] | undefined;
-                                } | {
-                                    role: string;
                                 };
                                 participant?: undefined | {
                                     kind: 'input';

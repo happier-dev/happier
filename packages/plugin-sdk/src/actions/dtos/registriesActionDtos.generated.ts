@@ -786,7 +786,7 @@ export type RegistriesActionResultById = {
                         path?: string | undefined;
                         healthCheck?: undefined | {
                             path: string;
-                            expectStatus: number;
+                            expectStatus?: number | undefined;
                         };
                     }[];
                     volumes: {

@@ -1150,7 +1150,9 @@ export type SessionControlActionInputById = {
     readonly "session.permission_mode.set": {
         sessionId: string;
         permissionMode: unknown;
-        applyTiming?: 'immediate' | undefined;
+        applyTiming?: 'immediate' | 'next_prompt' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.model.set": {
         [x: string]: unknown;
@@ -2653,6 +2655,10 @@ export type SessionControlActionResultById = {
                         stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                         requestId?: string | undefined;
                     };
+                    carrierFailure?: undefined | {
+                        closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                        closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+                    };
                     connectedServicesDefault?: undefined | {
                         v: 1;
                         source: 'account_default';
@@ -3336,6 +3342,10 @@ export type SessionControlActionResultById = {
                                     stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                                     requestId?: string | undefined;
                                 };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+                                };
                                 connectedServicesDefault?: undefined | {
                                     v: 1;
                                     source: 'account_default';
@@ -3852,6 +3862,10 @@ export type SessionControlActionResultById = {
                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                 requestId?: string | undefined;
             };
+            carrierFailure?: undefined | {
+                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+            };
             connectedServicesDefault?: undefined | {
                 v: 1;
                 source: 'account_default';
@@ -3898,6 +3912,10 @@ export type SessionControlActionResultById = {
                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                 requestId?: string | undefined;
             };
+            carrierFailure?: undefined | {
+                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+            };
             connectedServicesDefault?: undefined | {
                 v: 1;
                 source: 'account_default';
@@ -3943,6 +3961,10 @@ export type SessionControlActionResultById = {
                 code: string;
                 stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
                 requestId?: string | undefined;
+            };
+            carrierFailure?: undefined | {
+                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
             };
             connectedServicesDefault?: undefined | {
                 v: 1;

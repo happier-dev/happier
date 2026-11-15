@@ -1,9 +1,12 @@
 import * as React from 'react';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { NewSessionDraftAgentIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
-import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { resolveSessionAgentPickerSelectionFields } from '@/components/sessions/agentPicker/sessionAgentPickerSelectionFields';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -15,6 +18,30 @@ import {
 
 import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 
+/** Resolve the same selectable Agent row for UI and exact-draft Action edits. */
+export function applyNewSessionDraftAgentIntent(params: Readonly<{
+    intent: NewSessionDraftAgentIntent;
+    entries: readonly ResolvedBackendCatalogEntry[];
+    isSelectable: (entry: ResolvedBackendCatalogEntry) => boolean;
+    selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
+    setSessionMode: (sessionModeId: string | null) => void;
+    setConfigOption: (configId: string, value: string) => void;
+}>): boolean {
+    if (params.intent.kind === 'mode') {
+        params.setSessionMode(params.intent.sessionModeId);
+        return true;
+    }
+    if (params.intent.kind === 'config') {
+        params.setConfigOption(params.intent.configId, params.intent.value);
+        return true;
+    }
+    const targetKey = formatBackendTargetKeyV2(params.intent.backendTarget);
+    const entry = params.entries.find(candidate => candidate.backendTargetKey === targetKey);
+    if (!entry || !params.isSelectable(entry)) return false;
+    params.selectEngineSelection(entry, params.intent.selection);
+    return true;
+}
+
 type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
     selectedBackendTargetKey: string;
@@ -23,16 +50,16 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     /** Source identities absent from V1 must not be retained as native tuples. */
     canRetainModelSelection?: (selection: SessionModelSelectionV1 | null) => boolean;
     acpSessionModeId: string | null;
-    sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
+    sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
     setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
-    setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
+    setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<AcpConfigOptionOverridesV1 | null>>;
     setEngineSelectionForBackendTarget?: (backendTargetKey: string, selection: {
         modelMode: ModelMode;
         modelSelection?: SessionModelSelectionV1 | null;
         acpSessionModeId: string | null;
-        sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
+        sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
     }) => void;
     rememberEngineSelectionsEnabled?: boolean;
     rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
@@ -40,7 +67,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     onRememberEngineSelection?: (backendTarget: PersistedBackendTargetRefV2, selection: {
         modelSelection: SessionModelSelectionV1 | null;
         acpSessionModeId: string | null;
-        sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
+        sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
     }) => void;
     onExplicitBackendTargetSelection?: (backendTarget: PersistedBackendTargetRefV2) => void;
 }>;
@@ -183,40 +210,11 @@ export function useNewSessionAgentPickerEngineSelectionState(
 
     const applyEngineSelection = React.useCallback((entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => {
         const normalizedSessionModeId = normalizeSessionModeIdForEntry(entry, selection.sessionModeId);
-        const nextConfigOverrides: Readonly<Record<string, string>> = Object.fromEntries(
-            Object.entries(selection.configOverrides ?? {})
-                .map(([configId, value]) => [configId, typeof value === 'string' ? value.trim() : ''])
-                .filter(([, value]) => value.length > 0),
-        );
-        const updatedAt = Date.now();
-        const sessionConfigOptionOverrides = Object.keys(nextConfigOverrides).length === 0
-            ? null
-            : buildAcpConfigOptionOverridesV1({
-                updatedAt,
-                overrides: Object.fromEntries(
-                    Object.entries(nextConfigOverrides).map(([configId, value]) => [
-                        configId,
-                        { updatedAt, value },
-                    ]),
-                ),
-            });
+        // The one writer every Agent picker uses; New Session keeps only string choices it shows.
+        const { modelSelection, sessionConfigOptionOverrides } = resolveSessionAgentPickerSelectionFields({
+            agentTarget: entry.backendTargetKey, selection, updatedAt: Date.now(),
+        });
         const modelMode = selection.modelId as ModelMode;
-        const matchingStructuredSelection = selection.modelSelection?.ref.agentTargetKey === entry.backendTargetKey
-            && selection.modelSelection.ref.modelId === selection.modelId
-            ? selection.modelSelection
-            : null;
-        const modelSelection = selection.modelId === 'default'
-            && matchingStructuredSelection?.ref.providerConnectionId == null
-            ? null
-            : matchingStructuredSelection ?? {
-                    v: 1 as const,
-                    updatedAt,
-                    ref: {
-                        agentTargetKey: entry.backendTargetKey,
-                        providerConnectionId: null,
-                        modelId: selection.modelId,
-                    },
-                };
         const retainSelection = params.canRetainModelSelection?.(modelSelection) !== false;
         const appliedSelection = {
             ...selection,

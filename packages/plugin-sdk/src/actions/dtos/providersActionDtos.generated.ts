@@ -462,11 +462,11 @@ export type ProvidersActionInputById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: {
+                descriptor: Readonly<{
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: string[] | undefined;
+                    aliases?: readonly string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -489,28 +489,28 @@ export type ProvidersActionInputById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: readonly Readonly<{
                         id: string;
                         name: string;
+                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        description?: string | undefined;
-                        options?: undefined | {
+                        options?: readonly Readonly<{
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
-                            optionIds: string[];
+                        }>[] | undefined;
+                        overridesWhenOn?: Readonly<{
+                            optionIds: readonly string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
+                        }> | undefined;
+                    }>[] | undefined;
+                    capabilities?: Readonly<{
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
-                };
+                    }> | undefined;
+                }>;
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -863,11 +863,11 @@ export type ProvidersActionInputById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: {
+                descriptor: Readonly<{
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: string[] | undefined;
+                    aliases?: readonly string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -890,28 +890,28 @@ export type ProvidersActionInputById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: readonly Readonly<{
                         id: string;
                         name: string;
+                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        description?: string | undefined;
-                        options?: undefined | {
+                        options?: readonly Readonly<{
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
-                            optionIds: string[];
+                        }>[] | undefined;
+                        overridesWhenOn?: Readonly<{
+                            optionIds: readonly string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
+                        }> | undefined;
+                    }>[] | undefined;
+                    capabilities?: Readonly<{
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
-                };
+                    }> | undefined;
+                }>;
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -1374,11 +1374,11 @@ export type ProvidersActionInputById = {
                 connectionRole: 'default' | 'named';
                 connectionDisplayNameMode: 'automatic' | 'custom';
             };
-            model?: undefined | {
+            model?: Readonly<{
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: string[] | undefined;
+                aliases?: readonly string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -1401,28 +1401,28 @@ export type ProvidersActionInputById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: undefined | {
+                modelOptions?: readonly Readonly<{
                     id: string;
                     name: string;
+                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    description?: string | undefined;
-                    options?: undefined | {
+                    options?: readonly Readonly<{
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }[];
-                    overridesWhenOn?: undefined | {
-                        optionIds: string[];
+                    }>[] | undefined;
+                    overridesWhenOn?: Readonly<{
+                        optionIds: readonly string[];
                         forcedValue?: string | undefined;
-                    };
-                }[];
-                capabilities?: undefined | {
+                    }> | undefined;
+                }>[] | undefined;
+                capabilities?: Readonly<{
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                };
-            };
+                }> | undefined;
+            }> | undefined;
             managedPurposeBindings?: unknown;
             adapterBindingKey?: string | undefined;
             runtimeBindingBasis?: undefined | {
@@ -1709,11 +1709,11 @@ export type ProvidersActionInputById = {
                                 };
                             };
                             endpointTemplateIds?: string[] | undefined;
-                            staticModels?: undefined | {
+                            staticModels?: Readonly<{
                                 id: string;
                                 name: string;
                                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                                aliases?: string[] | undefined;
+                                aliases?: readonly string[] | undefined;
                                 description?: string | undefined;
                                 contextWindowTokens?: number | undefined;
                                 inlineCompletion?: undefined | {
@@ -1736,28 +1736,28 @@ export type ProvidersActionInputById = {
                                     maxOutputTokens?: number | undefined;
                                 };
                                 extendedContextModelId?: string | undefined;
-                                modelOptions?: undefined | {
+                                modelOptions?: readonly Readonly<{
                                     id: string;
                                     name: string;
+                                    description?: string | undefined;
                                     type: string;
                                     currentValue: string;
-                                    description?: string | undefined;
-                                    options?: undefined | {
+                                    options?: readonly Readonly<{
                                         value: string;
                                         name: string;
                                         description?: string | undefined;
-                                    }[];
-                                    overridesWhenOn?: undefined | {
-                                        optionIds: string[];
+                                    }>[] | undefined;
+                                    overridesWhenOn?: Readonly<{
+                                        optionIds: readonly string[];
                                         forcedValue?: string | undefined;
-                                    };
-                                }[];
-                                capabilities?: undefined | {
+                                    }> | undefined;
+                                }>[] | undefined;
+                                capabilities?: Readonly<{
                                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                                };
-                            }[];
+                                }> | undefined;
+                            }>[] | undefined;
                             catalogObservation?: undefined | {
                                 agent: {
                                     pluginId: string;
@@ -1894,6 +1894,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -2096,6 +2116,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -2295,6 +2335,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -2498,6 +2558,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -2554,6 +2634,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -2757,6 +2857,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -2813,6 +2933,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -3016,6 +3156,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -3072,6 +3232,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -3275,6 +3455,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -3331,6 +3531,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -3534,6 +3754,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -3590,6 +3830,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -3793,6 +4053,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -3849,6 +4129,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -4052,6 +4352,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -4108,6 +4428,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -4311,6 +4651,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -4367,6 +4727,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -4570,6 +4950,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -4626,6 +5026,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -4829,6 +5249,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -4885,6 +5325,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -5027,6 +5487,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -5054,6 +5534,26 @@ export type ProvidersActionResultById = {
                     requestId?: string | undefined;
                     failureCause?: ActionFailureCauseV1 | undefined;
                     connectionId?: (string) | undefined;
+                    connectedAccountTarget?: undefined | {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
                     machineId?: string | undefined;
                     sourceProfileId?: string | undefined;
                     retryAfterMs?: number | undefined;
@@ -5835,6 +6335,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -5857,6 +6377,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -5875,6 +6415,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -5891,6 +6451,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -5918,6 +6498,26 @@ export type ProvidersActionResultById = {
                     requestId?: string | undefined;
                     failureCause?: ActionFailureCauseV1 | undefined;
                     connectionId?: (string) | undefined;
+                    connectedAccountTarget?: undefined | {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
                     machineId?: string | undefined;
                     sourceProfileId?: string | undefined;
                     retryAfterMs?: number | undefined;
@@ -6699,6 +7299,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -6721,6 +7341,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -6864,6 +7504,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -6884,6 +7544,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -6904,6 +7584,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -6924,6 +7624,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -6944,6 +7664,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -6967,6 +7707,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -6990,6 +7750,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -7016,6 +7796,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -7039,6 +7839,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -7049,39 +7869,39 @@ export type ProvidersActionResultById = {
         status: 'not_supported';
     } | {
         status: 'success';
-        models: {
+        models: Readonly<{
             id: string;
             name?: string | undefined;
             contextWindowTokens?: number | undefined;
-            modelOptions?: undefined | {
+            modelOptions?: readonly Readonly<{
                 id: string;
                 name: string;
+                description?: string | undefined;
                 type: string;
                 currentValue: string;
-                description?: string | undefined;
-                options?: undefined | {
+                options?: readonly Readonly<{
                     value: string;
                     name: string;
                     description?: string | undefined;
-                }[];
-                overridesWhenOn?: undefined | {
-                    optionIds: string[];
+                }>[] | undefined;
+                overridesWhenOn?: Readonly<{
+                    optionIds: readonly string[];
                     forcedValue?: string | undefined;
-                };
-            }[];
-            capabilities?: undefined | {
+                }> | undefined;
+            }>[] | undefined;
+            capabilities?: Readonly<{
                 toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                 reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                 structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-            };
-            connectedAccountPurposes?: undefined | {
+            }> | undefined;
+            connectedAccountPurposes?: readonly {
                 consumer: {
                     pluginId: string;
                     localId: string;
                 };
                 purpose: string;
-            }[];
-        }[];
+            }[] | undefined;
+        }>[];
         requestFingerprint: string;
     };
     readonly "providers.usage.refresh": {
@@ -7094,6 +7914,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -7115,6 +7955,26 @@ export type ProvidersActionResultById = {
                 requestId?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
+                connectedAccountTarget?: undefined | {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
@@ -7282,6 +8142,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
@@ -7301,6 +8181,26 @@ export type ProvidersActionResultById = {
             requestId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             connectionId?: (string) | undefined;
+            connectedAccountTarget?: undefined | {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;

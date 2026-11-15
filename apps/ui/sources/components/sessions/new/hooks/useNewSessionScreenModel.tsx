@@ -168,6 +168,7 @@ import { useNewSessionHappyRouteFlag } from '@/components/sessions/new/hooks/scr
 import { useRouteBackendTargetSelectionSync } from '@/components/sessions/new/hooks/screenModel/useRouteBackendTargetSelectionSync';
 import { useNewSessionInputPopovers } from '@/components/sessions/new/hooks/screenModel/useNewSessionInputPopovers';
 import { useNewSessionAgentSelectionModelModeReconciliation } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentSelectionModelModeReconciliation';
+import { applyNewSessionDraftAgentIntent, useNewSessionAgentPickerEngineSelectionState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerEngineSelectionState';
 import { useNewSessionProfileBackendReconciliation } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileBackendReconciliation';
 import { useNewSessionProfileSelectionPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileSelectionPresentation';
 import { useNewSessionProfileActions } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileActions';
@@ -225,7 +226,7 @@ import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/vis
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { useProviderDefaultModelSelections, useProviderSettings } from '@/providers/hooks/useProviderSettings';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
-import { useNewSessionDraftActions } from './screenModel/useNewSessionDraftActions';
+import { useSessionDraftActions } from '@/components/sessions/composer/useSessionDraftActions';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { useHasMachineForGettingStartedGuidance } from '@/components/sessions/guidance/useHasMachineForGettingStartedGuidance';
 import { resolveNewSessionFolderChipState } from '@/components/sessions/new/modules/newSessionFolderChipState';
@@ -1497,21 +1498,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         }
         return Object.freeze([...keys]);
     }, [canonicalAgentTarget, currentProjectionInputs?.pluginProjectionV2]);
-    const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
-        setBackendTarget((prevTarget) => {
-            const currentAgentId = prevTarget.kind === 'agent'
-                ? resolveBundledAgentIdFromContributionIdentity(prevTarget.identity)
-                : (!prevTarget.configuredBackendId && isBundledAgentId(prevTarget.backendId)
-                    ? prevTarget.backendId
-                    : null);
-            if (!currentAgentId && typeof next === 'function') return prevTarget;
-            const nextAgentId = typeof next === 'function'
-                ? next(currentAgentId ?? 'claude')
-                : next;
-            return resolvedBackendEntries.find((entry) => entry.builtInAgentId === nextAgentId)?.backendTarget
-                ?? prevTarget;
-        });
-    }, [resolvedBackendEntries, setBackendTarget]);
+
     const agentOptionState = backendNewSessionOptionStateByTargetKey[selectedBackendTargetKey] ?? null;
     const selectedBackendEntry = React.useMemo(() => {
         return resolvedBackendEntries.find((entry) => entry.backendTargetKey === selectedBackendTargetKey) ?? null;
@@ -2206,6 +2193,41 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const newSessionComposerFileScope = React.useMemo(() => resolveNewSessionFileSuggestionScope({
         targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath,
     }), [selectedMachineHomeDir, selectedMachineId, selectedPath, targetServerId]);
+    const clearBackendTargetRouteParamsAfterExplicitSelection = React.useCallback(() => {
+        const paramsToClear = {
+            agentType: undefined,
+            backendTarget: undefined,
+            backendTargetKey: undefined,
+        };
+        if (
+            typeof agentTypeParam !== 'string'
+            && typeof backendTargetParam !== 'string'
+            && typeof backendTargetKeyParam !== 'string'
+        ) {
+            return;
+        }
+        const setParams = (navigation as any)?.setParams ?? (router as any)?.setParams;
+        if (typeof setParams === 'function') {
+            setParams(paramsToClear);
+            return;
+        }
+        const dispatch = (navigation as any)?.dispatch;
+        if (typeof dispatch !== 'function') return;
+        dispatch({
+            type: 'SET_PARAMS',
+            payload: { params: paramsToClear },
+        } as never);
+    }, [agentTypeParam, backendTargetKeyParam, backendTargetParam, navigation, router]);
+    const engineSelectionState = useNewSessionAgentPickerEngineSelectionState({
+        selectedBackendEntry, selectedBackendTargetKey, modelMode, modelSelection, canRetainModelSelection,
+        acpSessionModeId, sessionConfigOptionOverrides, setBackendTarget, setModelMode,
+        setAcpSessionModeId, setSessionConfigOptionOverrides, setEngineSelectionForBackendTarget,
+        rememberEngineSelectionsEnabled: rememberLastEngineSelections,
+        rememberedEngineSelectionsByScope: lastEngineSelectionsByScope,
+        rememberedEngineSelectionServerId: capabilityServerId,
+        onRememberEngineSelection: rememberEngineSelection,
+        onExplicitBackendTargetSelection: clearBackendTargetRouteParamsAfterExplicitSelection,
+    });
     const newSessionComposerDocument = useNewSessionComposerDocument({
         draftId,
         draftScope,
@@ -2225,6 +2247,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         isSubmitting: isCreating,
         isPresented: newSessionRouteIsFocused,
         setDirectoryIntent: directoryIntentFixed ? undefined : setDirectoryIntent,
+        applyAgentIntent: async intent => applyNewSessionDraftAgentIntent({ intent, entries: resolvedBackendEntries,
+            isSelectable: isBackendEntrySelectable, selectEngineSelection: engineSelectionState.selectEngineSelection,
+            setSessionMode: setAcpSessionModeIdAndRemember, setConfigOption: setAcpConfigOptionOverrideAndRemember }),
         applyModelIntent: async intent => {
             if (intent.kind === 'team') {
                 if (intent.selection) return await selectTeamCredentialModel(intent.selection);
@@ -2240,7 +2265,26 @@ export function useNewSessionScreenModel(input?: Readonly<{
         },
     });
 
-    const draftActions = useNewSessionDraftActions(newSessionComposerDocument.ref, draftScope);
+    const draftActions = useSessionDraftActions(newSessionComposerDocument.ref, draftScope);
+    const setDraftSessionMode = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
+        const sessionModeId = typeof next === 'function' ? next(currentEngineSelectionRef.current.acpSessionModeId) : next;
+        void draftActions.setAgent({ kind: 'mode', sessionModeId });
+    }, [currentEngineSelectionRef, draftActions.setAgent]);
+    const setDraftConfigOption = React.useCallback((configId: string, value: string) => {
+        void draftActions.setAgent({ kind: 'config', configId, value });
+    }, [draftActions.setAgent]);
+    const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
+        const currentTarget = currentEngineSelectionRef.current.backendTarget;
+        const currentAgentId = currentTarget.kind === 'agent'
+            ? resolveBundledAgentIdFromContributionIdentity(currentTarget.identity)
+            : (!currentTarget.configuredBackendId && isBundledAgentId(currentTarget.backendId) ? currentTarget.backendId : null);
+        if (!currentAgentId && typeof next === 'function') return;
+        const nextAgentId = typeof next === 'function' ? next(currentAgentId ?? 'claude') : next;
+        const entry = resolvedBackendEntries.find(candidate => candidate.builtInAgentId === nextAgentId);
+        if (!entry) return;
+        void draftActions.setAgent({ kind: 'picker', backendTarget: entry.backendTarget,
+            selection: engineSelectionState.getEngineSelectionForTargetKey(entry.backendTargetKey) });
+    }, [currentEngineSelectionRef, draftActions.setAgent, engineSelectionState.getEngineSelectionForTargetKey, resolvedBackendEntries]);
     const selectCreationModel = React.useCallback<React.ComponentProps<typeof SessionModelPicker>['onSelect']>((ref) => {
         void draftActions.setModel({ kind: 'selection', ref });
     }, [draftActions.setModel]);
@@ -2561,6 +2605,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
     const {
         permissionMode,
+        nativeSandbox,
         permissionModeForPersistence,
         permissionModeExplicit,
         permissionModeLock,
@@ -2582,6 +2627,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
         enabledAgentIds,
         sessionDefaultPermissionModeByTargetKey,
         managedDefaults: managedSessionDefaults.read.context,
+        openedMachineMetadata: selectedMachine?.metadata,
+        nativeSandboxAvailable: selectedRuntimeCarrierAgentId
+            ? (currentProjectionInputs?.pluginProjectionV2?.agentsById[selectedRuntimeCarrierAgentId]?.capabilities.nativeSandbox?.off
+                ?? (isBundledAgentId(selectedRuntimeCarrierAgentId) ? getAgentCore(selectedRuntimeCarrierAgentId).nativeSandbox?.off : false)) === true
+            : false,
     });
 
     const resolveSelectedProfileAuthoringIntent = React.useCallback((profileId: string) => (
@@ -2747,32 +2797,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         } as never);
     }, [navigation]);
 
-    const clearBackendTargetRouteParamsAfterExplicitSelection = React.useCallback(() => {
-        const paramsToClear = {
-            agentType: undefined,
-            backendTarget: undefined,
-            backendTargetKey: undefined,
-        };
-        if (
-            typeof agentTypeParam !== 'string'
-            && typeof backendTargetParam !== 'string'
-            && typeof backendTargetKeyParam !== 'string'
-        ) {
-            return;
-        }
-        const setParams = (navigation as any)?.setParams ?? (router as any)?.setParams;
-        if (typeof setParams === 'function') {
-            setParams(paramsToClear);
-            return;
-        }
-        const dispatch = (navigation as any)?.dispatch;
-        if (typeof dispatch !== 'function') return;
-        dispatch({
-            type: 'SET_PARAMS',
-            payload: { params: paramsToClear },
-        } as never);
-    }, [agentTypeParam, backendTargetKeyParam, backendTargetParam, navigation, router]);
-
     const canSelectProfile = React.useCallback((profileId: string): boolean => {
         const profile = profileMap.get(profileId);
         if (!profile) {
@@ -2812,6 +2836,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         agentType: agentPolicyType,
         preflightModels,
         preflightModelsTargetKey,
+        engineSelectionState: {
+            getEngineSelectionForTargetKey: engineSelectionState.getEngineSelectionForTargetKey,
+            selectEngineSelection: (entry, selection) => { void draftActions.setAgent({ kind: 'picker', backendTarget: entry.backendTarget, selection }); },
+        },
         useProfiles,
         selectedProfileId,
         profileMap,
@@ -4433,7 +4461,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 onRefresh: acpSessionModeProbeState.onRefresh,
             },
             acpSessionModeId,
-            setAcpSessionModeId: setAcpSessionModeIdAndRemember,
+            setAcpSessionModeId: setDraftSessionMode,
             acpConfigOptions: acpConfigOptions ?? undefined,
             acpModelConfigOptionId,
             acpConfigOptionsProbeState: {
@@ -4442,7 +4470,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 onRefresh: acpConfigOptionsProbeState.onRefresh,
             },
             acpConfigOptionOverrides: sessionConfigOptionOverrides,
-            setAcpConfigOptionOverride: setAcpConfigOptionOverrideAndRemember,
+            setAcpConfigOptionOverride: setDraftConfigOption,
             modelMode,
             modelSelection,
             setModelMode: setDraftModelMode,
@@ -4474,6 +4502,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             permissionModeLock,
             permissionModeSource,
             handlePermissionModeChange,
+            nativeSandbox,
         },
         machine: {
             machines,
@@ -4598,6 +4627,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         },
         model: {
             permissionMode,
+            nativeSandbox,
             permissionModeLock,
             permissionModeSource,
             handlePermissionModeChange,
@@ -4611,11 +4641,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
         acp: {
             acpSessionModeOptions,
             acpSessionModeId,
-            setAcpSessionModeId: setAcpSessionModeIdAndRemember,
+            setAcpSessionModeId: setDraftSessionMode,
             acpConfigOptions: acpConfigOptions ?? undefined,
             acpModelConfigOptionId,
             acpConfigOptionOverrides: sessionConfigOptionOverrides,
-            setAcpConfigOptionOverride: setAcpConfigOptionOverrideAndRemember,
+            setAcpConfigOptionOverride: setDraftConfigOption,
             acpSessionModeProbeState: {
                 phase: acpSessionModeProbeState.phase,
                 onRefresh: acpSessionModeProbeState.onRefresh,

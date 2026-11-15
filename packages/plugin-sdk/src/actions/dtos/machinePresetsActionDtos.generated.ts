@@ -45,6 +45,10 @@ export type MachinePresetsActionInputById = {
         }[];
         homeId: string;
         contentEncryptionMode: 'e2ee' | 'plain';
+        controller?: undefined | {
+            machineId: string;
+            installationId: string;
+        };
         retention?: undefined | {
             afterMs: number;
             kind: 'unused';
@@ -53,10 +57,6 @@ export type MachinePresetsActionInputById = {
             kind: 'until-delete';
         };
         wakeOnAcceptedMessage?: boolean | undefined;
-        controller?: undefined | {
-            machineId: string;
-            installationId: string;
-        };
         controllerPoolId?: string | undefined;
         teamAcquireDelegated?: boolean | undefined;
         simultaneousLimit?: undefined | {
