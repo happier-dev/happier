@@ -3263,6 +3263,7 @@ export type DeploymentsActionInputById = {
                 kind: 'script';
                 scriptName: string;
             };
+            providerResourceOrigin?: 'created' | undefined;
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             repositoryAccess?: undefined | {
                 status: 'needsGitAccess';
@@ -4169,6 +4170,7 @@ export type DeploymentsActionInputById = {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         targetLinkId?: string | undefined;
         requestKey?: string | undefined;
+        providerRemoval?: 'delete' | 'unlink' | undefined;
         removeEnvironment?: true | undefined;
         volumes?: ({
             name: string;
@@ -7112,6 +7114,7 @@ export type DeploymentsActionResultById = {
                         kind: 'script';
                         scriptName: string;
                     };
+                    providerResourceOrigin?: 'created' | undefined;
                     sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                     repositoryAccess?: undefined | {
                         status: 'needsGitAccess';
@@ -10193,6 +10196,7 @@ export type DeploymentsActionResultById = {
                     kind: 'script';
                     scriptName: string;
                 };
+                providerResourceOrigin?: 'created' | undefined;
                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                 repositoryAccess?: undefined | {
                     status: 'needsGitAccess';

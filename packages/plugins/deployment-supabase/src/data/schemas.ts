@@ -1,4 +1,4 @@
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1 } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetPreparationBaseV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
   DeploymentDataParentBranchRefV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -21,6 +21,7 @@ export const operands = {
   'projects-provision': defineProtocolObject({ name: string, password: passwordSchema, regionSelection: selectionSchema,
     desiredInstanceSize: string.optional() }, closed),
   'projects-link': defineProtocolObject({ projectRef: string }, closed),
+  'projects-delete': defineProtocolObject({}, closed),
   'branches-list': defineProtocolObject({}, closed),
   'branches-create': defineProtocolObject({ name: string, gitBranch: string.optional(), withData: defineProtocolLiteral(false),
     parentBranchRef: DeploymentDataParentBranchRefV1ProtocolSchema.optional() }, closed),
@@ -37,6 +38,7 @@ const selected = new Set<Operation>(['branches-list', 'branches-create', 'branch
 /** Compose the public common input contract with strict provider operands. */
 export function actionSchema(operation: Operation): PluginJsonSchema {
   const base = operation === 'branches-list' ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
+    : operation === 'projects-delete' ? DeploymentTargetRoleInputProtocolSchemasV1['projects.delete']
     : selected.has(operation) ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
       : DeploymentTargetPreparationBaseV1ProtocolSchema;
   const product = operands[operation];
@@ -71,7 +73,8 @@ const branchResult = resultObject({ branchId: s, projectRef: s, parentProjectRef
 const identityResult = resultObject({ providerAccountId: s, providerResourceId: s, providerEnvironment: s });
 const environmentResult = resultObject({ kind: literal('custom'), id: s });
 const nativeResult = resultObject({ state: literal('provisioned'), ready: b, engine: literal('postgres'), status: s, version: s,
-  providerIdentity: identityResult, providerEnvironment: environmentResult, providerConsole: resultObject({ url: s, label: s }) }, ['version']);
+  providerResourceOrigin: literal('created'),
+  providerIdentity: identityResult, providerEnvironment: environmentResult, providerConsole: resultObject({ url: s, label: s }) }, ['version', 'providerResourceOrigin']);
 const unknownProject = resultObject({ status: literal('outcome_unknown'), organizationSlug: s, recovery: s, code: s, projectRef: s }, ['code', 'projectRef']);
 const unavailable = resultObject({ status: literal('unavailable'), code: s });
 const resourceResult = resourceSchema.jsonSchema;
@@ -83,6 +86,7 @@ const pairResult = resultObject({ status: { type: 'string', enum: ['complete', '
 /** Closed product results keep vendor credential/error echoes out of projections. */
 export function resultSchema(operation: Operation): PluginJsonSchema {
   switch (operation) {
+    case 'projects-delete': return DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema;
     case 'projects-list': return resultObject({ projects: array(projectResult) });
     case 'provision-options': return resultObject({ organizationSlug: s, regions: array(resultObject({ code: s, name: s, type: s, provider: s, status: s }, ['status'])),
       subscription: literal('organization'), price: literal('unknown'), entitlementsObserved: b, desiredInstanceSize: s }, ['desiredInstanceSize']);

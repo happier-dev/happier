@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -13,7 +14,11 @@ type Context = PluginAccountActionContext;
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): value is RecordValue => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-function failure(code: string): never { throw new PluginError({ code, message: code }); }
+function failure(code: string, phase = 'deployment.supabase.provider', caught?: Readonly<{ error: unknown }>): never {
+  const result = new PluginError({ code, message: code });
+  throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase,
+    causeKind: caught ? 'native_failure' : 'not_found', error: caught?.error }) : result;
+}
 // These credential/security refusals are raised before the provider request.
 // Other typed HTTP failures (including response-body failures) prove no phase.
 const beforeRequestRefusals = new Set(['plugin_connected_account_binding_out_of_scope', 'plugin_connected_account_purpose_undeclared',
@@ -38,7 +43,7 @@ export function resource(input: Scope) {
 async function readPassword(reference: Operands<'projects-provision'>['password'], context: Context) {
   if (!context.services.secrets) return failure('secret_use_client_required');
   try { return await context.services.secrets.readSavedSecret(reference.ref, { resourceRevision: reference.resourceRevision, signal: context.signal }); }
-  catch (error) { return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable')); }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable', 'deployment.supabase.secret.read', { error })); }
 }
 
 /** Official Management API v1/1.0.0, characterized 2026-10-30 (PROVIDER-API.md).
@@ -55,15 +60,20 @@ export async function request(context: Pick<Context, 'signal'> & Readonly<{ serv
     }, { signal: context.signal });
   } catch (error) {
     const code = isPluginError(error) ? error.code : undefined;
-    if (readOnlyRequest) return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable'));
+    if (readOnlyRequest) return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable', 'deployment.supabase.provider', { error }));
     if (code && beforeRequestRefusals.has(code)) throw error;
-    throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}) });
+    throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}),
+      failureCause: projectActionFailureCauseV1(error, 'deployment.supabase.provider') });
   }
   if (response.finalUrl !== `${origin}${path}`) return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown');
   if (readOnly && (response.status < 200 || response.status >= 300)) return failure(`provider_http_${response.status}`);
-  if (response.status === 401 || response.status === 403) return failure('deployment_access_denied');
-  if (response.status === 404) return failure('deployment_unavailable');
-  if (response.status < 200 || response.status >= 300) return failure(method !== 'GET' && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed');
+  if (response.status < 200 || response.status >= 300) throw new PluginError({
+    code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+      : response.status === 404 ? 'deployment_unavailable'
+        : method !== 'GET' && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed',
+    details: { httpStatus: response.status },
+    failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'deployment.supabase.provider'),
+  });
   try { return JSON.parse(new TextDecoder().decode(response.body)) as unknown; }
   catch { return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown'); }
 }
@@ -121,7 +131,7 @@ async function provision(input: Scope & Operands<'projects-provision'>, context:
   try {
     response = await request(context, '/v1/projects', 'POST', { organization_slug: organization, name: input.name, db_pass: password,
       region_selection: input.regionSelection, ...(input.desiredInstanceSize ? { desired_instance_size: input.desiredInstanceSize } : {}) });
-    return facts(project(response, organization));
+    return { ...facts(project(response, organization)), providerResourceOrigin: 'created' };
   } catch (error) {
     // A successful write followed by malformed metadata is still an effect.
     // Keep only an exact native ref whose organization is independently present.
@@ -200,16 +210,41 @@ async function save(input: Scope & Operands<'connections-save'>, context: Contex
     } catch (error) {
       // Existing completed refs remain authoritative even if cancellation or
       // custody/storage failure interrupts the second independent save.
-      return output(isPluginError(error) ? error.code : context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable');
+      return withActionFailureDiagnostic(output(isPluginError(error) ? error.code : context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable'),
+        { phase: 'deployment.supabase.secret.save', causeKind: 'native_failure', error });
     }
   }
   return output();
+}
+
+async function deleteProject(input: Scope, context: Context) {
+  const path = `/v1/projects/${encode(input.providerIdentity!.providerResourceId)}`;
+  const absent = () => ({ v: 1 as const, state: 'succeeded' as const, observedAtMs: Date.now(), providerResourceAbsent: true as const });
+  const notFound = (error: unknown) => isPluginError(error) && object(error.details) && error.details.httpStatus === 404;
+  let writeFailure: unknown;
+  try { await request(context, path, 'DELETE'); }
+  catch (error) {
+    if (notFound(error)) return absent();
+    if (!isPluginError(error) || error.code !== 'outcome_unknown') throw error;
+    writeFailure = error;
+  }
+  if (!context.signal.aborted) {
+    try { await request(context, path); }
+    catch (error) {
+      if (notFound(error)) return absent();
+      writeFailure ??= error;
+    }
+  }
+  throw new PluginError({ code: 'outcome_unknown',
+    failureCause: projectActionFailureCauseV1(writeFailure ?? new PluginError({ code: 'outcome_unknown' }), 'deployment.supabase.project.delete'),
+  });
 }
 
 export async function run<K extends Operation>(operation: K, value: JsonValue, context: Context): Promise<JsonValue> {
   const input = parseInput(operation, value);
   if (context.signal.aborted) return failure('operation_cancelled');
   switch (operation) {
+    case 'projects-delete': return deleteProject(input, context);
     case 'projects-list': {
       const response = await request(context, '/v1/projects');
       if (!Array.isArray(response)) return failure('provider_response_invalid');
@@ -225,7 +260,7 @@ export async function run<K extends Operation>(operation: K, value: JsonValue, c
         const response = await request(context, `/v1/projects/${encode(projectRef)}/branches`);
         if (!Array.isArray(response)) return failure('provider_response_invalid');
         const selected = response.map(value => branch(value, projectRef)).find(value => value.projectRef === branchRef);
-        if (!selected) return failure('deployment_unavailable');
+        if (!selected) return failure('deployment_unavailable', 'deployment.supabase.branch.link');
         return { ...facts(observed, branchRef), ready: selected.status === 'ACTIVE_HEALTHY', status: selected.status ?? 'unknown' };
       }
       return facts(observed);
@@ -272,7 +307,8 @@ export async function run<K extends Operation>(operation: K, value: JsonValue, c
             if (!remaining.some(value => value.projectRef === selected.branchRef)) return { status: 'deleted', branchProjectRef: selected.branchRef };
             return { status: 'outcome_unknown', branchProjectRef: selected.branchRef, ...unknownCause(error) };
           } catch (observeError) {
-            return { status: 'outcome_unknown', branchProjectRef: selected.branchRef, code: isPluginError(observeError) ? observeError.code : 'deployment_unavailable' };
+            return withActionFailureDiagnostic({ status: 'outcome_unknown', branchProjectRef: selected.branchRef, code: isPluginError(observeError) ? observeError.code : 'deployment_unavailable' },
+              { phase: 'deployment.supabase.branch.observe', causeKind: 'native_failure', error: observeError });
           }
         }
         throw error;

@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest';
-import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs } from './deploymentTargetRolesV1.js';
+import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1Schema } from './deploymentTargetRolesV1.js';
+
+it('retains positive provider absence evidence through the lifecycle result boundary', () => {
+    expect(DeploymentTargetRoleResultV1Schema.parse({ v: 1, state: 'succeeded', observedAtMs: 1,
+        providerResourceAbsent: true })).toMatchObject({ providerResourceAbsent: true });
+    expect(DeploymentTargetRoleResultV1Schema.safeParse({ v: 1, state: 'succeeded', observedAtMs: 1,
+        providerResourceAbsent: false }).success).toBe(false);
+});
 
 it('requires reviewed create coordinates without fabricating a provider resource identity', () => {
     const credentialRef = { service: { pluginId: 'example.provider', localId: 'account' }, accountId: 'profile' };

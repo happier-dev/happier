@@ -1,4 +1,5 @@
 import { PluginError, isPluginError, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { HttpMethod, HttpService } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { ConnectionResource, ConnectionResult, Correlation, CreateBranchInput, CreatedSaveIntent, SaveIntent } from './schemas.js';
@@ -72,7 +73,8 @@ export async function request(context: Context, path: string, method: HttpMethod
     if (method === 'GET') context.signal.throwIfAborted();
     if (method === 'GET' && isPluginError(error)) throw error;
     throw new PluginError({ code: method === 'GET' ? 'provider_request_failed' : 'outcome_unknown',
-      ...(isPluginError(error) ? { details: { causeCode: error.code } } : {}) });
+      ...(isPluginError(error) ? { details: { causeCode: error.code } } : {}),
+      failureCause: projectActionFailureCauseV1(error, 'deployment.neon.provider') });
   }
   if (response.finalUrl !== `${api}${path}` || response.status >= 300 && response.status < 400) {
     throw new PluginError({ code: method === 'GET' ? 'provider_response_invalid' : 'outcome_unknown' });
@@ -80,7 +82,7 @@ export async function request(context: Context, path: string, method: HttpMethod
   if (response.status < 200 || response.status >= 300) throw new PluginError({
     code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : method !== 'GET' && response.status >= 500 && response.status !== 503 ? 'outcome_unknown' : 'provider_request_failed',
-    details: { httpStatus: response.status } });
+    details: { httpStatus: response.status }, failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'deployment.neon.provider') });
   if (!response.body.byteLength && method === 'DELETE') return {};
   try { return record(JSON.parse(new TextDecoder().decode(response.body))); }
   catch { throw new PluginError({ code: method === 'GET' ? 'provider_response_invalid' : 'outcome_unknown' }); }
@@ -376,6 +378,28 @@ export async function deleteBranch(input: Input & { branchId: string; correlatio
     return { status: 'outcome_unknown' as const, providerProjectId: selected.providerProjectId, branchId: input.branchId, code: unknownCode(error) };
   }
 }
+/** The admitted link owns the exact project identity; names never select deletion. */
+export async function deleteProject(input: Input, context: Context) {
+  const path = projectPath(input.providerIdentity!.providerResourceId);
+  const absent = () => ({ v: 1 as const, state: 'succeeded' as const, observedAtMs: Date.now(), providerResourceAbsent: true as const });
+  let writeFailure: unknown;
+  try { await request(context, path, 'DELETE'); }
+  catch (error) {
+    if (httpStatus(error, 404)) return absent();
+    if (!isPluginError(error) || error.code !== 'outcome_unknown' && !httpStatus(error, 503)) throw error;
+    writeFailure = error;
+  }
+  if (!context.signal.aborted) {
+    try { await request(context, path); }
+    catch (error) {
+      if (httpStatus(error, 404)) return absent();
+      writeFailure ??= error;
+    }
+  }
+  throw new PluginError({ code: 'outcome_unknown',
+    failureCause: projectActionFailureCauseV1(writeFailure ?? new PluginError({ code: 'outcome_unknown' }), 'deployment.neon.project.delete'),
+  });
+}
 async function recoverProject(input: Input & { name: string; requestKey: string; cursor?: string }, context: Context) {
   const page = await projects({ ...input, search: input.name }, context);
   const matchesFound: { projectId: string; branch: RecordValue }[] = [];
@@ -392,7 +416,8 @@ async function recoverProject(input: Input & { name: string; requestKey: string;
   }
   if (matchesFound.length !== 1 || incomplete) return { status: 'outcome_unknown' as const, code: 'outcome_unknown', ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   const found = matchesFound[0]!;
-  return configured(input, found.projectId, text(found.branch.id), { branch: found.branch, operations: [] }, true);
+  return { ...configured(input, found.projectId, text(found.branch.id), { branch: found.branch, operations: [] }, true),
+    providerResourceOrigin: 'created' as const };
 }
 export async function provision(input: Input & CreatedSaveIntent & { name: string; regionId: string; requestKey: string; recover?: true; cursor?: string }, context: Context) {
   if (input.recover) return recoverProject(input, context);
@@ -413,7 +438,7 @@ export async function provision(input: Input & CreatedSaveIntent & { name: strin
       const created = project(body.project, account(input));
       return { ...configured(input, projectId, branchId, body),
         ...(created.engineVersion === undefined ? {} : { engineVersion: created.engineVersion }), providerConsole: created.providerConsole };
-    }), ...captured };
+    }), ...captured, providerResourceOrigin: 'created' as const };
   } catch (error) {
     if (!isPluginError(error) || error.code !== 'outcome_unknown') throw error;
     if (context.signal.aborted) return { status: 'outcome_unknown' as const, ...known, ...captured, code: unknownCode(error) };

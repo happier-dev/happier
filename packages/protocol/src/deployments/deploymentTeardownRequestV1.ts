@@ -7,15 +7,16 @@ import { DeploymentTeardownVolumesV1Schema } from './deploymentTeardownVolumesV1
 
 /** The controller selects the current runtime link unless the person names one. */
 export const DeploymentTeardownRequestInputV1Schema = lazyZodSchema(() => z.strictObject({
-  serverId: DeploymentIdentifierV1Schema,
-  environmentId: DeploymentIdentifierV1Schema,
-  targetLinkId: z.optional(DeploymentIdentifierV1Schema),
-  requestKey: z.optional(DeploymentIdentifierV1Schema),
+  serverId: DeploymentRuntimeContentCasV1Schema.shape.serverId,
+  environmentId: DeploymentRuntimeContentCasV1Schema.shape.environmentId,
+  targetLinkId: z.optional(DeploymentRuntimeContentCasV1Schema.shape.targetLinkId),
+  requestKey: z.optional(DeploymentRuntimeContentCasV1Schema.shape.requestKey),
   reason: DeploymentTeardownReasonV1Schema,
-  removeEnvironment: z.optional(z.literal(true)),
-  volumes: z.optional(DeploymentTeardownVolumesV1Schema),
+  providerRemoval: z.optional(z.enum(['unlink', 'delete'])),
+  removeEnvironment: z.optional(z.literal(true).check(z.describe('Also remove the saved Environment after teardown completes.'))),
+  volumes: z.optional(DeploymentTeardownVolumesV1Schema.check(z.describe('Explicit volume keep/delete choices from the teardown preview. Omit to let preparation discover the inventory.'))),
   machines: DeploymentTeardownInputV1Schema.shape.machines,
-  mode: z.optional(z.literal('preview')),
+  mode: z.optional(z.literal('preview').check(z.describe('Preview the teardown without applying it. Omit mode to request the reviewed teardown.'))),
 }));
 export type DeploymentTeardownRequestInputV1 = z.infer<typeof DeploymentTeardownRequestInputV1Schema>;
 
@@ -30,7 +31,8 @@ export const DeploymentTargetUnlinkInputV1Schema = lazyZodSchema(() => z.strictO
   { message: 'Choose a teardown receipt or explicit detach.' })));
 export type DeploymentTargetUnlinkInputV1 = z.infer<typeof DeploymentTargetUnlinkInputV1Schema>;
 
-export const DeploymentTeardownReasonV1Schema = lazyZodSchema(() => z.enum(['manual', 'previewClosed', 'move', 'decommission']));
+export const DeploymentTeardownReasonV1Schema = lazyZodSchema(() => z.enum(['manual', 'previewClosed', 'move', 'decommission'])
+  .check(z.describe('Why teardown is requested. Use manual for an explicit person or agent request.')));
 /** Captured at teardown admission and retained alongside its final signed proof. */
 export const DeploymentTeardownDispositionV1Schema = lazyZodSchema(() => z.object({ removeEnvironment: z.literal(true) }));
 export const DeploymentTeardownInputV1Schema = lazyZodSchema(() => z.strictObject({

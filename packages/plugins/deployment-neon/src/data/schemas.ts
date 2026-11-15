@@ -57,9 +57,11 @@ const createBranch = { name: identifier, correlation: correlationSchema,
 export const createBranchInput = union([object(createBranch, closed), object({ ...createBranch, ...createdSave }, closed)]);
 export type CreateBranchInput = ReturnType<typeof createBranchInput.parse>;
 export const deleteBranchInput = object({ branchId: identifier, correlation: correlationSchema }, closed);
+export const deleteProjectInput = object({}, closed);
 export const mutationResult = object({ status: union([literal('provisioned'), literal('configured'), literal('deleted'), literal('outcome_unknown')]),
   providerProjectId: identifier.optional(), branchId: identifier.optional(), endpointId: identifier.optional(), correlation: correlationSchema.optional(),
   providerIdentity: providerIdentity.optional(), providerEnvironment: object({ kind: literal('custom'), id: identifier }, closed).optional(),
+  providerResourceOrigin: literal('created').optional(),
   ready: flag.optional(), operationIds: array(identifier).optional(), recovered: flag.optional(),
   engine: literal('postgres').optional(), engineVersion: number({ integer: true }).optional(),
   providerConsole: object({ url: identifier, label: identifier }, closed).optional(),
@@ -69,7 +71,8 @@ export const mutationResult = object({ status: union([literal('provisioned'), li
 
 /** Canonical custody fields retain their exact JSON Schema; this leaf adds only product operands. */
 export function inputSchema(product: ProtocolComposableSchema<unknown>, selected = false): PluginJsonSchema {
-  const base = (product === branchListInput ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
+  const base = (product === deleteProjectInput ? DeploymentTargetRoleInputProtocolSchemasV1['projects.delete']
+    : product === branchListInput ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
     : selected ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
       : DeploymentTargetPreparationBaseV1ProtocolSchema).jsonSchema;
   const variants = (product.jsonSchema.anyOf ?? [product.jsonSchema]).map(member => ({

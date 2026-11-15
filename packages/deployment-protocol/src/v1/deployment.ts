@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { ActionActorV1Schema } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { DeploymentPreviewCleanupV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentPreviewDomainFactV1Schema } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { DeploymentDataCreationReferenceV1Schema, DeploymentReceiptFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -151,6 +152,7 @@ export type DeploymentMachineResultV1 = z.infer<typeof DeploymentMachineResultV1
 export { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 /** The existing native serialized arm retains its exact builder/member/image proofs. */
 export const DeploymentOwnServerContentV1Schema = z.strictObject({
+    actor: z.optional(ActionActorV1Schema),
     sourceIntent: ownServerSourceIntentV1Schema,
     previewDomain: z.optional(DeploymentPreviewDomainFactV1Schema),
     services: z.optional(DeploymentServiceSubsetV1Schema),
@@ -181,6 +183,7 @@ export const DeploymentPlatformProvenanceV1Schema = z.extend(DeploymentTargetLin
 });
 export type DeploymentPlatformProvenanceV1 = z.infer<typeof DeploymentPlatformProvenanceV1Schema>;
 export const DeploymentPlatformContentV1Schema = z.strictObject({
+    actor: z.optional(ActionActorV1Schema),
     sourceIntent: DeploymentSourceIntentV1Schema, sourceMethod: DeploymentSourceMethodV1Schema,
     commitSubject: z.optional(z.string()), failure: z.optional(DeploymentReceiptFailureV1Schema),
     correlations: z.optional(z.array(DeploymentCorrelationV1Schema)),
@@ -192,6 +195,18 @@ export const DeploymentPlatformContentV1Schema = z.strictObject({
     services: z.optional(z.never()),
 });
 export type DeploymentPlatformContentV1 = z.infer<typeof DeploymentPlatformContentV1Schema>;
+/** Resource deletion uses exact provider custody without requiring a prior deployment source. */
+export const DeploymentProviderTeardownContentV1Schema = z.extend(z.omit(DeploymentPlatformContentV1Schema, {
+    sourceIntent: true, sourceMethod: true, teardown: true,
+}), { sourceIntent: z.optional(z.never()), sourceMethod: z.optional(z.never()),
+    teardown: z.strictObject({ ...DeploymentTeardownContentV1Schema.shape,
+        // Provider effects have no native installation/resource proof inventory.
+        machines: z.array(DeploymentTeardownContentV1Schema.shape.machines.element).check(z.maxLength(0)),
+        resources: z.array(DeploymentTeardownContentV1Schema.shape.resources.element).check(z.maxLength(0)),
+        proofs: z.array(DeploymentTeardownContentV1Schema.shape.proofs.element).check(z.maxLength(0)),
+    }),
+});
+export type DeploymentProviderTeardownContentV1 = z.infer<typeof DeploymentProviderTeardownContentV1Schema>;
 /** Data cleanup spends its retained provider custody; it has no runtime source/build provenance. */
 export const DeploymentDataTeardownContentV1Schema = z.extend(z.omit(DeploymentPlatformContentV1Schema, {
     sourceIntent: true, sourceMethod: true, platform: true,
@@ -205,7 +220,7 @@ export const DeploymentDataTeardownContentV1Schema = z.extend(z.omit(DeploymentP
 });
 export type DeploymentDataTeardownContentV1 = z.infer<typeof DeploymentDataTeardownContentV1Schema>;
 export const DeploymentContentV1Schema = z.union([DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema,
-    DeploymentDataTeardownContentV1Schema]);
+    DeploymentDataTeardownContentV1Schema, DeploymentProviderTeardownContentV1Schema]);
 export type DeploymentContentV1 = z.infer<typeof DeploymentContentV1Schema>;
 export const DeploymentStoredContentV1Schema = deploymentStoredContentV1Schema(DeploymentContentV1Schema);
 export type DeploymentStoredContentV1 = z.infer<typeof DeploymentStoredContentV1Schema>;

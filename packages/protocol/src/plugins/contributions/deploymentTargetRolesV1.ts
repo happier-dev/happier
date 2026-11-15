@@ -97,6 +97,8 @@ export type DeploymentManagedDataPresentationV1 = z.infer<typeof DeploymentManag
 
 /** Protected provider link content; the host remains the sole association writer. */
 export const DeploymentTargetLinkProviderContentV1Schema = lazyZodSchema(() => z.strictObject({
+    /** Recorded by the creation host; absence means an adopted or historical resource. */
+    providerResourceOrigin: z.optional(z.literal('created')),
     credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema,
     providerIdentity: DeploymentTargetProviderIdentityV1Schema,
     providerEnvironment: DeploymentTargetProviderEnvironmentV1Schema,
@@ -260,6 +262,7 @@ export const DeploymentTargetRoleInputSchemasV1 = {
     ...DeploymentTargetRuntimeRoleInputSchemasV1,
     'projects.list': preparationInput, 'projects.provisionOptions': preparationInput,
     'projects.provision': preparationInput, 'projects.link': preparationInput,
+    'projects.delete': DeploymentTargetDataInputV1Schema,
     'branches.list': DeploymentTargetBranchesListInputV1Schema, 'branches.create': DeploymentTargetDataInputV1Schema,
     'branches.delete': DeploymentTargetDataInputV1Schema, 'query.readOnly': DeploymentTargetDataQueryInputV1Schema,
     'connectionSecret.save': DeploymentTargetDataInputV1Schema,
@@ -289,6 +292,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
     'projects.provisionOptions': projectZodProtocolSchema(preparationInput),
     'projects.provision': projectZodProtocolSchema(preparationInput),
     'projects.link': projectZodProtocolSchema(preparationInput),
+    'projects.delete': DeploymentTargetDataInputV1ProtocolSchema,
     'branches.list': DeploymentTargetBranchesListInputV1ProtocolSchema,
     'branches.create': DeploymentTargetDataInputV1ProtocolSchema,
     'branches.delete': DeploymentTargetDataInputV1ProtocolSchema,
@@ -298,6 +302,8 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
 
 export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), state: DeploymentStateV1Schema, providerDeploymentId: z.optional(id), observedAtMs: timestamp,
+    /** Positive native absence observation, required by the host to settle provider deletion. */
+    providerResourceAbsent: z.optional(z.literal(true)),
     urls: z.optional(z.array(publicUrl)), steps: z.optional(z.array(DeploymentStepV1Schema)),
     /** Immutable upload evidence retained alongside later provider lifecycle observations. */
     uploadProvenance: z.optional(z.strictObject({

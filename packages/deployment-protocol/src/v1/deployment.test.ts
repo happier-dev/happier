@@ -18,6 +18,19 @@ describe('receipt structural integrity', () => {
         expect(DeploymentPlatformContentV1Schema.safeParse(platform).success).toBe(true);
         expect(DeploymentContentV1Schema.safeParse({ ...content, sourceIntent }).success).toBe(false);
     });
+    it('retains exact provider deletion custody without inventing a deployed source', () => {
+        const data = { machines: [], images: [], machineResults: [], steps: [],
+            teardown: { reason: 'manual', targetLinkRevision: 1, machines: [], resources: [], proofs: [] },
+            platform: { credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
+                consumer: { pluginId: 'example.deploy', localId: 'link' }, purpose: 'manage' },
+                target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'connected' } } },
+                providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
+                providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+                observation: { v: 1, state: 'queued', observedAtMs: 1000 } } };
+        expect(DeploymentContentV1Schema.parse(JSON.parse(JSON.stringify(data)))).toEqual(data);
+        expect(DeploymentContentV1Schema.safeParse({ ...data, teardown: undefined }).success).toBe(false);
+        expect(DeploymentContentV1Schema.safeParse({ ...data, sourceMethod: 'upload' }).success).toBe(false);
+    });
     it('retains canonical provider failure phases in serialized receipt content', () => {
         const { content } = createDeploymentReceiptDetailV1();
         const provider = DeploymentTargetRoleFailureV1Schema.parse({ v: 1,

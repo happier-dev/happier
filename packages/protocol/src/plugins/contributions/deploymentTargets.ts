@@ -51,7 +51,7 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
     return z.strictObject({
         projects: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             provisionOptions: z.optional(resource), provisionOptionsAction: z.optional(action),
-            provision: z.optional(action), link: z.optional(action) })),
+            provision: z.optional(action), link: z.optional(action), delete: z.optional(action) })),
         branches: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             create: z.optional(action), delete: z.optional(action),
             /** Plugin-owned preview operands, evaluated against the occurrence's neutral preview input. */
@@ -161,6 +161,11 @@ export function validateDeploymentTargetContributionsV1(
             if (!validInput || !action.resultSchema
                 || !isRecursivelyClosedPluginJsonSchemaV2(action.resultSchema)) {
                 context.addIssue({ code: 'custom', path, message: 'Deployment target roles require explicit recursively closed input and result schemas.' });
+            }
+            if (binding.role === 'projects.delete' && (!action.resultSchema
+                || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
+                    normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema)))) {
+                context.addIssue({ code: 'custom', path, message: 'Data project deletion requires the canonical absence observation.' });
             }
             if (descriptor.role === 'runtime' && binding.role !== 'inspect' && binding.role !== 'link'
                 && Object.hasOwn(DeploymentTargetRoleInputProtocolSchemasV1, binding.role)) {

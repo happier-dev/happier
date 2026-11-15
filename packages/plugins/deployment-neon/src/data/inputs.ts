@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, type DefinePluginInput, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -24,7 +25,7 @@ const runtime: PluginDynamicResourceRuntime = {
       ...(field === 'branchId' ? { projectId: draft.projectId!, includeBranches: true, ...(options.query?.cursor ? { cursor: options.query.cursor } : {}) } : {}),
       ...(field === 'projectId' && options.query?.query ? { search: options.query.query } : {}),
       ...(field === 'projectId' && options.query?.cursor ? { cursor: options.query.cursor } : {}) }, { signal: options.signal });
-    if (!result.ok) throw new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' });
+    if (!result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' }), { phase: 'deployment.neon.options', causeKind: 'native_failure', error: result });
     const value = result.result;
     if (!record(value)) throw new PluginError({ code: 'provider_response_invalid' });
     const rows = field === 'regionId' ? value.regions : field === 'branchId' ? value.branches : value.projects;

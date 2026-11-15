@@ -67,6 +67,22 @@ function dataManifest() {
 }
 
 describe('deployment target manifest admission', () => {
+    it('admits exact-resource data project deletion for Account and daemon execution', () => {
+        for (const execution of [{ target: 'daemon' }, { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]) {
+            const value = dataManifest();
+            const descriptor = { ...dataTarget, dataV1: { ...dataTarget.dataV1,
+                projects: { ...dataTarget.dataV1.projects, delete: 'projects/delete' } } };
+            // The selected data input is the same recorded custody as branches.create; no name operand exists.
+            const action = { id: 'projects/delete', title: 'Delete project', scopes: ['global'], surfaces: ['plugin'], execution,
+                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['branches.create'].jsonSchema,
+                resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'destructive', readOnly: false };
+            expect(admittedTargets({ ...value, contributes: { ...value.contributes,
+                deploymentTargets: [descriptor], actions: [...value.contributes.actions, action] } }).targets).toEqual([descriptor]);
+            expect(admittedTargets({ ...value, contributes: { ...value.contributes,
+                deploymentTargets: [descriptor], actions: [...value.contributes.actions, { ...action, resultSchema: closed }] } }).targets).toEqual([]);
+        }
+    });
+
     it('withdraws lifecycle roles whose closed schemas do not match their canonical input and observation', () => {
         const value = manifest();
         for (const patch of [{ inputSchema: closed }, { resultSchema: closed }]) {

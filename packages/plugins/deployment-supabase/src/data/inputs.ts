@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, type DefinePluginInput, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -23,7 +24,7 @@ const runtime: PluginDynamicResourceRuntime = {
     const result = await options.readAction({ pluginId, localId }, { ...custody,
       ...(field === 'regionSelection' && typeof draft.desiredInstanceSize === 'string' ? { desiredInstanceSize: draft.desiredInstanceSize } : {}) },
       { signal: options.signal });
-    if (!result.ok) throw new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' });
+    if (!result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' }), { phase: 'deployment.supabase.options', causeKind: 'native_failure', error: result });
     const value = result.result;
     if (!record(value)) throw new PluginError({ code: 'provider_response_invalid' });
     const rows = field === 'regionSelection' ? value.regions : value.projects;
@@ -56,6 +57,7 @@ export const dataInputHints = {
 } as const;
 
 export const dataActionInputHints = {
+  'projects-delete': { fields: [] },
   'projects-list': { fields: [dataInputHints.account] },
   'provision-options': { fields: [dataInputHints.account] },
   'projects-link': { fields: [dataInputHints.account, dataInputHints.project] },
