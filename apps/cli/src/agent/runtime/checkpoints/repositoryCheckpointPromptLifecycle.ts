@@ -174,6 +174,29 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     // One foreground turn is admitted at a time. Terminal publication joins its
     // capture and turn-start alias, including a reply that finishes before capture.
     let checkpointPreparation: Promise<void> = Promise.resolve();
+    // Repository discovery is one exec round trip through the Machine's exec service. Prepare it while the
+    // Session is idle (at start and when each turn ends) so a send waits only for the baseline capture.
+    let sessionEnded = false;
+    let preparedContext: Promise<ActiveCheckpointBinding> | null = null;
+    const resolveContext = () => resolveGitCheckpointContext({
+        runtimeDirectory: params.runtimeDirectory,
+        sessionId: params.session.sessionId,
+        scmCommandRunner: params.scmCommandRunner,
+    });
+    const prepareContext = () => {
+        if (sessionEnded) return;
+        const prepared = resolveContext();
+        prepared.catch(() => undefined);
+        preparedContext = prepared;
+    };
+    const takePreparedContext = async (): Promise<ActiveCheckpointBinding> => {
+        const prepared = preparedContext;
+        preparedContext = null;
+        const context = prepared ? await prepared.catch(() => null) : null;
+        // A failed discovery or an exec service that was not yet open is not a discovery result.
+        return context && context.unavailableReason !== 'scm_exec_unavailable' ? context : await resolveContext();
+    };
+    prepareContext();
 
     function endAttributionInterval(binding: ActiveCheckpointBinding): void {
         if (binding.attributionInterval) {
@@ -252,11 +275,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
         },
         onBeforePromptDispatch({ messageId }) {
             const capture = (async () => {
-                const context = await resolveGitCheckpointContext({
-                    runtimeDirectory: params.runtimeDirectory,
-                    sessionId: params.session.sessionId,
-                    scmCommandRunner: params.scmCommandRunner,
-                });
+                const context = await takePreparedContext();
                 const refs = buildRepositoryCheckpointRefs({
                     scopeId: context.scopeId,
                     messageId,
@@ -353,7 +372,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
         async onTurnFinal({ messageId, turnId, status, sequence }) {
             const activeBinding = bindingsByMessageId.get(messageId);
             bindingsByMessageId.delete(messageId);
-            if (!activeBinding) return;
+            if (!activeBinding) { prepareContext(); return; }
             const binding: ActiveCheckpointBinding = { ...activeBinding, finalSequence: sequence };
             let capturedAttributionScope: RepositoryCheckpointAttributionScope | null = null;
             /**
@@ -482,14 +501,18 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                         attributionScope: snapshotAttributionScope(binding), receipts: binding.receipts }) });
             } finally {
                 endAttributionInterval(binding);
+                prepareContext();
             }
         },
         onTurnAbortedBeforeStart({ messageId }) {
             const binding = bindingsByMessageId.get(messageId);
             bindingsByMessageId.delete(messageId);
             if (binding) endAttributionInterval(binding);
+            prepareContext();
         },
         async onSessionEnd() {
+            sessionEnded = true;
+            preparedContext = null;
             await checkpointPreparation;
             for (const binding of bindingsByMessageId.values()) {
                 endAttributionInterval(binding);
