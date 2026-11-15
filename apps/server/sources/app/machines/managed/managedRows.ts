@@ -269,6 +269,14 @@ export async function requireManagedControllerInTx(tx: Tx, input: Readonly<{
     if (!input.controller) return;
     const machine = projection ? projection.controllers.get(input.controller.machineId)
         : await tx.machine.findUnique({ where: { id: input.controller.machineId }, select: MANAGED_PROJECTION_CONTROLLER_SELECT });
+    return requireManagedControllerFromFacts(input, machine);
+}
+
+/** The same installation/custody decision for a controller captured in a set read. */
+export function requireManagedControllerFromFacts(input: Readonly<{
+    custodianAccountId: string; controller?: { machineId: string; installationId: string };
+}>, machine: ManagedProjectionController | null | undefined): ManagedProjectionController | undefined {
+    if (!input.controller) return;
     if (!machine || machine.accountId !== input.custodianAccountId) throw new ManagedMachineError("permission_denied");
     if (classifyMachineAvailabilityState(machine) !== "available" || machine.installationId !== input.controller.installationId) {
         throw new ManagedMachineError("controller_retired");

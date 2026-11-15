@@ -4,10 +4,11 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { SessionInputMachineTargetV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { Tx } from '@/storage/inTx';
-import { resolveMachineAdmissionInTx, resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
+import { resolveMachineAdmissionInTx, resolveMachineTargetAdmissionsInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
+import { getDbProviderFromEnv } from '@/storage/db';
 
 /** A Machine admission the caller already decided in this request for one exact actor and Machine. */
 type AdmittedMachine = Extract<MachineAdmission, { kind: 'admitted' }>;
@@ -51,18 +52,29 @@ export async function isCurrentSessionInputMachineTargetInTx(tx: Tx, target: Ses
 export async function areCurrentSessionInputMachineTargetsInTx(tx: Tx, targets: readonly SessionInputMachineTargetV1[],
     options?: Readonly<{ admittedWork?: true }>): Promise<readonly boolean[]> {
     if (targets.length === 0) return [];
-    if (targets.length > SESSION_ACCESS_SESSION_BATCH_SIZE) {
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    if (provider !== 'postgres' && targets.length > SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const currentness: boolean[] = [];
         for (let offset = 0; offset < targets.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
             currentness.push(...await areCurrentSessionInputMachineTargetsInTx(tx, targets.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE), options));
         }
         return currentness;
     }
-    const sessions = await tx.session.findMany({ where: { id: { in: [...new Set(targets.map(target => target.sessionId))] } },
-        select: { id: true, accountId: true, runtimeMachineTarget: true } });
+    const sessionIds = [...new Set(targets.map(target => target.sessionId))];
+    const sessions = provider === 'postgres'
+        ? await tx.$queryRawUnsafe<Array<{ id: string; accountId: string; runtimeMachineTarget: unknown }>>(
+            'SELECT "id", "accountId", "runtimeMachineTarget" FROM "Session" WHERE "id" = ANY($1::text[])', sessionIds)
+        : await tx.session.findMany({ where: { id: { in: sessionIds } },
+            select: { id: true, accountId: true, runtimeMachineTarget: true } });
     const bySession = new Map(sessions.map(session => [session.id, session]));
-    const keys = options?.admittedWork ? [] : await tx.accessKey.findMany({ where: { OR: targets.map(({ accountId, sessionId, machineId }) => ({ accountId, sessionId, machineId })) },
-        select: { accountId: true, sessionId: true, machineId: true } });
+    const keys = options?.admittedWork ? [] : provider === 'postgres'
+        ? await tx.$queryRawUnsafe<Array<{ accountId: string; sessionId: string; machineId: string }>>(
+            `SELECT k."accountId", k."sessionId", k."machineId" FROM "AccessKey" k
+             JOIN jsonb_to_recordset($1::jsonb) AS requested("accountId" text, "sessionId" text, "machineId" text)
+             ON k."accountId" = requested."accountId" AND k."sessionId" = requested."sessionId" AND k."machineId" = requested."machineId"`,
+            JSON.stringify(targets.map(({ accountId, sessionId, machineId }) => ({ accountId, sessionId, machineId }))))
+        : await tx.accessKey.findMany({ where: { OR: targets.map(({ accountId, sessionId, machineId }) => ({ accountId, sessionId, machineId })) },
+            select: { accountId: true, sessionId: true, machineId: true } });
     const bindingKey = (value: Readonly<{ accountId: string; sessionId: string; machineId: string }>) => JSON.stringify([value.accountId, value.sessionId, value.machineId]);
     const bindings = new Set(keys.map(bindingKey));
     const homeId = await readCurrentServerIdentityId(process.env, tx);
@@ -71,14 +83,11 @@ export async function areCurrentSessionInputMachineTargetsInTx(tx: Tx, targets: 
         select: { id: true, installationId: true, replacedByMachineId: true },
     }) : [];
     const byMachine = new Map(machines.map(machine => [machine.id, machine]));
-    const byAccount = new Map<string, Awaited<ReturnType<typeof resolveMachineAdmissionsInTx>>>();
-    for (const accountId of options?.admittedWork ? [] : new Set(targets.map(target => target.accountId))) {
-        byAccount.set(accountId, await resolveMachineAdmissionsInTx(tx, { actorAccountId: accountId,
-            machineIds: targets.filter(target => target.accountId === accountId).map(target => target.machineId) }));
-    }
-    return targets.map(target => {
+    const admissions = options?.admittedWork ? [] : await resolveMachineTargetAdmissionsInTx(tx,
+        targets.map(target => ({ actorAccountId: target.accountId, machineId: target.machineId })));
+    return targets.map((target, index) => {
         const session = bySession.get(target.sessionId);
-        const admission = byAccount.get(target.accountId)?.get(target.machineId);
+        const admission = admissions[index];
         const machine = byMachine.get(target.machineId);
         if (!session || session.accountId !== target.accountId || !homeId || homeId !== target.homeId) return false;
         if (options?.admittedWork
@@ -95,16 +104,24 @@ function sameMachineTarget(left: SessionInputMachineTargetV1, right: SessionInpu
         && left.machineId === right.machineId && left.installationId === right.installationId;
 }
 
+/** Parsing committed placement is shared by point reads and publication set reads. */
+export function readStoredCommittedSessionInputMachineTarget(session: Readonly<{
+    id: string; accountId: string; archivedAt: Date | null; runtimeMachineTarget: unknown;
+}>): SessionInputMachineTargetV1 | undefined {
+    if (session.archivedAt !== null || session.runtimeMachineTarget == null) return undefined;
+    const stored = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
+    return stored.success && stored.data.sessionId === session.id && stored.data.accountId === session.accountId ? stored.data : undefined;
+}
+
 /** Only an actual publisher commit establishes cold placement; keys alone never select it. */
 export async function readCurrentCommittedSessionInputMachineTargetInTx(tx: Tx, sessionId: string,
     options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
     const session = await tx.session.findUnique({ where: { id: sessionId },
         select: { accountId: true, archivedAt: true, runtimeMachineTarget: true } });
-    if (!session || session.archivedAt !== null || session.runtimeMachineTarget == null) return undefined;
-    const stored = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
-    if (!stored.success || stored.data.sessionId !== sessionId || stored.data.accountId !== session.accountId) return undefined;
-    const current = await readCurrentSessionInputMachineTargetInTx(tx, stored.data, options);
-    return current && sameMachineTarget(current, stored.data) ? stored.data : undefined;
+    const stored = session ? readStoredCommittedSessionInputMachineTarget({ ...session, id: sessionId }) : undefined;
+    if (!stored) return undefined;
+    const current = await readCurrentSessionInputMachineTargetInTx(tx, stored, options);
+    return current && sameMachineTarget(current, stored) ? stored : undefined;
 }
 
 export function readStoredSessionInputAdmissionReceipt(value: unknown): SessionInputAdmissionReceiptV1 | undefined {

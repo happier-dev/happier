@@ -434,6 +434,68 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
 }
 
 type MachineAdmissionsInput = Omit<MachineAdmissionInput, 'machineId'> & Readonly<{ machineIds: readonly string[] }>;
+/** Mixed-requester placement reads share one graph and recipient-material acquisition. */
+export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readonly MachineActor[]): Promise<readonly MachineAdmission[]> {
+    if (targets.length === 0) return [];
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const machineIds = [...new Set(targets.map(target => target.machineId))];
+    const rows: MachineResourceFacts[] = [];
+    if (provider === 'postgres') {
+        const accountFields = Object.keys(MACHINE_RESOURCE_FACTS_SELECT.account.select)
+            .flatMap(field => [`'${field}'`, `a."${field}"`]).join(', ');
+        const managedFields = Object.keys(MACHINE_RESOURCE_FACTS_SELECT.managedResource.select)
+            .flatMap(field => [`'${field}'`, `managed."${field}"`]).join(', ');
+        rows.push(...await tx.$queryRawUnsafe<MachineResourceFacts[]>(
+            `SELECT m.*, jsonb_build_object(${accountFields}) AS "account",
+             CASE WHEN managed."id" IS NULL THEN NULL ELSE jsonb_build_object(${managedFields}) END AS "managedResource"
+             FROM "Machine" m JOIN "Account" a ON a."id" = m."accountId"
+             LEFT JOIN "ManagedMachine" managed ON managed."enrolledMachineId" = m."id"
+             WHERE m."id" = ANY($1::text[])`, machineIds));
+    } else for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 3 })) {
+        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_RESOURCE_FACTS_SELECT }));
+    }
+    const facts = new Map(rows.map(row => [row.id, { ...row, grants: [], ...projectResourceGrantRows([]) }]));
+    const accountIds = [...new Set(targets.map(target => target.actorAccountId))];
+    const roles = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds, accountIds });
+    const encrypted = targets.filter(target => {
+        const row = facts.get(target.machineId);
+        return row && row.accountId !== target.actorAccountId && resourceMode(row) === 'e2ee'
+            && roles.get(row.id)?.get(target.actorAccountId);
+    });
+    const materials = new Map<string, Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>>();
+    const recipientIds = [...new Set(encrypted.map(target => target.actorAccountId))];
+    const recipients: NonNullable<Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>['recipient']>[] = [];
+    if (recipientIds.length > 0 && provider === 'postgres') {
+        const fields = Object.keys(RECIPIENT_READINESS_SELECT).map(field => `"${field}"`).join(', ');
+        recipients.push(...await tx.$queryRawUnsafe<typeof recipients>(`SELECT ${fields} FROM "Account" WHERE "id" = ANY($1::text[])`, recipientIds));
+    } else for (const ids of portableQueryChunks({ values: recipientIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        recipients.push(...await tx.account.findMany({ where: { id: { in: [...ids] } }, select: RECIPIENT_READINESS_SELECT }));
+    }
+    for (const recipient of recipients) materials.set(recipient.id, { recipient,
+        readiness: deriveAccountRecipientEnvelopeReadinessFromRow(recipient), envelopes: new Map() });
+    for (const accountId of recipientIds) if (!materials.has(accountId)) materials.set(accountId, { recipient: null, readiness: null, envelopes: new Map() });
+    const envelopeIds = [...new Map(encrypted.map(target => {
+        const id = { machineId: target.machineId, recipientAccountId: target.actorAccountId };
+        return [JSON.stringify(id), id];
+    })).values()];
+    const envelopes: MachineKeyEnvelope[] = [];
+    if (envelopeIds.length > 0 && provider === 'postgres') {
+        envelopes.push(...await tx.$queryRawUnsafe<MachineKeyEnvelope[]>(
+            `SELECT e.* FROM "MachineKeyEnvelope" e
+             JOIN jsonb_to_recordset($1::jsonb) AS requested("machineId" text, "recipientAccountId" text)
+             ON e."machineId" = requested."machineId" AND e."recipientAccountId" = requested."recipientAccountId"`, JSON.stringify(envelopeIds)));
+    } else for (const ids of portableQueryChunks({ values: envelopeIds, bindingsPerValue: 2, fixedBindings: 1 })) {
+        envelopes.push(...await tx.machineKeyEnvelope.findMany({ where: { OR: [...ids] } }));
+    }
+    for (const envelope of envelopes) {
+        materials.get(envelope.recipientAccountId)?.envelopes.set(envelope.machineId, envelope);
+    }
+    const admissions: MachineAdmission[] = [];
+    for (const target of targets) admissions.push(await machineAdmissionFromFactsWithRoleInTx(tx, facts.get(target.machineId) ?? null,
+        target, roles.get(target.machineId)?.get(target.actorAccountId) ?? null, materials.get(target.actorAccountId)));
+    return admissions;
+}
+
 /** Set-oriented default-use admission; point and batch readers share every policy decision. */
 export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput & Readonly<{ purpose: 'workflow' }>): Promise<ReadonlyMap<string, WorkflowMachineAdmission>>;
 export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput): Promise<ReadonlyMap<string, MachineAdmission>>;
@@ -458,6 +520,12 @@ export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineAdmissi
 export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineAdmissionFacts | null, input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>): Promise<MachineAdmission | WorkflowMachineAdmission> {
     return machineAdmissionFromFactsWithRoleInTx(tx, row ? { ...row, ...projectResourceGrantRows(row.grants) } : null, input);
 }
+function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
+    input: MachineAdmissionInput & Readonly<{ purpose?: never }>, role?: MachineAccessRoleV1 | null,
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission>;
+function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
+    input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null,
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission | WorkflowMachineAdmission>;
 async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
     input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null,
     material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission | WorkflowMachineAdmission> {
