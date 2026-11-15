@@ -87,6 +87,27 @@ describe('MultiPaneHost docked sheet', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('paints an overlay that fills the whole region as the page, not a frosted sheet over a page no one can see', async () => {
+        // A phone's details overlay (an open pane retained across a resize to phone width) covers the page entirely.
+        const screen = await renderScreen(<GlassMaterialSettingsProvider value={{}}>
+            <MultiPaneHost main={null} rightPane={null} detailsPane={<Panel />} overlayFillsRegion
+                layout={{ main: 'docked', kind: 'twoPane', right: 'hidden', details: 'overlay' }}
+                rightDockWidthPx={360} detailsDockWidthPx={390} onCloseRight={() => {}} onCloseDetails={() => {}}
+                onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}} />
+        </GlassMaterialSettingsProvider>);
+        try {
+            const pane = screen.findByTestId('multi-pane-details-overlay')!;
+            const layers = pane.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+            for (const layer of layers) {
+                const backdrop = styleOf(layer);
+                expect(String(backdrop.backdropFilter ?? backdrop.WebkitBackdropFilter ?? '')).not.toContain('blur(');
+            }
+            // No floating sheet corner either: the page it is has square edges.
+            const sheets = pane.findAll(node => typeof node.type === 'string' && Number(styleOf(node).borderTopLeftRadius ?? 0) > 0);
+            expect(sheets).toEqual([]);
+        } finally { await screen.unmount(); }
+    });
+
     it.each([false, true])('leaves the docked pane\'s seam unclipped so its resize target reaches over the page beside it (on canvas: %s)', async (onCanvas) => {
         // The handle's web target reaches past the pane edge; a clipping column would cut that outer part off.
         const screen = await renderScreen(<MultiPaneHost main={null} rightPane={<Panel />} detailsPane={null}

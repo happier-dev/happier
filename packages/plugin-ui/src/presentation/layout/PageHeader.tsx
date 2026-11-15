@@ -1,10 +1,11 @@
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { useOptionalHappierUiLocalization, useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
+import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMetaIdAnchor, type HappierPageHeaderMetaIdCopy } from './PageHeaderMetaId.js';
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
+import { useHappierLayoutTextAlign } from '../text/layoutTextAlign.js';
 import { useHappierCollectionDetailWidth, useHappierCollectionLayout } from '../collection/collectionLayout.js';
 import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappierPageBackPlacement } from './pageMetrics.js';
 import { HappierPageHeaderFlushTopContext, HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
@@ -147,10 +148,8 @@ function useDefaultPageTextRender(metaIdCopy: HappierPageHeaderMetaIdCopy | unde
   const headingRef = useContext(HappierPageHeadingBindingContext);
   const theme = useOptionalHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
-  // The header's words start on the page's edge, beside their mark: a title whose first word is Arabic or Hebrew
-  // keeps its own reading order (the text's direction) but not the far side of an LTR page (the page's direction).
-  const localization = useOptionalHappierUiLocalization();
-  const align = localization?.direction === 'rtl' ? PAGE_TEXT_RIGHT : PAGE_TEXT_LEFT;
+  // The header's words start on the page's edge, beside their mark (`useHappierLayoutTextAlign`).
+  const align = useHappierLayoutTextAlign();
   return useCallback((input) => {
     const color = theme === null
       ? undefined
@@ -181,9 +180,6 @@ function useDefaultPageTextRender(metaIdCopy: HappierPageHeaderMetaIdCopy | unde
     );
   }, [align, headingRef, metaIdCopy, theme, typography]);
 }
-
-const PAGE_TEXT_LEFT = Object.freeze({ textAlign: 'left' as const });
-const PAGE_TEXT_RIGHT = Object.freeze({ textAlign: 'right' as const });
 
 function renderPageText(
   slot: ReactNode,

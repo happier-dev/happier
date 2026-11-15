@@ -102,6 +102,8 @@ export function TriageChangedFilesProgress({
 /**
  * The Files panel while its first page is read: the quiet line that will stand above the files (Viewed progress, the
  * comparison being read), then compact rows of the files' own shape, so the files replace placeholders of their size.
+ * It is the settled panel's own List with no rows yet, so the line stands on the same text edge as the settled header
+ * and nothing moves sideways when the files arrive.
  */
 export function TriageChangedFilesLoading({
   title,
@@ -126,12 +128,22 @@ export function TriageChangedFilesLoading({
   );
   if (!progress) return rows;
   return (
-    <Stack gap="small">
-      <TriageChangedFilesProgress value={progress === true ? null : progress} />
-      {rows}
-    </Stack>
+    <List<never>
+      accessibilityLabel={title}
+      accessibilityLabelKey={titleKey}
+      density="flush"
+      items={NO_FILES}
+      keyForItem={readNoFileKey}
+      renderItem={renderNoFile}
+      header={<TriageChangedFilesProgress value={progress === true ? null : progress} />}
+      empty={rows}
+    />
   );
 }
+
+const NO_FILES: readonly never[] = Object.freeze([]);
+const readNoFileKey = (): string => '';
+const renderNoFile = (): null => null;
 
 type FileRowProps<TRow extends TriageChangedFileV1> = Readonly<{
   row: TRow;

@@ -105,6 +105,11 @@ export type MultiPaneHostProps = Readonly<{
     /** The details overlay floats over a page that stays live: no scrim, and the page keeps focus and presses. */
     detailsOverPage?: boolean;
     /**
+     * An overlay pane fills its whole region (a phone): nothing of the page shows beside it, so it is the page, not a
+     * sheet floating over one (an open pane retained across a resize to phone width reads as the pushed page).
+     */
+    overlayFillsRegion?: boolean;
+    /**
      * Set when the shell stands this page's right panel on the canvas (calm-shell R4-2): while docked
      * the right column renders in `host`, beside the page sheet, and `hidden` while this page is not on
      * screen. The column keeps one mounted instance whichever place it stands in.
@@ -428,6 +433,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     mirrored={mirrored}
                     flexible={mirrored}
                     presentation={layout.details}
+                    fillsRegion={props.overlayFillsRegion === true}
                     modalActive={detailsModalActive}
                     progress={detailsPresence.progress}
                     open={Boolean(detailsPane)}
@@ -481,6 +487,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     onCanvas={side && rightOnCanvas}
                     divider={props.rightDivider ?? 'line'}
                     presentation={inMain ? (mainVisible ? 'main' : 'hidden') : side ? layout.right : 'hidden'}
+                    fillsRegion={props.overlayFillsRegion === true}
                     modalActive={side && rightModalActive}
                     progress={inMain && props.rightSurfaces !== undefined ? settledMainProgress : rightPresence.progress}
                     open={Boolean(rightPane)}
@@ -593,6 +600,8 @@ function PaneColumn(props: Readonly<{
     flexible?: boolean;
     /** `main`: laid over the main column down to its composer (lab AR1 EFv). */
     presentation: ResolvedPaneLayout['details'] | 'main';
+    /** An overlay that fills its whole region is the page: page material, square edges, no rim (`overlayFillsRegion`). */
+    fillsRegion?: boolean;
     mainBottomInsetPx?: number;
     /** `main`: starts under the column's top chrome (its header and page tabs). */
     mainTopInsetPx?: number;
@@ -624,6 +633,8 @@ function PaneColumn(props: Readonly<{
     const { theme } = useUnistyles();
     const docked = props.presentation === 'docked';
     const overlay = props.presentation === 'overlay';
+    // Over the page it floats; filling the region there is no page beside it to float over.
+    const floating = overlay && props.fillsRegion !== true;
     const hidden = props.presentation === 'hidden';
     const inMain = props.presentation === 'main';
     const ownRegionFocus = usePaneRegionFocusBoundary(props.name, !hidden && props.focusEligible && props.regionFocus === undefined);
@@ -715,7 +726,7 @@ function PaneColumn(props: Readonly<{
                 zIndex: overlay ? props.overlayZIndex : -1,
                 backgroundColor: 'transparent',
                 opacity: overlay ? props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) : 0,
-                ...(overlay ? {
+                ...(floating ? {
                     ...(props.mirrored ? { borderTopRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX }
                         : { borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX }),
                     // The rounded sheet inside clips the content; on the web the column itself stays open so the resize
@@ -769,11 +780,11 @@ function PaneColumn(props: Readonly<{
                         {props.onCanvas ? <CanvasPanelBacking /> : null}
                         {/* A canvas panel stands beside the page coat; a joined panel inherits it. Both use the
                             existing content material, including the user's chosen opacity and blur. */}
-                        <GlassSurface {...resolvePaneSurfaceMaterial(overlay, theme.colors)}
-                            finishRole={overlay ? 'floating' : null} nested={inMain || (docked && !props.onCanvas)} style={{
+                        <GlassSurface {...resolvePaneSurfaceMaterial(floating, theme.colors)}
+                            finishRole={floating ? 'floating' : null} nested={inMain || (docked && !props.onCanvas)} style={{
                             flex: 1, minHeight: 0, minWidth: 0,
                             ...(props.onCanvas ? CANVAS_PANEL_SHEET_STYLE : null),
-                            ...(overlay ? (props.mirrored
+                            ...(floating ? (props.mirrored
                                 ? { borderTopRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX }
                                 : { borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX }) : null),
                             borderLeftWidth: docked && !props.mirrored && !props.onCanvas && props.divider !== 'shadow' ? StyleSheet.hairlineWidth : 0,
@@ -785,7 +796,7 @@ function PaneColumn(props: Readonly<{
                                 {/* A side pane's scrollers never drive the main column's header shade. */}
                                 <PaneHeaderScrollIsolation>{props.children}</PaneHeaderScrollIsolation>
                             </PluginSurfaceFocusEligibilityProvider>
-                            {overlay ? (
+                            {floating ? (
                                 // The rim runs past the anchored edge, so only the edge that shows (and its corners) is drawn.
                                 // Its own clip keeps that overhang out of the pane's scrollable overflow: on the web a focused
                                 // field inside (a review comment) otherwise scrolled the whole pane sideways by the overhang.

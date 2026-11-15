@@ -14,7 +14,6 @@ import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presenta
 import type { HappierStyleProp } from '../presentation/portableTypes.js';
 import { Button, IconButton } from './Button.js';
 import { Icon } from './Icon.js';
-import { Text } from './Text.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
 import { useCollectionDetailHeadingBindingInternal } from './Focus.js';
@@ -190,14 +189,24 @@ function PushedDetail(props: DetailsPaneProps): ReactElement {
 /**
  * @internal The body of a detail. Where the platform draws its title (`inset`: the details pane's band, the
  * pushed detail's header) its content stands on the title's edge, the page's sheet inset, so a plain line of text lines up under
- * the title instead of touching the pane's side. Sheets, page states and headings inside keep their own edges
+ * the title instead of touching the pane's side. It draws only the part of that edge its column does not draw already:
+ * a pushed detail is the page, whose host column already stands on the edge (a plugin page's gutter), so it adds
+ * nothing there and the body, the band and the story's title share one edge. The details pane (a new root, see
+ * `usePluginUiSurfaceBridge`) and the detail beside its list (`Collection`) are columns of their own and start at `0`. Sheets, page states and headings inside keep their own edges
  * (`HappierColumnEdgeContext`); `DetailsPaneFooter` still spans the whole width.
  */
+/** How far a detail's body pads its content, which its pinned footer reaches back across to span the body. */
+const DetailsPaneBodyPaddingContext = createContext(0);
+
 export function DetailsPaneBody(props: Readonly<{ inset: boolean; children?: ReactNode }>): ReactElement {
-  const edgePx = props.inset ? HAPPIER_PAGE_METRICS.sheetInsetPx : 0;
+  const columnEdgePx = useHappierColumnEdgePx();
+  const edgePx = props.inset ? Math.max(columnEdgePx, HAPPIER_PAGE_METRICS.sheetInsetPx) : 0;
+  const paddingPx = props.inset ? edgePx - columnEdgePx : 0;
   return (
-    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: edgePx }}>
-      <HappierColumnEdgeContext.Provider value={edgePx}>{props.children}</HappierColumnEdgeContext.Provider>
+    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: paddingPx }}>
+      <HappierColumnEdgeContext.Provider value={edgePx}>
+        <DetailsPaneBodyPaddingContext.Provider value={paddingPx}>{props.children}</DetailsPaneBodyPaddingContext.Provider>
+      </HappierColumnEdgeContext.Provider>
     </View>
   );
 }
@@ -332,13 +341,6 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
   // Never read from `chromeBack`: the published Back itself makes the navigation show one, and would withdraw itself.
   // Only one placement publishes the way back: the story's title leaves it to the band (never two publishers).
   const publishBack = collectionBack || placement === 'story' ? undefined : chrome?.publishBack;
-  // While the story carries the large title, navigation that shows a title keeps the compact one.
-  const publishTitle = placement === 'backOnly' ? chrome?.publishTitle : undefined;
-  useEffect(() => {
-    if (publishTitle === undefined || props.title === undefined) return undefined;
-    publishTitle(props.title);
-    return () => publishTitle(undefined);
-  }, [publishTitle, props.title]);
   const latestClose = useRef(props.onClose);
   latestClose.current = props.onClose;
   const backLabel = props.backLabel;
@@ -356,23 +358,17 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
   /> : <Button variant="plain" size="small" singleLine icon={<Icon name="back" tone="secondary" />} title={backLabel}
     onPress={props.onClose} {...backTestID} />}{trailing}</View>;
   const backInBand = hostBack || publishBack !== undefined;
+  // While the story carries the title the band is the way back alone: the title is said once, in the story that
+  // scrolls (lab merged-detail-pr phone, "‹ PRs & Issues" above the large title; DESIGN-LIVE-225).
   if (props.title === undefined || placement === 'backOnly') {
     if (backInBand) return <View />;
-    // While the story carries the large title, a band of its own keeps the compact title beside the way back, as a
-    // navigation band shows it (`publishTitle`): the large title scrolls away under it.
-    const compactTitle = placement === 'backOnly' && props.title !== undefined && publishTitle === undefined ? (
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text variant="heading" numberOfLines={1} value={props.title}
-          {...(props.testID === undefined ? {} : { testID: `${props.testID}:band-title` })} />
-      </View>
-    ) : null;
     return back({
       flexDirection: 'row',
       alignItems: 'center',
       gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
       paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
       paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
-    }, compactTitle);
+    });
   }
   return (
     <HappierPageHeadingBindingContext.Provider value={headingRef}>
@@ -411,7 +407,7 @@ export function DetailsPaneFooter(props: Readonly<{ children: ReactNode; testID?
   const { safeArea } = useHappierUiInsets();
   const host = useOptionalPluginUiPresentationHost();
   // Inside a detail's body (which pads its content) the footer still spans the detail's whole width.
-  const edgePx = useHappierColumnEdgePx();
+  const edgePx = useContext(DetailsPaneBodyPaddingContext);
   // The pause a group edge makes: the page's existing measure for a seam inside its column.
   const gap = HAPPIER_PAGE_METRICS.groupSeparatorGapPx;
   const paddingBottom = Math.max(safeArea.bottom, gap);

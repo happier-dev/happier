@@ -27,7 +27,7 @@ import {
   useOptionalHappierUiTypography,
 } from '../environment/context.js';
 import { useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
-import { HappierBodyEdgeContext, useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
+import { HappierBodyEdgeContext, HappierColumnEdgeContext, useHappierColumnEdgePx, useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
@@ -87,6 +87,7 @@ import { useHappierCollectionViewport, type HappierCollectionModel, type Happier
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import type { HappierLayoutChangeEvent, HappierPortableStyle } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
+import { useHappierLayoutTextAlign } from '../presentation/text/layoutTextAlign.js';
 import { CollectionCards, CollectionGroupActionButton, readCollectionLineHeight } from './CollectionCards.js';
 import { Dropdown } from './Overlay.js';
 import { HappierSkeletonRows, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
@@ -1318,6 +1319,8 @@ function TableTitle<Item>(props: Readonly<{
 }>): ReactElement {
   const { item, anatomy } = props;
   const stepStyle = props.titleStyle ?? null;
+  // The title starts beside the row's mark whatever its first word's script (`useHappierLayoutTextAlign`).
+  const align = useHappierLayoutTextAlign();
   const suffix = anatomy.titleSuffix?.(item) ?? null;
   const controls = anatomy.titleControls?.(item) ?? null;
   const pending = anatomy.titlePending?.(item) === true;
@@ -1329,7 +1332,7 @@ function TableTitle<Item>(props: Readonly<{
       <View pointerEvents={layer?.content} style={titleWithLineStyle}>
         <View pointerEvents={layer?.leaf} style={empty ? titleTextStyle : titleBeforeLineStyle}>
           {pending ? <CollectionPendingTitle item={item} anatomy={anatomy} />
-            : <HappierText variant="label" tone="neutral" numberOfLines={1} style={stepStyle}>{anatomy.title(item)}</HappierText>}
+            : <HappierText variant="label" tone="neutral" numberOfLines={1} style={[stepStyle, align]}>{anatomy.title(item)}</HappierText>}
         </View>
         {empty ? null : (
           <View pointerEvents={layer?.leaf} style={titleLineStyle}>
@@ -1344,7 +1347,7 @@ function TableTitle<Item>(props: Readonly<{
   }
   const inline = suffix !== null && suffix !== false && typeof suffix !== 'string' && typeof suffix !== 'number';
   const title = pending ? <CollectionPendingTitle item={item} anatomy={anatomy} /> : (
-    <HappierText variant="label" tone="neutral" numberOfLines={1} style={[inline ? titleBeforeLineStyle : titleTextStyle, stepStyle]}>
+    <HappierText variant="label" tone="neutral" numberOfLines={1} style={[inline ? titleBeforeLineStyle : titleTextStyle, stepStyle, align]}>
       {anatomy.title(item)}
     </HappierText>
   );
@@ -1453,6 +1456,7 @@ function ListCells<Item>(props: Readonly<{
   const { item, anatomy, AnimatedView } = props;
   const typography = useOptionalHappierUiTypography();
   const uiTheme = useHappierUiTheme();
+  const titleAlign = useHappierLayoutTextAlign();
   // The row's 1 pt press edge is part of its inset. A ruled row with no trailing control ends where its action
   // would, so a status at the title's end and an Add button share one end edge.
   const ruledPaddingPx = (props.ruledInsetPx ?? 0) - 1;
@@ -1601,7 +1605,7 @@ function ListCells<Item>(props: Readonly<{
               row grows above its floor (ST-5; a phone at large text, FIN-QA-LARGETEXT T1). A dense index row keeps one line. */}
           {anatomy.titlePending?.(item) === true ? <CollectionPendingTitle item={item} anatomy={anatomy} lineHeight={listTitleStep.lineHeight} /> : (
           <HappierText variant="label" tone="neutral" {...((catalog || props.wrapTitle) && anatomy.titleIdentifier !== true ? {} : { numberOfLines: 1 })}
-            style={[titleTextStyle, catalog ? null : flexCellStyle, resolveHappierTextStepStyle(listTitleStep, typography),
+            style={[titleTextStyle, catalog ? null : flexCellStyle, resolveHappierTextStepStyle(listTitleStep, typography), titleAlign,
               anatomy.titleIdentifier === true ? { fontFamily: typography?.mono?.fontFamily ?? IDENTIFIER_FALLBACK_FONT } : null]}>
             {anatomy.title(item)}
             {kindWord}
@@ -3083,6 +3087,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     ? { position: 'absolute', top: 0, bottom: 0, right: 0, left: (size?.width ?? 0) * listRatio }
     : composition === 'split' ? { flex: 1 - listRatio } : { flex: 1 };
   const detailTracks = overlayDetail ? HAPPIER_COLLECTION_TRANSITION_TRACKS.detail : NO_TRACKS;
+  // Pushed, the detail is the page and stands on the page column's edge; beside the list (or travelling over it) it
+  // is a column of its own, which draws its whole edge (`DetailsPaneBody`).
+  const pageColumnEdgePx = useHappierColumnEdgePx();
+  const detailColumnEdgePx = pushedPage ? pageColumnEdgePx : 0;
 
   // The open item stays marked in the list or on its card while its detail is open anywhere: in the split, pushed,
   // in the host details pane, or wherever the caller shows it (`detail: 'none'`).
@@ -3310,10 +3318,12 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               <HappierCollectionDetailWidthContext.Provider value={composition === 'split' && !overlayDetail && geometry?.mode === 'split' ? geometry.detailWidthPx : null}>
                 {pushedPage && openKey !== null ? pushedHeader : null}
                 <PushedDetailLeadContextInternal.Provider value={pushedLead}>
+                <HappierColumnEdgeContext.Provider value={detailColumnEdgePx}>
                 {pane ? null : (props.detailHeader === undefined && props.useDetailHeader === undefined) ? detailNode
                   // Given its identity, the platform draws the detail's title (pushed) and so owns its body's edge, the
                   // same edge as in the details pane; beside the list the author's own header keeps the text edge in it.
                   : <DetailsPaneBody inset>{detailNode}</DetailsPaneBody>}
+                </HappierColumnEdgeContext.Provider>
                 </PushedDetailLeadContextInternal.Provider>
               </HappierCollectionDetailWidthContext.Provider>
             </driver.AnimatedView>

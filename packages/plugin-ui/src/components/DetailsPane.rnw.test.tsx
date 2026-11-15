@@ -401,13 +401,14 @@ describe('DetailPage (an item that is its own page)', () => {
     banded.unmount();
   });
 
-  it('hands the title to its own band while the story carries it, as a navigation band shows it', async () => {
+  it('keeps the band to the way back while the story carries the one title (lab merged-detail-pr phone)', async () => {
     const view = mountWithPane(page(vi.fn()), null);
     await flush();
     measure(view, 390);
     expect(view.container.querySelector('[data-testid="story-lead"] [role="heading"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-testid="entry-page:band-title"]')?.textContent)
-      .toBe('Move cart totals to server-side rounding');
+    expect(view.container.querySelector('[data-testid="entry-page:back"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="entry-page:band-title"]')).toBeNull();
+    expect(view.container.textContent?.split('Move cart totals to server-side rounding').length).toBe(2);
     view.unmount();
   });
 

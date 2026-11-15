@@ -136,6 +136,7 @@ import { usePluginUiFocusTarget } from './Focus.js';
 import { PageHeader } from './PageHeader.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { HappierColumnEdgeContext } from '../presentation/layout/columnEdge.js';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '../presentation/collection/CollectionList.js';
 import { capabilityCollectionAnatomy } from './Capabilities.js';
 import { HappierCollectionNavigationBackClosesDetailContext } from '../presentation/collection/collectionLayout.js';
@@ -523,6 +524,8 @@ function mount(
     scrollTracker?: PluginUiScrollActivityTracker;
     pageChrome?: import('../presentation/layout/pageChrome.js').HappierPageChromeInternal;
     hostApiOverrides?: Parameters<typeof createHostApiStub>[1];
+    /** The page edge the host's column already draws around the surface (a plugin page's gutter). */
+    columnEdgePx?: number;
   }> &
     HarnessOptions = {},
 ) {
@@ -560,6 +563,7 @@ function mount(
       >
         <PluginUiSurfaceNoticeContext.Provider value={options.surfaceNotice ?? null}>
         <PluginUiScrollActivityProvider tracker={options.scrollTracker ?? null}>
+          <HappierColumnEdgeContext.Provider value={options.columnEdgePx ?? 0}>
           <Harness
             {...harness}
             openKey={openKey}
@@ -567,6 +571,7 @@ function mount(
               openChanges.push(key);
             }}
           />
+          </HappierColumnEdgeContext.Provider>
         </PluginUiScrollActivityProvider>
         </PluginUiSurfaceNoticeContext.Provider>
       </PluginUiProviderInternal>
@@ -658,6 +663,20 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it.each(['list', 'table'] as const)('starts a right-to-left %s row title on the page side, keeping its own reading order', (presentation) => {
+    const title = 'تعطل تسجيل الدخول — QA-F fixture';
+    const view = mount({ items: [{ ...entries[0]!, title }], presentation, detail: 'none', reducedMotion: true });
+    try {
+      view.measure(presentation === 'table' ? 1200 : 360);
+      const titles = [...view.container.querySelectorAll<HTMLElement>('[dir="auto"]')].filter((node) => node.textContent === title);
+      expect(titles.length).toBeGreaterThan(0);
+      // An Arabic first word would otherwise take the far side of the LTR row (the text's own start).
+      for (const node of titles) expect(node.style.textAlign).toBe('left');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('fulfills a route reveal after native content measurement when the first location is unmeasured', async () => {
     scrollCapture.reveals.length = 0;
     scrollCapture.failNextReveal = true;
@@ -2739,8 +2758,9 @@ describe('detail auto', () => {
     view.unmount();
   });
 
-  it('keeps the way back in the band and gives it the compact title while the story carries the title', async () => {
-    // Live READY150 (390): with the title in the story, the band lost its Back and showed no compact title.
+  it('keeps the way back in the band and the one title in the story, never a second title in the band', async () => {
+    // Live READY150 (390): with the title in the story, the band lost its Back. DESIGN-LIVE-225: the band then also
+    // repeated the title the story shows (lab merged-detail-pr phone: "‹ PRs & Issues" alone above the large title).
     const backs: Array<(() => void) | null> = [];
     const titles: Array<string | undefined> = [];
     function Story(props: Readonly<{ itemKey: string }>) {
@@ -2755,11 +2775,45 @@ describe('detail auto', () => {
     view.measure(390);
     await view.setOpen('a');
     expect(typeof backs.at(-1)).toBe('function');
-    expect(titles.at(-1)).toBe('Entry a');
+    expect(titles.filter((title) => title !== undefined)).toEqual([]);
     const detail = view.query('collection-detail')!;
     const headings = [...detail.querySelectorAll('[role="heading"]')].filter((node) => node.textContent === 'Entry a');
     expect(headings).toHaveLength(1);
     expect(view.query('detail-story')!.contains(headings[0]!)).toBe(true);
+    expect(detail.textContent?.split('Entry a').length).toBe(2);
+    view.unmount();
+  });
+
+  it.each([
+    ['pushed, the page itself', 390, 0],
+    ['beside the list, a column of its own', 1200, HAPPIER_PAGE_METRICS.sheetInsetPx],
+  ] as const)('stands a hosted detail\'s body on the page edge once when %s', async (_label, width, ownInsetPx) => {
+    // A plugin page's host column already draws the page edge (PluginPageContent): the pushed detail is that page and
+    // adds nothing; beside the list the detail is a new column and draws the edge itself (DESIGN-LIVE-225: 16 + 16).
+    function Story(props: Readonly<{ itemKey: string }>) {
+      return (
+        <View testID="detail-story">
+          <Text testID={`detail:${props.itemKey}`}>{`Detail ${props.itemKey}`}</Text>
+          <DetailsPaneFooter testID="detail-footer"><Text>Fix with Claude</Text></DetailsPaneFooter>
+        </View>
+      );
+    }
+    const view = mount({
+      columnEdgePx: HAPPIER_PAGE_METRICS.sheetInsetPx,
+      presentation: 'list',
+      detailHeader: (key) => ({ title: `Entry ${key}` }),
+      renderDetail: (key) => <Story itemKey={key} />,
+    });
+    view.measure(width);
+    await view.setOpen('a');
+    const detail = view.query('collection-detail')!;
+    let insetPx = 0;
+    for (let node: HTMLElement | null = view.query('detail-story'); node !== null && node !== detail; node = node.parentElement) {
+      insetPx += Number.parseFloat(node.style.paddingLeft || '0') || 0;
+    }
+    expect(insetPx).toBe(ownInsetPx);
+    // The pinned footer reaches back across exactly the body's own padding, so it spans the detail, never past it.
+    expect(-(Number.parseFloat(view.query('detail-footer')!.style.marginLeft || '0') || 0) || 0).toBe(ownInsetPx);
     view.unmount();
   });
 

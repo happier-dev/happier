@@ -644,6 +644,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 // (the side list, a cold file link); a drawer alone over main shades it.
                 detailsScrim={!mirrored && resolvedLayout.right === 'docked' ? 'soft' : 'standard'}
                 detailsOverPage={props.detailsOverPage}
+                // A phone's overlay pane takes the whole region, as a details-only destination does (`dockSizing`).
+                overlayFillsRegion={prefersFullScreenOverlay || destinationDetailOnly}
                 layout={resolvedLayout}
                 rightDockWidthPx={effectivePaneSizing.rightWidthPx}
                 detailsDockWidthPx={effectivePaneSizing.detailsWidthPx}
