@@ -224,6 +224,7 @@ export type BoardsActionInputById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: unknown;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: unknown;
@@ -658,6 +659,7 @@ export type BoardsActionInputById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: unknown;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: unknown;
@@ -1019,6 +1021,7 @@ export type BoardsActionResultById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
                                     unit?: 'bytes' | undefined;
+                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                                     visibleWhen?: InputPredicate | undefined;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: InputPredicate | undefined;
@@ -1297,6 +1300,7 @@ export type BoardsActionResultById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
                                     unit?: 'bytes' | undefined;
+                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                                     visibleWhen?: InputPredicate | undefined;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: InputPredicate | undefined;

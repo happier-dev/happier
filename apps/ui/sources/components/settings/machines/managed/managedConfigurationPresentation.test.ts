@@ -7,6 +7,25 @@ import { formatPriceSource, presentManagedCost } from './managedMachineDisplay';
 import { describeRetention, describeRetentionPolicy, formatRetentionDuration } from './managedRetentionPresentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { InputHintsSchema } from '@happier-dev/protocol/inputs/inputFields';
+
+describe('saved option size roles', () => {
+    it.each([false, true])('shares the saved size across receipt and offer (bytes=%s)', bytes => {
+        const savedLaunchPresentation = { schema: { type: 'object' as const }, inputHints: InputHintsSchema.parse({ fields: [
+            { path: 'arbitrary.cores', title: 'CPU', widget: 'integer', role: 'cpu' },
+            { path: 'ram', title: 'RAM', widget: 'integer', role: 'memory', ...(bytes ? { unit: 'bytes' } : {}) },
+            { path: 'storage', title: 'Disk', widget: 'integer', role: 'disk', ...(bytes ? { unit: 'bytes' } : {}) },
+        ] }) };
+        const saved = { provider: { pluginId: 'custom.vm', localId: 'vm' }, schemaVersion: 1, name: 'Guest',
+            choices: { arbitrary: { cores: 2 }, ram: 4 * (bytes ? 1024 ** 3 : 1), storage: 20 * (bytes ? 1024 ** 3 : 1) } };
+        const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Custom', savedLaunchPresentation });
+        const size = [t('managedMachines.receipt.cores', { count: 2 }), formatManagedSizeBytes(4 * 1024 ** 3),
+            formatManagedSizeBytes(20 * 1024 ** 3)].map(part => part.replace(/ /g, '\u00a0')).join(' · ');
+        expect(receipt.spec).toBe(size);
+        expect(receipt.facts.filter(fact => fact.id.startsWith('saved:'))).toEqual([]);
+        expect(describeManagedPresetOffer({ providerTitle: 'Custom', launch: saved, savedLaunchPresentation })).toBe(`Custom · ${size}`);
+    });
+});
 
 const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Original guest', choices: { cpu: 2 } };
 const reviewedFacts = { launch: { ...launch, name: 'Unrelated later name' }, controller: { machineId: 'original-host', installationId: 'installation' },

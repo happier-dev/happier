@@ -11,6 +11,8 @@ import { CuaLocalLaunchV1Schema, CuaLocalOptionsQueryV1Schema, CuaLocalResourceV
 import type { CuaLocalProvisionerId } from './machine/localProvisioner.js';
 import { remoteAccounts, remoteProvisioner, remoteRoles } from './machine/remoteDeclarations.js';
 import { CUA_DEPENDENCY_ID as dependencyId, resolveCuaExecutable } from './machine/nativeDependency.js';
+import { CUA_CLI_ARCHIVE_SOURCE } from './machine/nativeInstall.js';
+import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 
 const pluginId = 'happier.machine.cua';
 const processAccess = 'cua-native-process';
@@ -47,7 +49,12 @@ function roles(id: CuaLocalProvisionerId) {
                     // propagates as a failed check, so the surface offers Retry instead of claiming "Not installed".
                     const code = error instanceof Error ? error.message : '';
                     if (code !== 'cua_native_outdated' && code !== 'cua_native_unavailable') throw error;
-                    return machineCheckPresentation({ available: false, prerequisites: [{ requirement, status: 'unavailable' as const }], code });
+                    return machineCheckPresentation({ available: false, prerequisites: [{ requirement, status: 'unavailable' as const,
+                        // ensure preserves installed system binaries; it cannot
+                        // repair an outdated user installation by replacing it.
+                        ...(code === 'cua_native_unavailable' ? {
+                            repairAction: { action: { pluginId, localId: 'install' }, input: {} },
+                        } : {}) }], code });
                 }
             } },
         options: { ...defaults, title: 'Read Cua local image and runtime choices', dangerLevel: 'safe' as const,
@@ -55,10 +62,10 @@ function roles(id: CuaLocalProvisionerId) {
             inputHints: { fields: [
                 // Runtime and image are picked from the choices this read returns, never typed as filters.
                 // Cua CLI 0.17.0 documents no defaults for --cpu/--memory: https://cua.ai/docs/cua-cli/reference/cli/sandboxes
-                { path: 'size.cpu', title: configurationLabel('cpu'), widget: 'integer' as const, required: true },
-                { path: 'size.memoryBytes', title: configurationLabel('memoryBytes'), widget: 'integer' as const, unit: 'bytes' as const, required: true },
+                { path: 'size.cpu', role: 'cpu' as const, title: configurationLabel('cpu'), widget: 'integer' as const, required: true },
+                { path: 'size.memoryBytes', role: 'memory' as const, title: configurationLabel('memoryBytes'), widget: 'integer' as const, unit: 'bytes' as const, required: true },
                 // The disk follows the chosen image; only a Space may be given its own.
-                ...(id === 'local-space' ? [{ path: 'size.diskBytes', title: configurationLabel('diskBytes'), widget: 'integer' as const, unit: 'bytes' as const }] : []),
+                ...(id === 'local-space' ? [{ path: 'size.diskBytes', role: 'disk' as const, title: configurationLabel('diskBytes'), widget: 'integer' as const, unit: 'bytes' as const }] : []),
             ] },
             async run(input: CuaLocalOptionsQueryV1, context: PluginInvocationContext) {
                 return (await provider(id, context)).options(input);
@@ -138,6 +145,9 @@ function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinit
         description: machinePresentationLabel(id === 'local-space' ? 'spaceDescription' : 'description'),
         launchSchema: CuaLocalLaunchV1Schema.jsonSchema, resourceSchema: CuaLocalResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxId',
         platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: dependencyId }],
+        // The shared launch schema includes unprivileged container runtimes;
+        // it cannot promise nested Agent-native isolation for every choice.
+        sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: false },
         billing: { location: 'local', stoppedBilling: 'not-billed' },
         retention: { supportedIntents: ['start', 'suspend', 'resume', 'delete'] },
         actions: { check: `${prefix}-check`, options: `${prefix}-options`, acquire: `${prefix}-acquire`, bootstrap: `${prefix}-bootstrap`,
@@ -173,8 +183,8 @@ export const CUA_PLUGIN = definePlugin({
     ], optional: [] },
     connectedAccountDescriptors: remoteAccounts,
     managedDependencies: { [dependencyId]: { id: dependencyId, title: 'Cua', executable: 'cua',
-        description: 'User-installed native Cua CLI; native components retain their own license and runtime prerequisites.',
-        sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'] }] } },
+        description: 'Native Cua CLI; native components retain their own license and runtime prerequisites.',
+        sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'] }, CUA_CLI_ARCHIVE_SOURCE] } },
     ui: { translations: [
       { locale: "en", resourceId: "i18n-en" },
       { locale: "de", resourceId: "i18n-de" },
@@ -192,6 +202,15 @@ export const CUA_PLUGIN = definePlugin({
     machineProvisioners: { 'local-sandbox': provisioner('local-sandbox'), 'local-space': provisioner('local-space'),
         byoc: remoteProvisioner() },
     actions: {
+        install: { scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], execution: { target: 'daemon' },
+            title: 'Install Cua', dangerLevel: 'writesLocal',
+            confirmation: { title: 'Install Cua on this computer?',
+                body: 'Download the verified official Cua CLI release for this computer. Native runtime dependencies and their licenses remain separate; this does not elevate privileges or configure virtualization.', confirmLabel: 'Install' },
+            inputSchema: schemas.checkInput, resultSchema: defineProtocolLiteral(null),
+            async run(_input, context) {
+                await context.services.managedServices.dependencies.ensure(dependencyId, { signal: context.signal });
+                return null;
+            } },
         'byoc-check': byoc.check, 'byoc-options': byoc.options, 'byoc-acquire': byoc.acquire,
         'byoc-reconcile': byoc.reconcile, 'byoc-bootstrap': byoc.bootstrap, 'byoc-inspect': byoc.inspect,
         'byoc-power': byoc.power, 'byoc-destroy': byoc.destroy, 'byoc-exec': byoc.exec, 'byoc-put-file': byoc.putFile,

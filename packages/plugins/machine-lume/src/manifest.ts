@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
+import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { lumeConfigurationLabel as label } from './ui/translations.js';
 import { LUME_PLUGIN_ID, LUME_PROVISIONER_ID, LUME_DEPENDENCY_ID, LUME_BILLING } from './machine/definition.js';
 import { LumeLaunchV1Schema, LumeResourceV1Schema, LumeNativeOperationV1Schema, LumeOptionsInputV1Schema } from './machine/schemas.js';
@@ -69,6 +70,7 @@ async function runtime(context: PluginInvocationContext) {
 export const LUME_MACHINE_PROVISIONER = {
   title: 'Lume', icon: 'desktop', resourceKind: 'lume-vm', schemaVersion: 1,
   enrollmentRole: 'personal',
+  sessionPlacement: { kind: 'controller-local' },
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LumeLaunchV1Schema.jsonSchema, resourceSchema: LumeResourceV1Schema.jsonSchema, resourceIdPath: 'vmName',
   platforms: ['darwin'], prerequisites: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }, { kind: 'systemTool', id: 'ssh' }],
@@ -106,7 +108,17 @@ export const LUME_PLUGIN = definePlugin({
   ], optional: [] },
   managedDependencies: { [LUME_DEPENDENCY_ID]: {
     id: LUME_DEPENDENCY_ID, title: 'Lume', executable: 'lume', platforms: ['macos'], architectures: ['arm64'],
-    sources: [{ kind: 'system', executableNames: ['lume'], versionArguments: ['--version'] }],
+    sources: [{ kind: 'system', executableNames: ['lume'], versionArguments: ['--version'] }, {
+      // Vendor lume-v0.6.1 release-manifest.json supplies this checksum. Keep
+      // the signed app bundle intact; its native executable needs its resources.
+      kind: 'pinnedArchive', installId: 'dep.lume', version: '0.6.1', assetsByPlatform: {
+        'darwin-arm64': {
+          archiveUrl: 'https://github.com/trycua/cua/releases/download/lume-v0.6.1/lume-0.6.1-darwin-arm64.tar.gz',
+          sha256: '2675b7981b7d3eb525cd27f40a385c986052eb71b3360c0b2579644725f1bad8',
+          executableSubpath: 'lume.app/Contents/MacOS/lume',
+        },
+      },
+    }],
   } },
   systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] },
     ssh: { title: 'OpenSSH client', executableNames: ['ssh'] } },
@@ -126,6 +138,14 @@ export const LUME_PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
   actions: {
+    install: { ...defaults, title: 'Install Lume', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Install Lume on this Mac?', body: 'Download the verified Lume app bundle for Apple silicon. This does not create a VM or start the Lume service.', confirmLabel: 'Install' },
+      inputSchema: LUME_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),
+      async run(_input, context) {
+        await context.services.managedServices.dependencies.ensure(LUME_DEPENDENCY_ID, { signal: context.signal });
+        return null;
+      },
+    },
     check: { ...defaults, title: 'Check Lume availability', dangerLevel: 'safe',
       inputSchema: LUME_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
@@ -135,7 +155,12 @@ export const LUME_PLUGIN = definePlugin({
         } catch (error) {
           // A missing `lume` is its own state, so its card can say how to get it; the server's own refusals stay typed below.
           const notInstalled = error !== null && typeof error === 'object' && 'notInstalled' in error;
-          return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: notInstalled ? 'lume_not_installed' : errorCode(error) }));
+          return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: notInstalled ? 'lume_not_installed' : errorCode(error),
+            ...(notInstalled ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const, id: LUME_DEPENDENCY_ID },
+              status: 'unavailable' as const, reason: 'lume_not_installed',
+              repairAction: { action: { pluginId: LUME_PLUGIN_ID, localId: 'install' }, input: {} },
+            }] } : {}),
+          }));
         }
       },
     },
@@ -143,9 +168,9 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LumeOptionsInputV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
         { path: 'storage', title: label('storage'), description: label('storageDescription'), widget: 'text' },
-        { path: 'cpu', title: label('cpu'), widget: 'integer', defaultValue: DEFAULT_CPU },
-        { path: 'memoryBytes', title: label('memory'), widget: 'integer', unit: 'bytes', defaultValue: DEFAULT_MEMORY_BYTES },
-        { path: 'diskBytes', title: label('disk'), widget: 'integer', unit: 'bytes' },
+        { path: 'cpu', role: 'cpu', title: label('cpu'), widget: 'integer', defaultValue: DEFAULT_CPU },
+        { path: 'memoryBytes', role: 'memory', title: label('memory'), widget: 'integer', unit: 'bytes', defaultValue: DEFAULT_MEMORY_BYTES },
+        { path: 'diskBytes', role: 'disk', title: label('disk'), widget: 'integer', unit: 'bytes' },
         { path: 'image.kind', title: label('imageKind'), widget: 'select', requireExplicitSelection: true,
           options: [{ value: 'catalog', label: label('publishedImage') }, { value: 'native-image', label: label('nativeReference') }] },
         { path: 'image.id', title: label('publishedReference'), widget: 'text',

@@ -13,6 +13,14 @@ describe('brand mark', () => {
 });
 
 describe('native process disclosure', () => {
+  it('offers only the two local variants for controller-local Session placement', () => {
+    const local = PLUGIN_MANIFEST.contributes.machineProvisioners?.filter(
+      provisioner => provisioner.sessionPlacement?.kind === 'controller-local');
+    expect(local?.map(provisioner => provisioner.id).sort()).toEqual(['local-sandbox', 'local-space']);
+    // These launch schemas include unprivileged containers; they make no
+    // blanket promise that an Agent can nest its native sandbox inside them.
+    expect(local?.every(provisioner => provisioner.sessionPlacement?.supportsAgentNativeSandbox === false)).toBe(true);
+  });
   it('places both native cloud account choices in the cloud-machine setup category', () => {
     expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toMatchObject([
       { id: 'cloud-native', ui: { category: 'cloud-machines' } },
@@ -25,4 +33,10 @@ describe('native process disclosure', () => {
       scope: expect.objectContaining({ envKeys: ['HOME'] }),
     }));
   });
+});
+
+
+it('declares saved CPU, memory and disk dimensions through the options Action', () => {
+  const fields = PLUGIN_MANIFEST.contributes.actions?.flatMap(action => action.inputHints?.fields ?? []) ?? [];
+  for (const role of ['cpu', 'memory', 'disk']) expect(fields).toContainEqual(expect.objectContaining({ role }));
 });

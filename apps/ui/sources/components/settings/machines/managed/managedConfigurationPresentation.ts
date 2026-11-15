@@ -24,6 +24,7 @@ import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/cont
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { presentQualifiedConnectedAccountTarget, presentConnectedAccountPurposeTeamResource, type QualifiedConnectedAccountTargetPresentation } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { savedConfigurationSize } from './savedConfigurationSize';
 
 /** These are display targets from already validated selections, never new purpose authorizations. */
 export function managedCredentialReceiptTargets(launch: ValidatedLaunchSnapshotV1) {
@@ -118,7 +119,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     const billingLocation = (facts?.billing ?? input.declaredBilling)?.location;
     // The size is the receipt's spec line; the other dimensions are its facts, image first for a local
     // VM (what you will see on this computer) and place first in the cloud (lab m-config receipts).
-    const size = facts?.nativeFacts?.size;
+    const size = facts?.nativeFacts?.size ?? savedConfigurationSize(input.launch, input.savedLaunchPresentation?.inputHints);
     for (const dimension of billingLocation === 'local' ? ['image', 'location', 'network'] as const : ['location', 'image', 'network'] as const) {
         const fact = facts?.nativeFacts?.[dimension];
         if (!fact) continue;
@@ -274,8 +275,14 @@ export function describeManagedPresetOffer(preset: Readonly<{
     reviewedFacts?: ManagedConfigurationFactsV1; retention?: MachineRetentionOverrideV1['retention']; wakeOnAcceptedMessage?: boolean;
     /** The provider's declared title; `null` while it is read. */
     providerTitle?: string | null;
+    launch?: ValidatedLaunchSnapshotV1;
+    savedLaunchPresentation?: ManagedConfigurationReceiptInput['savedLaunchPresentation'];
 }>, localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | undefined {
     const dimensions = preset.reviewedFacts ? managedSummaryDimensions(preset.reviewedFacts, localized) : [];
+    if (!preset.reviewedFacts?.nativeFacts?.size && preset.launch) {
+        const size = savedConfigurationSize(preset.launch, preset.savedLaunchPresentation?.inputHints);
+        if (size) dimensions.unshift(...managedSizeDimensions(size));
+    }
     const keep = preset.retention
         ? describeRetentionPolicy({ retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage === true }) : null;
     return [...(preset.providerTitle ? [preset.providerTitle] : []), ...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;

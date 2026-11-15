@@ -109,6 +109,7 @@ export type DiscoveryActionInputById = {
                             maxSelections?: number | undefined;
                             defaultValue?: unknown;
                             unit?: 'bytes' | undefined;
+                            role?: 'cpu' | 'disk' | 'memory' | undefined;
                             visibleWhen?: unknown;
                             visibleWhenContextSlot?: string | undefined;
                             requiredWhen?: unknown;
@@ -252,6 +253,7 @@ export type DiscoveryActionResultById = {
                     maxSelections?: number | undefined;
                     defaultValue?: JsonValue | undefined;
                     unit?: 'bytes' | undefined;
+                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                     visibleWhen?: InputPredicate | undefined;
                     visibleWhenContextSlot?: string | undefined;
                     requiredWhen?: InputPredicate | undefined;
@@ -324,13 +326,8 @@ export type DiscoveryActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
@@ -416,6 +413,7 @@ export type DiscoveryActionResultById = {
                     maxSelections?: number | undefined;
                     defaultValue?: JsonValue | undefined;
                     unit?: 'bytes' | undefined;
+                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                     visibleWhen?: InputPredicate | undefined;
                     visibleWhenContextSlot?: string | undefined;
                     requiredWhen?: InputPredicate | undefined;
@@ -490,13 +488,8 @@ export type DiscoveryActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
@@ -2259,6 +2252,7 @@ export type DiscoveryActionResultById = {
                         maxSelections?: number | undefined;
                         defaultValue?: JsonValue | undefined;
                         unit?: 'bytes' | undefined;
+                        role?: 'cpu' | 'disk' | 'memory' | undefined;
                         visibleWhen?: InputPredicate | undefined;
                         visibleWhenContextSlot?: string | undefined;
                         requiredWhen?: InputPredicate | undefined;

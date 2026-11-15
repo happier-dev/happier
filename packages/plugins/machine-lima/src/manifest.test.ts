@@ -521,6 +521,12 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     expect(parsePluginManifest(LIMA_PLUGIN.manifest)).toMatchObject({ ok: true });
   });
 
+  it('offers the Linux VM as controller-local Session placement with native sandbox support', () => {
+    expect(LIMA_PLUGIN.manifest.contributes.machineProvisioners).toMatchObject([{
+      id: 'lima', sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: true },
+    }]);
+  });
+
   it('uses declared read-only system dependency readiness for Linux native availability', async () => {
     const exec: Pick<ExecService, 'run'> = { run: async (request) => processResult(new TextEncoder().encode(
       request.args?.[0] === '--version' ? 'limactl version 2.1.0'
@@ -538,7 +544,29 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     const exec: Pick<ExecService, 'run'> = { run: async () => processResult(new Uint8Array()) };
     const missing = await activatedAction('check', exec, []);
     expect(await missing.handler({}, missing.context)).toMatchObject({ available: false, code: 'lima_unavailable',
-      prerequisites: [{ requirement: { id: { localId: 'lima-cli' } }, status: 'unavailable' }] });
+      prerequisites: [{ requirement: { id: { localId: 'lima-cli' } }, status: 'unavailable',
+        repairAction: { action: { pluginId: LIMA_PLUGIN.manifest.id, localId: 'install' }, input: {} } }] });
+  });
+
+  it('repairs a missing native install through the dependency owner, then checks ready', async () => {
+    let installed = false;
+    const exec: Pick<ExecService, 'run'> = { run: async request => processResult(new TextEncoder().encode(
+      request.args?.[0] === 'info' ? JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })
+        : 'limactl version 2.2.1')) };
+    // Only the host dependency service is replaced; registration, Action schemas
+    // and the provider readiness path run through the public plugin testkit.
+    const services = { exec, managedServices: { dependencies: {
+      status: async (id: string) => installed ? { state: 'ready', id, sourceId: 'pinnedArchive', version: '2.2.1',
+        executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } } }
+        : { state: 'missing', id, supported: true },
+      ensure: async () => { installed = true; },
+    } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false });
+      await kit.invokeAction('install', {}, { surface: 'plugin' });
+      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: true });
+    } finally { await kit.dispose(); }
   });
 
   it('preserves binary streams and cancellation while private input stays on native stdin', async () => {
@@ -570,4 +598,10 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     expect(await handler({ resource, guestPath: '/tmp/private-enrollment', bytesBase64: 'AP4K', mode: 384 }, context))
       .toEqual({ kind: 'unknown' });
   });
+});
+
+
+it('declares saved CPU, memory and disk dimensions through the options Action', () => {
+  const fields = LIMA_PLUGIN.manifest.contributes.actions?.flatMap(action => action.inputHints?.fields ?? []) ?? [];
+  for (const role of ['cpu', 'memory', 'disk']) expect(fields).toContainEqual(expect.objectContaining({ role }));
 });

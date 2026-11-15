@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -15,6 +16,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createLimaSdkExecutor } from './machine/nativeExecutor.js';
+import { limaArchiveSource } from './machine/dependency.js';
 import { createLimaProvider, limaAcquisitionResource, LIMA_DEPENDENCY_ID, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID, LIMA_QEMU_DEPENDENCY_IDS } from './machine/provider.js';
 import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './machine/schemas.js';
 
@@ -50,6 +52,9 @@ export const LIMA_MACHINE_PROVISIONER = {
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LimaLaunchSchema.jsonSchema, resourceSchema: LimaResourceSchema.jsonSchema, resourceIdPath: 'instance',
   platforms: ['darwin', 'linux'],
+  // These are full Linux VMs, including on macOS; Agent isolation runs in
+  // the guest kernel rather than nesting inside a restricted container.
+  sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: true },
   prerequisites: [{ kind: 'managedDependency', id: LIMA_DEPENDENCY_ID }],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
   retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -90,7 +95,8 @@ export const LIMA_PLUGIN = definePlugin({
   }], optional: [] },
   managedDependencies: { [LIMA_DEPENDENCY_ID]: {
     id: LIMA_DEPENDENCY_ID, title: 'Lima', description: 'Native Lima 2.x executable.', executable: 'limactl',
-    sources: [{ kind: 'system', executableNames: ['limactl'], versionArguments: ['--version'] }],
+    platforms: ['macos', 'linux'], architectures: ['x64', 'arm64'],
+    sources: [{ kind: 'system', executableNames: ['limactl'], versionArguments: ['--version'] }, limaArchiveSource],
   }, [LIMA_QEMU_DEPENDENCY_IDS.x86_64]: {
     id: LIMA_QEMU_DEPENDENCY_IDS.x86_64, title: 'QEMU x86-64', executable: 'qemu-system-x86_64',
     sources: [{ kind: 'system', executableNames: ['qemu-system-x86_64'], versionArguments: ['--version'] }],
@@ -117,6 +123,16 @@ export const LIMA_PLUGIN = definePlugin({
   ] },
   machineProvisioners: { [LIMA_PROVISIONER_ID]: LIMA_MACHINE_PROVISIONER },
   actions: {
+    install: {
+      title: 'Install Lima', scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
+      execution: { target: 'daemon' }, dangerLevel: 'writesLocal',
+      confirmation: { title: 'Install Lima on this computer?', confirmLabel: 'Install' },
+      inputSchema: LIMA_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),
+      async run(_input, context) {
+        await context.services.managedServices.dependencies.ensure(LIMA_DEPENDENCY_ID, { signal: context.signal });
+        return null;
+      },
+    },
     check: {
       ...actionDefaults, title: 'Check Lima availability', dangerLevel: 'safe',
       inputSchema: LIMA_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
@@ -128,7 +144,8 @@ export const LIMA_PLUGIN = definePlugin({
             // The missing executable is a prerequisite, so the picker treats it like every other tool that isn't installed.
             return machineCheckPresentation({ available: false, code, ...(code === 'lima_unavailable' ? { prerequisites: [{
               requirement: { kind: 'managedDependency' as const, id: { pluginId: LIMA_PLUGIN_ID, localId: LIMA_DEPENDENCY_ID } },
-              status: 'unavailable' as const }] } : {}) });
+              status: 'unavailable' as const,
+              repairAction: { action: { pluginId: LIMA_PLUGIN_ID, localId: 'install' }, input: {} } }] } : {}) });
           });
         }
       },
@@ -144,9 +161,9 @@ export const LIMA_PLUGIN = definePlugin({
           options: [{ value: 'x86_64', label: 'x86_64' }, { value: 'aarch64', label: 'aarch64' }] },
         { path: 'vmType', title: 'VM driver', widget: 'select', required: true, requireExplicitSelection: true,
           options: [{ value: 'qemu', label: 'QEMU' }, { value: 'vz', label: 'VZ' }] },
-        { path: 'cpus', title: 'CPU cores', widget: 'integer', required: true },
-        { path: 'memoryGiB', title: 'Memory (GiB)', widget: 'integer', required: true },
-        { path: 'diskGiB', title: 'Disk (GiB)', widget: 'integer', required: true },
+        { path: 'cpus', role: 'cpu', title: 'CPU cores', widget: 'integer', required: true },
+        { path: 'memoryGiB', role: 'memory', title: 'Memory (GiB)', widget: 'integer', required: true },
+        { path: 'diskGiB', role: 'disk', title: 'Disk (GiB)', widget: 'integer', required: true },
         { path: 'mounts', title: 'Mounts', widget: 'json', defaultValue: [] },
       ] },
       async run(input, context) { return (await provider(context)).options(input); },

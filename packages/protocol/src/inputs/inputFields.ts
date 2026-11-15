@@ -93,6 +93,8 @@ const InputHintCoreFieldSchema = lazyZodSchema(() => z.strictObject({
   defaultValue: z.optional(StrictJsonValueSchema),
   /** Display hint for an integer: `bytes` is entered in GiB while the stored and submitted value stays bytes. */
   unit: z.optional(z.literal('bytes')),
+  /** Saved provisioner size: CPU cores; memory/disk in GiB unless unit is bytes. */
+  role: z.optional(z.enum(['cpu', 'memory', 'disk'])),
   visibleWhen: z.optional(InputPredicateSchema),
   /** Surface-aware editors show this field only when the host declares the named context slot. */
   visibleWhenContextSlot: z.optional(InputPathSchema),
@@ -152,6 +154,8 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   defaultValue?: JsonValue;
   /** An integer declared as `bytes` is entered in GiB; the stored and submitted value stays bytes. */
   unit?: 'bytes';
+  /** Saved provisioner size: CPU cores; memory/disk in GiB unless unit is bytes. */
+  role?: 'cpu' | 'memory' | 'disk';
   /** Choices restrict admitted values unless allowCustomValue is true; they never widen a type schema. */
   options?: readonly InputHintOptionDescriptor<TText, TValue>[];
   optionsSourceId?: string;
@@ -513,6 +517,7 @@ export function normalizeInputHintsText<TText>(
       ...(field.maxSelections === undefined ? {} : { maxSelections: field.maxSelections }),
       ...(field.defaultValue === undefined ? {} : { defaultValue: field.defaultValue }),
       ...(field.unit === undefined ? {} : { unit: field.unit }),
+      ...(field.role === undefined ? {} : { role: field.role }),
       ...(field.options === undefined ? {} : {
         options: field.options.map((option) => ({
           value: option.value,

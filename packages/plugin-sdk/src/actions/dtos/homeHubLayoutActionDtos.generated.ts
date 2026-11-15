@@ -72,6 +72,7 @@ export type HomeHubLayoutActionInputById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: unknown;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: unknown;
@@ -235,6 +236,7 @@ export type HomeHubLayoutActionInputById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: unknown;
                                         unit?: 'bytes' | undefined;
+                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
                                         visibleWhen?: unknown;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: unknown;
@@ -509,6 +511,7 @@ export type HomeHubLayoutActionInputById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: unknown;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: unknown;
@@ -682,6 +685,7 @@ export type HomeHubLayoutActionInputById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: unknown;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: unknown;
@@ -859,6 +863,7 @@ export type HomeHubLayoutActionResultById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
                                         unit?: 'bytes' | undefined;
+                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
                                         visibleWhen?: InputPredicate | undefined;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: InputPredicate | undefined;
@@ -1027,6 +1032,7 @@ export type HomeHubLayoutActionResultById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
                                     unit?: 'bytes' | undefined;
+                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                                     visibleWhen?: InputPredicate | undefined;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: InputPredicate | undefined;
@@ -1198,6 +1204,7 @@ export type HomeHubLayoutActionResultById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
                                         unit?: 'bytes' | undefined;
+                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
                                         visibleWhen?: InputPredicate | undefined;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: InputPredicate | undefined;
@@ -1370,6 +1377,7 @@ export type HomeHubLayoutActionResultById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
                                     unit?: 'bytes' | undefined;
+                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                                     visibleWhen?: InputPredicate | undefined;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: InputPredicate | undefined;
@@ -1524,6 +1532,7 @@ export type HomeHubLayoutActionResultById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: JsonValue | undefined;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: InputPredicate | undefined;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: InputPredicate | undefined;
@@ -1686,6 +1695,7 @@ export type HomeHubLayoutActionResultById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
                                         unit?: 'bytes' | undefined;
+                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
                                         visibleWhen?: InputPredicate | undefined;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: InputPredicate | undefined;
@@ -1854,6 +1864,7 @@ export type HomeHubLayoutActionResultById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
                                     unit?: 'bytes' | undefined;
+                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                                     visibleWhen?: InputPredicate | undefined;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: InputPredicate | undefined;
@@ -2025,6 +2036,7 @@ export type HomeHubLayoutActionResultById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
                                         unit?: 'bytes' | undefined;
+                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
                                         visibleWhen?: InputPredicate | undefined;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: InputPredicate | undefined;
@@ -2197,6 +2209,7 @@ export type HomeHubLayoutActionResultById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
                                     unit?: 'bytes' | undefined;
+                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
                                     visibleWhen?: InputPredicate | undefined;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: InputPredicate | undefined;
@@ -2351,6 +2364,7 @@ export type HomeHubLayoutActionResultById = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: JsonValue | undefined;
                                 unit?: 'bytes' | undefined;
+                                role?: 'cpu' | 'disk' | 'memory' | undefined;
                                 visibleWhen?: InputPredicate | undefined;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: InputPredicate | undefined;

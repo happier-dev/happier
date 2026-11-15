@@ -81,6 +81,8 @@ const PRESENTATION_SECTIONS = ['familiesById.pluginUi', 'familiesById.machinePro
 // A mark alone reads the provisioner's descriptor (its icon) and its installed package, which every
 // manifest carries: a row or rail mark never hydrates translations, credential titles or repair Actions.
 const MARK_SECTIONS = ['familiesById.machineProvisioners'] as const;
+// An offer reads the options declaration in the same projection request as its identity.
+const OFFER_SECTIONS = [...MARK_SECTIONS, 'actionsById'] as const;
 /**
  * A provisioner's mark at each slot it stands in (lab `l12-kit.js` / `screens-x-machines.js`): a page
  * header, a receipt's identity or a provider tile, a list row, the collection rail. No tile behind it.
@@ -174,7 +176,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     /** Changes when the person asks to read again: the projection is read anew. */
     refreshKey?: number;
     /** Only repair surfaces activate client Actions; marks demand only the identity sections they draw. */
-    purpose?: 'presentation' | 'mark' | 'repair';
+    purpose?: 'presentation' | 'mark' | 'offer' | 'repair';
     /** Preset authoring consumes the catalog's declarations without demanding executable availability. */
     declarationsOnly?: boolean;
     onApprovalPending?: (registration: ActionApprovalRegistration) => void;
@@ -191,7 +193,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     const { binding: controllerAccountLifetime } = useServerCredentialAccountScopeBinding(controllerAdmitted ? input.serverId : null);
     const projection = useDaemonMergedProjectionInputs({ serverId: input.serverId, machineId: controllerAdmitted ? input.controller?.machineId : undefined, enabled: controllerAdmitted,
         accountLifetime: controllerAccountLifetime,
-        sections: input.purpose === 'mark' ? MARK_SECTIONS : PRESENTATION_SECTIONS,
+        sections: input.purpose === 'mark' ? MARK_SECTIONS : input.purpose === 'offer' ? OFFER_SECTIONS : PRESENTATION_SECTIONS,
         ...(input.refreshKey === undefined ? {} : { refreshKey: input.refreshKey }) });
     const uiProjection = input.controller ? projection.inputs?.pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION
         : accountReader?.readAccountUiProjection() ?? EMPTY_PLUGIN_UI_PROJECTION;
@@ -311,11 +313,11 @@ export function ManagedPresetMark(props: Readonly<{
 }
 
 /** A preset's provisioner as its mark reads it: the same identity-only read serves its mark and its cost. */
-function useManagedPresetMarkPresentation(props: Readonly<{ serverId: string; accountScope?: ServerAccountScope | null; preset: ManagedPresetMarkSource }>) {
+function useManagedPresetMarkPresentation(props: Readonly<{ serverId: string; accountScope?: ServerAccountScope | null; preset: ManagedPresetMarkSource }>, purpose: 'mark' | 'offer' = 'mark') {
     const creation = hasOpenedManagedMachinePresetCreationV1(props.preset) ? props.preset : null;
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, accountScope: props.accountScope,
         controller: creation && !creation.teamAcquireDelegated ? creation.controller : undefined,
-        provider: creation?.launch.provider, schemaVersion: creation?.launch.schemaVersion, purpose: 'mark' });
+        provider: creation?.launch.provider, schemaVersion: creation?.launch.schemaVersion, purpose });
     return { creation, presentation };
 }
 
@@ -364,9 +366,10 @@ export function ManagedPresetOfferLine(props: Readonly<{
     preset: ManagedPresetMarkSource & Parameters<typeof describeManagedPresetOffer>[0];
     extra?: string;
 }>) {
-    const { creation, presentation } = useManagedPresetMarkPresentation(props);
+    const { creation, presentation } = useManagedPresetMarkPresentation(props, 'offer');
     const rowSubtitleStyle = useItemSubtitleTextStyle();
-    const line = [describeManagedPresetOffer({ ...props.preset, providerTitle: creation ? presentation.title : null }), props.extra]
+    const line = [describeManagedPresetOffer({ ...props.preset, providerTitle: creation ? presentation.title : null,
+        ...(creation ? { launch: creation.launch, savedLaunchPresentation: presentation.savedLaunchPresentation } : {}) }), props.extra]
         .filter(Boolean).join(' · ');
     return line ? <Text numberOfLines={1} style={rowSubtitleStyle}>{line}</Text> : null;
 }

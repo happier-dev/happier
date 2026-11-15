@@ -39,7 +39,7 @@ function Presentation(props: Readonly<{ icon: string; pluginId?: string }>) {
 }
 
 describe('managed provisioner presentation', () => {
-    it('presents resize reasons from the already-selected custom Account provisioner', async () => {
+    it.each(['presentation', 'offer'] as const)('presents declaration facts from the already-selected custom Account provisioner (%s)', async purpose => {
         const original = PLUGIN_MANIFEST.contributes.machineProvisioners![0]!;
         const manifest = PluginPortableReleaseManifestV1Schema.parse({ ...PLUGIN_MANIFEST, id: 'custom.compute.resize',
             contributes: { ...PLUGIN_MANIFEST.contributes, machineProvisioners: [{ ...original, resize: {
@@ -67,8 +67,9 @@ describe('managed provisioner presentation', () => {
             intentReads: [{ pluginId: manifest.id, response }], materializations: [], snapshots: [] } });
         expect(readPluginAccountAvailability(scope).readCurrentAccountExecution(manifest.id).kind).toBe('available');
         const hook = await renderHook(() => useManagedProvisionerPresentation({ serverId: scope.serverId, accountScope: scope,
-            provider: { pluginId: manifest.id, localId: original.id }, schemaVersion: original.schemaVersion }));
+            provider: { pluginId: manifest.id, localId: original.id }, schemaVersion: original.schemaVersion, purpose }));
         expect(hook.getCurrent().descriptor?.resize?.diskBytes).toEqual({ kind: 'unsupported', code: 'account_disk_unsupported' });
+        expect(hook.getCurrent().savedLaunchPresentation?.schema).toEqual(original.launchSchema);
         await hook.unmount();
     });
     it('does not render Preset presenters for resource-only publications, but observes installation replacement', async () => {

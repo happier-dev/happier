@@ -125,6 +125,43 @@ async function withCache(cachingEnabled: unknown, failure?: 'get' | 'post' | 're
 }
 
 describe('activated Lume provisioner Actions', () => {
+  it('declares local Session hosting only on macOS with no unproved native sandbox claim', () => {
+    const provisioner = LUME_PLUGIN.manifest.contributes.machineProvisioners?.find(item => item.id === 'lume');
+    expect(provisioner).toMatchObject({ platforms: ['darwin'], sessionPlacement: { kind: 'controller-local' } });
+  });
+  it('offers an executable dependency repair when Lume is missing without contacting the runtime', async () => {
+    const current = await activated(false);
+    const result = MachineProvisionerCheckResultV1Schema.parse(await current.action('check')({}, current.context));
+    expect(result).toMatchObject({ available: false, code: 'lume_not_installed', prerequisites: [{
+      requirement: { kind: 'managedDependency', id: 'lume-cli' }, status: 'unavailable',
+      repairAction: { action: { pluginId: LUME_PLUGIN.manifest.id, localId: 'install' }, input: {} },
+    }] });
+    expect(current.requests).toEqual([]);
+  });
+
+  it('installs Lume through the dependency owner and propagates refusal', async () => {
+    const current = await activated(false);
+    const ensured: string[] = [];
+    current.context.services.managedServices.dependencies.ensure = async id => {
+      ensured.push(id);
+      current.context.services.managedServices.dependencies.status = async () => ({
+        state: 'ready', id, version: '0.6.1', sourceId: 'pinnedArchive',
+        executable: { kind: 'managedDependency', id: { pluginId: LUME_PLUGIN.manifest.id, localId: id } },
+      });
+      return { state: 'ready', id, version: '0.6.1', sourceId: 'pinnedArchive' };
+    };
+    expect(await current.action('install')({}, current.context)).toBeNull();
+    expect(await current.action('check')({}, current.context)).toMatchObject({ available: true });
+    current.requests.length = 0;
+    current.context.services.managedServices.dependencies.ensure = async id => {
+      ensured.push(id);
+      throw Object.assign(new Error('Installation cancelled'), { code: 'cancelled' });
+    };
+    await expect(current.action('install')({}, current.context)).rejects.toMatchObject({ code: 'cancelled' });
+    expect(ensured).toEqual(['lume-cli', 'lume-cli']);
+    expect(current.requests).toEqual([]);
+  });
+
   it.each([202, 503])('carries native start acceptance without inferring it from a stopped read (HTTP %s)', async status => {
     const current = await activated(true, async input => {
       const path = new URL(input.url).pathname;
@@ -632,4 +669,10 @@ describe('activated Lume provisioner Actions', () => {
       nativeCause: { localCause: 'native_route_not_found', route: 'stop', httpStatus: 404 } });
     expect(current.requests.map(request => request.method)).toEqual(['GET', 'POST']);
   });
+});
+
+
+it('declares saved CPU, memory and disk dimensions through the options Action', () => {
+  const fields = LUME_PLUGIN.manifest.contributes.actions?.flatMap(action => action.inputHints?.fields ?? []) ?? [];
+  for (const role of ['cpu', 'memory', 'disk']) expect(fields).toContainEqual(expect.objectContaining({ role }));
 });

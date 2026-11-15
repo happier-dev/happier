@@ -117,6 +117,14 @@ property names and non-object roots do not fit the existing field-path grammar.
 These hints support discovery and form consumers; they do not make an Action
 automatically request MCP elicitation or change its approval policy.
 
+Provisioner options Actions can declare `role: 'cpu' | 'memory' | 'disk'` on
+numeric size fields. Saved configuration receipts and preset offers use these
+roles to describe size without interpreting field names. CPU values are cores;
+memory and disk values are GiB, or bytes when the field declares `unit: 'bytes'`.
+For example, `{ path: 'ram', title: 'Memory', widget: 'integer', role: 'memory',
+unit: 'bytes' }` describes a byte-valued memory choice. Older declarations without
+roles retain their ordinary saved-choice presentation.
+
 If your Action opens its own editor, declare exactly `inputHints: { fields: [] }`
 to omit the host input form. Hints containing only a form title, description or
 submit label still derive fields. The input schema continues validating operands
