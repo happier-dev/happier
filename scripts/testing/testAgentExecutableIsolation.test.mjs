@@ -28,6 +28,11 @@ test('agent test setup excludes ambient PATH and Home executables but permits ex
         assert.equal(existsSync(${JSON.stringify(marker)}), false, 'ambient cursor-agent was spawned');
         assert.equal(process.env.HAPPIER_CURSOR_PATH, undefined);
         assert.notEqual(process.env.HOME, ${JSON.stringify(fixture.root)});
+        if (process.platform !== 'win32') {
+          const platform = spawnSync('uname', ['-s'], { encoding: 'utf8' });
+          assert.equal(platform.status, 0, 'guest platform probe must remain available');
+          assert.ok(platform.stdout.trim());
+        }
         const explicit = invoke(${JSON.stringify(shim)});
         assert.equal(explicit.status, 0, explicit.stderr?.toString());
         assert.equal(existsSync(${JSON.stringify(marker)}), true, 'explicit executable fixture must still run');
