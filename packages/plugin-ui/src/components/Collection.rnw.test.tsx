@@ -6649,13 +6649,8 @@ describe('the Collection toolbar', () => {
     boxes['toolbar:lead'] = { width: 850, height: 76 };
     boxes.toolbar = { width: 1300, height: 76 };
     layout('toolbar', 76);
-    expect(view.query('refine:toolbar')).not.toBeNull();
-    // True outer wrapping fills the leading line (flexGrow: 1); even maxWidth-constrained clusters overflow
-    // their shared room. Internal wrapping inside a cluster keeps its existing composition policy.
-    boxes['toolbar:lead'] = { width: 1300, height: 36 };
-    layout('toolbar', 76);
-    // A healthy freshness gives its words up first; the row lays out again without them and still does not fit.
-    layout('toolbar', 76);
+    // The lead now wraps inside its share: a healthy freshness gives its words up first, the row measures itself
+    // again without them (no layout event need follow) and, still wrapped, folds.
     expect(view.query('refine:toolbar')).toBeNull();
     view.unmount();
   });
@@ -6777,7 +6772,13 @@ describe('the Collection toolbar', () => {
     expect(toolbar.textContent).toContain('Updated 10 minutes ago');
     reportToolbarLayout(view, 'toolbar:lead', 0, 650, 36);
     reportToolbarLayout(view, 'toolbar', 0, 1000, 36);
-    reportToolbarLayout(view, 'toolbar:trail', 0, 450, 32);
+    // The trailing group is as wide as what it draws: without the words it is narrower.
+    const trail = view.query('toolbar:trail') as unknown as {
+      measureInWindow: (callback: (...values: number[]) => void) => void;
+      __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void;
+    };
+    trail.measureInWindow = (callback) => callback(0, 0, toolbar.textContent!.includes('Updated 10 minutes ago') ? 450 : 300, 32);
+    act(() => trail.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 450, height: 32 } } }));
     expect(view.query('refine:toolbar')).not.toBeNull();
     expect(toolbar.textContent).not.toContain('Updated 10 minutes ago');
     // Without the words the row holds, and stays one row.
@@ -6785,6 +6786,24 @@ describe('the Collection toolbar', () => {
     expect(view.query('refine:toolbar')).not.toBeNull();
     // Only a row that still does not fit folds.
     reportToolbarLayout(view, 'toolbar:trail', 0, 450, 32);
+    expect(view.query('refine:toolbar')).toBeNull();
+    view.unmount();
+  });
+
+  it('folds a row that still wraps once its healthy freshness went quiet, without another layout event', () => {
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
+    view.measure(1120);
+    // A list column beside a detail pane: the one row wraps into several lines. Giving up the freshness's words
+    // leaves every box the same size (the trailing group still fills its lines), so no further layout event arrives.
+    const boxes: Record<string, readonly [number, number]> = {
+      toolbar: [400, 124], 'toolbar:lead': [400, 80], 'toolbar:trail': [388, 120],
+    };
+    for (const [id, [width, height]] of Object.entries(boxes)) {
+      const node = view.query(id) as unknown as { measureInWindow: (callback: (...values: number[]) => void) => void };
+      node.measureInWindow = (callback) => callback(0, 0, width, height);
+    }
+    act(() => (view.query('toolbar') as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void })
+      .__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 124 } } }));
     expect(view.query('refine:toolbar')).toBeNull();
     view.unmount();
   });
@@ -6830,8 +6849,7 @@ describe('the Collection toolbar', () => {
     layout('toolbar', 0, 36, 1000);
     expect(view.query('refine:toolbar')).not.toBeNull();
     // Freshness makes the trailing cluster wider; the current widths no longer fit the same 1000px row.
-    layout('toolbar:trail', 44, 32, 450);
-    // A healthy freshness gives its words up first; the row lays out again without them and still does not fit.
+    // A healthy freshness gives its words up first; the row measures itself again without them and still does not fit.
     layout('toolbar:trail', 44, 32, 450);
     const toolbar = view.query('toolbar')!;
     expect(view.query('refine:toolbar')).toBeNull();
@@ -6871,7 +6889,6 @@ describe('the Collection toolbar', () => {
     reportToolbarLayout(view, 'toolbar:lead', 0, 650, 80);
     reportToolbarLayout(view, 'toolbar:trail', 0, 300, 32);
     reportToolbarLayout(view, 'toolbar', 0, 1000, 80);
-    reportToolbarLayout(view, 'toolbar:trail', 0, 300, 32);
     expect(view.query('refine:toolbar')).toBeNull();
     view.unmount();
   });

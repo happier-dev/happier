@@ -5,7 +5,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
 import { expect, it, vi } from 'vitest';
-import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { Collection, CollectionToolbar, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -176,6 +176,74 @@ it('keeps a long authored row name and the collection title whole at 195 px', as
                 expect(rect.right, text).toBeLessThanOrEqual(195);
             }
         }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+// A lens wider than its share of the folded toolbar's line (here: all but 40 px of it) (Triage Tasks: Mine · Agents · Everyone and Views,
+// DESIGN-ACCEPT-209 at 308 px) gives the arrangement switch the next line instead of having it drawn over it.
+function WideLensList({ lensWidth }: { lensWidth: number }) {
+    const model = useHappierCollection({ items, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
+    return <CoreCollectionScope renderPageScroller={renderPageScroller}>
+        <Collection model={model} anatomy={anatomy} accessibilityLabel="Entries" presentation="list" detail="none" scroll="page"
+            header={(slots) => <CollectionToolbar slots={slots} testID="toolbar"
+                lens={<View testID="wide-lens" style={{ width: lensWidth, height: 28 }} />}
+                views={{ label: 'Arrange', value: 'list', onChange: () => {},
+                    options: [{ value: 'list', label: 'List', icon: 'list', testID: 'view:list' },
+                        { value: 'board', label: 'Board', icon: 'board', testID: 'view:board' }] }} />} />
+    </CoreCollectionScope>;
+}
+
+it.each([308, 390])('keeps the arrangement switch clear of a wide lens in the folded toolbar at %i px', async (width) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<View style={{ width }}><WideLensList lensWidth={width - 40} /></View>));
+        const layout = await measureWebLayout(host, { viewport: { width, height: 900 }, settle: (replay) => act(replay) });
+        const lens = layout.rect('wide-lens');
+        const toolbar = layout.rect('toolbar');
+        for (const text of ['view:list', 'view:board']) {
+            const rect = layout.rect(text);
+            const overlaps = rect.left < lens.right && rect.right > lens.left && rect.top < lens.bottom && rect.bottom > lens.top;
+            expect(overlaps, `${text} ${JSON.stringify(rect)} over lens ${JSON.stringify(lens)}`).toBe(false);
+            expect(rect.right, text).toBeLessThanOrEqual(toolbar.right + 1);
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+// A list narrowed beside a detail pane (Triage Tasks at 1440, DESIGN-ACCEPT-209): the page's name beside the search
+// left the field about 70 px ("Searc"). The name takes its own line instead, so the search keeps a readable width.
+function TitledSearchList() {
+    const model = useHappierCollection({ items, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
+    return <CoreCollectionScope renderPageScroller={renderPageScroller}>
+        <Collection model={model} anatomy={anatomy} accessibilityLabel="Entries" presentation="list" detail="none" scroll="page"
+            search={{ label: 'Search tasks', value: '', onValueChange: () => {}, testID: 'search' }}
+            header={(slots) => <CollectionToolbar slots={{ ...slots, title: <View testID="page-name" style={{ width: 165, height: 32 }} /> }}
+                testID="toolbar" lens={<View style={{ width: 200, height: 28 }} />}
+                primary={{ label: 'New task', onPress: () => {} }}
+                more={{ label: 'More', items: [{ id: 'refresh', label: 'Refresh' }], onSelect: () => {} }} />} />
+    </CoreCollectionScope>;
+}
+
+it.each([400, 780])('gives the search a readable width beside a page name in the folded toolbar at %i px', async (width) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<View style={{ width }}><TitledSearchList /></View>));
+        const layout = await measureWebLayout(host, { viewport: { width, height: 900 }, settle: (replay) => act(replay) });
+        const field = layout.rect('search.field');
+        const name = layout.rect('page-name');
+        expect(field.width, JSON.stringify(field)).toBeGreaterThanOrEqual(220);
+        // Neither is drawn over the other; with room for both, the name stays on the search's line.
+        expect(field.top >= name.bottom || field.left >= name.right).toBe(true);
+        if (width === 780) expect(field.top).toBeLessThan(name.bottom);
     } finally {
         await act(async () => root.unmount());
         host.remove();

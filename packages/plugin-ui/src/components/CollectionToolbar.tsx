@@ -10,7 +10,9 @@ import {
 } from 'react';
 import { View } from 'react-native';
 
+import { useHappierUiAccessibility } from '../environment/context.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
+import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import type { HappierPortableStyle } from '../presentation/portableTypes.js';
 import { Button, IconButton } from './Button.js';
 import type { CollectionHeaderSlots } from './Collection.js';
@@ -148,7 +150,9 @@ const REFRESH_ITEM_ID = 'happier-collection-toolbar:refresh';
  * sheet, with ⋯ beside it (Refresh carrying the freshness, the page's actions, then Order), then Select where the
  * list can select —
  * and one row with the lens on the left and the arrangement switch on the right. A healthy list stays quiet there; a list that is refreshing or
- * not current says so in that row, so it is never only inside a menu.
+ * not current says so in that row, so it is never only inside a menu. A lens that leaves the switch too little room
+ * gives it the next line, still on the trailing edge; a page name that would leave the search less than its readable
+ * width takes the line above the search.
  */
 export function CollectionToolbar(props: CollectionToolbarProps): ReactElement {
   const provided = useContext(CollectionToolbarCompactContext);
@@ -260,6 +264,13 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
     read('lead', lead);
     read('trail', trail);
   };
+  // Giving up the words can leave every box its size (a row wrapped over several lines still fills them), so no
+  // layout event follows: the row measures itself again once they are gone, and folds if it still does not fit.
+  const measureRef = useRef(measure);
+  measureRef.current = measure;
+  useEffect(() => {
+    if (quiet) measureRef.current();
+  }, [quiet]);
   // It leads with the add glyph the folded toolbar's round "+" shows, so the one primary reads the same at every width.
   const primary = props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded={false} />;
   return (search) => (
@@ -323,9 +334,12 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
   const { slots, freshness, refine } = props;
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
+  const { textScale } = useHappierUiAccessibility();
   // The widths the folded row can still see of what the wide row draws: the lens as drawn here, and the sizes of
   // the rest. When any of them gets smaller the wide row may fit again (`CollectionToolbarFitReport.shrank`).
-  const [widths, setWidths] = useState<Partial<Record<'title' | 'lens' | 'selection' | 'accessory' | 'pageActions', number>>>({});
+  // `buttons` (the round Filters, ⋯ and +) is the search line's own, for the room it leaves the search.
+  const [widths, setWidths] = useState<Partial<Record<'title' | 'lens' | 'selection' | 'accessory' | 'pageActions' | 'buttons', number>>>({});
+  const [stackWidth, setStackWidth] = useState<number | null>(null);
   const measured = (slot: keyof typeof widths, content: ReactNode, style: HappierPortableStyle = compactLensStyle) => content == null ? null : (
     <View style={style} onLayout={(event) => {
       const width = Math.round(event.nativeEvent.layout.width);
@@ -352,6 +366,7 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
     if (!active) {
       seen.current = null;
       setWidths((previous) => Object.keys(previous).length === 0 ? previous : {});
+      setStackWidth(null);
       return;
     }
     const sizes = contentKey.split(',').map(Number);
@@ -362,7 +377,9 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
   return (search) => {
     // With a search the funnel ends the field; without one it stays a round button beside ⋯.
     const filters = refine === undefined || search !== null ? null : <FilterFunnel refine={refine} inField={false} />;
-    const buttons = (
+    // MoreMenu draws nothing without items or folded choices; an empty wrapper would add a gap of its own.
+    const hasMore = props.refresh !== undefined || (props.more?.items.length ?? 0) > 0 || refine?.foldedChoices !== undefined;
+    const buttons = filters === null && !hasMore && props.primary === undefined ? null : (
       <>
         {filters}
         <MoreMenu {...props} folded />
@@ -374,6 +391,15 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
     const said =
       freshness == null || freshness.tone === 'muted' || freshness.pulsing === true ? null : freshness;
     const head = slots?.title != null || search !== null;
+    // The page's name and the search share the search line while the field keeps a readable width beside it; a list
+    // narrowed beside a detail pane would leave it a few letters ("Searc"), so the name takes the line above instead.
+    // Judged from the name's own width and the round buttons', never the field's, so it settles and never flips.
+    const headItems = [widths.title, widths.buttons, slots?.selection == null ? undefined : widths.selection]
+      .filter((width): width is number => width !== undefined);
+    const titleAlone = slots?.title != null && search !== null && stackWidth !== null && widths.title !== undefined
+      && stackWidth - headItems.reduce((sum, width) => sum + width, 0) - spacing.small * headItems.length
+        < HAPPIER_PAGE_METRICS.toolbarSearchMinWidthPx * textScale;
+    const title = measured('title', slots?.title, compactTitleStyle);
     // Select is an action on the list, as Filters and ⋯ are: it ends the search row, where the search gives way to it,
     // and never shares the lens row, whose segmented lens and switch leave it no room on a phone (it wrapped mid-word).
     const selection = measured('selection', slots?.selection, compactSelectionStyle);
@@ -382,16 +408,23 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
       : <HappierTextActionEdgeContext.Provider value="end">{selection}</HappierTextActionEdgeContext.Provider>;
     return (
       <View testID={props.testID} style={[compactStackStyle, { gap: spacing.small }]}
-        onLayout={(event) => fit?.width(event.nativeEvent.layout.width)}>
+        onLayout={(event) => {
+          const width = event.nativeEvent.layout.width;
+          fit?.width(width);
+          setStackWidth((previous) => previous === width ? previous : width);
+        }}>
+        {titleAlone ? <View key="title" style={compactTitleLineStyle}>{title}</View> : null}
         {head ? (
           <View key="lead" style={[compactHeadRowStyle, { gap: spacing.small }]}>
-            {measured('title', slots?.title, compactTitleStyle)}
+            {titleAlone ? null : title}
             {search}
-            {buttons}
+            {buttons === null ? null : measured('buttons', buttons, { ...compactButtonsStyle, gap: spacing.small })}
             {trailingSelection}
           </View>
         ) : null}
-        <Row key="lens" gap="small" align="center">
+        {/* A lens wider than its share of the line (a segmented lens and its saved views at 308) gives the switch
+            the next line, still on the trailing edge, instead of the switch being drawn over it. */}
+        <Row key="lens" gap="small" align="center" wrap>
           {/* A transient accessory (an Action picker while selecting) that does not fit beside the lens takes the line
               under it, rather than the lens shrinking under the accessory drawn over it. */}
           <Row gap="small" wrap align="center" style={compactLeadStyle}>
@@ -399,21 +432,23 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
             {head ? null : selection}
             {measured('accessory', props.accessory)}
           </Row>
-          <View style={compactFreshnessStyle}>
-            {said === null ? null : (
-              <Status
-                tone={said.tone}
-                pulsing={said.pulsing}
-                indicator={said.indicator}
-                label={said.label}
-                presentation="inline"
-              />
-            )}
+          <View style={[compactTrailStyle, { gap: spacing.small }]}>
+            <View style={compactFreshnessStyle}>
+              {said === null ? null : (
+                <Status
+                  tone={said.tone}
+                  pulsing={said.pulsing}
+                  indicator={said.indicator}
+                  label={said.label}
+                  presentation="inline"
+                />
+              )}
+            </View>
+            <Views views={props.views} compact />
+            {head ? null : buttons}
+            {/* The host's route controls (Run on) and the column's Hide stay one line, as they end the wide row. */}
+            {measured('pageActions', slots?.pageActions, compactPageActionsStyle)}
           </View>
-          <Views views={props.views} compact />
-          {head ? null : buttons}
-          {/* The host's route controls (Run on) and the column's Hide stay one line, as they end the wide row. */}
-          {measured('pageActions', slots?.pageActions, compactPageActionsStyle)}
         </Row>
       </View>
     );
@@ -525,10 +560,22 @@ const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 /** The page's name or switch keeps its words whole beside the search, which gives way instead. */
 const compactTitleStyle: HappierPortableStyle = { flexShrink: 0 };
+/** The name's own line above the search: a row, so the name keeps its own width there. */
+const compactTitleLineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', minWidth: 0 };
+/** The search line's round buttons, kept whole beside the field. */
+const compactButtonsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 0 };
 // The route controls (Run on) truncate on their own, so a tight row takes its room from them before the lens.
 const compactPageActionsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 100, minWidth: 0 };
 /** A control's words never break inside the folded toolbar; the search beside it gives way instead. */
 const compactSelectionStyle: HappierPortableStyle = { flexShrink: 0 };
+/**
+ * The switch and what ends the lens line, kept together on the trailing edge: sized by its controls, so it takes the
+ * next line when the lens leaves it too little, and it fills whatever room the lens leaves on a shared line.
+ */
+const compactTrailStyle: HappierPortableStyle = {
+  flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+  flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0, marginLeft: 'auto',
+};
 /** The space between the lens and the switch; a freshness that needs saying ends there, truncating first. */
 const compactFreshnessStyle: HappierPortableStyle = {
   flex: 1,

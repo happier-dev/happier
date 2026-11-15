@@ -200,6 +200,12 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
    */
   toolbarFoldBelowWidthPx: 900,
   /**
+   * The narrowest a Collection toolbar's search gives way to and still reads (lab a2 draws the wide row's field at
+   * about this width), at 100% text. The wide row folds before its field gets narrower; folded, the page's name takes
+   * its own line rather than leave the field less than this beside it.
+   */
+  toolbarSearchMinWidthPx: 220,
+  /**
    * Between the pieces of a Collection's header: its toolbar, a banner the page puts under it (Actions' "A deployment
    * is waiting for you"), a stale-data line. Lab a2 `.fc-banner` stands 16 below the toolbar.
    */
