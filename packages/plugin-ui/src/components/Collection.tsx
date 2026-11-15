@@ -1176,7 +1176,8 @@ function LeadingByline(props: Readonly<{ lead: ReactNode; line: ReactNode; textS
   const text = typeof line === 'string' || typeof line === 'number';
   return (
     <View style={leadingBylineStyle}>
-      {props.lead}
+      {/* The state word stays whole; the line after it gives way (an ellipsis at the row's edge). */}
+      <View style={bylineLeadStyle}>{props.lead}</View>
       {empty ? null : text ? <SlotContent value={`· ${String(line)}`} textStyle={props.textStyle} /> : (
         <><SlotContent value="·" textStyle={props.textStyle} />{line}</>
       )}
@@ -1184,6 +1185,7 @@ function LeadingByline(props: Readonly<{ lead: ReactNode; line: ReactNode; textS
   );
 }
 
+const bylineLeadStyle: HappierPortableStyle = { flexShrink: 0 };
 const leadingBylineStyle: HappierPortableStyle = {
   flexDirection: 'row', alignItems: 'center', gap: HAPPIER_SPACE_STEPS.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch',
 };

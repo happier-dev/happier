@@ -3291,7 +3291,8 @@ describe('render scope', () => {
       view.measure(390);
       const lead = view.query('lead:a')!;
       expect(lead).not.toBeNull();
-      expect(lead.parentElement!.textContent).toBe('Failed· payments-api');
+      // The state word (in its own unshrinking frame) and the byline after it share one line.
+      expect(lead.parentElement!.parentElement!.textContent).toBe('Failed· payments-api');
       // A row with no lead keeps its byline as it was.
       expect(view.query('lead:c')).toBeNull();
       expect(view.query('row:c')?.textContent).not.toContain('·');
