@@ -3,6 +3,7 @@ import { eventRouter } from "@/app/events/eventRouter";
 import { machineInstallationPublicKeysEqual, type VerifiedMachineInstallationIdentity } from "./installationProof";
 import { resolveMachineContentPublicKeyFingerprintForStorage } from "./machineMutations";
 import { invalidateManagedMachineInTx } from "./managed/managedRows";
+import { invalidatePresetInTx } from "./managed/machinePresetService";
 
 type ExistingMachineInstallationIdentity = Readonly<{
     dataEncryptionKey: Uint8Array | null;
@@ -73,11 +74,14 @@ export async function updateMachineInstallationIdentityInTx(
             await tx.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: data.installationId } });
             await invalidateManagedMachineInTx(tx, row);
         }
-    }
-    if (data.installationId && data.installationId !== machine.installationId) {
-        await tx.managedMachinePreset.updateMany({ where: { custodianAccountId: machine.accountId,
-            controllerMachineId: machine.id, controllerInstallationId: { not: data.installationId } },
-            data: { controllerInstallationId: data.installationId } });
+        const where = { custodianAccountId: machine.accountId, controllerMachineId: machine.id,
+            controllerInstallationId: { not: data.installationId } };
+        const owners = await tx.managedMachinePreset.findMany({ where,
+            select: { teamId: true, custodianAccountId: true }, distinct: ['teamId', 'custodianAccountId'] });
+        if (owners.length) {
+            await tx.managedMachinePreset.updateMany({ where, data: { controllerInstallationId: data.installationId } });
+            for (const owner of owners) await invalidatePresetInTx(tx, owner);
+        }
     }
     if (data.installationId !== undefined || data.installationPublicKey !== undefined) {
         afterTx(tx, () => eventRouter.disconnectMachineAndSessionSockets({

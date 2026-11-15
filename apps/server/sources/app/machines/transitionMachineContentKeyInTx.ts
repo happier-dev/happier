@@ -18,6 +18,7 @@ import { serializeMachineKeyBasis, serializeMachineRow } from "./machineSerializ
 import { readMachineDevcontainerChildInTx } from './managed/managedRows';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from "./machineAccess";
 import { classifyMachineAvailabilityState } from './machineStateGuards';
+import { withManagedWakeAvailabilityInTx } from './managed/managedWakeAvailability';
 
 /** Only the custodian may inspect raw historical content that ordinary mode-aware readers lock. */
 export async function readMachineContentKeySnapshotInTx(params: Readonly<{
@@ -33,7 +34,7 @@ export async function readMachineContentKeySnapshotInTx(params: Readonly<{
         encryptionMode: true, publicKey: true, contentPublicKey: true, contentPublicKeySig: true,
     } });
     if (!account || deriveAccountEncryptionCurrentnessFromRow(account).status !== "ready") return null;
-    return serializeMachineRow(machine, {
+    return serializeMachineRow((await withManagedWakeAvailabilityInTx(params.tx, [machine]))[0], {
         storageMode: isPlainMachineDataKeyMarker(machine.dataEncryptionKey) ? "plain" : "e2ee",
         devcontainerChild: await readMachineDevcontainerChildInTx(params.tx, machine.id),
     });
@@ -121,5 +122,5 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
             recipientFilter: { type: "machine-scoped-only", machineId: machine.id },
         });
     });
-    return { kind: "committed", machine: serializeMachineRow(committed, { storageMode: targetMode, devcontainerChild }) };
+    return { kind: "committed", machine: serializeMachineRow((await withManagedWakeAvailabilityInTx(tx, [committed]))[0], { storageMode: targetMode, devcontainerChild }) };
 }

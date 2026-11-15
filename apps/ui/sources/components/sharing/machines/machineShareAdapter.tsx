@@ -19,6 +19,7 @@ import { describeMachineShareTrust } from './machineShareTrust';
 /** Domain meaning only. ShareSheet retains list, picker, focus, Back and removal anatomy. */
 export function createMachineShareAdapter(input: Readonly<{
     machineName: string; online: boolean | null; controller: ReturnType<typeof useMachineShareController>;
+    nativeWord?: string | null;
     openApproval?: (artifactId: string) => void;
     /** The machine is shared with the viewer: says so before, or without, a readable access census. */
     shared?: boolean;
@@ -130,9 +131,12 @@ export function createMachineShareAdapter(input: Readonly<{
             if (controller.issue && !refusal) notices.push(notice('read-error', 'error', controller.issue.message,
                 controller.issue.retryable ? { label: t('common.retry'), onPress: () => { void controller.retryContent(); } } : undefined));
             // Only someone who can change access is told that changes are saved while it is offline.
-            if (input.online === false) notices.push(notice('offline', 'unavailable', t(controller.response?.canManage === false
+            if (input.nativeWord) notices.push(notice('native', 'unavailable', input.nativeWord));
+            else if (input.online === false) notices.push(notice('offline', 'unavailable', t(controller.response?.canManage === false
                 ? 'machines.sharing.offlineRecipient' : 'machines.sharing.offline', { machine })));
-            if (controller.notice) notices.push(notice('notice', 'warning', controller.notice.message));
+            if (controller.notice) notices.push(notice('notice', 'warning', controller.notice.message,
+                controller.notice.code === 'outcome_unknown'
+                    ? { label: t('common.refresh'), onPress: () => { void controller.retryContent(); } } : undefined));
             if (controller.approvalId && input.openApproval) {
                 const id = controller.approvalId;
                 // Waiting on the owner's own approval is the one line here that needs them; it leads to the approval.

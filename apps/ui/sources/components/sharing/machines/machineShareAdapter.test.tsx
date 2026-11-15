@@ -271,6 +271,30 @@ describe('Machine sharing through the canonical controller and sheet', () => {
         } finally { await screen?.unmount(); await home.dispose(); }
     });
 
+    it.each(['asleep', 'starting'] as const)('keeps the mounted share modal on native %s instead of Offline', async state => {
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-share-native.test', accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
+        const { Modal, ModalProvider } = await import('@/modal');
+        const { showMachineShareSheet } = await import('./MachineSharingSection');
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            const machine = createMachineFixture({ id: 'machine', active: false, activeAt: 1,
+                metadata: { ...createMachineFixture().metadata!, displayName: 'Devbox' },
+                managedInputRuntime: { nativeReady: false, wakeState: null, state } });
+            getStorage().getState().applyMachines([machine], true, { sourceServerId: scope.serverId });
+            screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+            await act(async () => showMachineShareSheet({ machineId: machine.id, machineName: 'Devbox', scope, shared: false }));
+            await vi.waitFor(() => expect(screen!.getTextContent()).toContain(state === 'asleep'
+                ? t('managedPower.asleep') : t('managedWake.starting', { machine: 'Devbox' })));
+            expect(screen.findByTestId('machine-share-offline')).toBeNull();
+            await act(async () => getStorage().getState().applyMachines([
+                { ...machine, managedInputRuntime: { nativeReady: false, wakeState: null, state: null } },
+            ], true, { sourceServerId: scope.serverId }));
+            await vi.waitFor(() => expect(screen!.findByTestId('machine-share-offline')).not.toBeNull());
+        } finally { await act(async () => Modal.hideAll()); await screen?.unmount(); await home.dispose(); }
+    });
+
     it('keeps the mounted share modal presence bound to its exact Home and Account', async () => {
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-share-presence.test', accountId: 'alice' }],
             route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
@@ -285,7 +309,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const applyMachine = () => getStorage().getState().applyMachines([machine], true, { sourceServerId: scope.serverId });
             applyMachine();
             screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-            await act(async () => showMachineShareSheet({ machineId: machine.id, machineName: 'Devbox', scope, online: false, shared: false }));
+            await act(async () => showMachineShareSheet({ machineId: machine.id, machineName: 'Devbox', scope, shared: false }));
             const offline = () => screen!.findByTestId('machine-share-offline') !== null;
             await vi.waitFor(() => expect(offline()).toBe(true));
             await act(async () => withdrawMachinePresenceForScope(scope));

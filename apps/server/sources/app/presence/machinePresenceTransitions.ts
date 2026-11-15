@@ -3,6 +3,7 @@ import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { readAccessibleMachineAccessInTx } from '@/app/machines/machineAccess';
 import { getDbProviderFromEnv, resolveDbSqlDialect } from '@/config/databaseProvider';
 import type { Tx } from '@/storage/inTx';
+import { invalidateManagedWakeControllerInTx } from '@/app/machines/managed/managedWakeAvailability';
 
 export async function readMachinePresenceForAccountInTx(tx: Tx, input: Readonly<{ actorAccountId: string; machineId: string }>) {
     const access = await readAccessibleMachineAccessInTx(tx, input);
@@ -30,6 +31,7 @@ export async function retainMachinePresenceTransitionInTx(tx: Tx, input: Readonl
     // Publication is queued until the containing transaction finishes domain
     // writes, including the first inactive→active inventory change.
     for (const accountId of input.recipientAccountIds) await markAccountChanged(tx, { accountId, kind: 'machine', entityId: input.machineId });
+    await invalidateManagedWakeControllerInTx(tx, input.machineId);
     if (input.active && previous === null) return;
     const revision = (previous?.revision ?? 0) + 1;
     const occurrence = { revision, occurredAt: input.occurredAt };

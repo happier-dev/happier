@@ -171,6 +171,28 @@ keeps the original blocked input available for explicit retry, even though its
 user transcript anchor already exists. The transcript projection places those
 Pending controls at that anchor, before the corresponding failure.
 
+In 0.3 development, blocked custody invalidates an otherwise idle CLI Session
+projection. The existing message-page reader accepts `projection=activity` for
+main-session activity consumers. Its initial whole-session read snapshot includes
+current primary Pending counts and the no-provider-effect blocked subset, plus a
+page-bounded `pendingOwnsTranscript` fact for each provisional committed twin.
+Scoped and backward context pages need only those page-local custody facts and
+skip the aggregate queries. The server and
+UI share the Pending crossover rule; the provider-effect classifier remains the
+single authority for whether a blocked row can represent running work. Ambiguous,
+unknown and access-removed outcomes stay busy. Execution Run input stays outside
+these primary counts and crossover facts.
+
+The CLI reduces those coherent facts with the transcript instead of treating an
+undelivered first user anchor as accepted work or erasing a different accepted
+input. A pending-change push triggers the existing activity recheck, including
+when the aggregate queue remains positive. Only that complete activity read can
+reconcile its awaiting-materialization guard. A strict whole-session read without
+the requested complete activity proof is unavailable. The existing transcript
+publication policy withholds live activity and custody facts from finite published
+transcripts. Regular message pages, Session lists and socket payloads retain their existing
+projection, and the activity read adds no polling or persisted state.
+
 When a generic native runtime-open error occurs after Session creation, the host publishes
 failed lifecycle status immediately and keeps its existing input consumer open
 for the caller's first message. It also offers any retained daemon-bootstrap
@@ -1014,14 +1036,20 @@ activation combines that native qualification with the exact enrolled guest's
 existing reachability. Optional `acceptedInputWakeOwner: 'home'` routes existing
 Session input through Home Pending, including controllerless wake by a running
 custodian Account daemon. Optional `newSessionWake` comes from
-`resolveManagedFiniteWakeControllerV1`, also consumed by finite wake custody and
-preparation: it is `{ kind: 'available' }` or
-`{ kind: 'unavailable', reason: 'no_controller' }`. The New Session picker claims
+`resolveManagedWakeAvailabilityV1`: finite wake requires the assigned controller's
+exact installation to be online, unrevoked and unreplaced now. It is
+`{ kind: 'available' }` or `{ kind: 'unavailable', reason: 'no_controller' | 'controller_unavailable' }`.
+The Home reads only the declared controllers and invalidates enrolled guest
+projections through existing presence/lifecycle changes, not unchanged heartbeats.
+Installation rebinds also publish the affected preset collections, so open offers
+receive the updated installed-controller binding.
+The New Session picker claims
 **Asleep · starts when you send** only with owner-enabled `wakeState` and
 `newSessionWake.kind === 'available'`, without reading the controller's managed
 allocation. Controllerless pre-Session wake is unsupported: start the Machine
 before sending. Missing support facts, or an absent or null projection, make no
-New Session wake claim.
+New Session wake claim. Native Asleep remains visible when immediate wake is
+unavailable; this does not withdraw input already accepted into Home Pending.
 Policy, enrollment and native-observation changes use the existing Machine
 invalidation and push path; opening a picker never requests power.
 

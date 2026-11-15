@@ -44,6 +44,7 @@ import { observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { resolveManagedWakeAvailability } from '@/sync/domains/pending/managedWakeProjection';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
@@ -160,6 +161,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     });
     const reachabilityScope = props.binding?.isCurrent() ? props.binding.scope : null;
     const controllerPresence = controller ? describeMachinePresenceLine(controller, presenceNowMs, undefined, reachabilityScope) : null;
+    const wakeAvailability = resolveManagedWakeAvailability(machine.controller, controller && controllerPresence
+        ? { ...controller, online: controllerPresence.online } : undefined);
     const requiredController = machine.controller && controller?.installationId === machine.controller.installationId ? controller : null;
     const provisionerPresentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: machine.controller,
         accountScope: reachabilityScope, provider: machine.launch.provider, schemaVersion: machine.launch.schemaVersion });
@@ -646,7 +649,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         } : undefined) : []).map(intent => {
             return { label: t(`managedMachines.actions.${intent}`), testID: `managed-machine.${intent}`, tone: 'bordered' as const,
                 ...(intent === 'stop' ? { icon: <Icon name="stop" size={14} color={theme.colors.text.primary} /> } : {}),
-                disabled: !canMutate || resourceGone, loading: pending === 'machines.managed.power.set',
+                disabled: !canMutate || resourceGone || Boolean(machine.controller
+                    && (intent === 'start' || intent === 'resume') && wakeAvailability.kind === 'unavailable'),
+                loading: pending === 'machines.managed.power.set',
                 onPress: () => fireAndForget(run('machines.managed.power.set', { ...target, when: 'now', expectedRevision: machine.intentRevision,
                     intent }), { tag: 'ManagedMachineSections.power' }) };
         }),

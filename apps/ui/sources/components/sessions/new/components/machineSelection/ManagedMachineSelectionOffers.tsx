@@ -1,10 +1,15 @@
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
+import { shallow } from 'zustand/shallow';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { useMachineDisplayNamesById } from '@/sync/domains/state/storage';
+import { getStorage, useMachineDisplayNamesById } from '@/sync/domains/state/storage';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { resolveManagedWakeAvailability } from '@/sync/domains/pending/managedWakeProjection';
+import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
@@ -90,16 +95,41 @@ export function useManagedMachineSelectionOffers(input: Readonly<{
     const { homeId, binding, serverId, presets, configure } = input;
     const controllerIds = React.useMemo(() => presets?.flatMap(preset => preset.controller ? [preset.controller.machineId] : []) ?? [], [presets]);
     const names = useMachineDisplayNamesById(controllerIds, { serverId });
+    const store = getStorage();
+    const readControllers = React.useCallback(() => {
+        const state = store.getState();
+        return controllerIds.map(id => resolveServerScopedMachine(state, serverId, id));
+    }, [store, serverId, controllerIds]);
+    const readUnavailable = React.useCallback((nowMs: number) => {
+        const controllers = new Map(readControllers().flatMap(controller => controller ? [[controller.id, controller] as const] : []));
+        const unavailable: Record<string, true> = {};
+        const scope = binding?.isCurrent() ? binding.scope : null;
+        for (const preset of presets ?? []) {
+            // Pools choose their controller at configuration; Account-side creation has no assigned controller.
+            if (!preset.controller) continue;
+            const controller = controllers.get(preset.controller.machineId);
+            const availability = resolveManagedWakeAvailability(preset.controller, controller
+                ? { ...controller, online: describeMachinePresenceLine(controller, nowMs, undefined, scope).online } : undefined);
+            if (availability.kind === 'unavailable') unavailable[preset.id] = true;
+        }
+        return unavailable;
+    }, [binding, presets, readControllers]);
+    const presenceTargets = React.useMemo(() => [{ serverId, machineIds: controllerIds }], [serverId, controllerIds]);
+    const unavailable = useMachinePresenceSnapshot(readControllers, readUnavailable, presenceTargets, shallow);
     return React.useMemo(() => homeId && binding?.isCurrent() ? buildManagedMachineSelectionOffers({
         homeId, presets: presets ?? [],
         oneOffTitle: t('managedMachines.picker.oneOff'), oneOffSubtitle: t('managedMachines.picker.oneOffHelp'),
         describeOffer: preset => describeManagedPresetOffer(preset),
+        describeUnavailable: preset => !unavailable[preset.id] ? undefined
+            : preset.controller && names[preset.controller.machineId]
+                ? t('managedMachines.controller.required', { controller: names[preset.controller.machineId]! })
+                : t('managedMachines.controller.requiredUnnamed'),
         markFor: preset => <ManagedPresetMark serverId={serverId} accountScope={binding.scope} preset={preset} size={MANAGED_PROVISIONER_MARK_SIZE.rail} />,
         // A local machine runs on the machine that manages it; a pool-backed preset names none (the pool picks one).
         costFor: preset => <ManagedPresetCost serverId={serverId} accountScope={binding.scope} preset={preset}
             runsOn={preset.controllerPoolId || !preset.controller ? undefined : names[preset.controller.machineId] ?? preset.controller.machineId} />,
         onConfigure: configure,
-    }) : [], [homeId, binding, presets, serverId, names, configure]);
+    }) : [], [homeId, binding, presets, serverId, names, unavailable, configure]);
 }
 
 function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ binding: ServerCredentialAccountScopeBinding }>) {

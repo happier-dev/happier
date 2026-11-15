@@ -98,22 +98,27 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
     oneOffTitle: string;
     oneOffSubtitle?: string;
     describeOffer?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
+    describeUnavailable?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
     markFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
     costFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
     onConfigure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
     return [...params.presets.filter((preset): preset is OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1 =>
-        preset.homeId === params.homeId && preset.archivedAt === undefined && hasOpenedManagedMachinePresetCreationV1(preset)).map(preset => ({
-        id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
-        homeId: preset.homeId,
-        presetId: preset.id,
-        kind: 'preset' as const,
-        title: preset.name,
-        subtitle: params.describeOffer?.(preset),
-        ...(params.markFor ? { mark: params.markFor(preset) } : {}),
-        ...(params.costFor ? { cost: params.costFor(preset) } : {}),
-        onSelect: () => params.onConfigure(preset),
-    })), {
+        preset.homeId === params.homeId && preset.archivedAt === undefined && hasOpenedManagedMachinePresetCreationV1(preset)).map(preset => {
+        const unavailableText = params.describeUnavailable?.(preset);
+        return {
+            id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
+            homeId: preset.homeId,
+            presetId: preset.id,
+            kind: 'preset' as const,
+            title: preset.name,
+            subtitle: params.describeOffer?.(preset),
+            ...(unavailableText === undefined ? {} : { disabled: true, unavailableText }),
+            ...(params.markFor ? { mark: params.markFor(preset) } : {}),
+            ...(params.costFor ? { cost: params.costFor(preset) } : {}),
+            onSelect: () => params.onConfigure(preset),
+        };
+    }), {
         id: `managed-machine:${params.homeId}:one-off`, homeId: params.homeId, kind: 'one-off' as const,
         title: params.oneOffTitle, subtitle: params.oneOffSubtitle,
         onSelect: () => params.onConfigure(null),

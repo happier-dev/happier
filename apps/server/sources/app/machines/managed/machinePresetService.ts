@@ -85,7 +85,7 @@ function readPresetRecipientEnvelopeRows(recipients: ManagedMachinePresetV1['rec
     }
 }
 
-function ownerOf(row: StoredPreset): ManagedMachinePresetV1["owner"] {
+function ownerOf(row: Pick<StoredPreset, 'teamId' | 'custodianAccountId'>): ManagedMachinePresetV1["owner"] {
     return row.teamId ? { kind: "team", teamId: row.teamId } : { kind: "account", accountId: row.custodianAccountId ?? "" };
 }
 
@@ -277,7 +277,7 @@ export async function rewriteMachinePresetContentInTx(tx: Tx, input: Readonly<{
     return { kind: 'saved', revision: row.revision + 1 };
 }
 
-export async function invalidatePresetInTx(tx: Tx, row: StoredPreset): Promise<void> {
+export async function invalidatePresetInTx(tx: Tx, row: Pick<StoredPreset, 'teamId' | 'custodianAccountId'>): Promise<void> {
     const accountIds = await readMachinePresetPublicationAudienceInTx(tx, ownerOf(row));
     await markAccountsChanged(tx, { accountIds, entityId: MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 });
 }
@@ -1059,10 +1059,12 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
         requirePresetCustodianRecipient(preset, preset.owner.accountId);
         return { kind: 'ready', preset, delegated: false, custodianAccountId: preset.owner.accountId, presetContent };
     }
-    const delegated = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: params.accountId, machineId: preset.controller.machineId }) !== 'manage';
+    const role = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: params.accountId, machineId: preset.controller.machineId });
     // `preset` carries no `launch`, so this only resolves current controller
     // authority and custodian routing; it does not parse private content.
     const authority = await resolvePresetControllerAuthorityInTx(tx, { homeId: preset.homeId, controller: preset.controller });
+    const delegated = role !== 'manage'
+        || (row.teamAcquireDelegated === true && authority.custodianAccountId !== params.accountId);
     requirePresetCustodianRecipient(preset, authority.custodianAccountId);
     await requirePresetDelegationInTx(tx, row, authority.custodianAccountId, delegated);
     return { kind: 'ready', preset, delegated, presetContent,

@@ -11918,6 +11918,8 @@ custodian Account daemon. Optional `newSessionWake` is `{ kind: 'available' }` o
 online, unrevoked and unreplaced Machine. It exposes no controller identity.
 The additional unavailable cause is an unreleased 0.3 direct cut: matching Home,
 Protocol and UI reload together; it changes no retained data or 0.2 contract.
+Installation rebinds update preset pins through the existing preset collection
+publication, so mounted pickers refresh their structural controller binding.
 New Session start-on-send requires both an owner-enabled `wakeState`
 and `newSessionWake.kind === 'available'`; a missing support fact makes no claim.
 Controllerless pre-Session wake remains unsupported and requires starting the
@@ -11958,6 +11960,14 @@ no fallback or person-entered digest. The inspected `../0.2` frontier
 Machine preset contracts.
 
 ## Managed guest authority (unreleased 0.3)
+
+Managed guest CLI updates use the connected Home's guest payload through the
+existing bootstrap retry operation, including acquire and repair. A missing
+payload is a typed `guest_payload_missing` refusal rather than a fallback to a
+public 0.2 release. Inspect recognizes the released 0.2 doctor-only JSON shape
+when the guest lacks the diagnostic collector and returns
+`guest_cli_incompatible` at `guest_capability`; malformed collector output still
+returns `invalid_action_output`. No wire or persisted shape changes are involved.
 
 Each enrolled managed Machine keeps its own Account, Team and Group grants.
 Manage on a controller also supplies Manage on its guests, including nested

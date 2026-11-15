@@ -189,15 +189,18 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         });
     });
 
-    it.each([false, true])('projects the finite owner new-Session wake decision to guest Use recipients (controller: %s)', async hasController => {
+    it.each(['absent', 'online', 'offline', 'revoked', 'replaced', 'different-installation'] as const)('projects the finite owner new-Session wake decision to guest Use recipients (controller: %s)', async state => {
         const { owner, recipient, machine } = await fixture();
-        const controller = hasController ? await db.machine.create({ data: {
+        const controller = state !== 'absent' ? await db.machine.create({ data: {
             id: `controller-${randomUUID()}`, accountId: owner.id, installationId: `installation-${randomUUID()}`,
             metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
+            active: state !== 'offline',
+            ...(state === 'revoked' ? { revokedAt: new Date() } : {}),
+            ...(state === 'replaced' ? { replacedByMachineId: randomUUID(), replacedAt: new Date() } : {}),
         } }) : null;
         await db.managedMachine.create({ data: {
             homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id, enrolledMachineId: machine.id,
-            ...(controller ? { controllerMachineId: controller.id, controllerInstallationId: controller.installationId } : {}),
+            ...(controller ? { controllerMachineId: controller.id, controllerInstallationId: state === 'different-installation' ? randomUUID() : controller.installationId } : {}),
             admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
@@ -209,8 +212,8 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         await withAuthenticatedTestApp(machinesRoutes, async app => {
             const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(hasController
-                ? { kind: 'available' } : { kind: 'unavailable', reason: 'no_controller' });
+            expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(state === 'online'
+                ? { kind: 'available' } : { kind: 'unavailable', reason: state === 'absent' ? 'no_controller' : 'controller_unavailable' });
             expect(response.json().machine.managedInputRuntime).not.toHaveProperty('controller');
         });
     });
@@ -305,7 +308,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             for (const compact of [false, true]) {
                 const refused = await read(compact);
                 expect(refused.statusCode, refused.body).toBe(200);
-                expect(refused.json()).toMatchObject({ machine: { access: { accessState: 'key_pending' } } });
+                expect(refused.json()).toMatchObject({ machine: { access: { accessState: 'refused', reason: 'content_unpublished' } } });
             }
             await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: machine.id, accountId: recipient.id } });
             expect((await read(true)).statusCode).toBe(404);

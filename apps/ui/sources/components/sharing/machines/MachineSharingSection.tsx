@@ -12,9 +12,10 @@ import { createMachineShareAdapter } from './machineShareAdapter';
 import { useMachineShareController } from './useMachineShareController';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { describeMachinePresenceSummary } from '@/utils/sessions/machinePresenceLine';
 
 type MachineShareSheetProps = Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
+    machineId: string; machineName: string; scope: ServerAccountScope; shared: boolean;
     presentation: ShareSheetPresentation;
     onRequestClose?: () => void;
     testID: string;
@@ -22,9 +23,14 @@ type MachineShareSheetProps = Readonly<{
 
 /** The machine's one share sheet: the page's Sharing section and the "Share <machine>" sheet mount the same model. */
 function ScopedMachineShareSheet(props: MachineShareSheetProps) {
-    const controller = useMachineShareController(props);
     const router = useRouter();
-    const adapter = createMachineShareAdapter({ machineName: props.machineName, online: props.online, controller, shared: props.shared,
+    const presence = useMachinePresenceSummary(props.scope.serverId, props.machineId);
+    const { binding } = useServerCredentialAccountScopeBinding(props.scope.serverId);
+    const currentScope = binding?.isCurrent() && binding.scope.accountId === props.scope.accountId;
+    const online = !currentScope || presence.reachability === 'unknown' ? null : presence.reachability === 'reachable';
+    const nativeWord = currentScope ? describeMachinePresenceSummary(presence).nativeWord : null;
+    const controller = useMachineShareController({ ...props, online });
+    const adapter = createMachineShareAdapter({ machineName: props.machineName, online, nativeWord, controller, shared: props.shared,
         openApproval: artifactId => router.push(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.scope.serverId)}`),
     });
     return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}
@@ -38,7 +44,7 @@ function MachineShareSheet(props: MachineShareSheetProps) {
 
 /** The machine page's Sharing section; its page (the Sharing sub-page) carries the title and the description. */
 export function MachineSharingSection(props: Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
+    machineId: string; machineName: string; scope: ServerAccountScope; shared: boolean;
 }>) {
     // The section's sheet is the share sheet's surface on every width: `full` would draw a second card inside it.
     // Its rows carry their own row inset, so the sheet sits directly in the card (lab m-share A/Ap: field, trust
@@ -51,21 +57,17 @@ export function MachineSharingSection(props: Readonly<{
 }
 
 type MachineShareModalProps = CustomModalInjectedProps & Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
+    machineId: string; machineName: string; scope: ServerAccountScope; shared: boolean;
 }>;
 
 function MachineShareModal(props: MachineShareModalProps) {
     const { onClose, setChrome: _setChrome, ...sheet } = props;
-    const presence = useMachinePresenceSummary(props.scope.serverId, props.machineId);
-    const { binding } = useServerCredentialAccountScopeBinding(props.scope.serverId);
-    const online = !binding?.isCurrent() || binding.scope.accountId !== props.scope.accountId || presence.reachability === 'unknown'
-        ? null : presence.reachability === 'reachable';
-    return <MachineShareSheet {...sheet} online={online} presentation="full" onRequestClose={onClose} testID="machine-share-editor" />;
+    return <MachineShareSheet {...sheet} presentation="full" onRequestClose={onClose} testID="machine-share-editor" />;
 }
 
 /** The machine's ⋯ → "Share <machine>": the same sheet at full presentation, with its search and Done (lab m-share S). */
 export function showMachineShareSheet(params: Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
+    machineId: string; machineName: string; scope: ServerAccountScope; shared: boolean;
     /** What the machine is, for example "Linux · End-to-end encrypted". */
     subtitle?: string;
     /** The ⋯ it came from; the sheet hangs from it on wide layouts. */

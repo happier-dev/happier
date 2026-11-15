@@ -222,7 +222,6 @@ function MachineSecuritySharingPage(props: PushedPageProps) {
             machineId={machine.id}
             machineName={props.machineName}
             scope={scope}
-            online={props.online}
             shared={machine.isShared === true}
           />
           {/* Who else works here is read by the machine for its owner and managers only (D8). */}

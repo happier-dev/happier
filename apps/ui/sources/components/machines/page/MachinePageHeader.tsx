@@ -299,7 +299,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             title: t('shareSheet.documents.shareMenu'),
             // The sheet's sentences name the machine as copy does ("this machine" while locked), like its Sharing page.
             onSelect: (intent) => showMachineShareSheet({ machineId: machine.id, machineName: target.machineSentenceName,
-                scope: activeAccountScope, online: target.online, shared: machine.isShared === true,
+                scope: activeAccountScope, shared: machine.isShared === true,
                 subtitle: meta.map(fact => fact.text).join(' · ') || undefined, anchor: intent?.anchor }),
         }] : [];
         // A leading needs-you action takes the third button's place, so the row keeps its size and the title never wraps.
@@ -307,7 +307,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             title: t('machineDetailPage.openTerminalAction'), onSelect: handleOpenTerminal }] : [];
         if (!canManageMachine(machine)) return [...terminal, ...share];
         return [...terminal, rename, ...share, ...environmentApply, ...replacement.menuActions];
-    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, router, target.online, target.serverId]);
+    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, router, target.serverId]);
 
     const fallbackDescription = props.managedIdentity?.description ?? t('machineDetailPage.description');
     return (

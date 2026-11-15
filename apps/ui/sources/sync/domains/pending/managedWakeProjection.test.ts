@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { deriveManagedWakeProjection, type ManagedWakeProjectionInput } from './managedWakeProjection';
+import { deriveManagedWakeProjection, resolveManagedWakeAvailability, type ManagedWakeProjectionInput } from './managedWakeProjection';
+import { ManagedMachineNewSessionWakeV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { describeMachineDestinationEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
+import { t } from '@/text';
 
 const controller = { machineId: 'controller-a', installationId: 'installation-a' };
 const resource: NonNullable<ManagedWakeProjectionInput['managed']> = {
@@ -16,6 +19,20 @@ const input: ManagedWakeProjectionInput = {
 };
 
 describe('managed wake observed projection', () => {
+    it('requires the assigned installed controller now for finite wake, independently of accepted input custody', () => {
+        expect(resolveManagedWakeAvailability(controller, { id: controller.machineId, installationId: controller.installationId, online: true })).toEqual({ kind: 'available' });
+        expect(resolveManagedWakeAvailability(controller, { id: controller.machineId, installationId: controller.installationId, online: false })).toEqual({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(resolveManagedWakeAvailability(controller, { id: controller.machineId, installationId: 'replacement', online: true })).toEqual({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(resolveManagedWakeAvailability(controller, { id: 'another-controller', installationId: controller.installationId, online: true })).toEqual({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(resolveManagedWakeAvailability(controller, { id: controller.machineId, installationId: controller.installationId, online: true, revokedAt: 1 })).toEqual({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(resolveManagedWakeAvailability(controller, { id: controller.machineId, installationId: controller.installationId, online: true, replacedByMachineId: 'successor' })).toEqual({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(resolveManagedWakeAvailability(controller, undefined)).toEqual({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(resolveManagedWakeAvailability(undefined, undefined)).toEqual({ kind: 'unavailable', reason: 'no_controller' });
+        const unavailable = ManagedMachineNewSessionWakeV1Schema.parse({ kind: 'unavailable', reason: 'controller_unavailable' });
+        expect(describeMachineDestinationEligibility({ eligible: false, reason: 'new_session_wake_unavailable', newSessionWake: unavailable }, { metadata: null }))
+            .toBe(t('managedMachines.controller.requiredUnnamed'));
+        expect(deriveManagedWakeProjection(input)).toMatchObject({ kind: 'waiting', inputCustody: 'queued', canWithdraw: true });
+    });
     it.each([
         { observedAt: 10, availability: 'present' as const },
         { observedAt: 10, availability: 'present' as const, power: 'running' as const },
@@ -76,10 +93,11 @@ describe('managed wake observed projection', () => {
         } })?.kind).toBe('connecting');
     });
 
-    it('keeps a real submitted Start visible when a later policy/controller edit cannot unsend it', () => {
+    it.each(['start', 'resume'] as const)('keeps a real submitted %s visible when a later policy/controller edit cannot unsend it', (intent) => {
         const managed = {
             ...resource, controller: { machineId: 'controller-b', installationId: 'installation-b' },
-            submittedNativeEffect: { intentRevision: 1, requestId: 'start-a', intent: 'start' as const, controller },
+            observation: { ...resource.observation!, power: intent === 'resume' ? 'suspended' as const : 'stopped' as const },
+            submittedNativeEffect: { intentRevision: 1, requestId: 'start-a', intent, controller },
         };
         expect(deriveManagedWakeProjection({ ...input, managed })?.kind).toBe('starting');
     });

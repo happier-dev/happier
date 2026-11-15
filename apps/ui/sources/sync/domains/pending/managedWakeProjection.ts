@@ -2,6 +2,8 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 
+export { resolveManagedWakeAvailabilityV1 as resolveManagedWakeAvailability } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+
 /** Held managed input recovers through its existing activation Action, not a second immediate send. */
 export function isManagedPendingInputAwaitingWake(
     pending: Pick<PendingMessage, 'localId' | 'source' | 'pendingDeliveryStatus' | 'pendingActivationHoldReason'>,

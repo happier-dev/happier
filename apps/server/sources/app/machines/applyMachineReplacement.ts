@@ -11,6 +11,7 @@ import { catchUpAutomationRunLifecycleSourcesForRestoredMachineTx } from "@/app/
 import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWorkflowPublicationLocksInTx";
 import { readMachineDevcontainerChildInTx } from './managed/managedRows';
 import { resolveMachineAccessInTx } from './machineAccess';
+import { invalidateManagedWakeControllerInTx } from './managed/managedWakeAvailability';
 
 export type ApplyMachineReplacementParams = Readonly<{
     tx: Tx;
@@ -94,6 +95,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         if (updated.count !== 1) throw new TransactionReplayRequiredError('transaction-account-audience-changed');
     }
 
+    await invalidateManagedWakeControllerInTx(params.tx, params.oldMachineId);
     const cursor = await markAccountChanged(params.tx, {
         accountId: params.accountId,
         kind: "machine",
@@ -139,7 +141,7 @@ export async function clearMachineReplacement(params: Readonly<{
         accountId: params.accountId,
         automationWhere: { accountId: params.accountId, enabled: true, deletedAt: null,
             assignments: { some: { machineId: params.oldMachineId, enabled: true } } },
-        runSourceTriggerWhere: { enabled: true, remainingOccurrences: 1, automation: { accountId: params.accountId,
+        sourceTriggerWhere: { enabled: true, remainingOccurrences: 1, automation: { accountId: params.accountId,
             enabled: true, deletedAt: null, assignments: { some: { machineId: params.oldMachineId, enabled: true } } } },
     });
     await params.tx.machine.update({
@@ -154,6 +156,7 @@ export async function clearMachineReplacement(params: Readonly<{
     });
 
     await catchUpAutomationRunLifecycleSourcesForRestoredMachineTx(params.tx, params.accountId, params.oldMachineId);
+    await invalidateManagedWakeControllerInTx(params.tx, params.oldMachineId);
     const child = await readMachineDevcontainerChildInTx(params.tx, params.oldMachineId);
     const access = await resolveMachineAccessInTx(params.tx, { actorAccountId: params.accountId, machineId: params.oldMachineId });
     const devcontainerChild = access?.accessState === 'ready' ? child : null;

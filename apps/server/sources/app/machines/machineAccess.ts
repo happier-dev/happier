@@ -23,6 +23,8 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { isProviderActionIdV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 import { inTx, type Tx } from '@/storage/inTx';
+import { withManagedWakeAvailabilityInTx } from './managed/managedWakeAvailability';
+import type { MachineSerializationRow } from './machineSerialization';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { projectResourceGrantRows, validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
@@ -356,7 +358,7 @@ async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: 
 }
 
 interface AccessibleMachineOpening {
-    machine: Machine & Pick<MachineOpeningRow, 'managedResource'>;
+    machine: Machine & Pick<MachineOpeningRow, 'managedResource'> & Pick<MachineSerializationRow, 'managedWakeAvailability'>;
     access: AccessibleMachineAccessV1;
     owned: boolean;
     callerDataEncryptionKey: Uint8Array<ArrayBuffer> | null;
@@ -412,6 +414,10 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
             owned: facts.owned,
             callerDataEncryptionKey: key,
         });
+    }
+    for (const machine of await withManagedWakeAvailabilityInTx(tx, [...result.values()].map(opening => opening.machine))) {
+        const opening = result.get(machine.id);
+        if (opening) opening.machine = machine;
     }
     const managed = input.includeRecipientWork ? [...result.values()].filter(opening => opening.access.role === 'manage'
         && opening.access.resourceMode === 'e2ee' && opening.access.accessState === 'ready'

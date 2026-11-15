@@ -585,7 +585,9 @@ export function buildAccountChangeWakeUpdate(
     changeCursor: number, updateId: string,
     changes?: Readonly<{ changeKinds: readonly ChangeKind[]; entityIds: readonly string[];
         artifactKinds?: readonly string[];
-        sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[] }>,
+        sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
+        /** Every change's row facts are pushed to this Session's audience. */
+        rowFactsPushedSessionId?: string }>,
 ): UpdatePayload {
     return {
         id: updateId,
@@ -594,6 +596,7 @@ export function buildAccountChangeWakeUpdate(
             changeKinds: [...changes.changeKinds], entityIds: [...changes.entityIds],
             ...(changes.artifactKinds !== undefined ? { artifactKinds: [...changes.artifactKinds] } : {}),
             ...(changes.sessionSystemRecords !== undefined ? { sessionSystemRecords: [...changes.sessionSystemRecords] } : {}),
+            ...(changes.rowFactsPushedSessionId !== undefined ? { rowFactsPushedSessionId: changes.rowFactsPushedSessionId } : {}),
         } : {}) },
         createdAt: Date.now(),
     };
@@ -616,6 +619,7 @@ export function buildAccountSettingsChangedUpdate(settingsVersion: number, updat
 export function buildNewMachineUpdate(machine: {
     id: string;
     managedResource: MachineSerializationRow['managedResource'];
+    managedWakeAvailability?: MachineSerializationRow['managedWakeAvailability'];
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: MachineKind;
     seq: number;

@@ -27,10 +27,10 @@ export type ManagedMachineRefV1 = z.infer<typeof ManagedMachineRefV1Schema>;
 export const ManagedMachineInputWakeV1Schema = lazyDefinition(() => z.enum(['asleep', 'starting']));
 export type ManagedMachineInputWakeV1 = z.infer<typeof ManagedMachineInputWakeV1Schema>;
 
-/** Finite wake transport support; this grants no Action or controller custody. */
+/** Current finite wake transport readiness; this grants no Action or controller custody. */
 export const ManagedMachineNewSessionWakeV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('available') }),
-    z.strictObject({ kind: z.literal('unavailable'), reason: z.literal('no_controller') }),
+    z.strictObject({ kind: z.literal('unavailable'), reason: z.enum(['no_controller', 'controller_unavailable']) }),
 ]));
 export type ManagedMachineNewSessionWakeV1 = z.infer<typeof ManagedMachineNewSessionWakeV1Schema>;
 

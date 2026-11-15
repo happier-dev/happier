@@ -1,5 +1,6 @@
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isStoredOpaquePresetMachine } from './managedMachineProjection';
+import { withManagedWakeAvailabilityInTx } from './managedWakeAvailability';
 import { resolvePluginLocalizedStringV2Text } from "@happier-dev/protocol/plugins/contributions/publicTypes";
 import { readManagedController, readManagedAdmissionState, projectManagedMachine, readStoredOpaquePresetLaunch, storeOpaquePresetLaunch } from './managedMachineProjection';
 import { MANAGED_RESIZE_ACTION_ID_V1, isManagedResizeActionIdV1, isManagedPowerOrDeleteActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -647,14 +648,16 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
         const observedMachines = enrollmentChanged ? await tx.machine.findMany({ where: { id: { in: [...machineIds] } },
             select: { id: true, managedResource: { select: { id: true, homeId: true } } } }) : [];
         const enrollmentReferences = new Map(observedMachines.map(machine => [machine.id, serializeManagedMachineRef(machine)]));
+        const [beforeWakeProjection, currentWakeProjection] = await withManagedWakeAvailabilityInTx(tx,
+            [{ managedResource: row }, { managedResource: fresh }]);
         const children: Array<{ machineId: string; child: Awaited<ReturnType<typeof readMachineDevcontainerChildInTx>>;
             managedMachineRef?: ReturnType<typeof serializeManagedMachineRef>;
             managedInputRuntime: ReturnType<typeof serializeManagedInputRuntime>; accountIds: string[] }> = [];
         for (const machineId of machineIds) {
             const child = await readMachineDevcontainerChildInTx(tx, machineId);
             const before = row.enrolledMachineId === machineId ? previous : null;
-            const beforeWake = serializeManagedInputRuntime({ id: machineId, managedResource: row });
-            const managedInputRuntime = serializeManagedInputRuntime({ id: machineId, managedResource: fresh });
+            const beforeWake = serializeManagedInputRuntime({ id: machineId, ...beforeWakeProjection });
+            const managedInputRuntime = serializeManagedInputRuntime({ id: machineId, ...currentWakeProjection });
             if (!enrollmentReferences.has(machineId) && pluginJsonValuesEqual(beforeWake, managedInputRuntime)
                 && managedDevcontainerChildProjectionsEqualV1(before ?? undefined, child ?? undefined)) continue;
             children.push({ machineId, child, managedInputRuntime, ...(enrollmentReferences.has(machineId) ? { managedMachineRef: enrollmentReferences.get(machineId) } : {}),

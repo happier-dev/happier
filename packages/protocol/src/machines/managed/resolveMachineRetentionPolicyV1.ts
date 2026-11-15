@@ -1,4 +1,6 @@
 import { isManagedOpaquePresetMachineV1 } from './managedMachineV1.js';
+import { isMachineOnlineV1 } from '../machineReachabilityV1.js';
+import { isMachineReplaced } from '../identity/canonicalMachineId.js';
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from './providerFactsV1.js';
 import type { ManagedControllerV1, ManagedMachineV1, ManagedMachineInputWakeV1, ManagedMachineNewSessionWakeV1, RetentionV1 } from './managedMachineV1.js';
 import type { MachineRetentionCategoryV1, MachineRetentionDefaultsV1, MachineRetentionOverrideV1, MachineRetentionPolicyV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
@@ -23,6 +25,23 @@ export function resolveManagedFiniteWakeControllerV1(machine: Pick<ManagedMachin
     : { kind: 'unavailable', reason: 'no_controller' };
 }
 
+/** Finite work needs its assigned installation now; accepted Session input retains Home custody. */
+export function resolveManagedWakeAvailabilityV1(
+  controller: ManagedControllerV1 | undefined,
+  observed: Readonly<{
+    id: string; installationId?: string | null; online: boolean;
+    revokedAt?: number | null; replacedByMachineId?: string | null; replacedAt?: unknown;
+  }> | undefined,
+): ManagedMachineNewSessionWakeV1 {
+  const assigned = resolveManagedFiniteWakeControllerV1({ controller });
+  if (assigned.kind === 'unavailable') return assigned;
+  return observed?.id === assigned.controller.machineId
+    && observed.installationId === assigned.controller.installationId
+    && isMachineOnlineV1({ active: observed.online, revokedAt: observed.revokedAt, presenceProtocolVersion: 1 })
+    && !isMachineReplaced(observed)
+    ? { kind: 'available' } : { kind: 'unavailable', reason: 'controller_unavailable' };
+}
+
 /** Desired intent is history; only an unsettled submitted effect proves a native power transition. */
 export function resolveManagedMachinePendingPowerIntentV1(machine: Pick<ManagedMachineV1, 'observation' | 'submittedNativeEffect'>):
   'start' | 'resume' | 'stop' | 'suspend' | null {
@@ -42,9 +61,7 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
     available: boolean; ready: boolean; wakeState: ManagedMachineInputWakeV1 | null;
     state: ManagedMachineInputWakeV1 | 'stopping' | null; inspectionRequired: boolean;
     acceptedInputWakeOwner: 'home' | 'caller';
-    newSessionWake: ManagedMachineNewSessionWakeV1;
   }> {
-  const finiteWake = resolveManagedFiniteWakeControllerV1(machine);
   const observation = machine.observation;
   const available = machine.creationState === 'active' && machine.allocation !== 'confirmed-absent'
     && observation?.availability !== 'absent' && observation?.storage !== 'lost';
@@ -67,7 +84,6 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
     : nativeTarget && parked ? 'asleep' : null;
   // Home dispatches accepted input through an assigned controller or its custodian Account daemon.
   return { available, ready, wakeState, state, acceptedInputWakeOwner: 'home',
-    newSessionWake: finiteWake.kind === 'available' ? { kind: 'available' } : finiteWake,
     // An offline running observation may predate a vendor-side Stop. Native power owns fresh Inspect.
     inspectionRequired: wakeState === 'asleep' || !starting && !machineReachable && retainedWake && observation?.power === 'running' };
 }

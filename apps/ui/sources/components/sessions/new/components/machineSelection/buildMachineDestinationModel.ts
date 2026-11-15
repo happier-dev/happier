@@ -184,7 +184,9 @@ export function describeMachineDestinationEligibility(
 ): string | undefined {
     if (eligibility.eligible) return undefined;
     if (eligibility.reason === 'new_session_wake_unavailable') {
-        return eligibility.newSessionWake?.kind === 'unavailable' ? t('managedWake.startBeforeSend') : t('common.unavailable');
+        if (eligibility.newSessionWake?.kind !== 'unavailable') return t('common.unavailable');
+        return eligibility.newSessionWake.reason === 'controller_unavailable'
+            ? t('managedMachines.controller.requiredUnnamed') : t('managedWake.startBeforeSend');
     }
     if (eligibility.reason === 'worker_status_unavailable' || eligibility.reason === 'worker_refused' || eligibility.reason === 'needs_copy') {
         return describeMachineDestinationWorkerFacts(eligibility, subject, purpose);

@@ -4,6 +4,7 @@ import {
     readAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { serializeMachineRow } from "@/app/machines/machineSerialization";
+import { withManagedWakeAvailabilityInTx } from '@/app/machines/managed/managedWakeAvailability';
 import { hasExactMachineReadiness } from "@/app/machines/machineSocketReadiness";
 import { validateMachineReplacement } from "@/app/machines/validateMachineReplacement";
 import { recheckMachineStoredContentMutationAdmissionInTx } from '@/app/machines/machineMutations';
@@ -81,7 +82,8 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
                 include: { managedResource: true },
             });
 
-            return { kind: "ok" as const, machine: updatedOldMachine };
+            return { kind: "ok" as const, machine: updatedOldMachine
+                ? (await withManagedWakeAvailabilityInTx(tx, [updatedOldMachine]))[0] : null };
         }).catch(error => {
             if (error instanceof MachineReplacementWriteConflictError) return { kind: 'error' as const,
                 validation: { ok: false as const, statusCode: error.statusCode, reason: error.reason } };
@@ -143,7 +145,8 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
                 include: { managedResource: true },
             });
 
-            return { kind: "ok" as const, machine: updatedMachine };
+            return { kind: "ok" as const, machine: updatedMachine
+                ? (await withManagedWakeAvailabilityInTx(tx, [updatedMachine]))[0] : null };
         });
 
         if (result.kind === "upgrade_required") {

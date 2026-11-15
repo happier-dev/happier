@@ -1,10 +1,12 @@
 import { resolveInstallationIdentityUpdate, updateMachineInstallationIdentityInTx } from "@/app/machines/installationIdentityUpdate";
 import { Fastify } from "../../types";
 import { persistentMachineWhere } from '@/app/machines/machineSelection';
+import { withManagedWakeAvailabilityInTx } from '@/app/machines/managed/managedWakeAvailability';
 import { z } from "zod/mini";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { timingSafeEqual } from "node:crypto";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -148,13 +150,14 @@ async function serializeMachineRowForRequest(
     request: FastifyRequest,
     storageMode?: "plain" | "e2ee",
 ) {
-    const projection = await inTx(async tx => ({
-        machine: await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
+    const projection = await inTx(async tx => {
+        const machine = await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
             managedResource: true,
-        } }),
-        devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id),
-    }));
-    return serializeMachineRow({ ...row, managedResource: projection.machine.managedResource }, {
+        } });
+        const [projectedMachine] = await withManagedWakeAvailabilityInTx(tx, [machine]);
+        return { machine: projectedMachine, devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id) };
+    });
+    return serializeMachineRow({ ...row, ...projection.machine }, {
         devcontainerChild: projection.devcontainerChild,
         ...(storageMode ? { storageMode } : {}),
         recipientAccountStoredContentProtocolVersion:
@@ -890,15 +893,18 @@ export function machinesRoutes(app: Fastify) {
         const projection = readMachineProjection(request);
         const accessible = await inReadSnapshot(async (tx) => {
             const ids = await listMachineCandidatesInTx(tx, userId, { includeRevokedOwned });
-            const machines = await tx.machine.findMany({
+            const machines: Array<{ id: string; lastActiveAt: Date }> = [];
+            for (const selectedIds of portableQueryChunks({ values: ids, bindingsPerValue: 1,
+                fixedBindings: isApiTokenCaller ? 0 : 1 })) machines.push(...await tx.machine.findMany({
                 where: {
-                    id: { in: ids },
+                    id: { in: [...selectedIds] },
                     ...(includeRevokedOwned ? {} : { revokedAt: null }),
                     ...(isApiTokenCaller ? {} : persistentMachineWhere),
                 },
                 orderBy: { lastActiveAt: 'desc' },
-                select: { id: true },
-            });
+                select: { id: true, lastActiveAt: true },
+            }));
+            machines.sort((left, right) => right.lastActiveAt.getTime() - left.lastActiveAt.getTime());
             return readAccessibleMachineProjectionsInTx(tx, { actorAccountId: userId, machineIds: machines.map(machine => machine.id), request, projection });
         });
         if (isApiTokenCaller && projection !== 'hostFacts') {

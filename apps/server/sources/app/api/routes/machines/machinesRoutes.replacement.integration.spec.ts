@@ -16,6 +16,7 @@ import { getMachineSocketRoom } from '@/app/api/socketRooms';
 import { machinesRoutes } from "./machinesRoutes";
 import { seedBundledManagedAvailability } from '@/app/machines/managed/managedProjectionVolume.testkit';
 import { admitManagedControl } from '@/app/machines/managed/managedMutations';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 describe("machinesRoutes machine replacement", () => {
     let harness: LightSqliteHarness;
@@ -232,10 +233,21 @@ describe("machinesRoutes machine replacement", () => {
         const preset = (name: string, controllerMachineId: string) => db.managedMachinePreset.create({ data: {
             homeId: "home", custodianAccountId: accountId, name, controllerMachineId, controllerInstallationId: "install-1" } });
         const [pinned, elsewhere] = [await preset("pinned", "m2"), await preset("elsewhere", "m1")];
-        const response = await invoke(proposal(undefined, tweetnacl.sign.keyPair(), "fresh-installation"));
+        const input = proposal(undefined, tweetnacl.sign.keyPair(), "fresh-installation");
+        const collectionChange = () => db.accountChange.findUnique({ where: { accountId_kind_entityId: {
+            accountId, kind: 'account', entityId: MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+        } } });
+        expect(await collectionChange()).toBeNull();
+        const response = await invoke(input);
         expect(response.statusCode, response.body).toBe(200);
         expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: pinned.id } })).controllerInstallationId).toBe("fresh-installation");
         expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: elsewhere.id } })).controllerInstallationId).toBe("install-1");
+        const published = await collectionChange();
+        expect(published).toMatchObject({ kind: 'account', entityId: MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+            cursor: expect.any(Number) });
+        const repeated = await invoke(input);
+        expect(repeated.statusCode, repeated.body).toBe(200);
+        expect(await collectionChange()).toEqual(published);
     });
 
     it.each([true, false])("applies and undoes connected replacement despite durable active=%s", async active => {

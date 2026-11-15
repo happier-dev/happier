@@ -25,6 +25,7 @@ import {
     machineCollectionHref,
     machineCollectionRowKey,
     machinePageHref,
+    partitionMachineCollectionRailRows,
     type MachineCollectionRow,
     type MachineCollectionSection,
 } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -47,7 +48,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useMachineCollection, useMachineCollectionPresenceRows } from '@/components/settings/machines/collection/useMachineCollection';
-import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { useReconciledStableRows } from '@/hooks/session/reconcileStableRows';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -198,16 +198,16 @@ function AllMachinesIndexBody() {
     if (!answerPending && !answered) setAnswered(true);
     const holding = answerPending && !answered;
     const items = useMachineCollectionPresenceRows(holding ? NO_ITEMS : answeredItems);
-    const presence = React.useMemo(() => partitionMachineFleetPresence(items, item => item.fleetPresence), [items]);
+    const presence = React.useMemo(() => partitionMachineCollectionRailRows(items, true), [items]);
     // Archive/display ownership does not withdraw a current Machine from its Home's fleet.
     // Only membership contributes to this total, so heartbeats need no second subscription here.
     const fleetCount = countMachineFleet(viewModel.visibleMachineGroups);
     const searchable = items.length > SEARCH_THRESHOLD;
     const normalizedQuery = searchable && !besideList ? query.trim().toLocaleLowerCase() : '';
     // A long fleet keeps its offline machines out of the table until asked for, as the list column folds them
-    // (real fleets carry dozens of retired or sleeping machines); a search still reaches every machine.
+    // while native power states stay inline; a search still reaches every machine.
     const [showOffline, setShowOffline] = React.useState(false);
-    const offlineCount = searchable ? presence.counts.offline : 0;
+    const offlineCount = searchable ? presence.offline.length : 0;
     const offlineKeys = React.useMemo(() => new Set(presence.offline.map(readKey)), [presence]);
     const offlineFoldable = offlineCount > 0 && offlineCount < items.length && !normalizedQuery;
     const hideOffline = offlineFoldable && !showOffline;
