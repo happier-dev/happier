@@ -1,6 +1,6 @@
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
+import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema,
     DeploymentRestoreStepV1Schema, DeploymentBackupRunResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
     DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, summarizeDeploymentRestoreReviewV1,
@@ -13,7 +13,7 @@ import type { OwnServerDeploymentTargetForHost } from '../targets/ownServer/ownS
 import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/restorePreparation';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { projectDeploymentFailure } from '../deploymentFailure';
+import { projectDeploymentException } from '../deploymentFailure';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 
@@ -52,7 +52,7 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
     nativeSnapshot?: Readonly<{
         read(input: DeploymentBackupRestoreInputV1, context: ActionExecutorContext): Promise<DeploymentNativeSnapshotOfferV1 | null>;
         execute(request: Readonly<{ input: Confirm; offer: DeploymentNativeSnapshotOfferV1; label: string; reason: string;
-            context: ActionExecutorContext }>): Promise<MachineProvisionerSnapshotResultV1>;
+            context: ActionExecutorContext }>): Promise<MachineProvisionerSnapshotResultV1 | ActionExecuteFailure>;
     }>;
     restore: OwnServerDeploymentTargetForHost['restore'];
 }>) {
@@ -151,13 +151,20 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             if (input.snapshot === true && !retained.snapshot) return refuse('snapshot_unavailable');
             if (retained.snapshot && input.snapshot !== false) {
                 if (!host.nativeSnapshot) return refuse('snapshot_unavailable');
-                snapshot = await host.nativeSnapshot.execute({ input, offer: retained.snapshot,
+                const result = await host.nativeSnapshot.execute({ input, offer: retained.snapshot,
                     label: `happier-restore-${acceptance.operationId}`, reason: `Before replacing data in ${input.environmentId}`, context });
+                const nativeFailure = 'ok' in result ? result : undefined;
+                const nativeDetails = nativeFailure ? ManagedNativeFailureDetailsV1Schema.safeParse(nativeFailure.details) : undefined;
+                snapshot = 'kind' in result ? result : { kind: 'unknown', code: result.errorCode,
+                    ...(nativeDetails?.success ? { nativeCause: nativeDetails.data.nativeCause } : {}) };
                 if (snapshot.kind !== 'confirmed') {
                     context.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: input.serverId,
                         environmentId: input.environmentId, deploymentId: input.deploymentId },
                         observation: { kind: 'review_required', code: 'restore_snapshot_not_confirmed', snapshot } });
-                    return { ...failure('restore_snapshot_not_confirmed'), details: normalizeStrictJsonValue({ steps: [], snapshot }) };
+                    const refused = nativeFailure ?? failure('restore_snapshot_not_confirmed');
+                    return carryActionFailureDiagnostic({ ...refused, details: normalizeStrictJsonValue({
+                        ...(isRecord(refused.details) ? refused.details : {}), steps: [], snapshot,
+                    }) }, refused);
                 }
             }
             const confirmed = await host.restore({ input, context, prepared: retained.native, ...(upload ? { upload: upload.source } : {}) });
@@ -166,12 +173,11 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                 verified: confirmed.verified, nextAction: confirmed.nextAction,
                 evidence: normalizeStrictJsonValue({ ...confirmed, ...(snapshot ? { snapshot } : {}) }) });
         } catch (error) {
-            const code = readActionErrorCodeV1(error) ?? 'deployment_unavailable';
             const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
             const steps = isRecord(details) && Array.isArray(details.steps) ? details.steps.flatMap(value => {
                 const step = DeploymentRestoreStepV1Schema.safeParse(value); return step.success ? [step.data] : [];
             }) : [];
-            const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : code, error, `deployment.restore.${input.mode}`);
+            const projected = projectDeploymentException(error, { signal: context.signal, phase: `deployment.restore.${input.mode}` });
             const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
             const { effectAttempted: nativeEffectAttempted, ...projectedFailure } = projected;
             const effectAttempted = snapshot?.kind === 'confirmed' ? true

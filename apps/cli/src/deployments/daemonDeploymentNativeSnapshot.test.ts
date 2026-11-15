@@ -18,6 +18,11 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { createNativeCredentialComposerFixture } from '@/machines/managed/nativeCredentialComposer.testkit';
 import { createManagedMachineAcquisitionDriver } from '@/machines/managed/acquire';
 import { registerDaemonDeploymentChildRpcHandler } from './daemonDeploymentChildRpc';
+import { createDaemonDeploymentNativeSnapshot } from './daemonDeploymentNativeSnapshot';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -61,6 +66,52 @@ function opaqueSnapshotRead(machine: ReturnType<typeof ManagedMachineV1Schema.pa
 }
 
 describe('installed restore snapshot child', () => {
+    it.each(['native', 'transport', 'uncoded'] as const)('retains %s snapshot failures through the child output', async stage => {
+        const native = await createNativeCredentialComposerFixture({ nativeOptions: { snapshot: true } });
+        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        try {
+            const machine = native.input.machine;
+            if (!machine.controller || !machine.resource) throw new Error('Expected managed native fixture');
+            const offer = { managedId: machine.id, intentRevision: machine.intentRevision, controller: machine.controller,
+                resource: machine.resource, contribution: machine.launch.provider,
+                coverage: { rootDisk: true, attachedVolumes: false }, consistency: 'running',
+                cost: { kind: 'billed', source: 'Native snapshot pricing' } };
+            const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'snapshot', actionId: 'deployments.backups.restore',
+                ...machine.controller, actionOperationId: 'restore-operation',
+                input: { serverId: machine.homeId, environmentId: 'environment', targetLinkId: 'target', deploymentId: 'deployment',
+                    source: { kind: 'repository', snapshotId: 'backup' }, expectedRevision: 1, machineId: 'guest',
+                    installationId: 'guest-installation', mode: 'confirm', prepareOperationId: 'prepared', snapshotReview: offer },
+                offer, label: 'Before restore', reason: 'Restore' });
+            if (job.kind !== 'snapshot') throw new Error('Expected snapshot job');
+            const nativeCause = { localCause: 'native_route_unavailable' as const };
+            const failureCause = projectActionFailureCauseV1({ code: 'native_route_unavailable' }, 'machines.snapshot');
+            const error = stage === 'uncoded' ? new TypeError('snapshot token=PRIVATE_SNAPSHOT_TOKEN')
+                : stage === 'native' ? new PluginError({ code: 'native_failed', details: { nativeCause, token: 'PRIVATE_SNAPSHOT_TOKEN' }, failureCause })
+                : new ManagedMachineControllerError('native_failed', undefined, { kind: 'managedNative', nativeCause }, failureCause);
+            const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200,
+                data: opaqueSnapshotRead(machine, 'plain', machine.custodianAccountId, new Uint8Array(32)) });
+            const context = { surface: 'cli' as const, operationAcceptance: {
+                actionId: 'deployments.backups.restore' as const, operationId: job.actionOperationId, accept() {} } };
+            const adapter = createDaemonDeploymentNativeSnapshot({ serverHttpBaseUrl: 'http://home',
+                executeManagedSnapshot: async () => { throw error; } }, {
+                headers: async () => ({}), openManagedRead: async () => machine,
+                // Transport is a real process boundary; the child owner remains loaded below it.
+                sendChild: async (child, childContext) => {
+                    if (stage === 'transport') throw error;
+                    if (child.kind !== 'snapshot') throw new Error('Unexpected child');
+                    return adapter.executeChild(child, childContext);
+                },
+            });
+            const result = await adapter.execute({ input: job.input, offer: job.offer, label: job.label, reason: job.reason, context });
+            expect(result).toMatchObject(stage === 'uncoded' ? { ok: false, errorCode: 'action_failed',
+                failureCause: { errorClass: 'TypeError', errorCode: null } }
+                : { ok: false, errorCode: 'native_failed', details: { kind: 'managedNative', nativeCause }, failureCause });
+            expect(post).toHaveBeenCalledTimes(stage === 'transport' ? 0 : 1);
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_SNAPSHOT_TOKEN');
+            expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE_SNAPSHOT_TOKEN');
+            if (stage === 'uncoded') expect(log).toHaveBeenCalled();
+        } finally { await native.cleanup(); }
+    });
     it.each(['plain', 'e2ee'] as const)('spends the admitted restore through retained controller custody (%s)', async encryptionMode => {
         const native = await createNativeCredentialComposerFixture({ nativeOptions: { snapshot: true } });
         const channel = await createRequesterCurrentnessSocketHarness();

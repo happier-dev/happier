@@ -8,6 +8,9 @@ import { ManagedListOutputV1Schema, ManagedGetOutputV1Schema, managedMachineActi
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedNativeSnapshotRequest } from '@/machines/managed/acquire';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { projectDeploymentException } from './deploymentFailure';
 
 export type ExecuteManagedNativeSnapshot = (request: ManagedNativeSnapshotRequest) => Promise<MachineProvisionerSnapshotResultV1>;
 
@@ -42,20 +45,22 @@ export function createDaemonDeploymentNativeSnapshot(host: Readonly<{
                 : machine.observation?.power === 'stopped' ? 'stopped' : 'unknown' });
     }
     async function execute(request: Readonly<{ input: Extract<DeploymentBackupRestoreInputV1, { mode: 'confirm' }>; offer: DeploymentNativeSnapshotOfferV1;
-        label: string; reason: string; context: ActionExecutorContext }>): Promise<MachineProvisionerSnapshotResultV1> {
+        label: string; reason: string; context: ActionExecutorContext }>): Promise<MachineProvisionerSnapshotResultV1 | ActionExecuteFailure> {
         const { input, offer, label, reason, context } = request;
         try {
             const actionOperationId = context.operationAcceptance?.operationId;
             if (!actionOperationId) return { kind: 'refused', code: 'admission_unavailable' };
             const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'snapshot', actionId: 'deployments.backups.restore',
                 ...offer.controller, actionOperationId, input, offer, label, reason });
-            return MachineProvisionerSnapshotResultV1Schema.parse(await ports.sendChild(job, context));
-        } catch {
-            context.signal?.throwIfAborted();
-            return { kind: 'unknown', code: 'native_snapshot_outcome_unknown' };
+            const result = await ports.sendChild(job, context);
+            const failure = ActionExecuteFailureSchema.safeParse(result);
+            return failure.success ? carryActionFailureDiagnostic(failure.data, result)
+                : MachineProvisionerSnapshotResultV1Schema.parse(result);
+        } catch (error) {
+            return projectDeploymentException(error, { signal: context.signal, phase: 'deployment.restore.snapshot' });
         }
     }
-    async function executeChild(job: Extract<DeploymentChildRpcV1, { kind: 'snapshot' }>, context: ActionExecutorContext): Promise<MachineProvisionerSnapshotResultV1> {
+    async function executeChild(job: Extract<DeploymentChildRpcV1, { kind: 'snapshot' }>, context: ActionExecutorContext): Promise<MachineProvisionerSnapshotResultV1 | ActionExecuteFailure> {
         try {
             if (!host.executeManagedSnapshot) return { kind: 'unsupported', code: 'native_snapshot_unsupported' };
             const body = { homeId: job.input.serverId, managedId: job.offer.managedId };
@@ -70,9 +75,8 @@ export function createDaemonDeploymentNativeSnapshot(host: Readonly<{
             return await host.executeManagedSnapshot({ machine, label: job.label, reason: job.reason,
                 options: { requestId: job.actionOperationId, signal: context.signal, context: { ...context,
                     operationAcceptance: { actionId: job.actionId, operationId: job.actionOperationId, accept() {} } } } });
-        } catch {
-            context.signal?.throwIfAborted();
-            return { kind: 'unknown', code: 'native_snapshot_outcome_unknown' };
+        } catch (error) {
+            return projectDeploymentException(error, { signal: context.signal, phase: 'deployment.restore.snapshot.child' });
         }
     }
     return { read, execute, executeChild };

@@ -14,6 +14,7 @@ import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploy
 import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
+import { ManagedMachineControllerError, readManagedNativeFailureDetails } from '@/machines/managed/controllerErrors';
 
 /** Throwing host readers retain the Artifact owner's code-only validation cause. */
 export function refuseDeploymentArtifactRead(failure: DeploymentArtifactReadFailureV1): never {
@@ -113,7 +114,12 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     const cause = thrownCause && typedReason && thrownCause.errorCode === errorCode
         ? { ...thrownCause, errorCode: typedReason } : thrownCause;
     const retainedDetails = readDeploymentBackupMaintenanceFailureEvidenceV1(error)
-        ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined);
+        ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined)
+        ?? (error instanceof ManagedMachineControllerError && error.code === errorCode && error.details?.kind === 'managedNative'
+            ? error.details : undefined)
+        ?? (pluginError?.code === errorCode ? readManagedNativeFailureDetails({
+            ok: false, errorCode, error: errorCode, details: pluginError.data,
+        }) : undefined);
     return { ok: false, errorCode, error: errorCode,
         ...(retainedDetails === undefined ? {} : { details: retainedDetails }),
         ...(cause === undefined ? {} : { failureCause: cause }) };

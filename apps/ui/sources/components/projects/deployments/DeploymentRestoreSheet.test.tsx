@@ -413,7 +413,12 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
     } finally { view.dispose(); }
   });
 
-  it.each(['unknown', 'failed'] as const)('reviews native snapshot coverage and stops on %s until a fresh continue choice', async (kind) => {
+  it.each([
+    { kind: 'unknown', code: 'restore_snapshot_not_confirmed', continueFails: false },
+    { kind: 'failed', code: 'restore_snapshot_not_confirmed', continueFails: false },
+    { kind: 'unknown', code: 'native_failed', continueFails: false },
+    { kind: 'unknown', code: 'native_failed', continueFails: true },
+  ] as const)('reviews $kind snapshot failure $code and its fresh continue choice (fails=$continueFails)', async ({ kind, code, continueFails }) => {
     const offer = {
       managedId: 'managed-database', intentRevision: 1,
       controller: { machineId: 'controller', installationId: 'controller-installation' },
@@ -429,8 +434,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
         return { ok: true, result: { ...result, evidence: { ...result.evidence, snapshot: offer } } };
       }
       return input.snapshot === false
-        ? { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } }
-        : { ok: false, errorCode: 'restore_snapshot_not_confirmed', details: { snapshot: { kind, code: 'provider_unconfirmed' } } };
+        ? continueFails
+          ? { ok: false, errorCode: 'restore_failed', details: { snapshot: { kind, code: 'provider_unconfirmed' } } }
+          : { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } }
+        : { ok: false, errorCode: code, details: { snapshot: { kind, code: 'provider_unconfirmed' } } };
     });
     try {
       await view.until(`${settings}.restore.open`);
@@ -446,9 +453,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       expect(view.observed[1]!.snapshot).not.toBe(false);
       expect(view.screen.findByTestId('project-deployments.restore.result.restored')).toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.restore.continueWithoutSnapshot');
-      await view.until('project-deployments.restore.result.restored');
+      await view.until(continueFails ? 'project-deployments.restore.refused' : 'project-deployments.restore.result.restored');
       expect(view.observed).toHaveLength(3);
       expect(view.observed[2]).toEqual({ ...view.observed[1], snapshot: false });
+      expect(view.screen.findByTestId('project-deployments.restore.continueWithoutSnapshot')).toBeNull();
     } finally { view.dispose(); }
   });
 

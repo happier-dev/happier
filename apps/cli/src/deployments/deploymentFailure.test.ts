@@ -11,6 +11,7 @@ import { inspectNativeComposeStorage } from '@/daemon/local/services/launch/nati
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 
 describe('deployment failure diagnostics', () => {
     it('surfaces value-free schema issue paths when preparation rejects receipt content', () => {
@@ -158,6 +159,15 @@ describe('deployment filesystem failure diagnostics', () => {
 
 describe('deployment exception projection', () => {
     afterEach(() => vi.restoreAllMocks());
+
+    it('retains the managed native owner’s closed cause in public output and the receipt', () => {
+        const failureCause = projectActionFailureCauseV1({ code: 'native_route_unavailable' }, 'machines.snapshot');
+        const nativeCause = { localCause: 'native_route_unavailable' as const };
+        const result = projectDeploymentException(new ManagedMachineControllerError('native_failed', undefined,
+            { kind: 'managedNative', nativeCause }, failureCause));
+        expect(result).toMatchObject({ errorCode: 'native_failed', details: { kind: 'managedNative', nativeCause }, failureCause });
+        expect(projectDeploymentReceiptFailure(result, 'restore')).toMatchObject({ code: 'native_failed', failureCause });
+    });
 
     it('settles an uncoded throw as a typed unknown failure with its class, never as missing Source content', () => {
         const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});

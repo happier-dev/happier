@@ -249,7 +249,10 @@ function DeploymentRestoreSheet(
         })
       : Promise.resolve();
 
-  const snapshotStopped = refusal?.code === 'restore_snapshot_not_confirmed';
+  const snapshotOutcome = refusal?.failure?.details && isRecord(refusal.failure.details)
+    ? MachineProvisionerSnapshotResultV1Schema.safeParse(refusal.failure.details.snapshot) : null;
+  const snapshotStopped = refusal?.code === 'restore_snapshot_not_confirmed'
+    || lastConfirmation.current?.snapshot !== false && snapshotOutcome?.success && snapshotOutcome.data.kind !== 'confirmed';
   const pickUpload = async () => {
     if (!uploadTarget || !uploadDestination || busy) return;
     const destination = uploadDestination.kind === 'volume' ? uploadDestination
@@ -381,9 +384,6 @@ function DeploymentRestoreSheet(
       { key: 'snapshotConsistency', label: t('projects.deployments.settingsSections.restoreExtended.consistency'), value: `${preparation.snapshot.consistency === 'running' ? t('projects.deployments.settingsSections.restoreExtended.consistencyRunning') : preparation.snapshot.consistency === 'stopped' ? t('projects.deployments.settingsSections.restoreExtended.consistencyStopped') : t('projects.deployments.settingsSections.restoreExtended.consistencyUnknown')} · ${t('projects.deployments.settingsSections.restoreExtended.noQuiesce')}` },
     ] : []),
   ] : [];
-  const snapshotOutcome = refusal?.failure?.details && isRecord(refusal.failure.details)
-    ? MachineProvisionerSnapshotResultV1Schema.safeParse(refusal.failure.details.snapshot) : null;
-
   const stepRows = steps.length > 0 ? (
     <ItemGroup testID="project-deployments.restore.steps" title={t('projects.deployments.restoreStepsTitle')}>
       {steps.map((entry) => (
