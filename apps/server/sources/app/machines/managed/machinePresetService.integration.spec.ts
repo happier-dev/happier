@@ -1124,6 +1124,7 @@ describe("Machine preset relational owner", () => {
 
         const request = {
             custodianAccountId: owner, requesterAccountId: member, requestEnvelopeDigest: 'managed-read-projection',
+            managedAcquireDelegation: true as const,
             input: { requestId: 'managed-read-projection', continuationPresent: false, input: {
                 selection: { kind: 'preset' as const, homeId, id, revision: 0 },
                 controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
@@ -1424,6 +1425,7 @@ describe("Machine preset relational owner", () => {
         const requestId = `policy-request-${scenario}`;
         const presetPolicy = scenario === 'owner-customizes' ? customPolicy : ownerPolicy;
         const request = { custodianAccountId: owner, requesterAccountId: scenario === 'owner-customizes' ? owner : member,
+            managedAcquireDelegation: true as const,
             requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false, input,
                 ...(scenario === 'member-unqualified' ? {} : { presetPolicy,
                     originalActionEnvelope: { v: 1 as const, requestId, input } }) } };
@@ -1607,6 +1609,7 @@ describe("Machine preset relational owner", () => {
             controllerAccess: { custodian: { accountId: owner }, installationPublicKey: encodeBase64(publicKey, 'base64url') } });
         expect(resolved.body).not.toContain('missing.private.provider');
         const admitted = await admitManagedAcquire({ requesterAccountId: member, custodianAccountId: owner,
+            managedAcquireDelegation: true,
             requestEnvelopeDigest: 'exact-member-opaque-admission', input: {
                 requestId: 'exact-member-opaque-admission', continuationPresent: false, input: {
                     selection: { kind: 'preset', homeId, id: definition.id, revision: 0 }, controller,
@@ -1713,6 +1716,7 @@ describe("Machine preset relational owner", () => {
         if (!presetContentOverride) throw new Error('Expected Team pool override');
         const acquired = await admitManagedAcquire({
             custodianAccountId: owner, requesterAccountId: member, requestEnvelopeDigest: 'team-pool-opaque',
+            managedAcquireDelegation: true,
             input: { requestId: 'team-pool-opaque', continuationPresent: false, input: {
                 selection: { kind: 'preset' as const, homeId, id: definition.id, revision: 0 },
                 controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
