@@ -6,7 +6,8 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema,
   StoredAppPresetInputV1Schema, StoredAppPresetBindingsV1Schema, EnvironmentVariableBindingInputV1Schema, DeploymentSecretBindingSourceV1Schema,
   DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema,
-  DeploymentTextV1Schema, DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentRepositoryComposeV1Schema } from './storedAppInputV1.js';
+  DeploymentTextV1Schema, DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentRepositoryComposeV1Schema,
+  DeploymentTemplateDomainBindingsV1Schema } from './storedAppInputV1.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../account/settings/savedSecretResourceActionsV1.js';
 import { DeploymentTemplateV1Schema, DeploymentTemplateSecretProfileV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { ResolvedDeploymentCreationDefaultsV1Schema, DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
@@ -72,7 +73,7 @@ export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.
   bindings: StoredAppPresetBindingsV1Schema,
   generatedSecretAudience: z.optional(DeploymentTemplateGeneratedSecretAudienceV1Schema),
   connectTo: z.optional(z.strictObject({ service: id })), replace: z.optional(z.array(id)),
-  domainBindings: z.optional(z.array(z.strictObject({ templateDomainId: id, hostname: id }))),
+  domainBindings: z.optional(DeploymentTemplateDomainBindingsV1Schema),
   volumeBindings: z.optional(z.array(z.strictObject({ templateVolumeId: id, source: id }))),
   /** Reviewed optional template companions (for example PostgreSQL's PgBouncer); omission selects none. */
   companions: z.optional(z.array(id)),

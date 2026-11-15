@@ -1,5 +1,20 @@
 # Compatibility and version skew
 
+## Stored App Preset Domain selections (unreleased 0.3)
+
+Catalog App preset intent accepts optional root `domainBindings`, using the
+same closed `{ templateDomainId, hostname }` selections as ordinary template
+instantiation. Setup retains them through source copies and capture, forwards
+them to template preparation and rejects a reviewed child whose selections
+differ from the saved intent. The template owner still validates declared ids
+and hostnames. Existing presets without selections remain readable unchanged;
+required Domains still need an explicit hostname. Compose App intent does not
+accept template selections. Matching Protocol, daemon and preset readers reload
+together; earlier strict development writers reject the added field and older
+stored readers may drop it. The inspected `../0.2` frontier
+`c8867dad513ef489183953878c084d660fbe0653` has neither affected Protocol module.
+No migration, wire epoch or compatibility adapter is added.
+
 ## Machine OS-update check time (unreleased 0.3)
 
 The closed `MachineSetupUpdatesObservationV1` admits optional `checkedAt`, Unix

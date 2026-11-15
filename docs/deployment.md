@@ -118,6 +118,14 @@ treat unresolved coordinates as clearance.
 
 ## Destination activity and scoped inventory (0.3 development)
 
+Environment collection pages admit private Environment Artifact headers through
+the Artifact access owner before selecting the visible page. Source-controlled
+sharing and E2EE recipient-envelope availability use that same admission. The
+reader continues through inaccessible candidate windows so they do not consume
+visible slots or leave empty tail pages. Work follows examined candidates in
+the existing page-sized batches; no complete Account census or total is added.
+Malformed readable records retain the collection's partial-coverage behavior.
+
 The Account deployment activity projection counts readable, non-deleted Environments
 whose latest attempt is running or failed. It uses the existing Source admission and
 receipt-state projection, one aggregate read and the existing Account invalidation
@@ -2481,6 +2489,13 @@ Create inputs identify selected template Domains with
 `domainBindings: [{ templateDomainId, hostname }]`. Preparation admits those
 ids against the pinned template; in 0.3 development, an undeclared id returns
 `template_domain_unknown`, including a selection mixing declared and unknown ids.
+Stored App Presets can retain the same optional `domainBindings` alongside
+`bindings` for a catalog App. Machine Setup forwards these selections into its
+ordinary template child and binds the reviewed child to that saved intent.
+A required template Domain without a selection still returns
+`template_domain_required`; Setup does not invent a hostname. These inert
+selections survive preset source copies and capture; authored Compose App
+intent does not accept template Domain selections.
 The signed intent projection and installer share `readDeploymentTemplateDeployIntentV1`
 to decide whether selected Domains imply a first deploy for a new Environment.
 Preparation admits the selected
@@ -5001,9 +5016,12 @@ without changing the retained header.
 If preparation fails after Cloudflare acknowledges a tunnel ID, the Domain saves
 that ID before returning the failure when its content update succeeds. Its typed failure identifies the retained
 tunnel and adoption recovery, preserving the provider's original cause and safe
-response diagnostic. After resolving the cause, reviewing Add again adopts the
-saved tunnel instead of creating another. If the content update itself fails,
-the failure still names the tunnel for explicit adoption. Remove cleans only its owned routes;
+response diagnostic. The Domain host settles preparation and subsequent native
+failures through the same failure owner. Its closed public failure contract retains
+these recovery facts in the operation and approval readers. After resolving the cause,
+the address row's Adopt action reviews the existing Domain Add with the saved tunnel.
+If the content update itself fails, Adopt authors that exact tunnel selection through
+the same Add action. Neither recovery creates a replacement tunnel. Remove cleans only its owned routes;
 the shared tunnel remains available for deliberate inspection or retirement.
 
 After a template's Deploy succeeds, its Domain step invokes that same authored

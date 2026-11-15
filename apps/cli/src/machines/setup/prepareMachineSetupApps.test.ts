@@ -19,7 +19,10 @@ import { DeploymentContentV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([false, true])('prepares saved catalog setup intent before effects, retaining required address facts: %s', async requiredAddress => {
+it.each(['none', 'missing', 'bound'] as const)('prepares saved catalog setup intent before effects, retaining required address facts: %s', async address => {
+    const requiredAddress = address !== 'none';
+    const domainBindings = address === 'bound'
+        ? [{ templateDomainId: 'SERVICE_URL_REDISINSIGHT_5540', hostname: 'insight.example.test' }] : undefined;
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain',
         accountId: 'owner', homeId: 'home', machineId: 'target', serverHttpBaseUrl: 'https://home.test',
@@ -92,11 +95,12 @@ it.each([false, true])('prepares saved catalog setup intent before effects, reta
         expect(body).toEqual({ homeId: 'home', machineId: 'target', sources: request.sources });
         return { status: 200, data: { sources: [{ ...preset, presetContent: { content: { t: 'plain', v: { v: 1, name: 'App preset',
             setup: { items: [{ kind: 'app', definition: { name: 'App', project: { kind: 'create' },
-                definition: { from: 'catalogApp', templateRef }, bindings: [] } }] } } }, recipientEnvelope: null } }, direct] } };
+                definition: { from: 'catalogApp', templateRef }, bindings: [],
+                ...(domainBindings ? { domainBindings } : {}) } }] } } }, recipientEnvelope: null } }, direct] } };
     });
     const context = { ...fixture.context('machines.setup.plan'), runtimeAccountId: 'owner' };
     const result = await setupPlan({ input: request, context });
-    if (requiredAddress) {
+    if (address === 'missing') {
         expect(result).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'template_domain_required',
             error: expect.stringContaining('SERVICE_URL_REDISINSIGHT_5540'),
             details: { key: 'SERVICE_URL_REDISINSIGHT_5540' } });
@@ -111,9 +115,11 @@ it.each([false, true])('prepares saved catalog setup intent before effects, reta
         actionId: 'deployments.templates.instantiate', input: { mode: 'apply', serverId: 'home', machineId: 'target',
             newProject: { owner: { kind: 'account', accountId: 'owner' } }, templateRef,
             target: { kind: 'new', installationId: identity.installationId }, deploy: { requestKey: expect.any(String) } } }],
-        appReviews: [{ sourceIndex: 0, itemIndex: 0, review: { firstRunSetup: true,
+        appReviews: [{ sourceIndex: 0, itemIndex: 0, review: {
             creationDefaults: { values: { retainPreviousDeployments: 7 } } } }],
         support: [{ sourceIndex: 0, itemIndex: 0, status: 'drifted' }] });
+    expect(planned.appChildren?.[0]?.input).toMatchObject(domainBindings ? { domainBindings } : {});
+    if (!requiredAddress) expect(planned.appReviews?.[0]?.review).toMatchObject({ firstRunSetup: true });
     expect(sourceTransport).not.toHaveBeenCalled();
     expect(contentWrites).toBe(0);
     const repeated = await setupPlan({ input: request, context });
@@ -121,6 +127,14 @@ it.each([false, true])('prepares saved catalog setup intent before effects, reta
     const reviewed = await setupPlan({ input: { ...request, appChildren: planned.appChildren },
         context });
     expect(reviewed).toEqual(planned);
+    if (domainBindings) {
+        const changed = structuredClone(planned.appChildren!);
+        const child = changed[0]!;
+        if (child.actionId !== 'deployments.templates.instantiate') throw new Error('Expected catalog app');
+        child.input.domainBindings = [{ ...domainBindings[0]!, hostname: 'changed.example.test' }];
+        expect(await setupPlan({ input: { ...request, appChildren: changed }, context }))
+            .toMatchObject({ ok: false, errorCode: 'machine_setup_app_plan_changed' });
+    }
     expect(sourceTransport).not.toHaveBeenCalled();
     expect(contentWrites).toBe(0);
 });

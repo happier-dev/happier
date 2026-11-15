@@ -329,6 +329,10 @@ export function hasOneDeploymentProjectV1(source: unknown, newProject: unknown):
 export const DeploymentCatalogAppDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
     from: z.literal('catalogApp'), templateRef: DeploymentTemplateRefV1Schema,
 }));
+/** Inert template Domain selections shared by reusable App intent and template preparation. */
+export const DeploymentTemplateDomainBindingsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+    templateDomainId: id, hostname: id,
+})));
 /** Inert reusable authoring intent. Normalization, defaults and all writes remain P40/P45 owned. */
 export const StoredAppPresetInputV1Schema = lazyZodSchema(() => z.strictObject({
     name: DeploymentTextV1Schema,
@@ -341,5 +345,7 @@ export const StoredAppPresetInputV1Schema = lazyZodSchema(() => z.strictObject({
         DeploymentCatalogAppDefinitionInputV1Schema,
     ]),
     bindings: StoredAppPresetBindingsV1Schema,
-}));
+    domainBindings: z.optional(DeploymentTemplateDomainBindingsV1Schema),
+}).check(z.refine(input => input.definition.from === 'catalogApp' || input.domainBindings === undefined,
+    { message: 'Template Domain selections require a catalog App.' })));
 export type StoredAppPresetInputV1 = z.infer<typeof StoredAppPresetInputV1Schema>;

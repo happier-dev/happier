@@ -2067,7 +2067,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     && readDeploymentTemplateDeployIntentV1(template.data)?.requestKey === originalInput.requestKey
                     || parent?.actionId === 'deployments.environments.create'
                         && isTemplateDeploymentRoot(originalRequest.context)
-                        && originalRequest.context.actionRequestId === originalInput.requestKey;
+                        && parent.input.requestKey === originalInput.requestKey;
                 const replayingDeployment = originalRequest.context.approvedActionReplay && !templateDeployment && !forkDeployment;
                 const authorsCandidate = !('contentArtifactId' in originalInput);
                 let preparationEnvironment: DeploymentEnvironmentDetailV1 | undefined;

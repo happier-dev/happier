@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { readHomeRequestArtifactReference } from '../homeRequestBody.testkit';
 import { delimiter, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createActionExecutor, type ActionExecutorContext, DeploymentTemplateInstantiateInputV1Schema,
+import { createActionExecutor, type ActionExecutorContext, DeploymentTemplateInstantiateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema,
     DeploymentActionInputSchemasV1, DeploymentDomainHeaderV1Schema, DeploymentDomainMachineTopologyV1Schema,
     DeploymentChildRpcV1Schema, ProjectDeploymentDefaultsOutputV1Schema, HomeConnectionDescriptorV1Schema,
     deploymentDomainObservationProofPayloadV1, signMachineInstallationProof, FeaturesResponseSchema,
@@ -47,7 +48,7 @@ import { readEnvironmentSecretLaunchAdmissionForHost } from '../secrets/readEnvi
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes a template Domain only through its admitted child: %s', async admission => {
+it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create replay'] as const)('publishes a template Domain only through its admitted child: %s', async admission => {
     await withConfiguredDaemonTestHome({ prefix: 'template-domain-child-' }, async () => {
         const origin = 'https://template-domain.test', serverId = 'srv_template_domain', machineId = 'target';
         const identity = await readOrCreateInstallationIdentity();
@@ -85,7 +86,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes
         const domainWrites: string[] = [];
         const trace: string[] = [];
         const httpPaths: string[] = [];
-        let rootInput: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse> | undefined;
+        let rootInput: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse> | ReturnType<typeof DeploymentEnvironmentCreateIntentInputV1Schema.parse> | undefined;
         let rootAuthorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
         let domain: ReturnType<typeof DeploymentDomainHeaderV1Schema.parse> | undefined;
         const content = (id: string) => {
@@ -188,10 +189,9 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes
                 return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 1 } };
             }
             if (path.endsWith('/bindings')) {
-                Object.assign(environment.environment, { contentArtifactId: request.data.contentArtifactId,
-                    contentHeaderVersion: request.data.contentHeaderVersion, contentBodyVersion: request.data.contentBodyVersion,
-                    revision: environment.environment.revision + 1 });
-                environment.content = DeploymentEnvironmentContentV1Schema.parse(content(request.data.contentArtifactId));
+                const reference = readHomeRequestArtifactReference(request.data);
+                Object.assign(environment.environment, { ...reference, revision: environment.environment.revision + 1 });
+                environment.content = DeploymentEnvironmentContentV1Schema.parse(content(reference.contentArtifactId));
                 return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision } };
             }
             if (path.endsWith('/deploy')) {
@@ -262,20 +262,27 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes
         const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
         let requester: Awaited<ReturnType<typeof prepareRequesterAccountActionContext>> = null;
         try {
-            const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', serverId, machineId, projectSourceId: 'project',
+            const templateInput = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', serverId, machineId, projectSourceId: 'project',
                 templateRef: { sourceId: 'apps', itemId: 'app', version: selected.summary.version!, ref: selected.payload.ref },
                 environment: { kind: 'create', name: 'App', requestKey: 'create-app', protection: 'nonProduction', purpose: 'standard',
                     deployerMode: 'managers', controllerMachineId: machineId }, target: { kind: 'new', installationId: identity.installationId },
                 destination: { kind: 'stored' }, bindings: [], domainBindings: [{ templateDomainId: 'web', hostname: 'app.example.test' }],
                 deploy: { requestKey: 'deploy-app' } });
+            const actionId = admission === 'approved Create replay' ? 'deployments.environments.create' : 'deployments.templates.instantiate';
+            const input = actionId === 'deployments.templates.instantiate' ? templateInput
+                : DeploymentEnvironmentCreateIntentInputV1Schema.parse({ mode: 'apply', serverId, projectSourceId: 'project',
+                    requestKey: 'create-app', name: 'App', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                    controllerMachineId: machineId, definition: { from: 'catalogApp', templateRef: templateInput.templateRef },
+                    firstTargetLink: { machines: [{ machineId, installationId: identity.installationId }] },
+                    domainBindings: templateInput.domainBindings });
             const target = { kind: 'machine' as const, machineId };
             const envelope = { v: 1 as const, requestId: 'template-domain-root', target, input };
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-template-root', binding: {
                 accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
                 serverIdentityId: serverId, machineId, installationId: identity.installationId, admittedMachineRole: 'manage', target,
-                actionId: 'deployments.templates.instantiate', requestId: envelope.requestId,
+                actionId, requestId: envelope.requestId,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', input) } });
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) } });
             rootInput = input; rootAuthorization = authorization;
             const identityOwner = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => serverId,
                 resolveHostIdentity: async () => ({ machineId, installationId: identity.installationId, custodianAccountId: 'owner' }) });
@@ -299,13 +306,14 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes
                 } });
             if (!requester) throw new Error('Expected original requester custody');
             const executor = requester.executor;
-            const result = await executor.execute('deployments.templates.instantiate', input, { surface: 'ui', authority: 'present_user',
+            const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
                 runtimeAccountId: 'owner', serverId, serverIdentityId: serverId, actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
                 actionsSettings: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined),
-                    actionId: 'deployments.templates.instantiate', surface: 'ui', approvalRequired: false }),
+                    actionId, surface: 'ui', approvalRequired: false }),
                 actionRequestId: envelope.requestId, executionRunTargetMachineId: machineId, externalActionTarget: target,
-                presentUserConfirmation: { actionId: 'deployments.templates.instantiate',
-                    inputDigest: computeActionInputApprovalDigestV1('deployments.templates.instantiate', input),
+                ...(admission === 'approved Create replay' ? { approvedActionReplay: { artifactId: 'approved-create' } } : {}),
+                presentUserConfirmation: { actionId,
+                    inputDigest: computeActionInputApprovalDigestV1(actionId, input),
                     accountId: 'owner', serverId, requestId: envelope.requestId, target },
                 originalActionEnvelope: envelope, externalActionExecutionAuthorization: requester.authorization,
                 operationAcceptance: { operationId: 'template-operation', accept() {} } });
@@ -327,7 +335,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port'] as const)('publishes
                 });
                 expect(domain).toBeUndefined();
             } else {
-                expect(result, JSON.stringify({ result, httpPaths, domainWrites })).toMatchObject({ ok: true, result: { kind: 'applied' } });
+                expect(result, JSON.stringify({ result, httpPaths, domainWrites })).toMatchObject({ ok: true, result: actionId === 'deployments.templates.instantiate' ? { kind: 'applied' } : { ok: true, environmentId: environment.environment.id } });
                 expect(domain).toMatchObject({ state: 'active' });
                 if (!domain) throw new Error('Expected active Domain');
                 const document = await runWithServerHttpBaseUrl(origin, () => createCredentialedAccountArtifactStore(credentials)

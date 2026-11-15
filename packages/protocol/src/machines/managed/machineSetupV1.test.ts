@@ -82,6 +82,14 @@ describe('MachineSetupV1', () => {
             expect(MachineSetupV1ReadSchema.parse(value)).toEqual(value);
             expect(MachineSetupV1Schema.safeParse({ items: [{ kind: 'app', definition: { ...definition, environmentId: 'created' } }] }).success).toBe(false);
         }
+        const addressed = { items: [{ kind: 'app', definition: { ...catalog,
+            domainBindings: [{ templateDomainId: 'console', hostname: 'dashboard.example.test' }] } }] };
+        expect(MachineSetupV1Schema.parse(addressed)).toEqual(addressed);
+        expect(mergeMachineSetupsV1(MachineSetupSourceV1Schema.parse([{ kind: 'direct', setup: addressed }])
+            .map(source => source.setup))).toEqual({ ok: true, setup: addressed });
+        expect(MachineSetupV1ReadSchema.parse(addressed)).toEqual(addressed);
+        expect(MachineSetupV1Schema.safeParse({ items: [{ kind: 'app', definition: { ...compose,
+            domainBindings: addressed.items[0]!.definition.domainBindings } }] }).success).toBe(false);
         for (const source of [{ kind: 'generated', key: 'password', value: 'secret' }, { kind: 'secret', value: 'secret' }]) {
             expect(MachineSetupV1Schema.safeParse({ items: [{ kind: 'app', definition: { ...compose,
                 bindings: [{ purpose: 'variable', name: 'PASSWORD', phase: 'runtime', source }] } }] }).success).toBe(false);

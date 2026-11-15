@@ -1,8 +1,9 @@
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { MachineSetupAppChildV1, MachineSetupAppReviewV1, MachineSetupPlanInputV1,
-  MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineSetupAppChildV1, MachineSetupAppReviewV1,
+  MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineSetupLocalPlanInputV1, MachineSetupLocalPlanResultV1 } from './prepareMachineSetupPlan';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentTemplateInstantiationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readMachineSetupAppIdentityV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupAcceptedAppRunV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -25,7 +26,7 @@ export type MachineSetupAppPreparationHost = Readonly<{
 }>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
-async function observeApps(input: MachineSetupPlanInputV1, plan: MachineSetupPlanResultV1,
+async function observeApps(input: MachineSetupLocalPlanInputV1, plan: MachineSetupLocalPlanResultV1,
   context: ActionExecutorContext, host: MachineSetupAppPreparationHost): Promise<AppObservation[]> {
   const references = new Map<string, MachineSetupAcceptedAppRunV1[]>();
   for (const facts of Object.values(plan.sourceFacts ?? {})) for (const reference of facts.acceptedAppRuns ?? []) {
@@ -66,7 +67,7 @@ async function observeApps(input: MachineSetupPlanInputV1, plan: MachineSetupPla
   });
 }
 
-async function prepareApp(input: MachineSetupPlanInputV1, plan: MachineSetupPlanResultV1,
+async function prepareApp(input: MachineSetupLocalPlanInputV1, plan: MachineSetupLocalPlanResultV1,
   child: MachineSetupAppChildV1, context: ActionExecutorContext, host: MachineSetupAppPreparationHost):
   Promise<MachineSetupAppReviewV1 | ActionExecuteFailure | null> {
   const item = plan.sources[child.sourceIndex]?.setup.items?.[child.itemIndex];
@@ -81,6 +82,7 @@ async function prepareApp(input: MachineSetupPlanInputV1, plan: MachineSetupPlan
           || selected.newProject.owner.accountId !== context.runtimeAccountId)
       || !sameStrictJsonValue(selected.templateRef, item.definition.definition.templateRef)
       || !sameStrictJsonValue(selected.bindings, item.definition.bindings)
+      || !sameStrictJsonValue(selected.domainBindings, item.definition.domainBindings)
       || selected.environment.kind === 'create' && selected.environment.name !== item.definition.name
       || !host.prepareDeploymentTemplateInstantiation) return failure('machine_setup_app_plan_changed');
     // P45 is local to this receiving target. It owns installation, catalog pin,
@@ -131,8 +133,8 @@ async function prepareApp(input: MachineSetupPlanInputV1, plan: MachineSetupPlan
 }
 
 /** Target Plan owns app preparation and outcome projection; parent only aggregates. */
-export async function prepareMachineSetupApps(input: MachineSetupPlanInputV1, plan: MachineSetupPlanResultV1,
-  context: ActionExecutorContext, host: MachineSetupAppPreparationHost): Promise<MachineSetupPlanResultV1 | ActionExecuteFailure> {
+export async function prepareMachineSetupApps(input: MachineSetupLocalPlanInputV1, plan: MachineSetupLocalPlanResultV1,
+  context: ActionExecutorContext, host: MachineSetupAppPreparationHost): Promise<MachineSetupLocalPlanResultV1 | ActionExecuteFailure> {
   const apps = await observeApps(input, plan, context, host);
   if (context.signal?.aborted) return failure('cancelled');
   const children: MachineSetupAppChildV1[] = [...input.appChildren ?? []];
@@ -154,7 +156,9 @@ export async function prepareMachineSetupApps(input: MachineSetupPlanInputV1, pl
         environment: { kind: 'create', name: item.definition.name, requestKey: key('environment'),
           protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: input.machineId },
         target: { kind: 'new', installationId: host.installationId }, destination: { kind: 'stored' },
-        bindings: item.definition.bindings, deploy: { requestKey: key('deploy') } } satisfies DeploymentTemplateInstantiateInputV1;
+        bindings: item.definition.bindings,
+        ...(item.definition.domainBindings === undefined ? {} : { domainBindings: item.definition.domainBindings }),
+        deploy: { requestKey: key('deploy') } } satisfies DeploymentTemplateInstantiateInputV1;
       children.push({ sourceIndex: app.sourceIndex, itemIndex: app.itemIndex,
         actionId: 'deployments.templates.instantiate', input: selected });
     }
