@@ -13,6 +13,8 @@ import {
     isRpcMethodNotFoundError,
 } from '@happier-dev/protocol/rpcErrors';
 
+import { readLocalServiceRpcFailure } from '../rpcFailure';
+
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 import {
@@ -79,16 +81,18 @@ export async function fetchLocalServicePreviewSnapshotViaMachineRpc(
             signal: input.signal,
         });
         if (isRpcMethodNotFoundResult(raw)) {
-            return { ok: false, reason: 'unavailable' };
+            return { ok: false, reason: 'unavailable', ...readLocalServiceRpcFailure(raw) };
         }
+        const failure = readLocalServiceRpcFailure(raw);
+        if (failure) return { ok: false, reason: 'request_failed', ...failure };
         const parsed = DaemonLocalServicePreviewSnapshotResponseV1Schema.safeParse(raw);
         if (!parsed.success) {
             return { ok: false, reason: 'invalid_response' };
         }
         const snapshot = normalizeLocalServicePreviewSnapshotPayload(parsed.data.snapshot, input.machineId);
         return snapshot ? { ok: true, snapshot, protocolSnapshot: parsed.data.snapshot } : { ok: false, reason: 'invalid_response' };
-    } catch {
-        return { ok: false, reason: 'request_failed' };
+    } catch (error) {
+        return { ok: false, reason: 'request_failed', ...readLocalServiceRpcFailure(error) };
     }
 }
 
@@ -108,16 +112,18 @@ export async function openOrCreateLocalServicePreviewViaMachineRpc(
             signal: input.signal,
         });
         if (isRpcMethodNotFoundResult(raw)) {
-            return { ok: false, reason: 'unavailable' };
+            return { ok: false, reason: 'unavailable', ...readLocalServiceRpcFailure(raw) };
         }
         const refusal = readLifecycleRefusalReason(raw);
-        if (refusal) return { ok: false, reason: `refused:${refusal}` };
+        if (refusal) return { ok: false, reason: `refused:${refusal}`, ...readLocalServiceRpcFailure(raw) };
+        const failure = readLocalServiceRpcFailure(raw);
+        if (failure) return { ok: false, reason: 'request_failed', ...failure };
         const parsed = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.safeParse(raw);
         return parsed.success
             ? { ok: true, response: parsed.data }
             : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        return { ok: false, reason: lifecycleFailureFromError(error) };
+        return { ok: false, reason: lifecycleFailureFromError(error), ...readLocalServiceRpcFailure(error) };
     }
 }
 
@@ -137,15 +143,17 @@ export async function revokeLocalServicePreviewViaMachineRpc(
             signal: input.signal,
         });
         if (isRpcMethodNotFoundResult(raw)) {
-            return { ok: false, reason: 'unavailable' };
+            return { ok: false, reason: 'unavailable', ...readLocalServiceRpcFailure(raw) };
         }
         const refusal = readLifecycleRefusalReason(raw);
-        if (refusal) return { ok: false, reason: `refused:${refusal}` };
+        if (refusal) return { ok: false, reason: `refused:${refusal}`, ...readLocalServiceRpcFailure(raw) };
+        const failure = readLocalServiceRpcFailure(raw);
+        if (failure) return { ok: false, reason: 'request_failed', ...failure };
         const parsed = DaemonLocalServicePreviewRevokeResponseV1Schema.safeParse(raw);
         return parsed.success
             ? { ok: true, response: parsed.data }
             : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        return { ok: false, reason: lifecycleFailureFromError(error) };
+        return { ok: false, reason: lifecycleFailureFromError(error), ...readLocalServiceRpcFailure(error) };
     }
 }

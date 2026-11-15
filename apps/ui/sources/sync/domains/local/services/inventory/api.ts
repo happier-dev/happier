@@ -1,6 +1,7 @@
 import { LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import type { LocalServiceLauncherScopeV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
+import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
 import type { LocalServiceInventorySnapshot } from './store';
 
 export const LOCAL_SERVICE_INVENTORY_SNAPSHOT_ROUTE = '/local-services/inventory/snapshot';
@@ -23,7 +24,7 @@ export type LocalServiceInventorySnapshotClientInput = Readonly<{
 
 export type LocalServiceInventorySnapshotClientResult =
     | Readonly<{ ok: true; snapshot: LocalServiceInventorySnapshot }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response'; reasonCode?: string }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -92,4 +93,4 @@ export type LocalServiceInventoryWatchClientInput = Readonly<{
 export type LocalServiceInventoryWatchClientResult =
     | Readonly<{ ok: true; changed: true; snapshot: LocalServiceInventorySnapshot }>
     | Readonly<{ ok: true; changed: false }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response'; reasonCode?: string }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;

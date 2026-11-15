@@ -13,6 +13,10 @@ import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actio
 import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createLocalServicePublicPreviewExposureViaMachineRpc } from '@/sync/domains/local/services/publicPreview/machineRpc';
+import { startLocalServiceLauncherTargetViaMachineRpc } from '@/sync/domains/local/services/launch/machineRpc';
 
 const modalSpies = vi.hoisted(() => ({ alert: vi.fn() }));
 const previewRpc = vi.hoisted(() => vi.fn());
@@ -33,6 +37,51 @@ import {
 } from './localServiceActionOutcome';
 
 describe('readLocalServiceActionOutcome', () => {
+    it('shows the public-preview transport cause through the real client and Action executor', async () => {
+        const failureCause = { phase: 'rpc.discovery', errorClass: 'RpcError',
+            errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, httpStatus: null };
+        primeServerFeaturesSnapshot({ serverId: 'public-preview-cause', snapshot: { status: 'ready',
+            features: createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: true } } } }) } });
+        previewRpc.mockRejectedValueOnce(new RpcError('private request details', RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause));
+        try {
+            const execute = createLocalServicesRuntimeActionExecutor({
+                createPublicPreviewExposure: createLocalServicePublicPreviewExposureViaMachineRpc,
+            });
+            const result = await execute({ actionId: 'localServices.publicPreview.create',
+                input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1',
+                    mode: 'secret_link', ttlMs: 600_000, confirmation: { acknowledged: true } },
+                context: { surface: 'ui', serverId: 'public-preview-cause' } });
+            expect(result).toMatchObject({ ok: false, failureCause, details: { reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE } });
+            const outcome = readLocalServiceActionOutcome(result);
+            expect(outcome).toEqual({ kind: 'failed', reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE });
+            if (outcome.kind !== 'failed') throw new Error('Expected transport failure');
+            const description = describeLocalServiceActionFailure(outcome);
+            expect(description.details).toContain(RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE);
+            expect(JSON.stringify(description)).not.toContain('private request details');
+        } finally {
+            resetServerFeaturesClientForTests();
+        }
+    });
+    it('keeps a lost launcher acknowledgement unknown through the real client and Action executor', async () => {
+        const failureCause = { phase: 'rpc.dispatch', errorClass: 'RpcError',
+            errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, httpStatus: null };
+        previewRpc.mockRejectedValueOnce(new RpcError('private request details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, failureCause));
+        const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
+        const result = await execute({ actionId: 'localServices.launcher.start',
+            input: { machineId: 'machine_1', targetId: 'target_1' }, context: { surface: 'ui' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', failureCause });
+        expect(readLocalServiceActionOutcome(result)).toMatchObject({ kind: 'outcome_unknown' });
+    });
+    it('shows the inventory count transport cause through the real Action executor', async () => {
+        const failureCause = { phase: 'rpc.discovery', errorClass: 'RpcError',
+            errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, httpStatus: null };
+        previewRpc.mockRejectedValueOnce(new RpcError('private request details', RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause));
+        const execute = createLocalServicesRuntimeActionExecutor();
+        const result = await execute({ actionId: 'localServices.inventory.list',
+            input: { machineId: 'machine_1', projection: 'count' }, context: { surface: 'ui' } });
+        expect(result).toMatchObject({ ok: false, failureCause, details: { reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE } });
+        expect(readLocalServiceActionOutcome(result)).toEqual({ kind: 'failed', reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE });
+    });
     it.each(['approval_canceled', 'approval_rejected', 'cancelled'])('classifies the shared policy decline as cancelled (%s)', errorCode => {
         expect(readLocalServiceActionOutcome({ ok: false, errorCode, error: errorCode }))
             .toEqual({ kind: 'cancelled' });

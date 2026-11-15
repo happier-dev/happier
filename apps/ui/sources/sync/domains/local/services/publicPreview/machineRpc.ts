@@ -7,7 +7,6 @@ import {
     DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
     DaemonLocalServicePublicPreviewStatusRequestV1Schema,
     DaemonLocalServicePublicPreviewStatusResponseV1Schema,
-    LocalServicePublicPreviewCreateFailureReasonV1Schema,
 } from '@happier-dev/protocol/local/services/public/v1';
 import {
     isRpcMethodNotFoundResult,
@@ -15,12 +14,12 @@ import {
 } from '@happier-dev/protocol/rpc';
 import {
     isRpcMethodNotFoundError,
-    readRpcErrorCode,
 } from '@happier-dev/protocol/rpcErrors';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { readLocalServiceRpcFailure } from '../rpcFailure';
 
 import {
     isPublicPreviewCopyUrlResponseForRequest,
@@ -42,26 +41,20 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function readRpcFailure(value: unknown): Extract<LocalServicePublicPreviewStatusClientResult, { ok: false }> | null {
-    if (isRpcMethodNotFoundResult(value)) {
-        return { ok: false, reason: 'unavailable' };
+    const failure = readLocalServiceRpcFailure(value);
+    if (isRpcMethodNotFoundResult(value) || isRpcMethodNotFoundError(value)) {
+        return { ok: false, reason: 'unavailable', ...failure };
     }
+    if (failure) return { ok: false,
+        reason: failure.reasonCode === 'public_preview_disabled' ? 'feature_disabled' : 'request_failed', ...failure };
     if (!isRecord(value)) {
         return null;
     }
-    const refusal = LocalServicePublicPreviewCreateFailureReasonV1Schema.safeParse(value.errorCode);
-    if (refusal.success) return {
-        ok: false,
-        reason: refusal.data === 'public_preview_disabled' ? 'feature_disabled' : 'request_failed',
-        reasonCode: refusal.data,
-    };
     return typeof value.error === 'string' || typeof value.errorCode === 'string' ? { ok: false, reason: 'request_failed' } : null;
 }
 
 function failureFromError(error: unknown): Extract<LocalServicePublicPreviewStatusClientResult, { ok: false }> {
-    if (isRpcMethodNotFoundError(error)) {
-        return { ok: false, reason: 'unavailable' };
-    }
-    return readRpcFailure({ errorCode: readRpcErrorCode(error) }) ?? { ok: false, reason: 'request_failed' };
+    return readRpcFailure(error) ?? { ok: false, reason: 'request_failed' };
 }
 
 /** One feature-admission and failure-envelope boundary for every public-preview operation. */

@@ -105,11 +105,27 @@ describe('local service public-preview machine RPC client', () => {
         }
     });
 
+    it.each(['throw', 'result'] as const)('keeps the transport owner cause when the daemon is unavailable (%s)', async carrier => {
+        const failureCause = { phase: 'rpc.discovery', errorClass: 'RpcError',
+            errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, httpStatus: null };
+        if (carrier === 'throw') machineRpcWithServerScopeMock.mockRejectedValue({
+            rpcErrorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, message: 'private request details', failureCause,
+        });
+        else machineRpcWithServerScopeMock.mockResolvedValue({
+            errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, error: 'private request details', failureCause,
+        });
+        for (const operation of await publicOperations()) {
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed',
+                reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause });
+        }
+    });
+
     it.each([{ error: 'HTTP request failed' }, { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN },
         ])('recognizes refusal envelopes before success parsing: %j', async refusal => {
         machineRpcWithServerScopeMock.mockResolvedValue(refusal);
         for (const operation of await publicOperations()) {
-            await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed' });
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed',
+                ...('errorCode' in refusal ? { reasonCode: refusal.errorCode } : {}) });
         }
     });
 
@@ -118,9 +134,9 @@ describe('local service public-preview machine RPC client', () => {
         const input = { serverId: 'server_1', request: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1' } };
         if (carrier === 'throw') machineRpcWithServerScopeMock.mockRejectedValueOnce({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         else machineRpcWithServerScopeMock.mockResolvedValueOnce({ errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'Method not found' });
-        expect(await fetchLocalServicePublicPreviewStatusViaMachineRpc(input)).toEqual({ ok: false, reason: 'request_failed' });
+        expect(await fetchLocalServicePublicPreviewStatusViaMachineRpc(input)).toEqual({ ok: false, reason: 'request_failed', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         machineRpcWithServerScopeMock.mockRejectedValueOnce({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
-        expect(await fetchLocalServicePublicPreviewStatusViaMachineRpc(input)).toEqual({ ok: false, reason: 'unavailable' });
+        expect(await fetchLocalServicePublicPreviewStatusViaMachineRpc(input)).toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
     });
 
     it('fetches public preview status through daemon machine RPC', async () => {
@@ -254,7 +270,7 @@ describe('local service public-preview machine RPC client', () => {
         await expect(fetchLocalServicePublicPreviewStatusViaMachineRpc({
             serverId: 'server_1',
             request: { machineId: 'machine_1' },
-        })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+        })).resolves.toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         await expect(createLocalServicePublicPreviewExposureViaMachineRpc({
             request: {
                 machineId: 'machine_1',

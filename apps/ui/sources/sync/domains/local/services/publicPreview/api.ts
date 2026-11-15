@@ -8,10 +8,10 @@ import type {
     DaemonLocalServicePublicPreviewStatusRequestV1,
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-    LocalServicePublicPreviewCreateFailureReasonV1,
 } from '@happier-dev/protocol/local/services/public/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { LocalServicePreviewServiceTargetV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
 
 export type LocalServicePublicPreviewFailureReason =
     | 'unavailable'
@@ -19,10 +19,9 @@ export type LocalServicePublicPreviewFailureReason =
     | 'request_failed'
     | 'invalid_response';
 
-type LocalServicePublicPreviewFailureResult = Readonly<{
+type LocalServicePublicPreviewFailureResult = LocalServiceRpcFailureMetadata & Readonly<{
     ok: false;
     reason: LocalServicePublicPreviewFailureReason;
-    reasonCode?: LocalServicePublicPreviewCreateFailureReasonV1;
 }>;
 
 export type LocalServicePublicPreviewStatusClientInput = Readonly<{

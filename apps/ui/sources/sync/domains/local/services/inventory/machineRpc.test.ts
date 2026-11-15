@@ -69,10 +69,13 @@ describe('local service inventory machine RPC client', () => {
     });
 
     it('fails closed for unavailable and mismatched daemon inventory responses', async () => {
+        const failureCause = { phase: 'rpc.discovery', errorClass: 'RpcError',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, httpStatus: null };
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
                 error: 'Method not found',
+                failureCause,
             })
             .mockResolvedValueOnce({
                 protocolVersion: 1,
@@ -82,7 +85,7 @@ describe('local service inventory machine RPC client', () => {
 
         await expect(fetchLocalServiceInventorySnapshotViaMachineRpc({
             machineId: 'machine_1',
-        })).resolves.toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+        })).resolves.toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, failureCause });
         await expect(fetchLocalServiceInventorySnapshotViaMachineRpc({
             machineId: 'machine_1',
         })).resolves.toEqual({ ok: false, reason: 'invalid_response' });

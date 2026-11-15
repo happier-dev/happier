@@ -56,11 +56,11 @@ describe('local service launcher machine RPC client', () => {
         const target = { machineId: 'machine_1', serverId: 'server_1', targetId: 'target_1' };
         if (carrier === 'throw') machineRpcWithServerScopeMock.mockRejectedValue({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         else machineRpcWithServerScopeMock.mockResolvedValue({ errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'Method not found' });
-        expect(await openLocalServiceLauncherPreviewViaMachineRpc(target)).toEqual({ ok: false, reason: 'request_failed' });
-        expect(await fetchLocalServiceLauncherSnapshotViaMachineRpc(target)).toEqual({ ok: false, reason: 'request_failed' });
-        expect(await startLocalServiceLauncherTargetViaMachineRpc(target)).toEqual({ ok: false, reason: 'request_failed' });
+        expect(await openLocalServiceLauncherPreviewViaMachineRpc(target)).toEqual({ ok: false, reason: 'request_failed', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+        expect(await fetchLocalServiceLauncherSnapshotViaMachineRpc(target)).toEqual({ ok: false, reason: 'request_failed', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+        expect(await startLocalServiceLauncherTargetViaMachineRpc(target)).toEqual({ ok: false, reason: 'request_failed', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         machineRpcWithServerScopeMock.mockRejectedValueOnce({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
-        expect(await openLocalServiceLauncherPreviewViaMachineRpc(target)).toEqual({ ok: false, reason: 'unavailable' });
+        expect(await openLocalServiceLauncherPreviewViaMachineRpc(target)).toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
     });
 
     it.each(['outcomeUnknown', 'unclassified', 'invalid_response'] as const)
@@ -140,6 +140,8 @@ describe('local service launcher machine RPC client', () => {
         // Only remote Machine transport is replaced. The runtime Action, strict
         // request/response clients and scoped subscription publication stay real.
         machineRpcWithServerScopeMock.mockImplementation(async ({ method, payload }: { method: string; payload: unknown }) => {
+            // No inventory change occurs in this workspace-publication case; its real watch stays parked.
+            if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
             const matches = payload !== null && typeof payload === 'object'
                 && 'scope' in payload && payload.scope === 'workspace'
                 && 'workspaceRoot' in payload && payload.workspaceRoot === selectedKey.workspaceRoot;
@@ -276,7 +278,7 @@ describe('local service launcher machine RPC client', () => {
 
         await expect(fetchLocalServiceLauncherSnapshotViaMachineRpc({
             machineId: 'machine_1',
-        })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+        })).resolves.toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         await expect(fetchLocalServiceLauncherSnapshotViaMachineRpc({
             machineId: 'machine_1',
         })).resolves.toEqual({ ok: false, reason: 'invalid_response' });
@@ -388,7 +390,7 @@ describe('local service launcher machine RPC client', () => {
         await expect(openLocalServiceLauncherPreviewViaMachineRpc({
             machineId: 'machine_1',
             targetId: 'target_1',
-        })).resolves.toEqual({ ok: false, reason: 'request_failed' });
+        })).resolves.toEqual({ ok: false, reason: 'request_failed', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
     });
 
     it('fails closed for unavailable and mismatched daemon launcher start responses', async () => {
@@ -410,11 +412,11 @@ describe('local service launcher machine RPC client', () => {
         await expect(startLocalServiceLauncherTargetViaMachineRpc({
             machineId: 'machine_1',
             targetId: 'target_1',
-        })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+        })).resolves.toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         await expect(startLocalServiceLauncherTargetViaMachineRpc({
             machineId: 'machine_1',
             targetId: 'target_1',
-        })).resolves.toEqual({ ok: false, reason: 'request_failed' });
+        })).resolves.toEqual({ ok: false, reason: 'request_failed', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
         await expect(startLocalServiceLauncherTargetViaMachineRpc({
             machineId: 'machine_1',
             targetId: 'target_1',

@@ -256,11 +256,11 @@ export function createLocalServiceInventoryCountAcquisition(input: LocalServiceI
         if (getLocalServiceInventoryRunningCount(input) !== null) return;
         const previous = store.getState(input);
         const previousSource = readLocalServiceInventoryMachineSummarySource(previous);
-        const summary = await fetchLocalServiceInventorySummaryViaMachineRpc({ ...input, signal });
+        const result = await fetchLocalServiceInventorySummaryViaMachineRpc({ ...input, signal });
         const current = store.getState(input);
-        if (!signal.aborted && summary && current.summary === previous.summary
+        if (!signal.aborted && result.ok && current.summary === previous.summary
             && readLocalServiceInventoryMachineSummarySource(current) === previousSource && current.generatedAt === previous.generatedAt) {
-            publishLocalServiceInventorySummary(input, summary);
+            publishLocalServiceInventorySummary(input, result.summary);
         }
     });
 }

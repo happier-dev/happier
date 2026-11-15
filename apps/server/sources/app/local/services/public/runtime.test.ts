@@ -25,6 +25,41 @@ const preview: LocalServicePreviewResourceV1 = {
 };
 
 describe("local service public exposure runtime", () => {
+    it('recreates an individual people share after individual and Team revocations', () => {
+        let exposureIndex = 0;
+        const runtime = createLocalServicePublicRuntime({
+            publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test',
+            tokenSecret: 'fixture-key',
+            policy: { enabled: true, allowedModes: ['people'], maxTtlMs: 600_000,
+                maxConcurrentExposures: 1, dnsTlsRequired: false, auditRequired: true,
+                rateLimitProfileIds: ['default'] },
+            nowMs: () => 1_000, generateExposureId: () => `people-${++exposureIndex}`,
+            allowTestDevAuditSink: true, recordAuditEvent: () => {},
+            checkRateLimit: createLocalServicePublicRateLimitChecker({ kind: 'test_dev' }),
+            resolvePreview: () => preview,
+        });
+        const audiences = [
+            [{ kind: 'account' as const, accountId: 'recipient' }],
+            [{ kind: 'account' as const, accountId: 'recipient' }],
+            [{ kind: 'team' as const, teamId: 'team' }],
+            [{ kind: 'account' as const, accountId: 'recipient' }],
+        ];
+        const createdIds: string[] = [];
+        for (const audience of audiences) {
+            const result = runtime.createExposure({ preview, requestedMode: 'people', requestedTtlMs: 600_000,
+                actorId: 'creator', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default',
+                audience, landingBaseUrl: 'https://app.example.test' });
+            expect(result).toMatchObject({ ok: true, exposure: { state: 'active', audience } });
+            if (!result.ok) throw new Error(result.reasonCode);
+            createdIds.push(result.exposure.exposureId);
+            expect(runtime.getSnapshot({ machineId: preview.machineId }).exposures.filter(item => item.state === 'active'))
+                .toEqual([result.exposure]);
+            expect(runtime.revokeExposure(result.exposure.exposureId, { actorId: 'creator' })).toEqual({ ok: true });
+        }
+        expect(new Set(createdIds).size).toBe(audiences.length);
+        expect(runtime.getSnapshot({ machineId: preview.machineId }).exposures.map(item => item.state))
+            .toEqual(['revoked', 'revoked', 'revoked', 'revoked']);
+    });
     it('publishes one content-free change per exposure lifecycle transition, never per status read', () => {
         // The publisher is the socket transport boundary; exposure lifecycle remains real.
         const onExposureChanged = vi.fn();

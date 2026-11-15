@@ -6,6 +6,7 @@ import {
     type DaemonLocalServicePreviewRevokeResponseV1,
 } from '@happier-dev/protocol/local/services/preview/v1';
 
+import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
 import type { LocalServicePreviewSnapshot, LocalServicePreviewSnapshotRow } from './store';
 
 export type LocalServicePreviewLifecycleFailureReason =
@@ -28,11 +29,11 @@ export type LocalServicePreviewRevokeClientInput = Readonly<{
 
 export type LocalServicePreviewOpenOrCreateClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServicePreviewOpenOrCreateResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServicePreviewLifecycleFailureReason }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: LocalServicePreviewLifecycleFailureReason }>;
 
 export type LocalServicePreviewRevokeClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServicePreviewRevokeResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServicePreviewLifecycleFailureReason }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: LocalServicePreviewLifecycleFailureReason }>;
 
 export type LocalServicePreviewSnapshotClientInput = Readonly<{
     machineId: string;
@@ -43,7 +44,7 @@ export type LocalServicePreviewSnapshotClientInput = Readonly<{
 
 export type LocalServicePreviewSnapshotClientResult =
     | Readonly<{ ok: true; snapshot: LocalServicePreviewSnapshot }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), snapshot: vi.fn() }));
@@ -173,6 +174,21 @@ describe('shared local-service inventory store', () => {
         await read;
         expect(rpc.machine.mock.calls[0]?.[0].signal.aborted).toBe(true);
         expect(getLocalServiceInventoryRunningCount(key)).toBeNull();
+    });
+    it.each(['returned', 'thrown'] as const)('keeps a newer known count when an older scalar read is refused (%s)', async carrier => {
+        const key = { machineId: 'machine-a', serverId: 'server-a', sessionId: 'session-a' };
+        const pending = createDeferred<unknown>();
+        rpc.snapshot.mockReturnValue(pending.promise);
+        const acquisition = createLocalServiceInventoryCountAcquisition(key);
+        const read = acquisition.readOnce();
+        publishLocalServiceInventorySummary(key, { v: 1, state: 'ready', runningCount: 4 });
+        if (carrier === 'returned') pending.resolve({ errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, error: 'private request details' });
+        else pending.reject(new RpcError('private request details', RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE));
+        await read;
+        await acquisition.readOnce();
+        expect(getLocalServiceInventoryRunningCount(key)).toBe(4);
+        expect(rpc.machine).toHaveBeenCalledTimes(1);
+        acquisition.dispose();
     });
 
     it('keeps a newer unavailable Machine publication when an older scalar read replies late', async () => {

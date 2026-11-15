@@ -9,6 +9,7 @@ import type {
     LocalServiceLaunchTargetV1,
 } from '@happier-dev/protocol/local/services/launcher/v1';
 
+import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
 export type LocalServiceLaunchTarget = LocalServiceLaunchTargetV1;
 export type LocalServiceLauncherSnapshot = LocalServiceLauncherSnapshotV1;
 
@@ -31,7 +32,7 @@ export type LocalServiceLauncherStartClientInput = Readonly<{
 
 export type LocalServiceLauncherStartClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServiceLauncherStartResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason | 'outcome_unknown' }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason | 'outcome_unknown' }>;
 
 // LSV-1 launcher leaves (UI → daemon machine-RPC). `openPreview`/`registerPreview` are bound to
 // a launch target; `history.clear` is target-less. They mirror the launcher.start client shape.
@@ -53,15 +54,15 @@ export type LocalServiceLauncherHistoryClearClientInput = Pick<DaemonLocalServic
 
 export type LocalServiceLauncherOpenPreviewClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServiceLauncherOpenPreviewResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason }>;
 
 export type LocalServiceLauncherRegisterPreviewClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServiceLauncherRegisterPreviewResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason }>;
 
 export type LocalServiceLauncherHistoryClearClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServiceLauncherHistoryClearResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: LocalServiceLauncherRouteFailureReason }>;
 
 export type LocalServiceLauncherState = Readonly<{
     machineId: string | null;

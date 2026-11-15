@@ -3,6 +3,7 @@ import {
     LocalServiceLauncherSnapshotV1Schema,
 } from '@happier-dev/protocol/local/services/launcher/v1';
 
+import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
 import type { LocalServiceLauncherSnapshot } from './types';
 
 export const LOCAL_SERVICE_LAUNCHER_SNAPSHOT_ROUTE = '/local-services/launcher/snapshot';
@@ -26,7 +27,7 @@ export type LocalServiceLauncherSnapshotClientInput = Readonly<{
 
 export type LocalServiceLauncherSnapshotClientResult =
     | Readonly<{ ok: true; snapshot: LocalServiceLauncherSnapshot }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
 
 export type LocalServiceLauncherWatchClientInput = Omit<LocalServiceLauncherSnapshotClientInput, 'request'> & Readonly<{
     targets: LocalServiceLauncherSnapshot['targets'];
@@ -34,7 +35,7 @@ export type LocalServiceLauncherWatchClientInput = Omit<LocalServiceLauncherSnap
 export type LocalServiceLauncherWatchClientResult =
     | Readonly<{ ok: true; changed: true; snapshot: LocalServiceLauncherSnapshot }>
     | Readonly<{ ok: true; changed: false }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
+    | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

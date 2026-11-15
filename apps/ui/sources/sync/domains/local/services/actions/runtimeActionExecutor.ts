@@ -5,6 +5,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { LocalServiceActionRequestV1Schema, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { fetchLocalServiceInventorySummaryViaMachineRpc } from '../inventory/machineRpc';
+import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
 import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema, type DaemonLocalServiceLauncherLeafRequestV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { parseLocalServiceDomainActionRpcRequest, resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
@@ -262,9 +263,11 @@ function resolveMachineId(input: Readonly<{
 function routeFailureResult(
     kind: LocalServicesRouteKind,
     reason: LocalServicesRouteFailureReason,
-    reasonCode?: string,
+    failure?: LocalServiceRpcFailureMetadata,
 ) {
-    return { ...disabledResult(`local_services_${kind}_${reason}`), ...(reasonCode ? { details: { reasonCode } } : {}) };
+    return { ...disabledResult(`local_services_${kind}_${reason}`),
+        ...(failure?.reasonCode ? { details: { reasonCode: failure.reasonCode } } : {}),
+        ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}) };
 }
 
 export function createLocalServicesRuntimeActionExecutor(
@@ -383,9 +386,10 @@ export function createLocalServicesRuntimeActionExecutor(
         if (args.actionId === 'localServices.inventory.list' || args.actionId === 'localServices.inventory.refresh') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             if (args.actionId === 'localServices.inventory.list' && isRecord(parsed.input) && parsed.input.projection === 'count') {
-                const summary = await fetchLocalServiceInventorySummaryViaMachineRpc({ machineId, serverId,
+                const result = await fetchLocalServiceInventorySummaryViaMachineRpc({ machineId, serverId,
                     ...(catalogBinding ? { accountId: catalogBinding.lifetime.scope.accountId } : {}), signal: args.context.signal });
-                if (!summary) return routeFailureResult('inventory', 'unavailable');
+                if (!result.ok) return routeFailureResult('inventory', result.reason, result);
+                const summary = result.summary;
                 if (mayPublishCatalog(serverId)) publishLocalServiceInventorySummary({ machineId, serverId, ...catalogScope }, summary);
                 return { summary };
             }
@@ -398,7 +402,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 signal: args.context.signal,
                 request: input.request,
             });
-            if (!result.ok) return routeFailureResult('inventory', result.reason, result.reasonCode);
+            if (!result.ok) return routeFailureResult('inventory', result.reason, result);
             onInventorySnapshot({ machineId, serverId, sessionId, snapshot: result.snapshot });
             if (args.actionId === 'localServices.inventory.refresh' && mayPublishCatalog(serverId)) {
                 recoverLocalServiceLauncherStores({ machineId, serverId, ...catalogScope });
@@ -421,7 +425,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 signal: args.context.signal,
                 request: input.request,
             });
-            if (!result.ok) return routeFailureResult('launcher', result.reason);
+            if (!result.ok) return routeFailureResult('launcher', result.reason, result);
             onLauncherSnapshot({ ...request.data, serverId, snapshot: result.snapshot });
             return result.snapshot;
         }
@@ -445,8 +449,9 @@ export function createLocalServicesRuntimeActionExecutor(
                 ...(args.context.signal ? { signal: args.context.signal } : {}),
             });
             if (!result.ok) return result.reason === 'outcome_unknown' || result.reason === 'invalid_response'
-                ? projectUnexpectedActionFailureV1(null, args.context.actionRequestId ?? undefined)
-                : routeFailureResult('launcher', result.reason);
+                ? { ...projectUnexpectedActionFailureV1(null, args.context.actionRequestId ?? undefined),
+                    ...(result.failureCause ? { failureCause: result.failureCause } : {}) }
+                : routeFailureResult('launcher', result.reason, result);
             onLauncherSnapshot({ machineId, serverId, sessionId,
                 ...(request.workspace ? { scope: 'workspace' as const, workspaceRoot: request.workspace.rootPath } : {}),
                 snapshot: result.response.snapshot });
@@ -463,7 +468,7 @@ export function createLocalServicesRuntimeActionExecutor(
             const targetId = readTargetIdFromInput(parsed.input);
             if (!targetId) return invalidParametersResult;
             const result = await openLauncherPreview({ machineId, targetId, serverId, sessionId, signal: args.context.signal });
-            return result.ok ? result.response : routeFailureResult('launcher', result.reason);
+            return result.ok ? result.response : routeFailureResult('launcher', result.reason, result);
         }
 
         if (args.actionId === 'localServices.launcher.registerPreview') {
@@ -471,7 +476,7 @@ export function createLocalServicesRuntimeActionExecutor(
             const targetId = readTargetIdFromInput(parsed.input);
             if (!targetId) return invalidParametersResult;
             const result = await registerLauncherPreview({ machineId, targetId, serverId, sessionId, signal: args.context.signal });
-            return result.ok ? result.response : routeFailureResult('launcher', result.reason);
+            return result.ok ? result.response : routeFailureResult('launcher', result.reason, result);
         }
 
         if (args.actionId === 'localServices.launcher.history.clear') {
@@ -489,7 +494,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 ...(accountId ? { accountId } : {}),
                 ...(context.signal ? { signal: context.signal } : {}),
             });
-            if (!result.ok) return routeFailureResult('launcher', result.reason);
+            if (!result.ok) return routeFailureResult('launcher', result.reason, result);
             onLauncherSnapshot({ ...request, serverId, snapshot: result.response.snapshot });
             return result.response;
         }
@@ -501,7 +506,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('preview', result.reason);
+            if (!result.ok) return routeFailureResult('preview', result.reason, result);
             // Converge the action read into the shared store so the status truth and the open pane
             // do not diverge (DUP-6).
             onPreviewSnapshot({ machineId, serverId, snapshot: result.snapshot });
@@ -537,7 +542,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason, result.reasonCode);
+            if (!result.ok) return routeFailureResult('public_preview', result.reason, result);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -561,7 +566,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason, result.reasonCode);
+            if (!result.ok) return routeFailureResult('public_preview', result.reason, result);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -584,7 +589,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason, result.reasonCode);
+            if (!result.ok) return routeFailureResult('public_preview', result.reason, result);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -608,7 +613,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            return result.ok ? result.response : routeFailureResult('public_preview', result.reason, result.reasonCode);
+            return result.ok ? result.response : routeFailureResult('public_preview', result.reason, result);
         }
 
         if (args.actionId.startsWith('localServices.actions.')) {
