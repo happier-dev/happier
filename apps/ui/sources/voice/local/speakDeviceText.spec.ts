@@ -24,8 +24,22 @@ vi.mock('expo-speech', () => ({
 }));
 
 import { speakDeviceText } from './speakDeviceText';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 
 describe('speakDeviceText', () => {
+    it('retains the browser synthesis event code through the published Voice cause', async () => {
+        speakSpy.mockImplementationOnce((_text, opts) => {
+            // Expo Speech web forwards SpeechSynthesisErrorEvent, not an Error.
+            // Expo's native Error annotation omits its actual web event shape.
+            const onError = opts.onError as ((event: unknown) => void) | undefined;
+            onError?.({ error: 'synthesis-failed', charIndex: 0, utterance: { text: 'private greeting' } });
+        });
+        const error = await speakDeviceText('private greeting').catch((cause: unknown) => cause);
+        expect(createVoiceMachineError({ kind: 'tts_failed', reason: 'tts_failed', cause: error }))
+            .toMatchObject({ failureCause: { phase: 'voice.tts.device', nativeErrorCode: 'synthesis-failed' } });
+        expect(JSON.stringify(error)).not.toContain('private greeting');
+        expect(getSharedVoiceAudioSessionCoordinator()!.getSnapshot().leaseCount).toBe(0);
+    });
     beforeEach(() => {
         vi.mocked(audioSession.nativeModule.configureAudioSession).mockClear();
         speakSpy.mockReset();

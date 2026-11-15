@@ -29,6 +29,7 @@ vi.mock('react-native', async () => {
 });
 
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { resetWebAudioContextForTests } from '@/voice/output/webAudioContext';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
@@ -92,6 +93,26 @@ afterEach(async () => {
 });
 
 describe('playAudioBytesWithStopper (web)', () => {
+  it('retains the HTML media error code through the published Voice cause', async () => {
+    (globalThis as unknown as { AudioContext?: unknown }).AudioContext = undefined;
+    const revokeObjectURL = vi.fn();
+    stubBlobUrlHelpers({ createObjectURL: vi.fn(() => 'blob:media-error'), revokeObjectURL });
+    (globalThis as unknown as { Audio?: unknown }).Audio = function AudioMock() {
+      return {
+        error: { code: 3, message: 'private media URL' },
+        onended: null,
+        onerror: null as (() => void) | null,
+        pause: vi.fn(),
+        play() { this.onerror?.(); return Promise.resolve(); },
+      };
+    };
+    const error = await playAudioBytesWithStopper({ bytes: new ArrayBuffer(4), format: 'wav',
+      registerPlaybackStopper: createVoicePlaybackController().registerStopper }).catch((cause: unknown) => cause);
+    expect(createVoiceMachineError({ kind: 'tts_failed', reason: 'tts_failed', cause: error }))
+      .toMatchObject({ failureCause: { phase: 'voice.playback', nativeErrorCode: '3' } });
+    expect(JSON.stringify(error)).not.toContain('private media URL');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:media-error');
+  });
   it('does not start HTML audio when a stale attempt is rejected during registration', async () => {
     (globalThis as unknown as { AudioContext?: unknown }).AudioContext = undefined;
     stubBlobUrlHelpers({

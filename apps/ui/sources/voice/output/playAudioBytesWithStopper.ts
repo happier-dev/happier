@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createVoiceEncodedAudioPlayback } from '@happier-dev/audio-stream-native';
 
 import type {
@@ -311,9 +312,14 @@ export async function playAudioBytesWithStopper(opts: {
       };
       playbackAudio.onerror = () => {
         if (settled) return;
+        const mediaError = playbackAudio.error;
+        const failureCause = {
+          ...projectActionFailureCauseV1(mediaError, 'voice.playback', { allowUnknownErrorCode: false }),
+          ...(mediaError ? { nativeErrorCode: String(mediaError.code) } : {}),
+        };
         qaOutputTap.markFailed('audio_playback_failed');
         cleanup();
-        safeReject(new Error('audio_playback_failed'));
+        safeReject(Object.assign(new Error('audio_playback_failed'), { failureCause }));
       };
 
       try {

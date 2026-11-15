@@ -1,4 +1,5 @@
 import * as ExpoSpeech from 'expo-speech';
+import { projectActionFailureCauseV1, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { acquireVoicePlaybackAudioMode } from '@/voice/runtime/voiceAudioMode';
 
 /**
@@ -68,6 +69,17 @@ export async function speakDeviceText(
                     },
                     onError: (err: unknown) => {
                         opts?.signal?.removeEventListener('abort', onAbort);
+                        // Web forwards SpeechSynthesisErrorEvent rather than Error.
+                        // Project only its code, never the event's utterance content.
+                        if (err && typeof err === 'object' && 'error' in err && typeof err.error === 'string') {
+                            fail(Object.assign(new Error('tts_failed'), {
+                                failureCause: readActionFailureCauseV1({
+                                    ...projectActionFailureCauseV1(err, 'voice.tts.device', { allowUnknownErrorCode: false }),
+                                    nativeErrorCode: err.error,
+                                }),
+                            }));
+                            return;
+                        }
                         fail(err);
                     },
                 });
