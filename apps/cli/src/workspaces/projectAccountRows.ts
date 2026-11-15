@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
 
 import {
-  PROJECT_ACCOUNT_ROWS_ROUTE_V1,
+  PROJECT_ACCOUNT_ROWS_ROUTE_V1, PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1,
   ProjectAccountRowListResponseV1Schema, ProjectAccountRowReadResponseV1Schema, ProjectAccountRowMutationRequestV1Schema,
   ProjectAccountRowMutationResponseV1Schema,
   assertProjectAccountRowPayloadBindingV1,
@@ -19,7 +19,7 @@ import {
 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
-import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
@@ -429,6 +429,58 @@ function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scope
 function applyAcknowledgedRows(snapshot: ActiveProjectAccountRowsSnapshot, rows: readonly OpenedProjectAccountRow[]): ActiveProjectAccountRowsSnapshot {
   return projectSnapshotFromRows(rows, snapshot.scopeKey, snapshot);
 }
+/**
+ * Private Session reads held per Account and Home while a live Session owner receives the Account
+ * wakes that announce project-row changes (`holdSessionProjectAccountRows`). The owner drops them
+ * on a wake naming a project row (or a coarse wake) and on disconnect; with no owner every read goes
+ * to the Home as before. Held reads never publish into the daemon's Active Account projection.
+ */
+type HeldSessionProjectRows = { owners: number; generation: number; reads: Map<string, ActiveProjectAccountRowsSnapshot> };
+const heldSessionProjectRows = new Map<string, HeldSessionProjectRows>();
+const heldSessionScopeKey = (custody: Readonly<{ serverHttpBaseUrl: string; accountId: string }>) =>
+  JSON.stringify([normalizeServerHttpBaseUrl(custody.serverHttpBaseUrl), custody.accountId]);
+const heldSelectionKey = (serverId: string, selection: unknown) => JSON.stringify([serverId, selection]);
+
+export type SessionProjectAccountRowsHold = Readonly<{ invalidate(): void; release(): void }>;
+export function holdSessionProjectAccountRows(custody: Readonly<{ serverHttpBaseUrl: string; accountId: string }>): SessionProjectAccountRowsHold {
+  const key = heldSessionScopeKey(custody);
+  const held = heldSessionProjectRows.get(key) ?? { owners: 0, generation: 0, reads: new Map() };
+  heldSessionProjectRows.set(key, held);
+  held.owners++;
+  let released = false;
+  const invalidate = () => { held.generation++; held.reads.clear(); };
+  return {
+    invalidate,
+    release() {
+      if (released) return;
+      released = true;
+      invalidate();
+      if (--held.owners === 0 && heldSessionProjectRows.get(key) === held) heldSessionProjectRows.delete(key);
+    },
+  };
+}
+
+/** An Account wake that may change project rows: it names a project row, or it names nothing. */
+export function isProjectAccountRowsAccountWake(body: unknown): boolean {
+  if (!body || typeof body !== 'object' || (body as { t?: unknown }).t !== 'account-change') return false;
+  const entityIds = (body as { entityIds?: unknown }).entityIds;
+  return !Array.isArray(entityIds)
+    || entityIds.some(entityId => typeof entityId === 'string' && entityId.startsWith(PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1));
+}
+
+function heldSessionReadSlot(input: ReadInput, serverId: string, selection: unknown) {
+  const held = input.sessionCustody ? heldSessionProjectRows.get(heldSessionScopeKey(input.sessionCustody)) : undefined;
+  if (!held) return null;
+  const key = heldSelectionKey(serverId, selection);
+  const generation = held.generation;
+  return {
+    read: () => held.reads.get(key) ?? null,
+    store(snapshot: ActiveProjectAccountRowsSnapshot) { if (held.generation === generation) held.reads.set(key, snapshot); },
+    invalidate() { held.generation++; held.reads.clear(); },
+    current: (snapshot: ActiveProjectAccountRowsSnapshot) => held.reads.get(key) === snapshot,
+  };
+}
+
 export type ProjectAccountRowsObservation = Readonly<{
   snapshot: ActiveProjectAccountRowsSnapshot;
   isCurrent(): Promise<boolean>;
@@ -442,6 +494,16 @@ export async function readProjectAccountRowsObservation(input: ProjectAccountRow
     bound.authorization?.binding.actionId ?? '', bound.authorization?.binding.requestId, stage, operation);
   const installedBeforeRead = bound.selection && canPublish(bound) && active?.scopeKey === scopeKey(bound)
     ? { value: selectedProjection(active, bound.selection) } : null;
+  const heldSlot = bound.selection ? heldSessionReadSlot(bound, bound.serverId, bound.selection) : null;
+  const heldSnapshot = heldSlot?.read();
+  if (heldSlot && heldSnapshot) {
+    await assertRequesterCurrent(bound);
+    return { snapshot: heldSnapshot, isCurrent: async () => {
+      try { await assertRequesterCurrent(bound); }
+      catch { return false; }
+      return heldSlot.current(heldSnapshot);
+    } };
+  }
   const observation = await runWithServerHttpBaseUrl(baseUrl(bound), () => withSnapshotReadFailurePolicy(bound, async () => {
       input.signal?.throwIfAborted();
       const mode = await timeWebLatencyPhase('projectRows.mode', () => trace('project_rows.mode', () => readMode(bound, 'identity')));
@@ -500,6 +562,7 @@ export async function readProjectAccountRowsObservation(input: ProjectAccountRow
   // Retirement is not an authentication/content failure: preserve any newer
   // admitted projection instead of withdrawing it through the failure policy.
   if (!observation) throw rowError('project_account_rows_changed');
+  heldSlot?.store(observation.snapshot);
   return observation;
 }
 
@@ -558,6 +621,17 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
 }>): Promise<Readonly<{ status: 'updated'; key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>; revision: number; value: ProjectAccountOrganizationV1 }> | Readonly<{ status: 'conflict'; revision: number }>> {
   return await runWithServerHttpBaseUrl(resolveServerHttpBaseUrl(), async () => {
     const key = { kind: 'project-organization' as const, serverId: input.serverId, projectKey: input.projectKey };
+    const heldSlot = input.expectedRevision === undefined ? heldSessionReadSlot(input, input.serverId, { key }) : null;
+    const heldSnapshot = heldSlot?.read();
+    if (heldSnapshot) {
+      // A held organization row this mutation would not change publishes nothing.
+      const heldIdentity = buildProjectAccountRowPhysicalKeyV1(key);
+      const heldRow = heldSnapshot.organizations.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === heldIdentity);
+      if (heldRow && isDeepStrictEqual(input.mutate(heldRow.value), heldRow.value)) {
+        await assertRequesterCurrent(input);
+        return { status: 'updated', key, revision: heldRow.revision, value: heldRow.value };
+      }
+    }
     const { mode, snapshot } = await withSnapshotReadFailurePolicy(input, async () => {
       const mode = await readMode(input);
       return { mode, snapshot: await fetchSnapshot(input, mode, { key }) };
@@ -569,8 +643,11 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
     const value = input.mutate(row?.value ?? {});
     if (row && isDeepStrictEqual(value, row.value)) {
       if (active?.scopeKey === snapshot.scopeKey) acceptSnapshot(input, snapshot);
+      heldSlot?.store(snapshot);
       return { status: 'updated', key, revision: row.revision, value: row.value };
     }
+    // This write changes project rows; held reads of this Account are retired before it lands.
+    heldSlot?.invalidate();
     const result = await submitOpenedRows({ ...input, request: {
       mutations: [{ key, expectedRevision: observedRevision, payload: { key, value } }],
       expectedRefs: [], topologyChange: false,

@@ -34,6 +34,27 @@ function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect' | 'liv
 }
 
 type ChangesPage = Awaited<ReturnType<typeof fetchChanges>>;
+
+/**
+ * Whether a live Account wake needs this Session client's changes read. The client consumes only
+ * Account rows (Settings, catalogs, plugin settings), share rows and changes to its own Session.
+ * Another Session's row has no consumer here (its per-client cursor keeps it for a later read), and
+ * an own-Session change whose row facts the server declares pushed to the Session audience
+ * (`rowFactsPushedSessionId`: current-view and pending-state writes) is applied through this
+ * client's live Session socket. Wakes
+ * without complete routing, and every other kind, read.
+ */
+export function accountWakeNeedsSessionChangesRead(params: Readonly<{
+    wake: unknown; sessionId: string; sessionPushesCurrent: boolean;
+}>): boolean {
+    const body = params.wake && typeof params.wake === 'object' && 'body' in params.wake ? params.wake.body : null;
+    if (!body || typeof body !== 'object' || !('t' in body) || body.t !== 'account-change') return true;
+    const routing = body as Readonly<{ changeKinds?: unknown; entityIds?: unknown; rowFactsPushedSessionId?: unknown }>;
+    if (!Array.isArray(routing.changeKinds) || !Array.isArray(routing.entityIds) || routing.changeKinds.length === 0) return true;
+    if (routing.changeKinds.some(kind => kind !== 'session')) return true;
+    if (!routing.entityIds.includes(params.sessionId)) return false;
+    return !(params.sessionPushesCurrent && routing.rowFactsPushedSessionId === params.sessionId);
+}
 const inFlightChangesPages = new Map<string, Promise<ChangesPage>>();
 
 /**
