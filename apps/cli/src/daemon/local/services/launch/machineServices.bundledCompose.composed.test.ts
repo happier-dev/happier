@@ -12,7 +12,7 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { createMachineServicesRuntime } from './machineServices';
 
 describe('bundled Compose Machine services', () => {
-    it.skipIf(process.platform === 'win32')('discovers and watches the exact native project without changing it, through installed admission and real Exec', async () => {
+    it.skipIf(process.platform === 'win32')('discovers, watches and controls only existing native project members through installed admission and real Exec', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-bundled-compose-'));
         const callsPath = join(root, 'calls.jsonl');
         const statePath = join(root, 'native-state.json');
@@ -32,7 +32,8 @@ if(args.includes('info')) process.stdout.write(args.includes('{{.ID}}')?state.en
 else if(args[0]==='ps') process.stdout.write(ids.join('\\n')+'\\n');
 else if(args[0]==='inspect') process.stdout.write(JSON.stringify(ids.map((id,index)=>({Id:id,Image:'sha256:'+'c'.repeat(64),Config:{Labels:{'com.docker.compose.project':state.project,'com.docker.compose.service':index?'worker':'web','com.docker.compose.oneoff':'False'}},State:{Status:state.state,Health:{Status:'healthy'}},NetworkSettings:{Ports:{}},Mounts:[]}))));
 else if(args[0]==='logs') process.stdout.write('native '+args.at(-1).slice(0,1)+' log\\n');
-else if(['start','stop','restart','up','down','run','build','pull'].some(verb=>args.includes(verb))){fs.writeFileSync(${JSON.stringify(statePath)},JSON.stringify({...state,state:'MUTATED'}));process.exitCode=18;}
+else if(['start','stop','restart'].includes(args[0])) fs.writeFileSync(${JSON.stringify(statePath)},JSON.stringify({...state,state:args[0]==='stop'?'exited':'running'}));
+else if(['up','down','run','build','pull'].some(verb=>args.includes(verb))){fs.writeFileSync(${JSON.stringify(statePath)},JSON.stringify({...state,state:'MUTATED'}));process.exitCode=18;}
 else process.exitCode=19;
 `, { mode: 0o700 });
         await chmod(executablePath, 0o700);
@@ -67,16 +68,20 @@ else process.exitCode=19;
             } })).toMatchObject({ kind: 'applied' });
             const listed = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
             expect(listed).toMatchObject({ kind: 'snapshot', services: [{ authority: 'machine',
-                capabilities: { start: false, restart: false, logs: true }, native: { phase: 'running', displayName: native.project },
+                capabilities: { start: true, stop: true, restart: true, logs: true }, native: { phase: 'running', displayName: native.project },
             }] });
             const selected = await fixture.registry.resolveProjectNativeAdapter(adapter, 'nativeServiceLifecycle');
             if (selected.kind !== 'ready') throw new Error('Compose lifecycle did not activate');
             const captured = selected.lease.captureNativeServiceLifecycle(candidate, { machine: target });
             if (captured.kind !== 'ready') throw new Error('Compose lifecycle did not capture');
             try {
-                expect(captured.lifecycle.start).toBeUndefined();
-                expect(captured.lifecycle.restart).toBeUndefined();
-                expect(await captured.lifecycle.stop(candidate)).toEqual({ status: 'unsupported' });
+                const handle = fixture.registry.projectManagedServices.listMachineServices()[0]!;
+                expect(await handle.controlNative('stop', { operation: { operationId: 'native-stop', kind: 'serviceControl' } }))
+                    .toMatchObject({ kind: 'observed', state: 'stopped' });
+                expect(await handle.controlNative('start', { operation: { operationId: 'native-start', kind: 'serviceControl' } }))
+                    .toMatchObject({ kind: 'observed', state: 'healthy' });
+                expect(await handle.controlNative('restart', { operation: { operationId: 'native-restart', kind: 'serviceControl' } }))
+                    .toMatchObject({ kind: 'observed', state: 'healthy' });
                 expect(await captured.lifecycle.logs!(candidate, { kind: 'read', maxBytes: 128 }))
                     .toMatchObject({ kind: 'page', page: { text: expect.stringContaining('native a log') } });
                 const bounded = await captured.lifecycle.logs!(candidate, { kind: 'read', maxBytes: 5 });
@@ -91,6 +96,12 @@ else process.exitCode=19;
                 await subscription.dispose();
                 expect(await readFile(callsPath, 'utf8')).toBe(callsBeforeFollow);
                 await writeFile(statePath, JSON.stringify({ ...native, engineId: 'other-engine' }));
+                const callsBeforeForeignEngine = await readFile(callsPath, 'utf8');
+                expect(await handle.controlNative('stop', { operation: { operationId: 'foreign-engine-stop', kind: 'serviceControl' } }))
+                    .toMatchObject({ kind: 'outcome_unknown' });
+                const foreignEngineCalls = (await readFile(callsPath, 'utf8')).slice(callsBeforeForeignEngine.length)
+                    .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]);
+                expect(foreignEngineCalls.some(args => ['start', 'stop', 'restart'].includes(args[0]!))).toBe(false);
                 expect(await captured.lifecycle.inspect(candidate)).toMatchObject({ phase: 'unknown' });
                 expect(await captured.lifecycle.logs!(candidate, { kind: 'read', maxBytes: 128 }))
                     .toMatchObject({ kind: 'unavailable' });
@@ -154,7 +165,9 @@ else process.exitCode=19;
             }
             expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual(native);
             const calls = (await readFile(callsPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as string[]);
-            expect(calls.filter(args => args.some(arg => ['start', 'stop', 'restart', 'up', 'down', 'run', 'build', 'pull'].includes(arg)))).toEqual([]);
+            expect(calls.filter(args => ['start', 'stop', 'restart'].includes(args[0]!))).toEqual(
+                ['stop', 'start', 'restart'].map(verb => [verb, ...containerIds]));
+            expect(calls.filter(args => args.some(arg => ['up', 'down', 'run', 'build', 'pull'].includes(arg)))).toEqual([]);
             expect(metadata).toMatchObject({ metadata: { displayName: 'Original', serviceWatchesV1: { watches: [] } } });
         } finally {
             try { await environmentHandle?.dispose(); }

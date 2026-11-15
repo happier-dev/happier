@@ -2447,6 +2447,13 @@ effect, its Action retains the operation receipt but discloses no old service
 state or generation. Accepted dispatch is not an observation that the service
 stopped; unconfirmed settlement keeps the existing operation uncertain.
 
+In 0.3 development, an adopted Compose watch controls its existing containers
+through the same admitted service control and Exec custody as other native
+services. Stop, Start and Restart use the watched resource's discovered container
+IDs and observe the resulting native state; they never launch or recreate a
+Compose project. The Machine row consumes the supervisor's control support
+facts, independently of the resource's current running or stopped phase.
+
 The same admitted built-in Compose lifecycle exposes its already-observed native
 container identities and PIDs to the daemon's canonical process-root projector.
 Only a matching full-ID Linux cgroup-v2 fence in that same census establishes host

@@ -292,7 +292,10 @@ export function createMachineManagedServices(input: Readonly<{
                     ...wrapped, kind: 'adopted', serverId: request.serverId, machineId: request.machineId,
                     watch, instance, serviceId: watch.watchId, instanceId: process.snapshot().instanceId, endpointKind: 'native',
                     lifecyclePurpose: watch.lifecyclePurpose, actionScope: { kind: 'machine', machineId: request.machineId },
-                    capabilities: Object.freeze({ exec: Boolean(serviceExec.executeServiceCommand), start: Boolean(native.start), stop: true, restart: Boolean(native.restart),
+                    capabilities: Object.freeze({ exec: Boolean(serviceExec.executeServiceCommand),
+                        start: process.nativeControlCapabilities?.start === true,
+                        stop: process.nativeControlCapabilities?.stop === true,
+                        restart: process.nativeControlCapabilities?.restart === true,
                         logs: Boolean(native.logs), accounting: Boolean(native.accounting) }),
                     retirementSignal: lifetime.signal, isCurrent,
                     async inspectCurrentOccurrence() { assertCurrent(); if (!process.inspectCurrentOccurrence) unavailable();
