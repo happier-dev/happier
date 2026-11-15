@@ -325,6 +325,68 @@ describe('requester credential disclosure at the human Action front door', () =>
             .toEqual([RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT]);
     });
 
+    // P03 R11 ruling: the rare review→confirm path re-dispatches as a fresh invocation and may re-read
+    // Machine grants once; no per-invocation custody carrier is kept between the two presses.
+    it('confirms a carried daemon review with at most two Machine grants reads (P03 R11)', async () => {
+        const homeId = 'srv_requester_confirm';
+        const serverId = await harness.addHome({ name: 'Original requester Home', serverUrl: 'https://requester-confirm.test',
+            serverIdentityId: homeId, accountId: 'bob', currentAccount: true });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        const custodian = { accountId: 'alice', displayName: 'Alice' };
+        const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(5));
+        const machine = { ...createPlainMachineRowFixture({ id: 'alice-machine', accountId: 'alice' }), kind: 'persistent', active: true,
+            installationId: 'alice-installation', installationPublicKey: encodeBase64(installation.publicKey),
+            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+            access: { custodian, role: 'use', resourceMode: 'plain', accessState: 'ready' } } as const;
+        harness.answer(serverId, '/v1/machines', { body: [machine] });
+        harness.answer(serverId, '/v1/machines/alice-machine', { body: { machine } });
+        harness.answer(serverId, '/v1/machines/alice-machine/access', { body: {
+            machineId: 'alice-machine', custodian,
+            access: { custodian, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+            canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
+        } });
+        harness.answer(serverId, '/v1/actions/session.spawn_new/execution-authorization', { select: body => {
+            const mint = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-confirm-root', binding: {
+                accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
+                machineId: 'alice-machine', installationId: 'alice-installation', custodianAccountId: 'alice',
+                accountEncryptionMode: 'plain', actionId: 'session.spawn_new', requestId: mint.envelope.requestId,
+                target: mint.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(mint.envelope),
+            } }) };
+        } });
+        let requesterDispatches = 0;
+        let firstPressGrantReads = 0;
+        harness.answer(serverId, '/v1/actions/session.spawn_new', { select: body => {
+            const carried = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            requesterDispatches += 1;
+            if (requesterDispatches === 1) firstPressGrantReads = harness.requestsFor('/v1/machines/alice-machine/access').length;
+            // The receiving daemon (no presenter) carries its review back on the first press; the confirmed press executes.
+            if (requesterDispatches === 1) return { body: { v: 1, actionId: 'session.spawn_new', requestId: carried.envelope.requestId,
+                execution: { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+                    effectAttempted: false, details: { review: { actionArgs: carried.envelope.v === 1 ? carried.envelope.input : undefined, preview: { summary: 'Start a Session' } },
+                        reviewDigest: 'R'.repeat(43) } } } };
+            return { body: { v: 1, actionId: 'session.spawn_new', requestId: carried.envelope.requestId,
+                execution: { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } } } };
+        } });
+        const previews: unknown[] = [];
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async ({ preview }) => {
+            previews.push(preview);
+            return true;
+        } });
+        const result = await executor.execute('session.spawn_new', SessionSpawnNewInputV2Schema.parse({
+            executionTarget: { serverId: homeId, machineId: 'alice-machine' },
+            directory: { kind: 'path', path: '/workspace/project' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }), { surface: 'ui', authority: 'present_user', serverId, actionRequestId: 'requester-confirm', actionCaller: { kind: 'host' } });
+        expect(result, JSON.stringify(result)).toEqual({ ok: true, result: SessionSpawnNewResultV1Schema.parse({
+            type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }) });
+        expect(previews).toEqual([{ summary: 'Start a Session' }]);
+        expect(requesterDispatches).toBe(2);
+        // A direct press selects custody with one Machine grants read; the confirmed press may read once more.
+        expect(firstPressGrantReads).toBe(1);
+        expect(harness.requestsFor('/v1/machines/alice-machine/access').length).toBeLessThanOrEqual(2);
+    });
+
     it.each([
         { surface: 'ui', route: 'native' }, { surface: 'voice', route: 'native' },
         { surface: 'ui', route: 'provider' }, { surface: 'ui', route: 'auth-free' },
