@@ -39,13 +39,15 @@ function parseGroup(value: unknown, id: string): WorkspaceGroup | null {
     const tabIds = candidate?.tabIds;
     const mru = candidate?.mru;
     if (!candidate || candidate.id !== id || !Array.isArray(tabIds)
-        || tabIds.length === 0 || !tabIds.every(nonempty)
-        || new Set(tabIds).size !== tabIds.length
-        || !nonempty(candidate.activeTabId) || !tabIds.includes(candidate.activeTabId)
+        || tabIds.length === 0 || !tabIds.every(nonempty)) return null;
+    // Membership by set: a restored layout can hold a thousand tabs, and each check runs once per tab.
+    const members = new Set(tabIds);
+    if (members.size !== tabIds.length
+        || !nonempty(candidate.activeTabId) || !members.has(candidate.activeTabId)
         || !Array.isArray(mru) || !mru.every(nonempty)
         || new Set(mru).size !== mru.length
         || !mru.includes(candidate.activeTabId)
-        || mru.some((tabId: string) => !tabIds.includes(tabId))) return null;
+        || mru.some((tabId: string) => !members.has(tabId))) return null;
     return {
         id, tabIds, activeTabId: candidate.activeTabId,
         mru,
