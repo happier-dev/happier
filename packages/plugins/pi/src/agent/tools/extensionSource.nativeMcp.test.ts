@@ -13,13 +13,18 @@ import { buildPiRpcLaunch } from '../runtime/rpc/args.js';
 describe('Pi native MCP delivery', () => {
   it.each(['default', 'read-only'])('%s delivers the requested user tool natively and witnesses the actual provider inventory', async permissionMode => {
     const root = mkdtempSync(join(tmpdir(), 'pi-native-mcp-'));
-    const name = 'mcp__usage_qa_called_r164p__read_active_fixture_status';
+    const toolName = 'read_active_fixture_status_' + 'long_'.repeat(12);
+    let name = '';
+    const originalName = `mcp__usage_qa_called_r164p__${toolName}`;
     const payloads: string[][] = [];
     const frames: Record<string, unknown>[] = [];
     const server = createServer(async (req, res) => {
       let body = ''; for await (const chunk of req) body += String(chunk);
       const payload = JSON.parse(body);
       payloads.push(payload.tools.map((tool: { name: string }) => tool.name));
+      name = payload.tools.find((tool: { name: string }) => tool.name.startsWith('mcp__h__usage_'))?.name ?? '';
+      expect(name.length).toBeGreaterThan(0);
+      expect(payload.tools.every((tool: { name: string }) => tool.name.length <= 64)).toBe(true);
       const call = !payload.messages.at(-1).content.some((part: { type: string }) => part.type === 'tool_result');
       const records = [
         { type: 'message_start', message: { id: 'fixture', type: 'message', role: 'assistant', model: payload.model,
@@ -46,8 +51,8 @@ describe('Pi native MCP delivery', () => {
       writeFileSync(join(root, 'mcp.cjs'), `require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
         const r=JSON.parse(line);if(r.id===undefined)return;
         const result=r.method==='initialize'?{protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}
-          :r.method==='tools/list'?{tools:[{name:'read_active_fixture_status',inputSchema:{type:'object',properties:{}}}]}
-          :{content:[{type:'text',text:'Native MCP succeeded'}]};
+          :r.method==='tools/list'?{tools:[{name:${JSON.stringify(toolName)},inputSchema:{type:'object',properties:{}}}]}
+          :r.params.name===${JSON.stringify(toolName)}?{content:[{type:'text',text:'Native MCP succeeded'}]}:{isError:true,content:[{type:'text',text:'Wrong original tool name'}]};
         process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');});`);
       // Explicit strict selection requires the complete catalog on the first turn.
       prepared = await preparePiHappierToolsExtension({ directory: root, permissionMode, mcpServersStrictMode: true,
@@ -78,6 +83,7 @@ describe('Pi native MCP delivery', () => {
         expect.objectContaining({ type: 'tool_execution_end', isError: false })]));
       expect(frames.filter(frame => frame.type === 'happier-pi-mcp-delivery')).toEqual(payloads.map(tools => ({
         type: 'happier-pi-mcp-delivery', tools: tools.filter(tool => tool.startsWith('mcp__')),
+        aliases: expect.objectContaining({ [name]: originalName }),
       })));
     } finally {
       if (child && child.exitCode === null && child.signalCode === null) {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
+import { listActionSpecBindingDeclarations } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionCapabilityNoticeV1Schema } from '@happier-dev/protocol';
 import { buildPiHappierToolsExtensionSource } from './extensionSource.js';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -40,6 +41,51 @@ lines.on('close', () => process.exit(0));
 `;
 
 describe('Pi extension user MCP', () => {
+  it('registers the full Action catalog and long plugin names within the provider limit with stable unique dispatch', async () => {
+    const catalog = listActionSpecBindingDeclarations().flatMap(spec => spec.bindings?.mcpToolName ? [spec.bindings.mcpToolName] : []);
+    const originals = [...new Set([...catalog, 'plugin_' + 'shared_prefix_'.repeat(10) + 'read', 'plugin_' + 'shared_prefix_'.repeat(10) + 'write'])];
+    const root = mkdtempSync(join(tmpdir(), 'pi-tool-names-'));
+    const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+    const tools: Tool[] = [];
+    try {
+      const configPath = join(root, 'config.json');
+      const extensionPath = join(root, 'extension.mjs');
+      const serverPath = join(root, 'server.mjs');
+      writeFileSync(extensionPath, buildPiHappierToolsExtensionSource());
+      writeFileSync(serverPath, serverSource.replace("let calls = 0;", `let calls = 0; const names = ${JSON.stringify(originals)};`)
+        .replace("else if (message.method === 'tools/list') result = message.params.cursor", "else if (message.method === 'tools/list') result = true")
+        .replace("{ tools: [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } }] }", "{ tools: names.map(name => ({ name, inputSchema: { type: 'object' } })) }")
+        .replace("structuredContent: { calls }", "structuredContent: { calls, originalName: message.params.name }"));
+      writeFileSync(configPath, JSON.stringify({ v: 1, directory: root, systemPrompt: '', tools: [],
+        launch: { executablePath: process.execPath, argsPrefix: [] }, mcpServersStrictMode: true,
+        mcpServers: { happier: { command: process.execPath, args: [serverPath], env: { MCP_FIXTURE_PREFIX: '' } } } }));
+      const extension = await import(pathToFileURL(extensionPath).href);
+      const bind = () => extension.default({ registerFlag() {}, getFlag: () => configPath, registerTool(tool: Tool) { tools.push(tool); },
+        on(name: string, handler: (...args: unknown[]) => unknown) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+        getActiveTools: () => [], setActiveTools() {} });
+      bind();
+      for (const handler of handlers.get('session_start') ?? []) await handler({});
+      expect(tools).toHaveLength(originals.length);
+      expect(tools.filter(tool => tool.name.length > 64).map(tool => tool.name)).toEqual([]);
+      expect(new Set(tools.map(tool => tool.name)).size).toBe(originals.length);
+      expect(tools.find(tool => tool.name === 'mcp__happier__connected_services_authentication_continue_connect')).toBeDefined();
+      for (const original of originals.filter(name => `mcp__happier__${name}`.length > 64)) {
+        const tool = tools[originals.indexOf(original)]!;
+        await expect(tool.execute('call', { text: 'ok' }, undefined, undefined, { cwd: root, ui: { confirm: async () => true } }))
+          .resolves.toMatchObject({ details: { structuredContent: { originalName: original } } });
+      }
+      const firstNames = tools.map(tool => tool.name);
+      for (const handler of handlers.get('session_shutdown') ?? []) await handler({});
+      handlers.clear(); tools.length = 0;
+      bind();
+      for (const handler of handlers.get('session_start') ?? []) await handler({});
+      expect(tools.map(tool => tool.name)).toEqual(firstNames);
+    } finally {
+      for (const handler of handlers.get('session_shutdown') ?? []) await handler({});
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['spawn', 'initialize', 'list'] as const)('isolates optional %s failure, publishes its typed notice, and cleans every child', async stage => {
     await checkStartupFailure(stage, false);
   });

@@ -329,6 +329,11 @@ substitution syntax in catalog data is escaped or refused where it would expand
 an environment variable or file; only the adapter authors credential references.
 
 Pi and Oh My Pi accept credentialed OpenAI Responses bindings in 0.3 development.
+Pi's MCP extension bounds flattened provider tool names to the published
+[OpenAI function-name limit of 64 characters](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
+also observed on Muse Spark. Oversized names receive a readable prefix and a
+stable SHA-256 suffix. MCP calls retain the original server tool name; the Pi
+RPC reader restores canonical names for approvals, transcripts and usage.
 Their plugin adapters register the selected model in a private native home,
 forward the admitted endpoint and public headers, and keep credentials in child
 environment values referenced by native configuration. Native model owners

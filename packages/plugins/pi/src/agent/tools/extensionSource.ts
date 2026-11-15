@@ -9,6 +9,7 @@ export const PI_USER_INPUT_NOTIFICATION_TYPE = 'happy-pi-user-input';
 export function buildPiHappierToolsExtensionSource(): string {
   return `// Happier Pi native tools extension. Generated; tool policy is host-owned.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs, { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -253,6 +254,7 @@ export default function happierPiToolsExtension(pi) {
     if (!config) return;
     registered = true;
     const names = [];
+    const mcpToolAliases = {};
     const activateTools = () => {
       const base = Array.isArray(config.nativeTools)
         ? [...config.nativeTools, ...config.tools.map((tool) => tool.name)] : pi.getActiveTools();
@@ -286,7 +288,8 @@ export default function happierPiToolsExtension(pi) {
           ? tool.functionDeclarations : [tool.function || tool]);
         if (definitions.every((tool) => typeof tool?.name === "string")) {
           fs.writeSync(1, JSON.stringify({ type: MCP_DELIVERY_RECORD_TYPE,
-            tools: definitions.map((tool) => tool.name).filter((name) => name.startsWith("mcp__")) }) + "\\n");
+            tools: definitions.map((tool) => tool.name).filter((name) => name.startsWith("mcp__")),
+            ...(Object.keys(mcpToolAliases).length ? { aliases: mcpToolAliases } : {}) }) + "\\n");
         }
       }
       if (!Array.isArray(payload?.tools) || !payload.tools.some((tool) => tool.input_schema && tool.strict !== true)) return;
@@ -316,7 +319,8 @@ export default function happierPiToolsExtension(pi) {
       });
     }
     if (Array.isArray(config.nativeTools)) activateTools();
-    mcpServers = createMcpServers(pi, config, (registeredNames) => {
+    mcpServers = createMcpServers(pi, config, (registeredNames, aliases) => {
+      Object.assign(mcpToolAliases, aliases);
       names.push(...registeredNames);
       activateTools();
     });

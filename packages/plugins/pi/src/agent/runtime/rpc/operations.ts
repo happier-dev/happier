@@ -535,6 +535,7 @@ function createRuntimeOperations(params: Readonly<{
   const runtimeEventProjector = createPiRuntimeEventProjector();
   const mcpServerNames = new Set(params.mcpServerNames);
   const nativeMcpCalls = new Map<string, string>();
+  const nativeMcpToolAliases = new Map<string, string>();
   let nativeMcpInventory: Set<string> | null = null;
   let nativeMcpInventoryIncomplete = false;
   let sessionId = params.initialSessionId;
@@ -765,6 +766,20 @@ function createRuntimeOperations(params: Readonly<{
 
   function handleRuntimeRecordNow(record: Readonly<Record<string, unknown>>, observedAtMs: number): void {
     const type = readPiRuntimeRecordType(record);
+    // The generated extension and this reader belong to one native launch.
+    // Restore canonical identity before usage, transcript and approval consumers.
+    if (type === PI_MCP_DELIVERY_RECORD_TYPE) {
+      if (isRecord(record.aliases)) {
+        for (const [alias, original] of Object.entries(record.aliases)) {
+          if (typeof original === 'string') nativeMcpToolAliases.set(alias, original);
+        }
+      }
+      if (Array.isArray(record.tools)) record = { ...record,
+        tools: record.tools.map(name => typeof name === 'string' ? nativeMcpToolAliases.get(name) ?? name : name) };
+    }
+    if (typeof record.toolName === 'string' && nativeMcpToolAliases.has(record.toolName)) {
+      record = { ...record, toolName: nativeMcpToolAliases.get(record.toolName)! };
+    }
     const agentTurnId = readPiProviderTurnId(record);
     if (type === 'turn_start' || type === 'agent_start') {
       readOrBeginTurn(agentTurnId, undefined, 'provider', observedAtMs);

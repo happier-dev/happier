@@ -1245,7 +1245,8 @@ describe('createPiRuntimeOperations', () => {
     await ackLastCommand(capture);
     await prompt;
     await emit(capture, { type: 'tool_execution_start', toolCallId: 'native-a', toolName: 'mcp__a__echo', args: { text: 'actual-a' } });
-    await emit(capture, { type: 'tool_execution_start', toolCallId: 'native-b', toolName: 'mcp__b__echo', args: { text: 'actual-b' } });
+    await emit(capture, { type: 'happier-pi-mcp-delivery', tools: ['mcp__h__alias'], aliases: { mcp__h__alias: 'mcp__b__echo' } });
+    await emit(capture, { type: 'tool_execution_start', toolCallId: 'native-b', toolName: 'mcp__h__alias', args: { text: 'actual-b' } });
     await emit(capture, { type: 'extension_ui_request', id: 'dialog-b', method: 'confirm',
       title: 'happier:mcp-approval:native-b', message: '{"text":"untrusted-dialog-text"}' });
     await vi.waitFor(() => expect(capture.approvalRequests).toHaveLength(1));

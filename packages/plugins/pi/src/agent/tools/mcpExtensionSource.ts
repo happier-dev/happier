@@ -1,6 +1,19 @@
 // Emitted inside the native extension alongside its schema validator and notice codec.
 export function buildPiMcpExtensionSource(): string {
-  return `function openMcpServer(server, cwd) {
+  return `// Meta Muse/OpenAI-compatible function names have a 64-character boundary.
+// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+function providerMcpToolName(serverName, toolName) {
+  const original = "mcp__" + serverName + "__" + toolName;
+  const aliasPrefix = "mcp__h__";
+  if (original.length <= 64 && !original.startsWith(aliasPrefix)) return original;
+  // Retain the full SHA-256 digest. Base64url leaves room for a readable prefix.
+  // Reserve the alias namespace so an unchanged short name cannot shadow it.
+  const hash = createHash("sha256").update(original).digest("base64url");
+  const prefixLength = 64 - aliasPrefix.length - 1 - hash.length;
+  return aliasPrefix + original.slice(5, 5 + prefixLength) + "_" + hash;
+}
+
+function openMcpServer(server, cwd) {
   const child = spawn(server.command, server.args || [], {
     cwd, env: { ...process.env, ...(server.env || {}) }, shell: false,
     windowsHide: true,
@@ -126,8 +139,11 @@ function createMcpServers(pi, config, onRegistered) {
       for (const tool of selectedTools) assertToolParameters(tool.inputSchema);
       if (stopped) return;
       const names = [];
+      const aliases = {};
       for (const tool of selectedTools) {
-        const name = "mcp__" + serverName + "__" + tool.name;
+        const name = providerMcpToolName(serverName, tool.name);
+        const originalName = "mcp__" + serverName + "__" + tool.name;
+        if (name !== originalName) aliases[name] = originalName;
         names.push(name);
         pi.registerTool({ name, label: tool.title || tool.name,
           description: tool.description || "", parameters: tool.inputSchema,
@@ -145,7 +161,7 @@ function createMcpServers(pi, config, onRegistered) {
           },
         });
       }
-      onRegistered(names);
+      onRegistered(names, aliases);
     } catch (error) {
       if (connection) {
         connections.delete(connection);
