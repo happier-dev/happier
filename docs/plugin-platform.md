@@ -560,7 +560,9 @@ consumers, not capabilities established by these HTTP request options.
 Set `HAPPIER_WEB_LATENCY_TRACE=1` in the daemon's launch environment to enable
 the existing file-only `[external-action-stage]` sink. The daemon must load this
 source; changing another shell's environment does not enable an existing daemon.
-File logging must allow warnings (`HAPPIER_LOG_LEVEL` must not be `silent`).
+Routine Action stages and web-latency spans use debug-level file logging;
+`HAPPIER_LOG_LEVEL=debug` enables them. They retain local redaction and never
+enter remote logging. Actual phase refusals remain warnings.
 No extra service, timer, endpoint or persistence is involved.
 
 The shared plugin HTTP owner emits one `contributed.http.transport.end` per
@@ -588,7 +590,7 @@ The local daemon log uses this single-line format (action/root request context
 and absent response fields vary):
 
 ```text
-[HH:MM:SS.mmm] [WARN] [external-action-stage] {"actionId":"action.invoke","stage":"contributed.http.transport.end","pluginId":"happier.scm.forge.github","operationId":"happier.scm.forge.github/actions/scan","method":"GET","routeTemplate":"/repos/{owner}/{repo}/pulls/{number}","httpStatus":200,"rateLimitRemaining":"4356","rateLimitReset":"1793496661","rateLimitResource":"core","elapsedMs":12.3}
+[HH:MM:SS.mmm] [external-action-stage] {"actionId":"action.invoke","stage":"contributed.http.transport.end","pluginId":"happier.scm.forge.github","operationId":"happier.scm.forge.github/actions/scan","method":"GET","routeTemplate":"/repos/{owner}/{repo}/pulls/{number}","httpStatus":200,"rateLimitRemaining":"4356","rateLimitReset":"1793496661","rateLimitResource":"core","elapsedMs":12.3}
 ```
 
 For a log window within one day, count terminal attempts by daemon-local minute,
@@ -745,6 +747,36 @@ This is an unreleased source contract; the generated SDK availability report
 owns availability for a particular artifact.
 
 ## Machine setup declarations (unreleased development contract)
+
+Machine provisioners may declare `sessionPlacement` with kind
+`controller-local` or `remote`, an optional launch-input `when` predicate and
+`supportsAgentNativeSandbox`. The declaration owns placement and native sandbox
+support independently of billing, enrollment and transport. The Protocol readers
+`readMachineProvisionerSessionPlacementV1` and
+`readMachineProvisionerAgentNativeSandboxSupportV1` interpret it; missing support
+means false. Predicate paths must belong to the declared launch schema. These are
+unreleased 0.3 author-contract additions: matching SDK and host readers move
+together, and older strict development readers reject the new declaration.
+
+Provisioners may also declare optional `preparation` with `inputSchema`,
+`artifactSchema`, `artifactLaunchPath`, `nativeOperationSchema` and local `build`, `inspect` and
+`destroy` Actions. The existing provisioner role owner qualifies those Actions
+and projects their inputs and results. `defineMachineProvisionerPreparationSchemas`
+provides the corresponding authoring schemas. Artifacts and native operations
+retain `{ contributionRef, schemaVersion, value }`; an unknown outcome retains
+its native operation reference for recovery. Inspect also accepts the retained
+`operationId` and original `input` to recover a build whose native identity was
+not returned. `artifactLaunchPath` selects complete launch choices inside the
+artifact value; the provisioner contract boundary validates those choices against
+the launch schema. The canonical prepared build input contains the validated
+`launch` snapshot and credential-free `cli` installation payload supplied by the
+managed guest CLI supplier. Destroy accepts an owned artifact,
+native operation, or both, and distinguishes confirmed cleanup from pending,
+refused and unknown outcomes. The preset owner decides artifact freshness and
+credential-free build composition; a provider's ready result alone establishes
+neither a matching preset nor permission to skip installation or setup. The
+declaration grants no provider-effect authority: build and destroy still require
+the admitted preset operation's custody through the existing host execution seam.
 
 The development `machineRecipes` and `machineSetupPresets` families use the
 existing Protocol contribution catalog, manifest admission, public SDK authoring
@@ -2088,7 +2120,8 @@ Connected Account credentials through the incumbent purpose owner. Native mobile
 and desktop HTTP hosts retain direct Account execution when no subject Machine is
 addressed. Placement applies to every
 provider, without a provider list, retry or fallback after relay selection. A browser
-without an eligible own Machine retains local execution. Account
+without an eligible own Machine receives `target_unavailable` unless the Action
+declares invoking-UI placement. Account
 read observers retain their local dependency subscriptions; their finite Action
 reads follow the same placement rule. Authentication and established credential
 runtimes are separate from this Action placement contract.
@@ -4525,6 +4558,18 @@ executable without requiring an exact researched version. Native output and
 resource identities still pass through their existing parsers; a routine CLI
 update alone does not disable managed operations. Version references in native
 contract comments identify the research basis, not runtime equality checks.
+
+In 0.3 development source, the Docker plugin also declares the separate
+`docker-cloud` provisioner as remote, with cloud billing and no local executable
+prerequisite. It consumes the same Docker connected-account selection as local
+sign-in. The REST adapter exchanges the selected Docker ID/PAT for a management
+bearer, then uses sandbox-scoped credentials for the returned process/file
+endpoint; neither bearer enters a resource or operation result. Accepted creates
+retain their native operation for reconciliation, and accepted deletes remain
+unconfirmed until native completion. Native expiry is observed from Docker's
+timeout feature, with no additional local timer. The researched contract is
+[Docker Sandboxes REST v1](https://docs.docker.com/reference/api/sandboxes/latest/);
+real tenant, endpoint routing, billing and cleanup validation remain release checks.
 
 In 0.3 development source, Crabbox's missing native command is a managed-dependency
 prerequisite with a repair Action. The shared prerequisite presentation launches
@@ -7106,7 +7151,7 @@ permits localhost only for redirect URIs. The host's existing redirect refusal
 also prevents a redirect from forwarding exchange or registration secrets.
 
 The development MCP callback controller consumes the stable
-`https://app.happier.dev/oauth/mcp/callback` response and strips its query before
+`https://cloud.happier.dev/oauth/mcp/callback` response and strips its query before
 any browser handoff or asynchronous work. It forwards code, full state and
 optional issuer to an opener, or uses the existing Connected Account Actions
 on the retained or discovered same-Account machine. Account retirement aborts
@@ -8175,7 +8220,8 @@ The development targeted-contribution reply carries optional
 `resourceDeclarationsByPluginId` alongside its handles. A present plugin key is
 that plugin's complete Resource declaration set, including `{}` for known-empty;
 an absent key or field means that reply supplied no census. The controller uses
-a complete Account namespace first, including known-empty. When Account coverage
+a complete Account namespace first, including known-empty, regardless of the
+mount's Account or daemon origin. When Account coverage
 is unknown, it uses the selected Machine's complete targeted set in preference
 to the full describe, retaining that Machine's occurrence and each Resource's
 declared context scope. The full-describe producer marks each included plugin's
@@ -10530,9 +10576,20 @@ configuration revocation. A `materialize` result alone qualifies remotely again
 before the credential leaves the host, and credential settlement keeps its own
 revision check. A rotation during `status` or `quota` applies to the next call.
 
-The 0.3 development Connected Account callback at
-`https://app.happier.dev/oauth/connected-account/callback` and the unchanged MCP
-callback share `connectedAccountOAuthCallback.ts` and one callback page. Capture
+An authorization-code mode that declares no `callbackUrl` uses the Connected
+Account relay at its Home's web app: `capabilities.server.webappUrl` (from
+`HAPPIER_WEBAPP_URL` or a bundled UI) plus `/oauth/connected-account/callback`,
+or `https://cloud.happier.dev/oauth/connected-account/callback` when the Home
+advertises no web app. `resolveConnectedAccountOAuthCallbackUrlV1` in
+`oauthAuthorizationResponse.ts` decides it once; the daemon attempt owner seals
+the result into the attempt transaction, the own-client guide shows the same
+value, and the web callback page answers at its own origin. A mode that declares
+a provider-fixed callback (MCP sign-in, Devin) keeps it. Plugins compare no
+callback themselves: the provider enforces its registered redirect URIs and the
+attempt accepts only its sealed callback.
+
+The 0.3 development Connected Account callback and the unchanged MCP callback
+share `connectedAccountOAuthCallback.ts` and one callback page. Capture
 and query stripping run synchronously before credential-binding effects or
 Action readiness. The page relays accepted OAuth response fields only to an
 exact-origin opener, or uses existing same-Account authentication Actions to

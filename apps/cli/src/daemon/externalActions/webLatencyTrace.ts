@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@/ui/logger';
 import { resolveFileLogLevel } from '@/ui/logFileLevel';
 import { DAEMON_EVENT_LOOP_STALL_WARNING_THRESHOLD_MS } from '@/daemon/diagnostics/daemonEventLoopStallMonitor';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type TraceContext = Readonly<{
   requestId?: string;
@@ -15,6 +16,10 @@ type TraceContext = Readonly<{
 const context = new AsyncLocalStorage<TraceContext>();
 
 export type WebLatencyTracePoint = Readonly<{ requestId: string; spanId?: number }>;
+
+export function isWebLatencyTraceEnabled(): boolean {
+  return sessionProcessEnvironment().HAPPIER_WEB_LATENCY_TRACE === '1';
+}
 
 /** Owner-supplied code/identity facts only; never approval operands or errors. */
 export type WebLatencyApprovalFacts = Readonly<{
@@ -32,7 +37,7 @@ export type WebLatencyApprovalFacts = Readonly<{
 /** Diagnostic provenance for an already-shared promise, never an authority witness. */
 export function readWebLatencyTracePoint(): WebLatencyTracePoint | undefined {
   const current = context.getStore();
-  return process.env.HAPPIER_WEB_LATENCY_TRACE === '1' && current?.requestId
+  return isWebLatencyTraceEnabled() && current?.requestId
     ? { requestId: current.requestId, ...(current.spanId === undefined ? {} : { spanId: current.spanId }) } : undefined;
 }
 
@@ -41,7 +46,7 @@ export function withWebLatencyTrace<T>(requestId: unknown, operation: () => T, s
   if (parent?.requestId === requestId) return operation();
   // MCP child spawns hash the parent/creation-key tuple to retain one root
   // across retries; ordinary Actions and new-Session attempts use UUIDs.
-  return process.env.HAPPIER_WEB_LATENCY_TRACE === '1'
+  return isWebLatencyTraceEnabled()
     && typeof requestId === 'string' && /^(?:(?:new-session-attempt-)?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{64})$/iu.test(requestId)
     ? context.run({ ...(parent?.approval ? parent : {}), requestId, ...(sessionId ? { sessionId } : {}),
       sequence: parent?.approval ? parent.sequence : { next: 0 } }, operation) : operation();
@@ -138,7 +143,7 @@ export async function timeWebLatencyPhase<T>(phase: string, operation: () => T |
   approvalFacts?: () => WebLatencyApprovalFacts): Promise<T> {
   if (phase.startsWith('storage.')) return timeStorageReadStage(phase, operation);
   const parent = context.getStore();
-  const webTrace = process.env.HAPPIER_WEB_LATENCY_TRACE === '1';
+  const webTrace = isWebLatencyTraceEnabled();
   if (!webTrace && !parent?.approval) return await operation();
   const started = performance.now();
   const span = parent ? { ...parent, spanId: ++parent.sequence.next,
@@ -148,7 +153,7 @@ export async function timeWebLatencyPhase<T>(phase: string, operation: () => T |
     ...(span ? { requestId: span.requestId, ...(span.sessionId ? { sessionId: span.sessionId } : {}),
       spanId: span.spanId, ...(span.parentSpanId === undefined ? {} : { parentSpanId: span.parentSpanId }) } : {}) };
   writeApprovalPhase(span, phase, 'started', 0);
-  try { if (webTrace) logger.warnLocalFile('[web-latency]', { phase, status: 'started', ...correlation, ...approvalFacts?.() }); } catch { /* Diagnostic only. */ }
+  try { if (webTrace) logger.debugLocalFile('[web-latency]', { phase, status: 'started', ...correlation, ...approvalFacts?.() }); } catch { /* Diagnostic only. */ }
   let status: 'completed' | 'failed' = 'failed';
   let current: boolean | undefined;
   try {
@@ -159,7 +164,7 @@ export async function timeWebLatencyPhase<T>(phase: string, operation: () => T |
   }
   finally {
     writeApprovalPhase(span, phase, status, Math.max(0, performance.now() - started));
-    try { if (webTrace) logger.warnLocalFile('[web-latency]', { phase, elapsedMs: performance.now() - started,
+    try { if (webTrace) logger.debugLocalFile('[web-latency]', { phase, elapsedMs: performance.now() - started,
       status, ...(current === undefined ? {} : { current }), ...correlation, ...approvalFacts?.() }); } catch { /* Diagnostic only. */ }
   }
 }

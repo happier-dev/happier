@@ -6,6 +6,7 @@
  */
 
 import chalk from 'chalk'
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope'
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -259,12 +260,10 @@ async function pruneCurrentProcessLogsBestEffort(currentLogPath: string): Promis
 }
 
 export class Logger {
-  private dangerouslyUnencryptedServerLoggingUrl: string | undefined
+  private processDangerouslyUnencryptedServerLoggingUrl: string | undefined
+  private readonly allowDangerousRemoteLogging: boolean
   private hasLoggedFileWriteError: boolean = false
-  private readonly fileLogLevel: FileLogLevel
-  private readonly debugFileEnabled: boolean
-  private readonly infoFileEnabled: boolean
-  private readonly warnFileEnabled: boolean
+  private readonly processFileLogLevel: FileLogLevel
   private readonly fileAppender: BufferedFileAppender
   private readonly redactFileOutput: boolean
   private readonly pruneLogs: boolean
@@ -279,10 +278,8 @@ export class Logger {
     this.logFilePath = options.logFilePath ?? getSessionLogPath()
     this.redactFileOutput = options.redactFileOutput === true
     this.pruneLogs = options.pruneCurrentProcessLogs !== false
-    this.fileLogLevel = resolveFileLogLevel({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })
-    this.debugFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'debug')
-    this.infoFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'info')
-    this.warnFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'warn')
+    this.allowDangerousRemoteLogging = options.allowDangerousRemoteLogging !== false
+    this.processFileLogLevel = resolveFileLogLevel({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })
     // One appender per file: the tail-window trim requires a single writer.
     this.fileAppender = new BufferedFileAppender({
       filePath: this.logFilePath,
@@ -292,12 +289,38 @@ export class Logger {
     if (this.pruneLogs) void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
 
     // Remote logging enabled only when explicitly set with server URL
-    if (options.allowDangerousRemoteLogging !== false
+    if (this.allowDangerousRemoteLogging
       && process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING
       && process.env.HAPPIER_SERVER_URL) {
-      this.dangerouslyUnencryptedServerLoggingUrl = process.env.HAPPIER_SERVER_URL
+      this.processDangerouslyUnencryptedServerLoggingUrl = process.env.HAPPIER_SERVER_URL
       writeConsoleLogBestEffort(chalk.yellow('[REMOTE LOGGING] Sending logs to server for AI debugging'))
     }
+  }
+
+  private get fileLogLevel(): FileLogLevel {
+    return readHostedSessionScope()?.runtimeConfiguration.fileLogLevel ?? this.processFileLogLevel
+  }
+
+  private get debugFileEnabled(): boolean {
+    return isFileLogLevelEnabled(this.fileLogLevel, 'debug')
+  }
+
+  private get infoFileEnabled(): boolean {
+    return isFileLogLevelEnabled(this.fileLogLevel, 'info')
+  }
+
+  private get warnFileEnabled(): boolean {
+    return isFileLogLevelEnabled(this.fileLogLevel, 'warn')
+  }
+
+  private get debugEnabled(): boolean {
+    return readHostedSessionScope()?.runtimeConfiguration.debugEnabled ?? Boolean(process.env.DEBUG)
+  }
+
+  private get dangerouslyUnencryptedServerLoggingUrl(): string | undefined {
+    if (!this.allowDangerousRemoteLogging) return undefined
+    const scope = readHostedSessionScope()
+    return scope ? scope.runtimeConfiguration.dangerousRemoteLoggingUrl : this.processDangerouslyUnencryptedServerLoggingUrl
   }
 
   // Use local timezone for simplicity of locating the logs,
@@ -326,7 +349,7 @@ export class Logger {
     maxStringLength: number = 100,
     maxArrayLength: number = 10,
   ): void {
-    if (!process.env.DEBUG) return;
+    if (!this.debugEnabled) return;
 
     // Some of our messages are huge, but we still want to show them in the logs
     const visited = new WeakSet<object>()
@@ -404,7 +427,7 @@ export class Logger {
     this.debug(message, ...args)
     
     // Write to info if DEBUG mode is on
-    if (process.env.DEBUG) {
+    if (this.debugEnabled) {
       this.logToConsole('info', '[DEV]', message, ...args)
     }
   }
@@ -419,6 +442,12 @@ export class Logger {
     this.logToConsole('error', '', message, ...args)
     if (this.fileLogLevel === 'silent') return
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[ERROR] ${message}`, args)
+  }
+
+  /** Routine file-only diagnostics keep local redaction without console or remote output. */
+  debugLocalFile(message: string, ...args: unknown[]): void {
+    if (!this.debugFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, args, false)
   }
 
   /** Retain local paths, redact credentials, and bypass console and remote output. */
@@ -437,10 +466,11 @@ export class Logger {
       const detail = formatFatalErrorForLog(error)
       this.fileAppender.append(
         `[${this.localTimezoneTimestamp()}] [FATAL] Unhandled CLI error ${detail}\n`,
+        { silent: !this.debugEnabled },
       )
     } catch {
       try {
-        this.fileAppender.append('[FATAL] Unhandled CLI error Unknown error\n')
+        this.fileAppender.append('[FATAL] Unhandled CLI error Unknown error\n', { silent: !this.debugEnabled })
       } catch {
         // Fatal reporting must never replace or mask the originating failure.
       }
@@ -650,11 +680,9 @@ export class Logger {
     }
   }
 
-  private async sendToRemoteServer(level: string, message: string, ...args: unknown[]): Promise<void> {
-    if (!this.dangerouslyUnencryptedServerLoggingUrl) return
-    
+  private async sendToRemoteServer(url: string, level: string, message: string, ...args: unknown[]): Promise<void> {
     try {
-      await fetch(this.dangerouslyUnencryptedServerLoggingUrl + '/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
+      await fetch(url + '/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -685,29 +713,30 @@ export class Logger {
         if (arg && typeof arg === 'object' && 'stack' in arg) return (arg as Error).stack || String(arg)
         return String(arg)
       }
-    }).join(' ')}\n`
+    }).join(' ')}${formatHostedSessionLogTag()}\n`
     const logLine = this.redactFileOutput || !allowRemote
       ? redactBugReportSensitiveText(unredactedLogLine)
       : unredactedLogLine
     
     // Send to remote server if configured
-    if (allowRemote && this.dangerouslyUnencryptedServerLoggingUrl) {
+    const remoteLoggingUrl = allowRemote ? this.dangerouslyUnencryptedServerLoggingUrl : undefined
+    if (remoteLoggingUrl) {
       // Determine log level from prefix
       let level = 'info'
       if (prefix.includes(this.localTimezoneTimestamp())) {
         level = 'debug'
       }
       // Fire and forget, with explicit .catch to prevent unhandled rejection
-      this.sendToRemoteServer(level, message, ...args).catch(() => {
+      this.sendToRemoteServer(remoteLoggingUrl, level, message, ...args).catch(() => {
         // Silently ignore remote logging errors to prevent loops
       })
     }
     
-    this.fileAppender.append(logLine)
+    this.fileAppender.append(logLine, { silent: !this.debugEnabled })
   }
 
   private handleFileWriteError(error: unknown): void {
-    if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
+    if (!this.hasLoggedFileWriteError) {
       writeConsoleErrorBestEffort('[DEV MODE ONLY] Failed to append to log file:', error)
       this.hasLoggedFileWriteError = true
     }
@@ -715,6 +744,12 @@ export class Logger {
 }
 
 // Will be initialized immideately on startup
+/** Lines written inside a hosted Session carry it; one process may host several. */
+function formatHostedSessionLogTag(): string {
+  const sessionId = readHostedSessionScope()?.sessionId
+  return sessionId ? ` [session ${sessionId}]` : ''
+}
+
 export let logger = new Logger()
 
 /**

@@ -41,7 +41,7 @@ it.each(['session_detail_invalid_response', 'session_detail_projection_unavailab
 
 it.each(['session.stop', 'session.archive', 'session.unarchive', 'session.status.get', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'localServices.launcher.start', 'approval.request.decide', 'plugins.list'])('traces %s admission and real executor phases without caller content', async actionId => {
   vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', actionId === 'plugins.list' || actionId === 'session.archive' || actionId === 'session.unarchive' ? '0' : '1');
-  const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
   const rootRequestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
   try {
     const execution = await executeExternalAction({ actionId,
@@ -91,7 +91,7 @@ it.each([false, true])('excludes multiline exception content from the real phase
 });
 
 it('joins contributed stages by the RPC UUID and preserves thrown values without logging them', async () => {
-  const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
   const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
   const failure = new Error('private-failure-marker');
   try {
@@ -108,7 +108,7 @@ it('joins contributed stages by the RPC UUID and preserves thrown values without
 
 it('correlates overlapping inner phases with their own ingress and preserves boundary failure identity', async () => {
   vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-  const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
   const first = '70cc64d3-0386-4914-b7d8-713b7879e99f';
   const second = 'fd0b0146-17a5-431c-bc69-3a3fa865b1d7';
   let release!: () => void;
@@ -139,7 +139,7 @@ it('correlates overlapping inner phases with their own ingress and preserves bou
 
 it.each(['machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options'])(
   'correlates %s read completion and cleanup only while latency diagnostics are enabled', actionId => {
-    const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
     const rootRequestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
     const transportRequestId = 'fd0b0146-17a5-431c-bc69-3a3fa865b1d7';
     try {

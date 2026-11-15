@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
+import { SessionRuntimeConfiguration } from '@/configuration/sessionRuntimeConfiguration';
+import type { TranscriptRecoveryCoordinator } from '@/api/session/recovery/TranscriptRecoveryCoordinator';
 
 /**
  * The Session a piece of runner work belongs to. One process can host several
@@ -12,6 +14,8 @@ import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/proc
  *   handoff keys, the process owner tag and policy overlays that children of
  *   this Session inherit. Session code reads and writes it instead of
  *   `process.env`.
+ * - `runtimeConfiguration` captures policy once from that environment, without
+ *   changing the host's Home, credentials or installation identity.
  * - `termination` is filled by the termination owner so a fatal error raised
  *   inside this Session's work ends only this Session.
  * - `sessionId` and `workingDirectory` are bound by the runtime once known: log
@@ -20,6 +24,10 @@ import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/proc
  */
 export type HostedSessionScope = {
   readonly environment: NodeJS.ProcessEnv;
+  /** Parsed once at admission; independent of the host's Home/install identity. */
+  runtimeConfiguration: SessionRuntimeConfiguration;
+  /** Recovery schedulers share this Session's admitted policy and lifetime. */
+  transcriptRecoveryCoordinators?: Map<string, TranscriptRecoveryCoordinator>;
   termination: unknown;
   /** Content-free runner failure retained until this Session reports its end. */
   failureCause?: SessionRuntimeIssueV1['failureCause'];
@@ -49,7 +57,8 @@ export function runInHostedSessionScope<T>(
   run: () => T,
 ): T {
   if (hostedSessionScope.getStore()) return run();
-  return hostedSessionScope.run({ environment: input.environment ?? process.env, termination: null }, run);
+  const environment = input.environment ?? process.env;
+  return hostedSessionScope.run({ environment, runtimeConfiguration: new SessionRuntimeConfiguration(environment), termination: null }, run);
 }
 
 /**
@@ -61,7 +70,7 @@ export function runAddedHostedSession<T>(
     runnerBootstrap?: HostedSessionScope['runnerBootstrap'] }>,
   run: () => T,
 ): T {
-  return hostedSessionScope.run({ ...input, termination: null }, run);
+  return hostedSessionScope.run({ ...input, runtimeConfiguration: new SessionRuntimeConfiguration(input.environment), termination: null }, run);
 }
 
 export function readHostedSessionScope(): HostedSessionScope | undefined {

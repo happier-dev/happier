@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger';
-import { timeApprovalPhase } from './webLatencyTrace';
+import { isWebLatencyTraceEnabled, timeApprovalPhase } from './webLatencyTrace';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -40,9 +40,9 @@ export function logExternalActionCurrentIntentMismatch(field: CurrentIntentMisma
 /** Host-only phase facts; never pass plugin input, results, URLs or thrown values. */
 export function traceExternalActionInnerStage(stage: string,
   diagnostic: ExternalActionInnerDiagnostic & Readonly<{ elapsedMs?: number }> = {}): void {
-  if (process.env.HAPPIER_WEB_LATENCY_TRACE !== '1') return;
+  if (!isWebLatencyTraceEnabled()) return;
   try {
-    logger.warnLocalFile('[external-action-stage]', {
+    logger.debugLocalFile('[external-action-stage]', {
       actionId: 'action.invoke', ...innerStageContext.getStore(), stage, ...diagnostic,
     });
   } catch { /* Diagnostic failure cannot change execution. */ }
@@ -50,7 +50,7 @@ export function traceExternalActionInnerStage(stage: string,
 
 export async function runTracedExternalActionInnerStage<T>(stage: string, operation: () => T | Promise<T>,
   diagnostic: ExternalActionInnerDiagnostic = {}): Promise<T> {
-  if (process.env.HAPPIER_WEB_LATENCY_TRACE !== '1') return await operation();
+  if (!isWebLatencyTraceEnabled()) return await operation();
   const started = performance.now();
   traceExternalActionInnerStage(`${stage}.begin`, diagnostic);
   try { return await operation(); }
@@ -74,7 +74,7 @@ function isTracedRequest(actionId: unknown, rootRequestId: unknown): boolean {
   return validRequestId && (actionId === 'session.spawn_new'
     || (actionId === 'session.stop' || actionId === 'session.archive' || actionId === 'session.unarchive'
       || actionId === 'session.status.get' || actionId === 'plugins.list' || actionId === 'action.invoke'
-      || process.env.HAPPIER_WEB_LATENCY_TRACE === '1'
+      || isWebLatencyTraceEnabled()
         && (actionId === 'approval.request.decide' || actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
           || actionId === 'projects.inspect' || actionId === 'localServices.launcher.start'
           || actionId === 'projects.worker.status' || actionId === 'projects.service.relocate'
@@ -89,7 +89,7 @@ export async function runTracedExternalActionStage<T>(actionId: string, rootRequ
   const requestId = typeof rootRequestId === 'string' ? rootRequestId.replace(/^rpc_/u, '') : rootRequestId;
   traceExternalActionStage(actionId, requestId, `${stage}.begin`);
   try {
-    return await (process.env.HAPPIER_WEB_LATENCY_TRACE === '1' && typeof requestId === 'string'
+    return await (isWebLatencyTraceEnabled() && typeof requestId === 'string'
       && isTracedRequest(actionId, requestId)
       ? innerStageContext.run({ actionId, rootRequestId: requestId }, () => timeApprovalPhase(`approval.${stage}`, operation))
       : timeApprovalPhase(`approval.${stage}`, operation));
@@ -103,7 +103,7 @@ export function traceExternalActionStage(actionId: unknown, rootRequestId: unkno
   if (!isTracedRequest(actionId, rootRequestId)) return;
   try {
     const diagnosticTransportRequestId = transportRequestId?.replace(/^rpc_/u, '');
-    logger.warnLocalFile('[external-action-stage]', { actionId, rootRequestId, stage,
+    logger.debugLocalFile('[external-action-stage]', { actionId, rootRequestId, stage,
       ...(diagnostic ? { phase: diagnostic.phase,
         ...(diagnostic.elapsedMs !== undefined ? { elapsedMs: diagnostic.elapsedMs } : {}) } : {}),
       ...(isUuidDiagnosticRequestId(diagnosticTransportRequestId)

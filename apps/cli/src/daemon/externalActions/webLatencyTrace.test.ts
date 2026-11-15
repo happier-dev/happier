@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
-import { timeWebLatencyPhase, withStorageReadTrace, withWebLatencyTrace } from './webLatencyTrace';
+import { readWebLatencyTracePoint, timeWebLatencyPhase, withStorageReadTrace, withWebLatencyTrace } from './webLatencyTrace';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -9,6 +10,22 @@ afterEach(() => {
 });
 
 describe('daemon web latency request correlation', () => {
+  it.each(['0', '1'])('admits diagnostic correlation using the hosted Session policy with host trace %s', async hostTrace => {
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', hostTrace);
+    const requestId = '23b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
+    const observe = () => withWebLatencyTrace(requestId, async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      return readWebLatencyTracePoint();
+    });
+    const [enabled, disabled] = await Promise.all([
+      runInHostedSessionScope({ environment: { NODE_ENV: 'test', HAPPIER_WEB_LATENCY_TRACE: '1' } }, observe),
+      runInHostedSessionScope({ environment: { NODE_ENV: 'test', HAPPIER_WEB_LATENCY_TRACE: '0' } }, observe),
+    ]);
+    expect(enabled).toEqual({ requestId });
+    expect(disabled).toBeUndefined();
+    expect(await observe()).toEqual(hostTrace === '1' ? { requestId } : undefined);
+  });
+
   it('resolves storage diagnostic demand once for the request, including nested phases', async () => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
     vi.stubEnv('HAPPIER_LOG_LEVEL', 'debug');
@@ -56,7 +73,7 @@ describe('daemon web latency request correlation', () => {
   });
   it('reports the active phase before a pending boundary settles, with the same correlation at settlement', async () => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
     const requestId = '23b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
     let settle!: () => void;
     const boundary = new Promise<void>(resolve => { settle = resolve; });
@@ -79,7 +96,7 @@ describe('daemon web latency request correlation', () => {
   ])('retains the %s request identity across asynchronous execution', async (_kind, requestId) => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
     // Only the file logging sink is replaced; execution and async context remain real.
-    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
     const failure = new Error('execution failed');
 
     await expect(withWebLatencyTrace(requestId, async () => {
@@ -93,7 +110,7 @@ describe('daemon web latency request correlation', () => {
   });
 
   it('omits arbitrary input and leaves tracing disabled unless requested', async () => {
-    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
     await withWebLatencyTrace('private free-form input'.padEnd(64, 'x'), () => timeWebLatencyPhase('execute', () => 'ok'));
     expect(sink).toHaveBeenCalledWith('[web-latency]', expect.not.objectContaining({ requestId: expect.anything() }));
@@ -108,7 +125,7 @@ describe('daemon web latency request correlation', () => {
     'ca287f82fdd83fd583f9459812b579ce6013223d4e819f4656c40d0cf9ae1ed2',
   ])('preserves the current span when a boundary re-enters the same admitted root %s', async (rootId) => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
     await withWebLatencyTrace(rootId, () => timeWebLatencyPhase('outer', () =>
       withWebLatencyTrace(rootId, () => timeWebLatencyPhase('inner', () => 'ok'))));
     expect(sink).toHaveBeenCalledWith('[web-latency]', expect.objectContaining({
@@ -118,7 +135,7 @@ describe('daemon web latency request correlation', () => {
 
   it('keeps diagnostic sink failures from changing boundary results', async () => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-    vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => { throw new Error('file unavailable'); });
+    vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => { throw new Error('file unavailable'); });
     await expect(withWebLatencyTrace('23b2ed82-2ef7-4e4e-af0f-f64d599a08c6', () =>
       timeWebLatencyPhase('boundary', () => 42))).resolves.toBe(42);
   });

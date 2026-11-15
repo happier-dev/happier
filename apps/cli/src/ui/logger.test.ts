@@ -8,7 +8,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 describe('logger.debugLargeJson', () => {
-    const envKeys = ['DEBUG', 'HAPPIER_HOME_DIR', 'HAPPIER_LOG_LEVEL', 'HAPPIER_DAEMON_LOG_KEEP_COUNT', 'HAPPIER_SESSION_LOG_KEEP_COUNT', 'HAPPIER_CRASHED_SESSION_LOG_KEEP_COUNT', 'DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING', 'HAPPIER_SERVER_URL', 'TZ'] as const;
+    const envKeys = ['DEBUG', 'HAPPIER_HOME_DIR', 'HAPPIER_LOG_LEVEL', 'HAPPIER_WEB_LATENCY_TRACE', 'HAPPIER_DAEMON_LOG_KEEP_COUNT', 'HAPPIER_SESSION_LOG_KEEP_COUNT', 'HAPPIER_CRASHED_SESSION_LOG_KEEP_COUNT', 'DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING', 'HAPPIER_SERVER_URL', 'TZ'] as const;
     let envScope = createEnvKeyScope(envKeys);
     let tempDir: string;
 
@@ -40,6 +40,133 @@ describe('logger.debugLargeJson', () => {
         logger.flushSync();
 
         expect(existsSync(logger.getLogPath())).toBe(false);
+    });
+
+    it.each(['warn', 'debug'])('keeps routine Action and RPC tracing below warnings at file level %s', async level => {
+        envScope.patch({ HAPPIER_LOG_LEVEL: level, HAPPIER_WEB_LATENCY_TRACE: '1' });
+        const { logger } = await import('@/ui/logger');
+        const { runTracedExternalActionStage, runTracedExternalActionInnerStage, refuseExternalActionPhase } = await import('@/daemon/externalActions/externalActionPhase');
+        const { withWebLatencyTrace, timeWebLatencyPhase } = await import('@/daemon/externalActions/webLatencyTrace');
+        const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
+        const value = await withWebLatencyTrace(requestId, () => runTracedExternalActionStage('action.invoke', requestId, 'target_resolution', () =>
+            runTracedExternalActionInnerStage('collection.encryption.currentness', () => timeWebLatencyPhase('machine.rpc', () => 42))));
+        expect(value).toBe(42);
+        refuseExternalActionPhase('requester_prepare', 'machine', undefined, { refusalBranch: 'custody' });
+        logger.flushSync();
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[WARN] [external-action-phase]');
+        if (level === 'warn') {
+            expect(content).not.toContain('[external-action-stage]');
+            expect(content).not.toContain('[web-latency]');
+        } else {
+            expect(content).toContain('[external-action-stage]');
+            expect(content).toContain('[web-latency]');
+            expect(content).not.toContain('[WARN] [external-action-stage]');
+            expect(content).not.toContain('[WARN] [web-latency]');
+        }
+    });
+
+    it('keeps local debug diagnostics redacted and out of opt-in remote logging', async () => {
+        envScope.patch({ HAPPIER_LOG_LEVEL: 'debug', DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: '1',
+            HAPPIER_SERVER_URL: 'https://debug-logs.example.test' });
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        try {
+            const { logger } = await import('@/ui/logger');
+            logger.debugLocalFile('[TEST] local debug', 'Authorization: Bearer private-fixture-token');
+            logger.flushSync();
+            const content = readFileSync(logger.getLogPath(), 'utf8');
+            expect(content).toContain('[TEST] local debug');
+            expect(content).not.toContain('private-fixture-token');
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+            fetchSpy.mockRestore();
+            consoleSpy.mockRestore();
+        }
+    });
+
+    it.each([undefined, '1'])('keeps shared logger diagnostics scoped to interleaved Sessions (host DEBUG %s)', async hostDebug => {
+        envScope.patch({ DEBUG: hostDebug, HAPPIER_LOG_LEVEL: 'silent' });
+        const { Logger } = await import('@/ui/logger');
+        const { runAddedHostedSession } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+        const logPath = join(tempDir, 'shared-session.log');
+        const sharedLogger = new Logger({ logFilePath: logPath, pruneCurrentProcessLogs: false });
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        try {
+            await Promise.all([true, false].map(debugEnabled => runAddedHostedSession({
+                environment: { NODE_ENV: 'test', DEBUG: debugEnabled ? '1' : undefined }, workingDirectory: tempDir, end: () => {},
+            }, async () => {
+                await Promise.resolve();
+                const label = debugEnabled ? 'debug-session' : 'quiet-session';
+                sharedLogger.debug(`${label} debug`);
+                sharedLogger.debugLargeJson(`${label} json`, { value: label });
+                sharedLogger.infoDeveloper(`${label} developer`);
+                sharedLogger.infoFile(`${label} info`);
+            })));
+            sharedLogger.debug('host debug');
+            sharedLogger.flushSync();
+            expect(existsSync(logPath)).toBe(true);
+            const content = readFileSync(logPath, 'utf8');
+            expect(content).toContain('debug-session debug');
+            expect(content).toContain('debug-session json');
+            expect(content).toContain('debug-session developer');
+            expect(content).toContain('debug-session info');
+            expect(content).toContain('quiet-session info');
+            expect(content).not.toContain('quiet-session debug');
+            expect(content).not.toContain('quiet-session json');
+            expect(content).not.toContain('quiet-session developer');
+            expect(content).not.toContain('host debug');
+            expect(consoleSpy.mock.calls.flat().join(' ')).toContain('debug-session developer');
+            expect(consoleSpy.mock.calls.flat().join(' ')).not.toContain('quiet-session developer');
+        } finally { consoleSpy.mockRestore(); }
+    });
+
+    it('routes opt-in remote diagnostics by Session and preserves an explicitly local-only sink', async () => {
+        envScope.patch({ DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: '1', HAPPIER_SERVER_URL: 'https://host-logs.example.test' });
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        const { Logger } = await import('@/ui/logger');
+        const { runAddedHostedSession } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+        const sharedLogger = new Logger({ logFilePath: join(tempDir, 'remote-sessions.log'), pruneCurrentProcessLogs: false });
+        const localOnlyLogger = new Logger({ logFilePath: join(tempDir, 'local-sessions.log'), pruneCurrentProcessLogs: false,
+            allowDangerousRemoteLogging: false, redactFileOutput: true });
+        try {
+            await Promise.all(['first', 'second', 'quiet'].map(id => runAddedHostedSession({
+                environment: { NODE_ENV: 'test', ...(id === 'quiet' ? {} : { DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: '1' }),
+                    HAPPIER_SERVER_URL: `https://${id}-logs.example.test` }, workingDirectory: tempDir, end: () => {},
+            }, async () => {
+                await Promise.resolve();
+                sharedLogger.infoFile(`${id} remote`);
+                localOnlyLogger.infoFile(`${id} local Authorization: Bearer private-fixture-token`);
+            })));
+            sharedLogger.infoFile('host remote');
+            sharedLogger.flushSync(); localOnlyLogger.flushSync();
+            expect(fetchSpy.mock.calls.map(call => String(call[0]))).toEqual([
+                'https://first-logs.example.test/logs-combined-from-cli-and-mobile-for-simple-ai-debugging',
+                'https://second-logs.example.test/logs-combined-from-cli-and-mobile-for-simple-ai-debugging',
+                'https://host-logs.example.test/logs-combined-from-cli-and-mobile-for-simple-ai-debugging',
+            ]);
+            expect(readFileSync(localOnlyLogger.logFilePath, 'utf8')).not.toContain('private-fixture-token');
+        } finally { consoleSpy.mockRestore(); fetchSpy.mockRestore(); }
+    });
+
+    it.each([undefined, '1'])('retains Session DEBUG for file failures flushed after the Session ends (host DEBUG %s)', async hostDebug => {
+        envScope.patch({ DEBUG: hostDebug });
+        const { Logger } = await import('@/ui/logger');
+        const { runAddedHostedSession } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+        const blockedParent = join(tempDir, 'blocked-parent');
+        writeFileSync(blockedParent, 'not a directory');
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            for (const debugEnabled of [false, true]) {
+                const sharedLogger = new Logger({ logFilePath: join(blockedParent, `${debugEnabled}.log`), pruneCurrentProcessLogs: false });
+                runAddedHostedSession({ environment: { NODE_ENV: 'test', DEBUG: debugEnabled ? '1' : undefined }, workingDirectory: tempDir,
+                    end: () => {} }, () => sharedLogger.infoFile('deferred write failure'));
+                consoleSpy.mockClear();
+                sharedLogger.flushSync();
+                expect(consoleSpy.mock.calls.length > 0).toBe(debugEnabled);
+            }
+        } finally { consoleSpy.mockRestore(); }
     });
 
     it.each(['UTC', 'Europe/Amsterdam', 'America/New_York'])('preserves local millisecond timestamps in %s across midnight and daylight saving', async timeZone => {
