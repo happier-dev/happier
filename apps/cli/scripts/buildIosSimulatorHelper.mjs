@@ -15,7 +15,8 @@
 //     --version <semver> \
 //     --signing-identity "Developer ID Application: ... (TEAMID)" \
 //     --notary-profile <notarytool-keychain-profile> \
-//     [--skip-notarize]   (DEV ONLY: produces a development-build, never vendored as production)
+//   node apps/cli/scripts/buildIosSimulatorHelper.mjs --skip-notarize
+//     (DEV ONLY: ad-hoc signs into node_modules/.cache/happier-ios-simulator-helper, never assets/)
 //
 // On success it writes:
 //   apps/cli/assets/ios/simulator-helper/happier-ios-simulator-helper        (signed+notarized+stapled)
@@ -71,10 +72,15 @@ function main() {
     }
 
     const args = parseArgs(process.argv.slice(2));
+    const cliVersion = JSON.parse(readFileSync(join(CLI_ROOT, 'package.json'), 'utf8')).version;
+    if (args.skipNotarize) {
+        args.version ??= cliVersion;
+        if (args.version !== cliVersion) fail('development helper --version must match the owning CLI package version.');
+    }
     if (!args.version || args.version === '0.0.0-unavailable') {
         fail('a real --version (semver) is required; refusing to pin the placeholder version.');
     }
-    if (!args.signingIdentity) {
+    if (!args.skipNotarize && !args.signingIdentity) {
         fail('a Developer ID --signing-identity is required; refusing to vendor an unsigned helper.');
     }
     if (!args.skipNotarize && !args.notaryProfile) {
@@ -92,8 +98,19 @@ function main() {
     }).trim();
     const builtBinary = join(binPath, ARTIFACT_NAME);
 
-    mkdirSync(ASSET_DIR, { recursive: true });
-    copyFileSync(builtBinary, ARTIFACT_PATH);
+    const artifactPath = args.skipNotarize
+        ? join(CLI_ROOT, 'node_modules', '.cache', 'happier-ios-simulator-helper', ARTIFACT_NAME)
+        : ARTIFACT_PATH;
+    mkdirSync(dirname(artifactPath), { recursive: true });
+    copyFileSync(builtBinary, artifactPath);
+    if (args.skipNotarize) {
+        // Ad-hoc signing never opens a signing identity/keychain and never writes release assets.
+        run('codesign', ['--force', '--sign', '-', artifactPath]);
+        run('codesign', ['--verify', '--strict', artifactPath]);
+        writeFileSync(`${artifactPath}.json`, `${JSON.stringify({ version: args.version }, null, 2)}\n`);
+        console.error(`[buildIosSimulatorHelper] development helper ready: ${artifactPath}`);
+        return;
+    }
 
     // 2. Sign with hardened runtime + secure timestamp.
     console.error('[buildIosSimulatorHelper] codesigning...');
@@ -103,10 +120,9 @@ function main() {
     ]);
     run('codesign', ['--verify', '--strict', '--deep', ARTIFACT_PATH]);
 
-    // 3. Notarize + staple (skipped only for explicit dev builds — never production-vendored).
+    // 3. Notarize + staple the production artifact.
     let notarizationSubmissionId = null;
-    let helperDistribution = 'development-build';
-    if (!args.skipNotarize) {
+    {
         console.error('[buildIosSimulatorHelper] notarizing (this can take several minutes)...');
         const zipPath = `${ARTIFACT_PATH}.zip`;
         run('ditto', ['-c', '-k', '--keepParent', ARTIFACT_PATH, zipPath]);
@@ -127,7 +143,6 @@ function main() {
         run('xcrun', ['stapler', 'staple', ARTIFACT_PATH]);
         run('xcrun', ['stapler', 'validate', ARTIFACT_PATH]);
         run('spctl', ['--assess', '--type', 'execute', '--verbose=2', ARTIFACT_PATH]);
-        helperDistribution = 'prebuilt-signed';
     }
 
     // 4. Compute digest + write sidecar + manifest evidence.
@@ -136,20 +151,18 @@ function main() {
 
     writeFileSync(SIDECAR_PATH, `${JSON.stringify({ version: args.version, digest: sha256 }, null, 2)}\n`);
 
-    const status = helperDistribution === 'prebuilt-signed'
-        ? 'pinned_signed_notarized_helper'
-        : 'blocked_missing_signed_notarized_helper';
+    const status = 'pinned_signed_notarized_helper';
     const manifest = {
         artifact: ARTIFACT_NAME,
         status,
         signature: 'developer_id_notarized_required',
-        helperDistribution,
+        helperDistribution: 'prebuilt-signed',
         version: args.version,
-        sha256: helperDistribution === 'prebuilt-signed' ? sha256 : null,
+        sha256,
         evidence: {
             signingIdentity: args.signingIdentity,
             notarizationSubmissionId,
-            stapled: helperDistribution === 'prebuilt-signed',
+            stapled: true,
             builtAt: new Date().toISOString(),
         },
     };
@@ -159,17 +172,8 @@ function main() {
     console.error(`  version: ${args.version}`);
     console.error(`  sha256:  ${sha256}`);
     console.error(`  status:  ${status}`);
-    if (helperDistribution === 'prebuilt-signed') {
-        // No source edit required: the daemon pin (PINNED_IOS_SIMULATOR_HELPER_ARTIFACT in
-        // apps/cli/src/daemon/devices/simulator/ios/discovery.ts) is derived from this manifest.json
-        // via resolveIosSimulatorHelperPin(). The version + sha256 just written become the
-        // launch-time pin automatically; the resolver re-hashes the bytes on disk and verifies they
-        // match before the helper is ever launched.
-        console.error('  manifest.json updated — the daemon pin is derived from it automatically.');
-        console.error('  Run the iOS argent QA gate on a booted simulator before relying on the flip.');
-    } else {
-        console.error('  Development build only — NOT vendorable as production (manifest stays blocked).');
-    }
+    console.error('  manifest.json updated — the daemon pin is derived from it automatically.');
+    console.error('  Run the iOS argent QA gate on a booted simulator before relying on the flip.');
 }
 
 main();

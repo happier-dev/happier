@@ -35,9 +35,9 @@ The posture that keeps this defensible and App-Store-safe:
   unavailable. Framework loading and symbol checks belong to helper health, separately from device
   discovery; an incompatible symbol surface fails closed (`private_framework_symbol_mismatch`).
 - **Trusted, signed, notarized.** The helper is treated as a trusted first-party diagnostics/control
-  channel. It is launched only after Developer ID signature + notarization + digest verification, and
-  only ever through the daemon's binary-safe process starter (which refuses Node/package-manager
-  runtimes). See "Trust chain" below.
+  channel. Published runtimes require Developer ID signature + notarization + digest verification.
+  Source/dev runtimes may use the local development build described below. Both launch through
+  the daemon's binary-safe process starter (which refuses Node/package-manager runtimes). See "Trust chain" below.
 
 This mirrors how the Android scrcpy server is vendored and pinned, and how the desktop (Tauri) build
 signs/notarizes with the same Developer ID identity.
@@ -82,9 +82,11 @@ through `helperProtocol.ts`'s serializer and the helper's `InputDispatcher`.
    + `prebuilt-signed` manifest with a real version and non-placeholder sha256 yields a real pin;
    everything else (unbuilt, dev build, placeholder digest, malformed) falls back to the all-zero
    placeholder pin.
-2. **Resolve** — `helperArtifact.ts` rejects the placeholder digest up front, then re-hashes the bytes
-   on disk and requires the digest to match the pin.
-3. **Sign** — `signature.ts` runs `codesign --verify --strict --deep`, `spctl --assess --type execute`,
+2. **Resolve** — `helperArtifact.ts` asks the canonical runtime authority once. Published runtimes
+   reject the placeholder digest up front, then re-hash the bytes and require the digest to match
+   the pin. Source/dev runtimes instead resolve the local build at the fixed path below and require
+   its version sidecar to match the owning CLI package version.
+3. **Sign (published runtimes)** — `signature.ts` runs `codesign --verify --strict --deep`, `spctl --assess --type execute`,
    and (optionally) `stapler validate`. Trust is derived only from a daemon-side assessment of the
    bytes, never a caller assertion. Non-macOS hosts fail closed.
 4. **Probe** — the helper's `--health-json` must report `available` with the expected codec/input
@@ -109,3 +111,24 @@ This builds (universal arm64+x86_64), codesigns (hardened runtime + secure times
 (`xcrun notarytool submit --wait`), staples, vendors the binary + sidecar, and rewrites
 `manifest.json`. The daemon pin is then derived from that manifest automatically — no source edit.
 Run the iOS argent QA gate on a booted simulator before relying on the flip.
+
+## Local development build (0.3 source/dev runtimes)
+
+On the Mac that runs the source daemon, from the same checkout:
+
+```sh
+node apps/cli/scripts/buildIosSimulatorHelper.mjs --skip-notarize
+```
+
+The existing producer builds the repo's Swift source and ad-hoc signs the result, requiring no
+Developer ID, keychain profile or notarization. It writes the helper and version sidecar to
+`apps/cli/node_modules/.cache/happier-ios-simulator-helper/happier-ios-simulator-helper` (ignored), using
+the CLI package version. It does not write release assets or alter the release manifest.
+
+The canonical runtime authority (`resolveAuthoritativePackagedRuntimeProjectRoot`) selects
+source modules and source snapshots. Their resolver requires this fixed local path and matching
+version sidecar; it skips release digest pinning and Apple notarization. A missing build reports
+`helper_artifact_missing` with the build command; a stale or absent sidecar reports
+`helper_version_mismatch`. Rebuild after changing the CLI version. Published/package runtimes
+continue using only the pinned signed/notarized artifact, even if a dev build is present.
+Helper health, capture capability and input availability still come from the ordinary native probe.

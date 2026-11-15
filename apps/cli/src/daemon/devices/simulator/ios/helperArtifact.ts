@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 
 import type { IosSimulatorAdapterUnavailableReasonV1 } from '@happier-dev/protocol';
 
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
+
+import { resolveAuthoritativePackagedRuntimeProjectRoot } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 
 import { verifyIosSimulatorHelperSignature } from './signature';
 
@@ -38,6 +41,8 @@ export type IosSimulatorHelperArtifactResolution = Readonly<
 export type ResolveIosSimulatorHelperArtifactInput = Readonly<{
     expectedVersion: string;
     expectedDigest: string;
+    /** Executing module location, consumed by the canonical runtime authority. */
+    runtimeModuleUrl?: string;
     resolveArtifactPath?: () => string;
     readFile?: (path: string) => Promise<Uint8Array>;
     readMetadata?: (path: string) => Promise<IosSimulatorHelperArtifactMetadata>;
@@ -93,16 +98,27 @@ function errorName(error: unknown): string {
 export async function resolveIosSimulatorHelperArtifact(
     input: ResolveIosSimulatorHelperArtifactInput,
 ): Promise<IosSimulatorHelperArtifactResolution> {
-    const path = (input.resolveArtifactPath ?? defaultArtifactPath)();
+    const runtime = resolveAuthoritativePackagedRuntimeProjectRoot({
+        moduleUrl: input.runtimeModuleUrl ?? import.meta.url,
+    });
+    const sourceRoot = runtime?.provenance === 'source-module' || runtime?.provenance === 'source-snapshot'
+        ? runtime.root : null;
+    const path = sourceRoot
+        ? join(sourceRoot, 'node_modules', '.cache', 'happier-ios-simulator-helper', 'happier-ios-simulator-helper')
+        : (input.resolveArtifactPath ?? defaultArtifactPath)();
     const readFile = input.readFile ?? defaultReadFile;
     const readMetadata = input.readMetadata ?? defaultReadMetadata;
     const verifySignature = input.verifySignature ?? defaultVerifySignature;
+
+    // Owner ruling 2026-11-15: only the source authority can select this repo-local build.
+    // No dev artifact is placed in release assets or admitted by a packaged runtime.
+    const recovery = sourceRoot ? 'Build the dev helper: node apps/cli/scripts/buildIosSimulatorHelper.mjs --skip-notarize' : null;
 
     // Boundary guard: the pinned placeholder digest (all-zero) means no real signed/notarized
     // artifact has been produced yet. Fail closed before touching disk so iOS capture stays
     // unavailable until a genuine vendored artifact + digest is pinned. Mirrors the Android
     // scrcpy resolver's placeholder guard.
-    if (isPlaceholderSha256Digest(input.expectedDigest)) {
+    if (!sourceRoot && isPlaceholderSha256Digest(input.expectedDigest)) {
         return failedArtifactResolution('helper_artifact_missing', [{
             code: 'helper_artifact_placeholder_digest',
             expectedDigest: input.expectedDigest,
@@ -115,12 +131,13 @@ export async function resolveIosSimulatorHelperArtifact(
     } catch (error) {
         return failedArtifactResolution('helper_artifact_missing', [{
             code: 'helper_artifact_read_failed',
+            ...(recovery ? { recovery } : {}),
             errorName: errorName(error),
         }]);
     }
 
     const digest = sha256Digest(bytes);
-    if (digest !== input.expectedDigest) {
+    if (!sourceRoot && digest !== input.expectedDigest) {
         return failedArtifactResolution('helper_artifact_digest_mismatch', [{
             code: 'helper_artifact_digest_mismatch',
             expectedDigest: input.expectedDigest,
@@ -128,7 +145,7 @@ export async function resolveIosSimulatorHelperArtifact(
         }]);
     }
 
-    const signature = await verifySignature(path);
+    const signature = sourceRoot ? { ok: true as const } : await verifySignature(path);
     if (!signature.ok) {
         return failedArtifactResolution('helper_artifact_unsigned', [{
             code: 'helper_artifact_signature_failed',
@@ -144,10 +161,20 @@ export async function resolveIosSimulatorHelperArtifact(
             errorName: errorName(error),
         }],
     }));
-    if (metadata.version !== input.expectedVersion) {
+    // The local producer uses its CLI package version, independently of the release pin.
+    const expectedVersion = sourceRoot
+        ? await defaultReadFile(join(sourceRoot, 'package.json'))
+            .then((bytes) => {
+                const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+                return parsed && typeof parsed === 'object' && 'version' in parsed && typeof parsed.version === 'string'
+                    ? parsed.version : '';
+            }).catch(() => '')
+        : input.expectedVersion;
+    if (!expectedVersion || metadata.version !== expectedVersion) {
         return failedArtifactResolution('helper_version_mismatch', [{
             code: 'helper_version_mismatch',
-            expectedVersion: input.expectedVersion,
+            expectedVersion,
+            ...(recovery ? { recovery } : {}),
             actualVersion: metadata.version,
         }]);
     }
