@@ -3028,26 +3028,40 @@ describe('ordinary Account managed Action origination', () => {
 
     it.each([
         { phase: 'child', mode: 'plain' }, { phase: 'child', mode: 'e2ee' },
+        { phase: 'child', mode: 'plain', delegatedMember: true },
         { phase: 'declined', mode: 'plain' },
         { phase: 'wake', mode: 'e2ee' }, { phase: 'activity', mode: 'e2ee' }, { phase: 'control', mode: 'e2ee' },
-    ] as const)('consumes sealed enrollment custody for $phase without a public native resource ($mode)', async ({ phase, mode }) => {
+    ] as const)('consumes sealed enrollment custody for $phase without a public native resource ($mode, delegatedMember=$delegatedMember)', async scenario => {
+        const { phase, mode } = scenario;
+        const delegatedMember = 'delegatedMember' in scenario && scenario.delegatedMember;
         const selected = await fixture(true, mode);
-        const owner = { kind: 'account' as const, accountId: selected.account.id };
+        const requester = delegatedMember ? await fixture(true, mode) : selected;
+        const team = delegatedMember ? await db.team.create({ data: { name: 'Opaque enrollment custody' } }) : null;
+        if (team) await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        const owner = team ? { kind: 'team' as const, teamId: team.id }
+            : { kind: 'account' as const, accountId: selected.account.id };
         const presetId = crypto.randomUUID();
         const census = await readMachinePresetRecipientCensus({ accountId: selected.account.id, input: { homeId, owner } });
         if (census.kind !== 'ready') throw new Error('Expected ready preset recipients');
         const sealed = sealManagedMachinePresetContentV1({ presetId, mode,
             content: { v: 1, name: 'Private enrollment', launch: selected.input.selection.launch },
             recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes });
-        expect(await createMachinePreset({ accountId: selected.account.id, input: { homeId, id: presetId, owner,
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: { homeId, id: presetId, owner,
             contentEncryptionMode: mode, ...sealed, controller: selected.controller,
+            ...(delegatedMember ? { teamAcquireDelegated: true } : {}),
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } })).toMatchObject({ kind: 'saved' });
+        if (delegatedMember) expect(await resolveMachineAccess({ actorAccountId: requester.account.id,
+            machineId: selected.controller.machineId })).toBeNull();
         const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
             role: 'server' as const, adminAccessAtCreation: 'none' as const };
         const cryptoInput = mode === 'plain' ? { mode: 'plain' as const }
             : { mode: 'e2ee' as const, accountId: selected.account.id, accountKey: selected.contentKey! };
         const override = createManagedMachinePresetAcquireOverrideV1({ presetId, ...cryptoInput,
-            projection: projectManagedMachinePresetForRecipientV1({ ...sealed, recipientAccountId: selected.account.id }),
+            projection: projectManagedMachinePresetForRecipientV1({ ...sealed, recipientAccountId: requester.account.id }),
             enrollmentIdentity: identity, randomBytes: tweetnacl.randomBytes });
         if (!override) throw new Error('Expected opened enrollment override');
         const acquire = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: presetId, revision: 0 },
@@ -3060,8 +3074,8 @@ describe('ordinary Account managed Action origination', () => {
         const seal = (actionId: string, machineId: string, input: unknown, requestId = selected.requestId) => mode === 'plain'
             ? ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: { kind: 'machine', machineId }, input })
             : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-                binding: { serverIdentityId: homeId, accountId: selected.account.id,
-                    authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId,
+                binding: { serverIdentityId: homeId, accountId: requester.account.id,
+                    authentication: { kind: 'account', tokenEpoch: requester.account.tokenEpoch }, actionId,
                     requestId, target: { kind: 'machine', machineId } }, input, material, randomBytes: tweetnacl.randomBytes });
         const policy = { version: 1 as const, mode: 'none' as const };
         let nativeEffects = 0;
@@ -3078,13 +3092,13 @@ describe('ordinary Account managed Action origination', () => {
         const instance = await app(async request => {
             const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
             const result = await executeExternalAction({ ...dispatch, currentMachineId: guestId,
-                currentAccountId: selected.account.id, currentInstallationId: guestInstallationId, currentServerId: homeId,
+                currentAccountId: requester.account.id, currentInstallationId: guestInstallationId, currentServerId: homeId,
                 externalActionMachineRequestPrivateKey: guestKeys.secretKey,
                 verifyExecutionAuthorization: async ({ authorization }) =>
                     await verifyCurrentExternalActionPrincipal(authorization.binding) !== null,
                 // The receiving host's installed key and settings are external boundaries.
                 resolveEncryption: async () => ({ serverIdentityId: homeId, material }),
-                resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: selected.token, encryption: null } }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: requester.token, encryption: null } }),
                 executor: { execute: (actionId, input, context) => executor.execute(actionId, input,
                     { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) }) },
             });
@@ -3094,9 +3108,10 @@ describe('ordinary Account managed Action origination', () => {
         try {
             const rootEnvelope = seal('machines.managed.acquire', selected.controller.machineId, acquire);
             const issued = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
-                headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId, envelope: rootEnvelope } });
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: selected.controller.machineId, envelope: rootEnvelope } });
             expect(issued.statusCode, issued.body).toBe(200);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(root.binding).toMatchObject({ accountId: requester.account.id, custodianAccountId: selected.account.id });
             const admitPath = '/v1/machines/managed/controller/admit';
             const admitBody = { requestId: selected.requestId, input: acquire, continuationPresent: false,
                 originalActionEnvelope: rootEnvelope, presetPolicy: { retention: acquire.retention, wakeOnAcceptedMessage: true } };
@@ -3124,29 +3139,36 @@ describe('ordinary Account managed Action origination', () => {
                 requestId: selected.requestId, controller: selected.controller };
             await submitManagedAcquire(correlation);
             await reportManagedAcquire({ ...correlation, result: { kind: 'bound' }, presetContent: reported.content });
-            const registered = await instance.inject({ method: 'POST', url: '/v1/machines', headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${selected.token}` },
+            const registered = await instance.inject({ method: 'POST', url: '/v1/machines', headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${requester.token}` },
                 payload: { id: guestId, metadata: mode === 'plain' ? encodePlainMachineStoredContent({ host: 'guest', platform: 'linux',
                     happyCliVersion: 'test', homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier' }) : 'guest-ciphertext',
                     ...(mode === 'plain' ? { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } : {}),
                     installationId: guestInstallationId, installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url'),
                     installationProof: signMachineInstallationProof({ payload: { version: 1, machineId: guestId,
-                        installationId: guestInstallationId, accountId: selected.account.id }, privateKey: guestKeys.secretKey }), managedEnrollment: correlation } });
+                        installationId: guestInstallationId, accountId: requester.account.id }, privateKey: guestKeys.secretKey }), managedEnrollment: correlation } });
             expect(registered.statusCode, registered.body).toBe(200);
             await db.machine.update({ where: { id: guestId }, data: { active: true,
                 operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: capabilities } });
             const row = await db.managedMachine.findUniqueOrThrow({ where: { id: carrier.machine.id } });
-            expect(row).toMatchObject({ resource: null, allocation: 'bound', enrolledMachineId: guestId });
+            expect(row).toMatchObject({ resource: null, allocation: 'bound', enrolledMachineId: guestId,
+                custodianAccountId: selected.account.id });
+            expect(row.admittedInput).toMatchObject({ enrollmentAccountId: requester.account.id });
+            expect(await db.machine.findUniqueOrThrow({ where: { id: guestId } })).toMatchObject({ accountId: requester.account.id });
             if (phase === 'child' || phase === 'declined') {
                 const actionId = 'machines.setup.adminAccess.set';
-                const base = seal(actionId, guestId, { serverId: homeId, machineId: guestId, expectedMetadataVersion: 0,
-                    expectedAdminAccess: policy, adminAccess: policy, comparison: 'field' });
-                const envelope = sealManagedCreationActionCodecV1({ authorization: root, actionId,
-                    continuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 }, envelope: base,
-                    recipient: { machineId: guestId, installationId: guestInstallationId, installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url') },
-                    invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' }, randomBytes: tweetnacl.randomBytes });
                 const path = `/v1/actions/${actionId}`;
-                const body = { v: 1, machineId: guestId, envelope,
-                    managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
+                const makeChild = (recipient = { machineId: guestId, installationId: guestInstallationId,
+                    installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url') }) => {
+                    const base = seal(actionId, recipient.machineId, { serverId: homeId, machineId: recipient.machineId,
+                        expectedMetadataVersion: 0, expectedAdminAccess: policy, adminAccess: policy, comparison: 'field' });
+                    const envelope = sealManagedCreationActionCodecV1({ authorization: root, actionId,
+                        continuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 }, envelope: base,
+                        recipient, invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' },
+                        randomBytes: tweetnacl.randomBytes });
+                    return { v: 1, machineId: recipient.machineId, envelope,
+                        managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
+                };
+                const body = makeChild();
                 const send = (payload = body, privateKey = selected.keys.secretKey) => instance.inject({ method: 'POST', url: path, payload,
                     headers: createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: root.binding.actionId,
                         target: root.binding.target, installationId: selected.controller.installationId, privateKey,
@@ -3157,6 +3179,18 @@ describe('ordinary Account managed Action origination', () => {
                 expect(confirmations).toBe(1);
                 expect(nativeEffects).toBe(phase === 'declined' ? 0 : 1);
                 if (phase === 'declined') expect(child.json()).toMatchObject({ execution: { ok: false, errorCode: 'approval_canceled' } });
+                if (delegatedMember) {
+                    const wrongGuest = makeChild({ ...requester.controller,
+                        installationPublicKey: Buffer.from(requester.keys.publicKey).toString('base64url') });
+                    expect((await send(wrongGuest)).statusCode).toBe(403);
+                    const unrelated = await fixture(true);
+                    const unrelatedChild = await instance.inject({ method: 'POST', url: path, payload: body,
+                        headers: { authorization: `Bearer ${unrelated.token}` } });
+                    expect(unrelatedChild.statusCode, unrelatedChild.body).toBe(409);
+                    expect(unrelatedChild.json()).toMatchObject({ code: 'target_unavailable' });
+                    expect(confirmations).toBe(1);
+                    expect(nativeEffects).toBe(1);
+                }
                 // Construct only the retired storage boundary; the accepted
                 // authority above was produced by real admission and signing.
                 await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled' } });
