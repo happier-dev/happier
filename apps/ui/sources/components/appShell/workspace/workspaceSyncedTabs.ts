@@ -112,8 +112,25 @@ function createLinkedOrder(ids: readonly string[]) {
     };
 }
 
+/**
+ * Whether two states share every input of {@link projectWorkspaceSharedTabs}: the tab table, the pairs, and each
+ * pane's member list in canvas order. A tab switch moves only the active tab and focus, so it projects nothing.
+ */
+function sameSharedTabInputs(before: WorkspaceState, after: WorkspaceState): boolean {
+    if (before.tabs !== after.tabs || before.tabPairs !== after.tabPairs) return false;
+    if (before.root === after.root && before.groups === after.groups) return true;
+    const previous = collectSplitCanvasLeaves(before.root);
+    const next = collectSplitCanvasLeaves(after.root);
+    if (previous.length !== next.length) return false;
+    for (let index = 0; index < next.length; index++) {
+        const groupId = next[index]!.payload.groupId;
+        if (previous[index]!.payload.groupId !== groupId || before.groups[groupId]?.tabIds !== after.groups[groupId]?.tabIds) return false;
+    }
+    return true;
+}
+
 export function collectWorkspaceTabIntents(before: WorkspaceState, after: WorkspaceState, action?: WorkspaceAction): WorkspaceTabIntent[] {
-    if (before === after) return [];
+    if (before === after || sameSharedTabInputs(before, after)) return [];
     const previous = projectWorkspaceSharedTabs(before);
     const next = projectWorkspaceSharedTabs(after);
     const intents: WorkspaceTabIntent[] = [];

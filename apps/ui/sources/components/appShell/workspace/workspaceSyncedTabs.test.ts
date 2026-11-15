@@ -62,6 +62,17 @@ describe('workspace synced tab intent owner', () => {
         for (const id of ids.slice(1)) state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab(id) });
         return { ids, state };
     };
+    it('collects no shared-tab work for a tab switch, however many tabs are open', () => {
+        // A switch moves only the active tab and focus; shared membership, order and pairs stand.
+        const { ids, state } = openTabs(1000);
+        const switched = reduceWorkspaceState(state, { type: 'activateTab', groupId: 'group:1', tabId: ids[10]! });
+        let intents: ReturnType<typeof collectWorkspaceTabIntents> = [];
+        const elements = scannedElements(() => { intents = collectWorkspaceTabIntents(state, switched); });
+        expect({ intents, elements }).toEqual({ intents: [], elements: 0 });
+        // A real membership edit still projects both sides.
+        const opened = reduceWorkspaceState(switched, { type: 'openTab', groupId: 'group:1', tab: tab('fresh') });
+        expect(collectWorkspaceTabIntents(switched, opened).map(intent => intent.type === 'open' ? `open:${intent.tab.id}` : intent.type)).toEqual(['open:fresh']);
+    });
     it('restores a saved layout with membership work linear in the tab count', () => {
         const scanned = (count: number) => {
             const { state } = openTabs(count);
