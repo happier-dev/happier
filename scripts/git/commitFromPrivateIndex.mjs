@@ -93,6 +93,13 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
           ...closure.findings.map(finding => `  ${finding}`),
           'Commit each producer (export, module, package.json) with its consumer, or the importer adaptations with the producer change; otherwise leave the consumer uncommitted.'].join('\n'));
       }
+      // Blocking plugin import-boundary check of the packet tree (changed plugin files, Git-object manifests).
+      const { commitExtensionBoundaries } = await import('../workspaces/checkCommitTypeCoherence.mjs');
+      const boundary = commitExtensionBoundaries({ repo: cwd, base: head, tree });
+      if (boundary.findings.length) {
+        throw new Error([`Commit refused: the packet adds ${boundary.findings.length} extension import-boundary violation(s):`,
+          ...boundary.findings.map(finding => `  ${finding}`)].join('\n'));
+      }
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
       try {
         git('update-ref', 'HEAD', commit, head);

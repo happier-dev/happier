@@ -33,10 +33,14 @@ import { resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable
 import { diagnosticHunks, diagnosticMessageText, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDeclaration.mjs';
 import { commitProducerClosure } from './commitProducerClosure.mjs';
+import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 
 // The textual producer-closure scan (missing modules/exports, untracked lockfile importers) runs
 // before any compiler or admission on every commit path, including the fast private-index path.
 export { commitProducerClosure };
+// Blocking plugin import-boundary check of the packet tree (PLUGIN-BOUNDARY-ZERO-1115-ENFORCEMENT ask):
+// the canonical validator over the packet's changed plugin files, manifests materialized from Git objects.
+export { commitExtensionBoundaries };
 
 const require = createRequire(import.meta.url);
 let ts;
@@ -654,8 +658,10 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
       continue;
     }
     // A landed commit can drop an export or module the packet reads; check the replayed parent.
+    // A landed commit can also change a manifest the packet's plugin files are judged against.
     const closure = checked.base === original.base ? []
-      : commitProducerClosure({ repo, base: head, tree: checked.tree }).findings;
+      : [...commitProducerClosure({ repo, base: head, tree: checked.tree }).findings,
+        ...commitExtensionBoundaries({ repo, base: head, tree: checked.tree }).findings];
     if (closure.length) {
       checked = { ...checked, closure };
       continue;
@@ -721,20 +727,23 @@ function main(argv) {
     // Blocking producer closure (owner 2026-11-15). TS packets reach it after admission, because
     // the CLI does no work before its queued process image is replaced; zero-TS packets need none.
     const closure = commitProducerClosure({ repo, base: result.base, tree: result.tree }).findings;
-    const verdict = result.fresh.length || result.unowned.length || closure.length ? 'INCOHERENT' : 'coherent';
+    const boundary = commitExtensionBoundaries({ repo, base: result.base, tree: result.tree }).findings;
+    const verdict = result.fresh.length || result.unowned.length || closure.length || boundary.length ? 'INCOHERENT' : 'coherent';
     console.log(
-      `${verdict} ${target.label}: changed=${result.changed} roots=${result.roots} new=${result.fresh.length} unowned=${result.unowned.length} closure=${closure.length} ${(result.ms / 1000).toFixed(1)}s`,
+      `${verdict} ${target.label}: changed=${result.changed} roots=${result.roots} new=${result.fresh.length} unowned=${result.unowned.length} closure=${closure.length} boundary=${boundary.length} ${(result.ms / 1000).toFixed(1)}s`,
     );
     if (closure.length) console.log('  producer closure:');
     for (const finding of closure) console.log(`  ${finding}`);
+    if (boundary.length) console.log('  extension import boundary (new):');
+    for (const finding of boundary) console.log(`  ${finding}`);
     for (const row of result.fresh)
       console.log(
         `  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`,
       );
     for (const file of result.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-    if (result.fresh.length || result.unowned.length || closure.length) incoherent += 1;
-    if (messageFile && closure.length) {
-      console.error(`Packet refused: closure=${closure.length}`);
+    if (result.fresh.length || result.unowned.length || closure.length || boundary.length) incoherent += 1;
+    if (messageFile && (closure.length || boundary.length)) {
+      console.error(`Packet refused: closure=${closure.length} boundary=${boundary.length}`);
       return 1;
     }
     if (messageFile) {

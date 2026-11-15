@@ -97,6 +97,33 @@ test('importer discovery handles changed target stems beyond the OS argument lim
   assert.ok(grepCount > 0, 'the bounded-pattern contract must exercise Git importer discovery');
 });
 
+// P03-ADMISSION-PRIORITY: the compiler admission identity names the owner programs this
+// packet compiles (its changed files and their importers), so the broker reserves the
+// measured peak of that program set rather than one class-wide floor.
+test('compiler admission names the owner programs the packet compiles, importers included', async t => {
+  const { repo, write, git } = await checkout(t);
+  await mkdir(join(repo, 'pkg'));
+  await write('pkg/tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ['*.ts'] }));
+  await write('pkg/inner.ts', 'export const inner = 1;\n');
+  await write('pkg/alone.ts', 'export const alone = 1;\n');
+  await write('outer.ts', "import { inner } from './pkg/inner';\nexport const outer: number = inner;\n");
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'owners');
+  const requested = target => {
+    git('commit', '--quiet', '-m', `change ${target}`, '--', target);
+    let projects;
+    assert.throws(() => checkCommitTypeCoherence({ repo, base: 'HEAD^', tree: 'HEAD', beforeCompiler: value => {
+      projects = value;
+      throw new Error('admission requested');
+    } }), /admission requested/u);
+    return projects;
+  };
+  await write('pkg/alone.ts', 'export const alone = 2;\n');
+  assert.deepEqual(requested('pkg/alone.ts'), ['pkg']);
+  await write('pkg/inner.ts', 'export const inner = 2;\n');
+  assert.deepEqual(requested('pkg/inner.ts'), ['.', 'pkg'], 'a root importer adds the root program');
+});
+
 test('verdict dependencies omit unrelated modules while retaining configured global and module augmentations', async t => {
   const { repo, write, commitOnly } = await checkout(t);
   await write('ambient.d.ts', 'interface Error { ambientValue: number }\n');
@@ -981,4 +1008,28 @@ test('finalization refuses a checked script packet once a landed commit drops th
   assert.equal(result.commit, undefined);
   assert.ok(result.checked.closure.some(finding => finding.includes('consumer.mjs imports { extra }')), result.checked.closure.join('\n'));
   assert.equal(git('rev-parse', 'HEAD').trim(), parent);
+});
+
+test('the checker CLI refuses a plugin packet that adds an extension import-boundary violation in its tree', async (t) => {
+  const { repo, write, commitOnly, git } = await checkout(t);
+  await mkdir(join(repo, 'packages/plugins/demo/src'), { recursive: true });
+  await write('packages/plugins/demo/package.json', JSON.stringify({ name: '@happier-dev/plugins-demo', private: true }));
+  // A violation already at the base stays reported by the canonical validator, never by this packet.
+  await write('packages/plugins/demo/src/legacy.mjs', "import { old } from '@/legacy';\nexport const legacy = old;\n");
+  await write('packages/plugins/demo/src/index.mjs', 'export const value = 1;\n');
+  const base = commitOnly('packages/plugins/demo/package.json', 'packages/plugins/demo/src/legacy.mjs', 'packages/plugins/demo/src/index.mjs');
+  await write('packages/plugins/demo/src/legacy.mjs', "// touched\nimport { old } from '@/legacy';\nexport const legacy = old;\n");
+  await write('packages/plugins/demo/src/index.mjs', "import { host } from '@/host';\nexport const value = host;\n");
+  const broken = commitOnly('packages/plugins/demo/src/legacy.mjs', 'packages/plugins/demo/src/index.mjs');
+  // The worktree no longer holds the violation: the verdict must come from the packet's tree.
+  await write('packages/plugins/demo/src/index.mjs', 'export const value = 1;\n');
+  const cli = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('./checkCommitTypeCoherence.mjs', import.meta.url)), ...args],
+    { cwd: repo, encoding: 'utf8' });
+  const refused = cli(`--base=${base}`, `--tree=${broken}`);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stdout, /INCOHERENT[^\n]*boundary=1[\s\S]*packages\/plugins\/demo\/src\/index\.mjs: forbidden import "@\/host"/u);
+  assert.doesNotMatch(refused.stdout, /legacy\.mjs: forbidden/u);
+  const fixed = commitOnly('packages/plugins/demo/src/index.mjs');
+  const accepted = cli(`--base=${broken}`, `--tree=${fixed}`);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
 });
