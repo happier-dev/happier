@@ -53,6 +53,10 @@ import {
 import { createProductionWorkflowSessionStepExecutor } from './sessionStepExecutor';
 
 describe('Workflow Session step execution', () => {
+  it('CC1 carries a fulfilled quota failure into the Workflow reason', () => {
+    const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', occurredAt: 1, failureCause: { phase: 'client_start', failureReason: 'usage_limit', retryable: false } } as const;
+    expect(classifyWorkflowSessionInputResult({ kind: 'fulfilled', outcome: { kind: 'failed', runtimeIssueV1 } })).toMatchObject({ kind: 'needs_attention', runtimeIssueV1 });
+  });
   it.each([
     { outcome: { kind: 'pass' as const }, expected: { kind: 'completed', result: '' } },
     { outcome: { kind: 'terminal_no_result' as const }, expected: { kind: 'needs_attention', code: 'session_input_result_unavailable' } },

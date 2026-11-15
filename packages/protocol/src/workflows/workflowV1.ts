@@ -11,6 +11,7 @@ import {
 } from '../sessions/authoring/selectionFieldsV1.js';
 import { PortableRuntimeDescriptorV1Schema } from '../sessions/metadata/runtimeDescriptorV1.js';
 import { WorkflowStepComposerDocumentSchema } from './workflowComposerDocumentV1.js';
+import { WorkflowActionTextDocumentV1Schema } from './workflowActionTextV1.js';
 import {
   WorkflowAuthoredProducerRefSchema,
   WorkflowAuthoredResultReferenceSchema,
@@ -240,7 +241,6 @@ export function findWorkflowUnsupportedSelectionFieldV1(selection: Readonly<Reco
   return WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS.find(field => selection[field] !== undefined) ?? null;
 }
 
-
 function projectStoredCapabilitySelection(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const { mcpSelection, ...canonical } = raw as Record<string, unknown>;
@@ -344,6 +344,8 @@ export const WorkflowActionFieldBindingV1Schema = lazyZodSchema(() => z.union([
   WorkflowActionValueReferenceV1Schema,
   z.strictObject({ kind: z.literal('list'), items: z.array(WorkflowActionValueReferenceV1Schema) }),
   z.strictObject({ kind: z.literal('object'), fields: z.record(z.string(), WorkflowActionValueReferenceV1Schema) }),
+  /** Workflow values inside the field's text, substituted at run time by the field's declared type. */
+  z.strictObject({ kind: z.literal('text'), document: WorkflowActionTextDocumentV1Schema, input: z.array(WorkflowActionValueReferenceV1Schema) }),
 ]));
 export type WorkflowActionFieldBindingV1 = z.infer<typeof WorkflowActionFieldBindingV1Schema>;
 const workflowLeafFields = { id: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema, execution: zMini.optional(WorkflowStepSelectionV1Schema), onlyWhen: zMini.optional(WorkflowConditionSchema), runWhen: zMini.optional(WorkflowRunWhenV1Schema) };

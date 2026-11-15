@@ -9,6 +9,9 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarration.js';
 import { ReviewPublicationEvidenceSchema, ReviewPublicationMaterializationSchema } from '../../reviews/reviewPublicationEvidence.js';
 
+import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
+import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
+
 // Retained immediate output is a compatibility seam: additional owner fields survive,
 // but the launched run identity and the Action's intent must remain explicit.
 const FanoutOutputSchema = lazyZodSchema(() => z.looseObject({
@@ -25,6 +28,7 @@ const PerEngineOutcomeSchema = lazyZodSchema(() => z.strictObject({
   key: z.string().check(z.minLength(1)), runId: z.optional(z.string().check(z.minLength(1))),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   reviewOutcome: z.optional(z.enum(['complete', 'partial', 'failed', 'unavailable'])),
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   errorCode: z.optional(z.string().check(z.minLength(1))), materialization: z.optional(ReviewPublicationMaterializationSchema),
 }));
 
@@ -49,6 +53,7 @@ type ObservedRun = Readonly<ActionCompletionRun & { outcome: ExecutionRunTermina
 function perRunOutcome({ key, runId, outcome }: ObservedRun) {
   return {
     key, runId, outcome: outcome.kind,
+    ...(outcome.kind === 'failed' && outcome.runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(outcome.runtimeIssueV1) } : {}),
     ...(outcome.kind !== 'completed' && outcome.code ? { errorCode: outcome.code } : {}),
   };
 }
@@ -60,6 +65,7 @@ function launchFailureOutcomes(output: unknown, intent: 'review' | 'plan') {
 const NarrationTerminalValueSchema = lazyZodSchema(() => z.strictObject({ runId: z.optional(z.string().check(z.minLength(1))),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   outputState: z.optional(z.enum(['complete', 'partial', 'failed', 'cancelled'])),
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   errorCode: z.optional(z.string().check(z.minLength(1))), result: z.optional(StrictJsonValueSchema),
 }));
 
@@ -74,6 +80,7 @@ function narrationTerminalValue(run: ObservedRun, purpose: 'input' | 'stored') {
     : ScmDiffSummaryGenerateOutputSchema).safeParse(run.outcome.result) : undefined;
   const outputState = output?.success ? output.data.outputs?.walkthrough?.state : undefined;
   return { runId: run.runId, outcome: run.outcome.kind,
+    ...(run.outcome.kind === 'failed' && run.outcome.runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(run.outcome.runtimeIssueV1) } : {}),
     ...(outputState && outputState !== 'pending' && outputState !== 'writing' ? { outputState } : {}),
     ...(run.outcome.kind === 'completed' ? { result: run.outcome.result }
       : run.outcome.code ? { errorCode: run.outcome.code } : {}),

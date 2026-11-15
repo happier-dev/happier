@@ -18,6 +18,9 @@ import { ReviewPublicationEvidenceSchema, type ReviewPublicationMaterialization 
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from './operations/v1.js';
 import type { DeploymentReceiptResultV1 } from '../deployments/deploymentActionsV1.js';
 
+import { projectSessionRuntimeIssueMetadataV1 } from '../sessions/control/runtimeIssueMetadataV1.js';
+import type { SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
+
 export type ActionCompletionRun = Readonly<{ key: string; runId: string; observation?: ExecutionRunOutputObservation }>;
 export type ActionCompletionLaunchFailure = Readonly<{ key: string; errorCode: string; runCreation: ExecutionRunStartRunCreation }>;
 export type ReviewRunMaterialization = ReviewPublicationMaterialization;
@@ -30,7 +33,7 @@ export type ExecutionRunTerminalObservation =
     commentIds?: readonly string[];
     materialization?: ReviewRunMaterialization;
   }>
-  | Readonly<{ kind: 'failed'; code: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
+  | Readonly<{ kind: 'failed'; code: string; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'cancelled'; code?: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string }>;
 
@@ -40,6 +43,8 @@ export function readActionCompletionRunObservationV1(native: Readonly<{
   latestToolResult?: unknown;
   structuredMeta?: ExecutionRunGetResponse['structuredMeta'];
 }>, observation?: ExecutionRunOutputObservation): ExecutionRunTerminalObservation {
+  const runtimeIssueV1 = native.run.error?.runtimeIssueV1;
+  const runtimeEvidence = runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(runtimeIssueV1) } : {};
   if (observation) {
     if (native.run.error?.code === 'execution_run_send_outcome_unknown') {
       return { kind: 'outcome_uncertain', code: native.run.error.code };
@@ -57,7 +62,7 @@ export function readActionCompletionRunObservationV1(native: Readonly<{
       : undefined;
     const reviewEvidence = reviewedRuns?.length ? { reviewedRuns } : {};
     const publicationFailure = ScmDiffSummaryResultErrorCodeSchema.safeParse(native.run.error?.code);
-    if (publicationFailure.success) return { kind: 'failed', code: publicationFailure.data, ...reviewEvidence };
+    if (publicationFailure.success) return { kind: 'failed', code: publicationFailure.data, ...runtimeEvidence, ...reviewEvidence };
     if (matches
       && (observation.afterRevision === undefined || output.data.revision !== undefined && output.data.revision > observation.afterRevision)) {
       const state = output.data.outputs?.[observation.kind === 'scm_diff_summary' ? observation.output : 'walkthrough']?.state;
@@ -66,14 +71,14 @@ export function readActionCompletionRunObservationV1(native: Readonly<{
       }
     }
     if (native.run.status === 'failed' || native.run.status === 'timeout') {
-      return { kind: 'failed', code: native.run.error?.code ?? 'execution_run_failed', ...reviewEvidence };
+      return { kind: 'failed', code: native.run.error?.code ?? 'execution_run_failed', ...runtimeEvidence, ...reviewEvidence };
     }
     if (native.run.status === 'cancelled') return { kind: 'cancelled', ...reviewEvidence };
     if (native.run.status === 'succeeded') return { kind: 'outcome_uncertain', code: 'execution_run_result_unavailable' };
     return { kind: 'outcome_uncertain', code: 'execution_run_output_not_settled' };
   }
   if (native.run.status === 'failed' || native.run.status === 'timeout') {
-    return { kind: 'failed', code: native.run.error?.code ?? 'execution_run_failed' };
+    return { kind: 'failed', code: native.run.error?.code ?? 'execution_run_failed', ...runtimeEvidence };
   }
   if (native.run.status === 'cancelled') return { kind: 'cancelled' };
   if (native.run.status !== 'succeeded') return { kind: 'outcome_uncertain', code: 'execution_run_not_terminal' };

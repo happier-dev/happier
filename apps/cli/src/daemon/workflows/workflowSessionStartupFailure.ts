@@ -5,6 +5,7 @@ import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPr
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { WorkflowSessionCompositionError } from './workflowConversation';
 import { SessionSpawnNewActionResultV1Schema, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
 
 /** Retain the creator's existing typed projection, including its retry decision. */
@@ -31,12 +32,13 @@ function workflowSessionStartupRefusalError(
 ): WorkflowSessionCompositionError {
   const launch = 'launchError' in refusal ? refusal.launchError : undefined;
   const code = launch?.code ?? ('providerError' in refusal ? refusal.providerError?.code : undefined) ?? refusal.code;
-  const actionFailureCause = 'failureCause' in refusal ? refusal.failureCause : undefined;
+  const providerCause = 'providerError' in refusal ? readSessionRuntimeFailureCause(refusal.providerError, 'client_start') : undefined;
+  const actionFailureCause = ('failureCause' in refusal ? refusal.failureCause : undefined) ?? providerCause?.actionCause;
   if (actionFailureCause && !launch && !('providerError' in refusal && refusal.providerError)) {
     return new WorkflowSessionCompositionError(code, code, undefined, undefined, undefined, actionFailureCause);
   }
   const failureCause = { phase: 'client_start' as const, failureReason: 'unknown' as const,
-    code, retryable: refusal.retryable, ...launch?.failureCause };
+    code, retryable: refusal.retryable, ...(launch?.failureCause ?? providerCause) };
   const runtimeIssueV1 = projectSessionRuntimeIssueMetadataV1({ v: 1, scope: 'primary_session', status: 'failed',
     code, source: failureCause.failureReason === 'usage_limit' ? 'usage_limit' : 'unknown', occurredAt, failureCause,
     ...('agentId' in refusal && refusal.agentId ? { agentId: refusal.agentId } : {}) });

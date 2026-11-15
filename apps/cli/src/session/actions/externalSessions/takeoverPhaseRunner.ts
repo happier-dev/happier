@@ -1,3 +1,6 @@
+import { readSessionRuntimeFailureCause, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationResumeInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import { canCancelExternalSessionOperationV1, isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1, projectExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import { resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -363,6 +366,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
     message: string,
     phase: 'quiescing' | 'admitting' | 'spawning',
     admission: CapturedTakeoverAdmission,
+    spawnFailure?: Readonly<{ retryable: boolean; runtimeIssueV1?: SessionRuntimeIssueV1 }>,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     const failed = await mutate(record, (fresh) => {
       const {
@@ -380,7 +384,8 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         error: {
           code,
           message,
-          retryable: true,
+          retryable: spawnFailure?.retryable ?? true,
+          ...(spawnFailure?.runtimeIssueV1 ? { runtimeIssueV1: spawnFailure.runtimeIssueV1 } : {}),
           occurredAtMs: nowMs(),
         },
       };
@@ -871,12 +876,23 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
           admission,
         );
         if (reconciled) return reconciled;
+        const failure = spawned.ok && spawned.value.type === 'error' ? projectSessionSpawnFailure(spawned.value) : undefined;
+        const cause = failure && 'launchError' in failure
+          ? readSessionRuntimeFailureCause(failure.launchError, 'client_start')
+          : failure && 'providerError' in failure ? readSessionRuntimeFailureCause(failure.providerError, 'client_start') : undefined;
+        const runtimeIssueV1 = cause ? projectSessionRuntimeIssueMetadataV1({
+          v: 1, scope: 'primary_session', status: 'failed',
+          code: cause.code ?? 'spawn_failed',
+          source: cause.failureReason === 'usage_limit' ? 'usage_limit' : 'unknown',
+          occurredAt: nowMs(), failureCause: cause,
+        }) : undefined;
         return await failPreSpawn(
           active,
           'spawn_failed',
           'External-linked takeover runtime did not start.',
-          phaseForAdmissionFailure(active),
+          'spawning',
           admission,
+          failure ? { retryable: failure.retryable, ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}) } : undefined,
         );
       }
       const admissionOutcome = await admissionWait!.outcome;

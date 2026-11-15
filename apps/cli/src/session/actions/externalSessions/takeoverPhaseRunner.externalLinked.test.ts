@@ -202,6 +202,75 @@ describe('external-linked durable takeover continuation', () => {
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });
+  it('CC4 retains a typed launch refusal in takeover progress', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-account-'));
+    const credentialsFor = (sub: string) => ({
+      token: `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`,
+      encryption: null,
+    });
+    ambientCredentials.current = credentialsFor('account-a');
+    const accountScope = resolveExternalSessionOperationAccountScope(
+      activeServerDir, ambientCredentials.current.token,
+    );
+    if (!accountScope) throw new Error('expected Account A scope');
+    const record = externalLinkedRecord();
+    const admissionWaiter = createPersistedTakeoverAdmissionWaiter();
+    const prepared = {
+      linked: {} as never,
+      occurrenceId: occurrenceId('account-pin-occurrence'),
+      quiescenceIdentity: 'exact-source-and-process',
+      permitsAdmission: true,
+      hostedOwnerSessionId: null,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
+    };
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, record, { accountScope });
+      const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
+        activeServerDir,
+        operationExclusion: createExternalSessionOperationExclusion({
+          activeServerDir, ownerId: 'account-pin-owner',
+        }),
+        loadCurrent: async () => prepared,
+        followLeaseManager: {
+          suspendSession: async () => {
+            ambientCredentials.current = credentialsFor('account-b');
+            return true;
+          },
+          resumeSession: async () => ({ resumed: true, leaseAcquired: false }),
+        },
+        resolveSpawn: async () => ({
+          ok: true,
+          value: {
+            options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
+            origin: {
+              agentId: 'example', pluginId: 'example.plugin',
+              occurrenceId: occurrenceId('account-pin-occurrence'),
+            },
+          },
+        }),
+        spawnResolvedTakeoverSession: async (input) => ({
+          ok: true, value: await input.spawnSession({ ...input.resolved.options, ...input.options }),
+        }),
+        spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'private', errorDetail: { kind: 'launch_error', code: 'credential_unavailable', message: 'private', failureCause: { code: 'credential_unavailable', phase: 'authentication', failureReason: 'authentication_required', retryable: false } } }),
+        admissionWaiter,
+        reconcileRuntimeBindingFailure: noCommittedRuntimeBindingFailure,
+        publishProgress: async () => undefined,
+        nowMs: () => 20,
+      });
+      const outcome = await runner.resume({
+        sessionId: record.request.sessionId, operationId: record.operationId, revision: record.revision,
+      });
+      const retained = await readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope);
+      expect(outcome, JSON.stringify(retained?.error)).toMatchObject({ ok: true, progress: { status: 'failed', error: { code: 'spawn_failed', retryable: false, runtimeIssueV1: { failureCause: { code: 'credential_unavailable', failureReason: 'authentication_required' } } } } });
+      expect(ambientCredentials.reads).toBe(1);
+      await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId)).resolves.toBeNull();
+      await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope))
+        .resolves.toMatchObject({ status: 'failed' });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
   it('fails writer safety from the current admitted source before durable advance or spawn', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-external-linked-takeover-'),

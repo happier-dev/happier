@@ -9,6 +9,7 @@ import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV
 import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/workflowComposerDocumentV1';
 import type { DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { WorkflowActionFieldBindingV1, WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
+import { listWorkflowActionTextInputIndexesV1, renderWorkflowActionTextV1, type WorkflowActionTextEncodingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import { compactWorkflowPromptContext, projectWorkflowPromptContext, renderWorkflowPromptContext } from './workflowPromptContext';
 import { isWorkflowJsonObject, type WorkflowJsonValue } from './workflowValues';
 
@@ -171,14 +172,31 @@ export function selectWorkflowResultPath(
   return selected;
 }
 
-/** Resolve each authored field through the value owner, preserving its object or list shape. */
+/**
+ * Resolve each authored field through the value owner, preserving its object or list shape.
+ * Text with values inside resolves only the values it uses, encoded as the frozen field type
+ * declares (`readWorkflowActionFieldTextEncodingV1`); without that decision it fails closed.
+ */
 export async function resolveWorkflowActionFieldBinding(
   binding: WorkflowActionFieldBindingV1,
   runtime: WorkflowValueResolutionRuntime,
   originSessionId?: string,
+  textEncoding?: WorkflowActionTextEncodingV1,
 ): Promise<WorkflowJsonValue> {
   const resolve = async (reference: WorkflowActionValueReferenceV1): Promise<WorkflowJsonValue> =>
     reference.kind === 'origin_session_id' ? originSessionId ?? null : await resolveWorkflowValueReference(reference, runtime);
+  if (binding.kind === 'text') {
+    if (textEncoding === undefined) throw new WorkflowInputResolutionError('invalid_input');
+    const values = new Map<number, WorkflowJsonValue>();
+    for (const index of listWorkflowActionTextInputIndexesV1(binding.document)) {
+      const reference = binding.input[index];
+      if (reference === undefined) throw new WorkflowInputResolutionError('missing_reference');
+      values.set(index, await resolve(reference));
+    }
+    const rendered = renderWorkflowActionTextV1(binding.document, textEncoding, index => values.get(index)!);
+    if (!rendered.ok) throw new WorkflowInputResolutionError('invalid_input');
+    return rendered.value;
+  }
   if (binding.kind === 'list') return await Promise.all(binding.items.map(resolve));
   if (binding.kind === 'object') return Object.fromEntries(await Promise.all(Object.entries(binding.fields)
     .map(async ([field, reference]) => [field, await resolve(reference)] as const)));

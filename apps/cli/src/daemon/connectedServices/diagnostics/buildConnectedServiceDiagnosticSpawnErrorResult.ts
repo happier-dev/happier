@@ -1,6 +1,6 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { formatAgentLikeIdForDisplay } from '@happier-dev/agents/presentation';
-import { readSessionStartupFailurePreview, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionStartupFailurePreview, readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceCredentialReconnectCauseV1Schema, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import type { ConnectedServiceUxDiagnosticV1, SpawnSessionResult } from '@happier-dev/protocol';
@@ -97,20 +97,17 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   if (isPluginError(input.error) && (input.error.code === 'credential_unavailable'
     || input.error.code === 'provider_incompatible_with_agent')) {
     const details = readRecord(input.error.details);
-    const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(details?.failureCause);
+    const failureCause = readSessionRuntimeFailureCause(input.error, 'client_start');
     const requiredKinds = Array.isArray(details?.requiredCredentialKinds)
       ? details.requiredCredentialKinds.flatMap(kind => kind === 'token' ? ['API key'] : kind === 'oauth' ? ['OAuth subscription'] : [])
       : [];
     const message = input.error.code === 'provider_incompatible_with_agent' && requiredKinds.length > 0
       ? `${formatAgentLikeIdForDisplay(input.agentId)} needs a Connected Account with ${requiredKinds.join(' or ')} credentials. Select a compatible account.`
       : readSessionStartupFailurePreview(input.error.code);
-    if (failureCause.success && message) {
+    if (failureCause && message) {
       return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: input.error.code,
-        errorDetail: { kind: 'launch_error', code: input.error.code, message, failureCause: {
-          code: input.error.code, phase: failureCause.data.phase,
-          failureReason: failureCause.data.failureReason, retryable: failureCause.data.retryable,
-        } } };
+        errorDetail: { kind: 'launch_error', code: input.error.code, message, failureCause } };
     }
   }
   const authorityError = readRecord(input.error);

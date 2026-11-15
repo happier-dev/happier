@@ -1,3 +1,5 @@
+import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
+import { projectSessionRuntimeIssueMetadataV1 } from '../control/runtimeIssueMetadataV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -426,6 +428,7 @@ export type ExternalSessionOperationSocketResponseErrorCodeV1 = z.infer<
 export const ExternalSessionOperationErrorV1Schema = lazyZodSchema(() => z.strictObject({
   code: ExternalSessionOperationErrorCodeV1Schema,
   publicationErrorCode: z.optional(ExternalSessionOperationSocketResponseErrorCodeV1Schema),
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   message: z.string().check(z.trim(), z.minLength(1), z.maxLength(2_000)),
   retryable: z.boolean(),
   occurredAtMs: OperationTimestampSchema,
@@ -1057,6 +1060,7 @@ const ExternalSessionOperationPublicCheckpointV1Schema = lazyZodSchema(() => z.s
 const ExternalSessionOperationPublicErrorV1Schema = lazyZodSchema(() => z.strictObject({
   code: ExternalSessionOperationErrorCodeV1Schema,
   publicationErrorCode: z.optional(ExternalSessionOperationSocketResponseErrorCodeV1Schema),
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   retryable: z.boolean(),
   occurredAtMs: OperationTimestampSchema,
 }));
@@ -1181,6 +1185,7 @@ export function projectExternalSessionOperationProgressV1(
       ? {
           error: {
             code: operation.error.code,
+            ...(operation.error.runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(operation.error.runtimeIssueV1) } : {}),
             ...(operation.error.publicationErrorCode ? { publicationErrorCode: operation.error.publicationErrorCode } : {}),
             retryable:
               operation.error.code === 'reconciliation_required'

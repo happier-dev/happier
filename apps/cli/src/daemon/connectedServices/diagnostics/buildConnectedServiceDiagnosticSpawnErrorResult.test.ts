@@ -14,6 +14,11 @@ import {
 import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
 describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
+  it('SB1 retains canonical cause fields instead of rebuilding a four-field subset', () => {
+    const failureCause = { code: 'credential_unavailable', phase: 'authentication', failureReason: 'authentication_required', retryable: false, httpStatus: 401 } as const;
+    const result = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi', error: new PluginError({ code: 'credential_unavailable', retryable: false, details: { failureCause } }) });
+    expect(result?.errorDetail).toMatchObject({ failureCause });
+  });
   it('names the declared required kind in the presented incompatible-account refusal', () => {
     const result = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi',
       error: new PluginError({ code: 'provider_incompatible_with_agent', retryable: false,

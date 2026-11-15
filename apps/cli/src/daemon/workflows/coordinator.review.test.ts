@@ -21,6 +21,22 @@ function deferred<T>() {
 }
 
 describe('workflow review pipeline', () => {
+  it('CC2 retains runtime evidence when a generation attention result enters review', async () => {
+    const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', occurredAt: 1, failureCause: { phase: 'client_start', failureReason: 'usage_limit', retryable: false } } as const;
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const authored = definition([leaf('quota', true)]);
+    const key = workflowInvocationKey({ runId: 'quota-review', blockId: 'quota', scope: [], attempt: 0 });
+    await store.ensureIntent({ key, recordId: 'quota-row', runId: 'quota-review', blockKind: 'step', blockId: 'quota', memberOrdinal: '0',
+      path: { blockId: 'quota', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'pending' });
+    await store.commitFact({ key, lifecycle: 'waiting_for_review', result: 'prior', workspace: { descriptor: workspace },
+      execution: { kind: 'detached_run', runId: 'native', localInputId: 'prior-input',
+        runtimeSelection: projectWorkflowRetainedRuntimeSelectionV1({ ...authored.defaults, permissionMode: 'default' }) },
+      review: { decision: { kind: 'generate', requestedFromContentRevision: '0' } } });
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
+      executeStep: async () => ({ kind: 'needs_attention', code: 'continuation_unavailable', runtimeIssueV1 }) });
+    expect((await coordinator.run({ runId: 'quota-review', definition: authored, inputs: {}, executionTarget: { kind: 'detached_run' }, authorization })).state).toBe('waiting_for_review');
+    expect([...store.records.values()].find(row => row.attempt === 1)).toMatchObject({ runtimeIssueV1 });
+  });
   it('keeps Session context materialization in flight until an independent leaf can execute', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const contextRead = deferred<void>();

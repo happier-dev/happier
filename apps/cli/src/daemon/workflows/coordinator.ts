@@ -1,4 +1,5 @@
 import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowLoopItemDisplayLabelV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { readWorkflowActionFieldTextEncodingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowAcceptedStepSelectionV1, WorkflowStepSelectionErrorV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
@@ -1874,10 +1875,11 @@ async function executeActionBlock(
     // attempt, reviewer decision or freshly resolved binding can change them.
     const heldInput = setupConsentHold && row.execution?.kind === 'action' ? row.execution.input : undefined;
     let input: Record<string, WorkflowJsonValue> = { ...(heldInput ?? frozen.actionInput) };
-    for (const [field, binding] of Object.entries(heldInput ? {} : leaf.input)) {
-      input[field] = await resolveWorkflowActionFieldBinding(binding, runtime, context.originSessionId);
-    }
     const schema = frozen.actionContract.inputSchema;
+    for (const [field, binding] of Object.entries(heldInput ? {} : leaf.input)) {
+      input[field] = await resolveWorkflowActionFieldBinding(binding, runtime, context.originSessionId,
+        binding.kind === 'text' ? readWorkflowActionFieldTextEncodingV1(schema, field) : undefined);
+    }
     if (!isWorkflowJsonObject(schema)) return await fail('invalid_input', 'failed', true);
     const validation = validateExecutionRunProfileResult(input, { kind: 'json', schema });
     if (!validation.ok) {
@@ -2735,7 +2737,7 @@ async function executeStepBlock(
       const row = await enterReview({ key, lifecycle: 'waiting_for_review', reason: execution.code,
         ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.failureCause
           ? { failureCause: execution.failureCause } : {}),
-        ...(execution.kind === 'failed' && execution.runtimeIssueV1 ? { runtimeIssueV1: execution.runtimeIssueV1 } : {}),
+        ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.runtimeIssueV1 ? { runtimeIssueV1: execution.runtimeIssueV1 } : {}),
         ...(execution.kind === 'failed' && execution.reasonDetails ? { reasonDetails: execution.reasonDetails } : {}),
         ...(execution.kind === 'failed' && execution.message !== undefined ? { reasonMessage: execution.message } : {}),
         ...(execution.usage ? { usage: execution.usage } : {}),

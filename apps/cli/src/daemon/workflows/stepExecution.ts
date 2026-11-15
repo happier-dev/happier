@@ -48,7 +48,8 @@ export function classifyWorkflowSessionInputResult(
           return { kind: 'completed', result: '', ...reply };
         case 'terminal_no_result': return { kind: 'needs_attention', code: 'session_input_result_unavailable', ...reply };
         case 'cancelled': return { kind: 'cancelled', ...reply };
-        case 'failed': return { kind: 'failed', code: 'session_input_failed', message: 'The requested session failed.', ...reply };
+        case 'failed': return { kind: workflowRuntimeFailureKind(outcome.runtimeIssueV1), code: 'session_input_failed', message: 'The requested session failed.',
+          ...(outcome.runtimeIssueV1 ? { runtimeIssueV1: outcome.runtimeIssueV1 } : {}), ...reply };
         case 'declined': return { kind: 'failed', code: 'session_input_declined', message: 'The requested session declined.', ...reply };
         case 'answer': return { kind: 'needs_attention', code: 'session_input_result_unavailable', ...reply };
       }

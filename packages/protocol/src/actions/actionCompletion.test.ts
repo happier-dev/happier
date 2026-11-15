@@ -7,6 +7,14 @@ import { readActionCompletionRunObservationV1, prepareActionCompletionV1,
   freezeActionCompletionContractV1, resumeActionCompletionV1 } from './actionCompletion.js';
 
 describe('Action completion contract', () => {
+  it.each([undefined, { kind: 'review_walkthrough', comparisonId: 'c' }] as const)('CC5 carries runtime issue through terminal Action values (%s)', (observation) => {
+    const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', occurredAt: 1, failureCause: { phase: 'client_start', failureReason: 'usage_limit', retryable: false } } as const;
+    const outcome = readActionCompletionRunObservationV1({ run: { status: 'failed', error: { code: 'execution_run_failed', runtimeIssueV1 } } }, observation);
+    expect(outcome).toMatchObject({ kind: 'failed', runtimeIssueV1 });
+    const declaration = getActionSpec('review.start').completion!;
+    const value = declaration.terminal({ intent: 'review', sessionId: null, results: [{ key: 'engine', ok: true, result: { runId: 'r' } }] }, [{ key: 'engine', runId: 'r', outcome }]);
+    expect(declaration.terminalOutputSchema.parse(value)).toMatchObject({ perEngineOutcome: [{ runtimeIssueV1 }] });
+  });
   it('preserves the source failure cause separately from failed Action details', () => {
     const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const details = { reason: 'connection_lost' };
