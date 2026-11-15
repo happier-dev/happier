@@ -10,7 +10,7 @@ import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedCreationScopeRetentionV1Schema, createManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, type ManagedControllerCurrentnessV1, type ManagedAdmissionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, isManagedPresetAcquireInputV1, type ManagedControllerCurrentnessV1, type ManagedAdmissionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetLaunchNameOverrideV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -81,7 +81,7 @@ export function readManagedReviewedDeclaration(facts: unknown): ManagedDeclarati
 export function projectManagedControllerAccess(controller: Readonly<{
     kind: string; accountId: string; installationId: string | null; installationPublicKey: Uint8Array | null;
     revokedAt: Date | null; replacedByMachineId: string | null;
-}> | null, expected: Readonly<{ installationId: string }>) {
+}> | null | undefined, expected: Readonly<{ installationId: string }>) {
     if (!controller || controller.kind !== 'persistent' || classifyMachineAvailabilityState(controller) !== 'available'
         || controller.installationId !== expected.installationId || !controller.installationPublicKey) return null;
     const parsed = ManagedControllerAccessV1Schema.safeParse({ custodian: { accountId: controller.accountId },
@@ -192,7 +192,7 @@ export function readManagedOpaquePresetContentOverride(row: Pick<StoredManagedMa
 
 /** Optional replacement content is carried separately from the admitted request identity. */
 export function projectManagedAcquisitionComputeInput(input: ManagedAdmissionInputV1['input']): NonNullable<StoredManagedAdmission['computeInput']> {
-    if (input.selection.kind !== 'preset') return input;
+    if (!isManagedPresetAcquireInputV1(input)) return input;
     // A replay returns the first retained ciphertext even when a retry carries another one.
     const { presetContentOverride: _override, ...computeInput } = input;
     return computeInput;

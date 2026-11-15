@@ -177,9 +177,10 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       const { executeContributedAction } = await import('./executeContributedAction');
       invocationSignal.throwIfAborted();
       const machine = context.invocationServices?.managedMachine;
+      const launch = machine?.launch;
       const seed = context.invocationServices?.connectedAccountPurposeBinding;
-      const contribution = machine && lease.registry.contributes.machineProvisioners?.find(candidate =>
-        candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId);
+      const contribution = launch && lease.registry.contributes.machineProvisioners?.find(candidate =>
+        candidate.identity.pluginId === launch.provider.pluginId && candidate.identity.localId === launch.provider.localId);
       const role = contribution && readMachineProvisionerActionRolesV1(contribution.definition).find(candidate => candidate.action === action.localId)?.role;
       let admittedManagedProviderOperation: AdmittedManagedProviderOperationExecutionRequest | undefined;
       const binding = seed ? captureConnectedAccountInvocationPurposeBinding(seed, action) : undefined;

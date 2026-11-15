@@ -24,6 +24,7 @@ import { createUnavailablePluginServicesFactory } from '../services/factory';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createCommittedContributedActionInvoker } from './createCommittedContributedActionDeps';
 
 function executeContributedAction(request: Parameters<typeof dispatchContributedAction>[0]) {
@@ -32,7 +33,7 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
-    it.each(['selected', 'foreign', 'absent', 'team', 'team-brokered', 'team-brokered-foreign'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
+    it.each(['selected', 'foreign', 'absent', 'opaque', 'team', 'team-brokered', 'team-brokered-foreign'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
         const service = { pluginId: 'acme.accounts', localId: 'cloud' };
         const team = scenario.startsWith('team');
         const brokered = scenario.startsWith('team-brokered');
@@ -69,9 +70,12 @@ describe('managed native-role custody at contributed dispatch', () => {
             purpose: { consumer: provider, purpose: 'upstream' },
             ...(team ? { teamId: 'team-a', selection: teamSelection } : { account: { service, accountId: 'selected-account' } }),
         }] };
-        const machine: ManagedMachineV1 = { id: 'managed-1', homeId: 'home-1', custodianAccountId: 'owner', launch,
+        const fullMachine: ManagedMachineV1 = { id: 'managed-1', homeId: 'home-1', custodianAccountId: 'owner', launch,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
+        const machine = scenario === 'opaque' ? ManagedOpaquePresetMachineV1Schema.parse({ ...fullMachine,
+            launch: undefined, resource: undefined, preset: { id: 'preset', revision: 1, contentEncryptionMode: 'e2ee' },
+        }) : fullMachine;
         const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', actionRequestId: 'original',
             operationAcceptance: { operationId: 'original-operation', accept() {} } };
         let directOpens = 0;

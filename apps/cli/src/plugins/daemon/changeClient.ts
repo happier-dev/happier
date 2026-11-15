@@ -1,5 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isManagedOpaquePresetResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import {
   decideDaemonPluginChange,
@@ -722,14 +723,20 @@ export async function requestUserPluginChange(
       input.signal,
     );
     if (answer.kind === 'aborted' || !answer.approved) return { kind: 'cancelled' };
-    const reviewedRequest: PluginChangeRequest = { ...request, managedResourceDispositions: result.resources.map(resource => ({
-      managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,
-      expectedAllocation: resource.allocation,
-      ...(resource.resource !== undefined ? { expectedResource: resource.resource } : {}),
-      ...(resource.nativeOperationRef !== undefined ? { expectedNativeOperationRef: resource.nativeOperationRef } : {}),
-      ...(resource.recovery !== undefined ? { expectedRecovery: resource.recovery } : {}),
-      responsibility: 'manual',
-    })) };
+    const reviewedRequest: PluginChangeRequest = { ...request, managedResourceDispositions: result.resources.map((resource): ManagedResourceDispositionV1 => {
+      if (isManagedOpaquePresetResourceDependencyV1(resource)) return {
+        managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,
+        expectedAllocation: resource.allocation, opaquePreset: true, responsibility: 'manual',
+      };
+      return {
+        managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,
+        expectedAllocation: resource.allocation,
+        ...(resource.resource !== undefined ? { expectedResource: resource.resource } : {}),
+        ...(resource.nativeOperationRef !== undefined ? { expectedNativeOperationRef: resource.nativeOperationRef } : {}),
+        ...(resource.recovery !== undefined ? { expectedRecovery: resource.recovery } : {}),
+        responsibility: 'manual',
+      };
+    }) };
     const applied = input.signal
       ? await requestChange(reviewedRequest, { signal: input.signal })
       : await requestChange(reviewedRequest);

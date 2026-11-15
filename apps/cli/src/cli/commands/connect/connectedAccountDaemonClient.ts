@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { resolveAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
-import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -54,6 +54,8 @@ export type ConnectedAccountDaemonClient = Readonly<{
 
 export function createConnectedAccountDaemonClient(params: Readonly<{
   credentials: StoredCredentials;
+  serverId: string;
+  serverHttpBaseUrl: string;
   machineId?: string;
   callMachineRpc?: typeof callMachineRpcRuntime;
   actionExecutor?: Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'>;
@@ -65,7 +67,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
     throw new Error('Connected-account daemon client requires a machine id');
   }
   const callMachineRpc = params.callMachineRpc ?? callMachineRpcRuntime;
-  const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+  const serverHttpBaseUrl = params.serverHttpBaseUrl;
   const lifetime = new AbortController();
   let savedSecretOperationContext: SavedSecretOperationContextV1 | undefined;
   let registry: Promise<Awaited<ReturnType<typeof resolveAccountExecutionRuntime>>['registry']> | undefined;
@@ -81,7 +83,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
           && getActiveAccountSettingsSnapshotLifetimeToken() === snapshotLifetime
           && getActiveAccountSettingsSnapshot()?.scopeKey === snapshot.scopeKey });
       return (await resolveAccountExecutionRuntime({ signal: lifetime.signal,
-        accountExecution: { credentials: params.credentials, serverUrl: serverHttpBaseUrl,
+        accountExecution: { credentials: params.credentials, serverUrl: serverHttpBaseUrl, serverId: params.serverId,
           savedSecretOperationContext,
           isCurrent: () => !lifetime.signal.aborted } })).registry;
     });
@@ -95,6 +97,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
       const host = owner.connectedAccountAuthenticationHost;
       if (!host) throw Object.assign(new Error('connected_account_service_unavailable'), { code: 'connected_account_service_unavailable' });
       const executorOptions = { credentials: params.credentials, savedSecretOperationContext,
+        serverId: params.serverId, serverApiUrl: serverHttpBaseUrl,
         ...(params.onApprovalRequested ? { onApprovalRequested: params.onApprovalRequested } : {}),
         ...(machineId ? { machineId } : {}) };
       const nativeExecutor = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createCliActionExecutorFromCredentials({

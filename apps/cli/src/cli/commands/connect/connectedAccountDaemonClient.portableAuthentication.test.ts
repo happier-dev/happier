@@ -25,11 +25,11 @@ it('keeps portable CLI approval custody local when its contextual Machine is not
     });
     const credentialFiles = vi.spyOn(persistence, 'readCredentials').mockRejectedValue(new Error('No credential files in fixture'));
     const client = runWithServerHttpBaseUrl(origin, () => createConnectedAccountDaemonClient({
-        credentials, machineId: 'local-unenrolled-identity',
+        credentials, serverId: fixture.serverId, serverHttpBaseUrl: origin, machineId: 'local-unenrolled-identity',
     }));
     try {
         await expect(client.authenticate({ operation: 'beginConnect', service: fixture.service, modeId: 'manual' }))
-            .rejects.toMatchObject({ code: 'action_failed' });
+            .rejects.toMatchObject({ code: 'approval_origin_unavailable' });
         expect(approvalSocket).toHaveBeenCalled();
         expect(fixture.machineRequests).toBe(0);
         expect(fixture.promotedResourceCount).toBe(0);
@@ -50,7 +50,7 @@ it.each([false, true])('completes authored Account manual sign-in without a Mach
     // Credential-file IO is an OS boundary; this fixture supplies its own custody.
     const credentialFiles = vi.spyOn(persistence, 'readCredentials').mockRejectedValue(new Error('Credential files are unavailable in this fixture'));
     const client = runWithServerHttpBaseUrl(origin,
-        () => createConnectedAccountDaemonClient({ credentials: fixture.credentials }));
+        () => createConnectedAccountDaemonClient({ credentials: fixture.credentials, serverId: fixture.serverId, serverHttpBaseUrl: origin }));
     try {
         let begun = await runWithServerHttpBaseUrl(origin, () => client.authenticate({ operation: 'beginConnect', service: fixture.service, modeId: 'manual' }))
             .catch((failure: unknown) => {
@@ -115,7 +115,8 @@ it.each([undefined, 'native-import-machine'])('describes Codex native import thr
     // Credential-file IO is an OS boundary; the signed-in fixture supplies custody.
     const credentialFiles = vi.spyOn(persistence, 'readCredentials').mockRejectedValue(new Error('No credential files in this fixture'));
     const client = runWithServerHttpBaseUrl(origin, () => createConnectedAccountDaemonClient({
-        credentials: fixture.credentials, ...(machineId ? { machineId } : {}), callMachineRpc: nativeRpc,
+        credentials: fixture.credentials, serverId: fixture.serverId, serverHttpBaseUrl: origin,
+        ...(machineId ? { machineId } : {}), callMachineRpc: nativeRpc,
     }));
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     try {

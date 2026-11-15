@@ -1,4 +1,5 @@
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 import { createConnectedAccountAttemptTransactionApi } from '@/api/client/connectedAccountAttemptTransactionApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -105,7 +106,7 @@ describe('native connected-service Action adapter', () => {
       return { group };
     });
     const home = await server.listen({ host: '127.0.0.1', port: 0 });
-    const action = createCliConnectedServiceAction({ credentials,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials,
       serverHttpBaseUrl: home, isCredentialCurrent: () => current,
       resolveHeaders: () => ({ Authorization: `Bearer ${token}` }),
       callMachineAction: async () => { throw new Error('Account pool read must not contact a Machine'); } });
@@ -158,7 +159,7 @@ describe('native connected-service Action adapter', () => {
     const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: home, isCurrent: async () => true,
       snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
         settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } });
-    const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: home, operationContext,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, serverHttpBaseUrl: home, operationContext,
       resolveHeaders: () => ({ Authorization: `Bearer ${token}` }),
       callMachineAction: async () => { machineCalls += 1; throw new Error('Account save has no Machine'); } });
     try {
@@ -221,7 +222,7 @@ describe('native connected-service Action adapter', () => {
     let requests = 0;
     server.addHook('onRequest', async () => { requests += 1; });
     const home = await server.listen({ host: '127.0.0.1', port: 0 });
-    const action = createCliConnectedServiceAction({ credentials: { token: 'direct-key-requester', encryption: null }, serverHttpBaseUrl: home,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials: { token: 'direct-key-requester', encryption: null }, serverHttpBaseUrl: home,
       resolveHeaders: () => ({ Authorization: 'Bearer direct-key-requester' }),
       callMachineAction: async () => { throw new Error('Invalid direct save must not contact a Machine'); } });
     try {
@@ -264,7 +265,7 @@ describe('native connected-service Action adapter', () => {
         return response;
       });
       const account = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'stable-direct-key' };
-      const action = createCliConnectedServiceAction({ credentials: requester.credentials, serverHttpBaseUrl: home,
+      const action = createCliConnectedServiceAction({ serverId: 'home', credentials: requester.credentials, serverHttpBaseUrl: home,
         operationContext: requester.operationContext(home), isCredentialCurrent: () => current,
         resolveHeaders: () => ({ Authorization: `Bearer ${requester.token}` }),
         callMachineAction: async () => { throw new Error('Account save has no Machine'); } });
@@ -291,7 +292,7 @@ describe('native connected-service Action adapter', () => {
     const home = await server.listen({ host: '127.0.0.1', port: 0 });
     let current = true;
     const requester = directKeyAccount('retiring-direct-key-requester');
-    const action = createCliConnectedServiceAction({ credentials: requester.credentials, serverHttpBaseUrl: home,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials: requester.credentials, serverHttpBaseUrl: home,
       operationContext: requester.operationContext(home), isCredentialCurrent: () => current,
       resolveHeaders: (_context, _actionId, request) => {
         if (request.method === 'POST' && request.path === promotePath) current = false;
@@ -312,7 +313,7 @@ describe('native connected-service Action adapter', () => {
     server.delete('/v4/connect/qualified/credential', async (_request, reply) =>
       reply.code(409).send({ error: 'managed_resources_review_required', resources: [] }));
     const home = await server.listen({ host: '127.0.0.1', port: 0 });
-    const action = createCliConnectedServiceAction({ credentials: { token: 'bodyless-requester', encryption: null },
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials: { token: 'bodyless-requester', encryption: null },
       serverHttpBaseUrl: home, resolveHeaders: () => ({ Authorization: 'Bearer bodyless-requester' }),
       callMachineAction: async () => { throw new Error('Account removal must not contact a Machine'); } });
     try {
@@ -333,7 +334,7 @@ describe('native connected-service Action adapter', () => {
     server.delete('/v4/connect/qualified/group', async () => ({ success: true }));
     server.get('/v4/connect/qualified/group', async () => ({ group: row }));
     const home = await server.listen({ host: '127.0.0.1', port: 0 });
-    const action = createCliConnectedServiceAction({ credentials: { token: 'bodyless-requester', encryption: null },
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials: { token: 'bodyless-requester', encryption: null },
       serverHttpBaseUrl: home, resolveHeaders: () => ({ Authorization: 'Bearer bodyless-requester' }),
       callMachineAction: async () => { throw new Error('Pool mutations use HTTP'); } });
     try {
@@ -438,7 +439,7 @@ describe('native connected-service Action adapter', () => {
       writes.push(body);
       return { status: 200, data: { status: 'updated', revision: 2, cursor: 2 } };
     });
-    const action = createCliConnectedServiceAction({ credentials, operationContext,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, operationContext,
       resolveHeaders(caller, effectActionId, request) {
         const resolved = resolveExternalActionServerRequestHeaders({ context: caller, effectActionId, ...request,
           daemonToken: 'alice-daemon-must-not-fallback', serverIdentityId: 'srv_bob_home', installationId: 'alice-installation',
@@ -492,7 +493,7 @@ describe('native connected-service Action adapter', () => {
       }
       return { status: 200, data: { success: true, version: 8 } };
     });
-    const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: 'https://metadata-home.test',
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, serverHttpBaseUrl: 'https://metadata-home.test',
       resolveHeaders: () => ({ Authorization: 'Bearer metadata-action' }),
       callMachineAction: async () => { throw new Error('metadata_is_account_owned'); } });
     expect(await action({ actionId: 'connectedServices.accounts.rename', input: { account, label: 'Work' },
@@ -546,7 +547,7 @@ describe('native connected-service Action adapter', () => {
       }
       return { status: 200, data: { success: true, version: 8 } };
     });
-    const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: 'https://bob-metadata.test', ...{ operationContext },
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, serverHttpBaseUrl: 'https://bob-metadata.test', ...{ operationContext },
       resolveHeaders: () => ({ Authorization: 'Bearer bob-metadata' }), callMachineAction: async () => { throw new Error('metadata_is_not_machine_rpc'); } });
     const args = { actionId: 'connectedServices.accounts.rename' as const, input: { account, label: 'Bob' },
       context: { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } } };
@@ -596,7 +597,7 @@ describe('native connected-service Action adapter', () => {
       expect(config.method).toBe('GET');
       return { status: 404, data: { error: 'connect_group_not_found' } };
     });
-    const action = createCliConnectedServiceAction({ credentials, operationContext, serverHttpBaseUrl: 'https://alice-custodian.test',
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, operationContext, serverHttpBaseUrl: 'https://alice-custodian.test',
       resolveHeaders: () => ({ Authorization: 'Bearer bob-primary-group' }),
       callMachineAction: async () => { throw new Error('group_mutation_is_http'); } });
     expect(await action({ actionId: 'connectedServices.pools.delete', input: { group, expectedIncarnation: 'group-1', expectedGeneration: 4 },
@@ -634,7 +635,7 @@ describe('native connected-service Action adapter', () => {
       return { status: 200, data: { status: 'updated', revision: 3, cursor: 3 } };
     });
     const subject = { kind: 'warning' as const, warningId: '', scope: { kind: 'machine' as const, machineId: 'exact-machine' } };
-    const action = createCliConnectedServiceAction({ credentials, ...{ operationContext },
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, ...{ operationContext },
       resolveHeaders: () => ({ Authorization: 'Bearer machine-warning' }), callMachineAction: async () => { throw new Error('ack_is_not_machine_rpc'); } });
     const pending = action({ actionId: 'connectedServices.acknowledgements.set', input: { subject, acknowledged: false },
       context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } });
@@ -692,6 +693,11 @@ describe('native connected-service Action adapter', () => {
     const settingsWrites: unknown[] = [];
     vi.spyOn(axios, 'post').mockImplementation(async (input, body: unknown) => {
       const path = new URL(String(input)).pathname;
+      const availability = absentAccountPluginAvailabilityHttpResponse(String(input), body);
+      if (availability) {
+        expect(new URL(String(input)).origin).toBe('https://historical-delete.test');
+        return availability;
+      }
       expect(deleted).toBe(true);
       if (path.endsWith('/connected-metadata/presentation')) {
         const mutation = body as { expectedRevision: number; content: { t: 'plain'; v: ConnectedPresentationRecordV1 } };
@@ -707,7 +713,7 @@ describe('native connected-service Action adapter', () => {
       sourceVersion += 1;
       return { status: 200, data: { success: true, version: sourceVersion } };
     });
-    const action = createCliConnectedServiceAction({ credentials, ...{ operationContext },
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, ...{ operationContext },
       resolveHeaders: () => ({ Authorization: 'Bearer historical-delete' }),
       async callMachineAction(request) {
         const command = ConnectedAccountControlCommandRequestSchema.parse(request.request).command;
@@ -745,7 +751,7 @@ describe('native connected-service Action adapter', () => {
     await once(server, 'listening');
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing server address');
-    const action = createCliConnectedServiceAction({
+    const action = createCliConnectedServiceAction({ serverId: 'home',
       credentials: { token: 'boundary-token', encryption: null },
       serverHttpBaseUrl: `http://127.0.0.1:${address.port}`,
       resolveHeaders: () => ({ Authorization: 'Bearer boundary-token' }),
@@ -838,7 +844,7 @@ describe('native connected-service Action adapter', () => {
       if (request.content?.t === 'plain') written = request.content.v;
       return { status: 200, data: { status: 'updated', revision: 2, cursor: 2, settingsVersion: sourceVersion } };
     });
-    const action = createCliConnectedServiceAction({
+    const action = createCliConnectedServiceAction({ serverId: 'home',
       credentials, operationContext,
       resolveHeaders: () => ({ Authorization: 'Bearer purpose-default' }),
       callMachineAction: async () => { throw new Error('configuration_is_not_machine_rpc'); },
@@ -940,7 +946,7 @@ describe('native connected-service Action adapter', () => {
     const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: home, isCurrent: async () => current,
       snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
         loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } });
-    const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: home, operationContext,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, serverHttpBaseUrl: home, operationContext,
       resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
       callMachineAction: async request => { expect(request).toMatchObject({ machineId: 'unavailable-machine', exactMachine: true });
         machineCalls += 1; throw new Error('Named Machine is unavailable'); } });
@@ -1118,6 +1124,9 @@ describe('native connected-service Action adapter', () => {
       throw new Error(`Unexpected HTTP request: ${url}`);
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url: string, body: unknown) => {
+      expect(new URL(url).origin).toBe('https://work.invalid');
+      const availability = absentAccountPluginAvailabilityHttpResponse(url, body);
+      if (availability) return availability;
       expect(response).toMatchObject({ status: 'revoked' });
       writes.push(new URL(url).pathname);
       if (url.endsWith('/connected-accounts/purposes')) {
@@ -1166,6 +1175,12 @@ describe('native connected-service Action adapter', () => {
   });
 
   it('captures the published credential revision before the shared revoke Ask without issuing a revoke', async () => {
+    vi.spyOn(axios, 'post').mockImplementation(async (url: string, body: unknown) => {
+      expect(new URL(url).origin).toBe('https://work.invalid');
+      const availability = absentAccountPluginAvailabilityHttpResponse(url, body);
+      if (availability) return availability;
+      throw new Error(`Unexpected revision preparation POST: ${url}`);
+    });
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const account = { service, accountId: 'work-account' };
     const presentedRevision = 'csr_abcdefghijklmnopqrstuv';
@@ -1214,7 +1229,8 @@ describe('native connected-service Action adapter', () => {
     expect(reviewedInput).toEqual({ ...input, expectedCredentialRevision: presentedRevision });
     expect(requests).toEqual([{ machineId: 'work-machine', serverId: 'work-home', method: 'daemon.connectedAccounts.control.command',
       request: { v: 1, machineId: 'work-machine', command: { operation: 'describeService', service, requiredOperation: 'credential_delete' } },
-      authority: 'present_user', authorization: undefined, context,
+      authority: 'present_user', authorization: undefined,
+      context: expect.objectContaining(context),
       effectActionId: 'connectedServices.accounts.revoke', exactMachine: true }]);
     expect(nativeEffectIssued).toBe(false);
     currentRevision = 'csr_zyxwvutsrqponmlkjihgfe';

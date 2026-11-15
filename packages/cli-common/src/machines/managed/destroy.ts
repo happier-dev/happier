@@ -1,7 +1,7 @@
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { reconcileManagedAcquisitionIdentity, type ManagedMachineReconciliation, type ManagedReconciliationHome,
+import { reconcileManagedAcquisitionIdentity, type ManagedMachineReconciliation, type ManagedReconciliationReportHome,
     type ManagedNativeInvocation, type ManagedNativeInvocationIO } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
@@ -9,7 +9,7 @@ import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 /** Recover uncertain acquisition identity before claiming Delete; an issued Delete keeps its cleanup custody. */
 export async function prepareManagedMachineDeleteIntent(input: Readonly<Pick<ManagedMachineReconciliation, 'requestId' | 'provisioner' | 'signal'> & {
     machine: ManagedMachineFullV1;
-    home: Pick<ManagedReconciliationHome, 'correlation' | 'row'>;
+    home: ManagedReconciliationReportHome;
     invoke: ManagedNativeInvocation;
 }>): Promise<ManagedMachineFullV1> {
     const { machine } = input;

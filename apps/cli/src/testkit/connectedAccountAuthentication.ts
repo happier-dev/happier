@@ -23,7 +23,8 @@ import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-d
 
 /** Authored public artifact plus genuine Home HTTP/database boundaries; no runtime or lifecycle mocks. */
 export async function createPortableConnectedAccountAuthenticationHttpFixture(origin: string,
-    options: Readonly<{ accountId?: string; requireAccountConfiguration?: boolean; includeBundledPluginIds?: readonly string[] }> = {}) {
+    options: Readonly<{ accountId?: string; requireAccountConfiguration?: boolean; includeBundledPluginIds?: readonly string[];
+        additional?: NonNullable<Parameters<typeof registerAuthoredAccountActionRelease>[2]>['additional'] }> = {}) {
     const app = fastify();
     const accountId = options.accountId ?? 'portable-authentication-owner';
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
@@ -42,7 +43,8 @@ export async function createPortableConnectedAccountAuthenticationHttpFixture(or
         'connectedServices.authentication.continueConnect': ['agent', 'cli'],
         'connectedServices.configuration.replace': ['agent', 'cli'],
     } }) });
-    const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_portable_authentication', settings });
+    const serverId = 'srv_portable_authentication';
+    const features = registerAccountHomeHttp(app, { accountId, serverId, settings });
     app.get('/v1/features', async () => features);
     const manifest = normalizePluginManifestV2(createPluginManifestV2Fixture({ id: 'acme.portable-authentication', contributes: {
         connectedAccountDescriptors: [{ id: 'example', title: 'Example', authentication: {
@@ -56,7 +58,8 @@ export async function createPortableConnectedAccountAuthenticationHttpFixture(or
         } }],
     } }));
     const projectRoot = resolve(import.meta.dirname, '../../../../packages/plugin-sdk/examples/public-authoring');
-    const authored = await registerAuthoredAccountActionRelease(app, accountId, { includeBundledPluginIds: options.includeBundledPluginIds, primary: {
+    const authored = await registerAuthoredAccountActionRelease(app, accountId, {
+        includeBundledPluginIds: options.includeBundledPluginIds, additional: options.additional, primary: {
         manifest, projectRoot, entryPath: join(projectRoot, 'portableAuthentication.ts'),
         activateExport: 'activate', manifestExport: null,
     } });
@@ -169,7 +172,7 @@ export async function createPortableConnectedAccountAuthenticationHttpFixture(or
     await app.ready();
     const restoreHttp = installAxiosFastifyAdapter({ app, origin });
     return {
-        credentials, settings, features, service: { pluginId: authored.pluginId, localId: 'example' },
+        credentials, serverId, settings, features, service: { pluginId: authored.pluginId, localId: 'example' },
         get machineRequests() { return machineRequests; },
         get addressedAttemptReads() { return addressedAttemptReads; },
         get directCredentialWrites() { return directCredentialWrites; },

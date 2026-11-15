@@ -6,6 +6,9 @@ import { WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/ac
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { MachineSetupSourceV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { readMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
@@ -18,6 +21,7 @@ const receipt = { ok: true, environmentId, revision: 2, deploymentId: 'deploymen
 
 async function fixture(options: Readonly<{
   create?: boolean; deploy?: boolean; result?: unknown; lifecycle?: 'completed' | 'failed' | 'cancelled' | 'outcome_uncertain';
+  opaquePreset?: boolean;
 }>) {
   const intent = StoredAppPresetInputV1Schema.parse({ name: 'App', project: { kind: 'existing', projectSourceId: 'project' },
     definition: { from: 'catalogApp', templateRef }, bindings: [] });
@@ -28,8 +32,12 @@ async function fixture(options: Readonly<{
       : { kind: 'existing', environmentId, expectedRevision: 1 },
     destination: options.create ? { kind: 'stored' } : definition,
     ...(options.deploy === false ? {} : { deploy: { requestKey: 'deploy' } }) });
+  const localSources = MachineSetupSourceV1Schema.parse([{ ...(options.opaquePreset
+    ? { kind: 'accountPreset', presetId: 'preset', presetRevision: 3, contentEncryptionMode: 'plain' }
+    : { kind: 'direct' }), setup: { items: [{ kind: 'app', definition: intent }] } },
+    ...(options.opaquePreset ? [{ kind: 'direct', setup: {} }] : [])]);
   const setup = MachineSetupApplyInputV1Schema.parse({ homeId, machineId, targets: [{ homeId, machineId,
-    desiredRevision: 1, recipePlans: [], sources: [{ kind: 'direct', setup: { items: [{ kind: 'app', definition: intent }] } }],
+    desiredRevision: 1, recipePlans: [], sources: projectManagedOpaqueSetupSourcesV1(localSources),
     appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: 'deployments.templates.instantiate', input }] }] });
   const literalInput = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value)
     .map(([key, item]) => [key, { kind: 'literal', value: item }]));
@@ -79,11 +87,20 @@ async function fixture(options: Readonly<{
   const reference = { intent, homeId, runId: run.run.id, sourceKey: '$root', blockId: 'app',
     actionId: 'deployments.templates.instantiate' as const };
   const read = () => readMachineSetupAcceptedAppRuns({ homeId, machineId, execute,
-    isCurrent: async () => current, apps: [{ intent, reference }] });
-  return { read, row, setCurrent: (value: boolean) => { current = value; } };
+    isCurrent: async () => current, apps: [{ intent, reference }], localSources });
+  return { read, row, localSources, setCurrent: (value: boolean) => { current = value; } };
 }
 
 describe('accepted template app outcomes', () => {
+  it('binds an opaque accepted preset to its opened revision before reading app completion', async () => {
+    const f = await fixture({ opaquePreset: true });
+    expect(await f.read()).toMatchObject([{ outcome: { kind: 'completed' }, environmentId }]);
+    const source = f.localSources[0];
+    if (source?.kind !== 'accountPreset') throw new Error('Expected opened preset fixture');
+    f.localSources[0] = { ...source, presetRevision: source.presetRevision + 1 };
+    expect(await f.read()).toMatchObject([{ outcome: { kind: 'unknown' } }]);
+  });
+
   it.each([false, true])('consumes a settled composite deployment for create=%s', async create => {
     const f = await fixture({ create });
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'completed' }, environmentId }]);
@@ -116,8 +133,8 @@ describe('accepted template app outcomes', () => {
     const f = await fixture({ lifecycle });
     f.row.progress.result = undefined;
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'failed' } }]);
-    f.row.progress.result = DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'partial', phase: 'generation',
-      errorCode: 'secret_missing', savedSecrets: [] });
+    f.row.progress.result = normalizeStrictJsonValue(DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'partial', phase: 'generation',
+      errorCode: 'secret_missing', savedSecrets: [] }));
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'failed' } }]);
   });
 
@@ -135,7 +152,7 @@ describe('accepted template app outcomes', () => {
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'unknown' } }]);
     f.row.progress.result = { ...applied, environmentId: 'foreign', deployment: { ...receipt, environmentId: 'foreign' } };
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'unknown' }, environmentId }]);
-    f.row.progress.result = DeploymentTemplateInstantiateResultV1Schema.parse({ ...applied, deployment: receipt });
+    f.row.progress.result = normalizeStrictJsonValue(DeploymentTemplateInstantiateResultV1Schema.parse({ ...applied, deployment: receipt }));
     const execution = f.row.progress.execution;
     f.row.progress.execution = { kind: 'action', localInputId: 'app-input', actionId: 'deployments.templates.instantiate', actionRequestId: 'other', input: {} };
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'unknown' } }]);

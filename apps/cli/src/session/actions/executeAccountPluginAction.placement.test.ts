@@ -138,7 +138,7 @@ it.each(['plain', 'e2ee'] as const)('routes declared and host-attached Session s
         expect(machines.length).toBeGreaterThan(0);
         expect(new Set(machines)).toEqual(new Set(['session-machine']));
         const retained = createRetainedAccountExecutionRuntime(() => ({ happyHomeDir,
-            accountExecution: { credentials, serverUrl: serverHttpBaseUrl, machineId: 'ambient-machine', isCurrent: () => true } }));
+            accountExecution: { credentials, serverUrl: serverHttpBaseUrl, serverId: 'session-source-home', machineId: 'ambient-machine', isCurrent: () => true } }));
         try {
             const host = { token, credentials, happyHomeDir, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
                 serverId: 'session-source-home', serverHttpBaseUrl };

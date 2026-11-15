@@ -148,6 +148,8 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
   const operation = params.operation;
   if (operation?.accountMachine) {
     const machine = operation.accountMachine;
+    const launch = machine.launch;
+    if (!launch) return invalid();
     const binding = operation.purposeBinding;
     const identity = { pluginId: operation.contribution.pluginId, localId: params.action.definition.id };
     const reviewed = readHostReviewedChildOperationV1(params.approvalContext, formatQualifiedPluginActionId(identity), params.input);
@@ -155,15 +157,15 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
       || !reviewed || !binding || binding.identity.pluginId !== identity.pluginId || binding.identity.localId !== identity.localId
       || binding.managedOperation?.role !== operation.role
       || operation.managedId !== machine.id || operation.homeId !== machine.homeId || operation.intentRevision !== machine.intentRevision
-      || !matches.some(({ contribution, role }) => role === operation.role && contribution.identity.pluginId === machine.launch.provider.pluginId
-        && contribution.identity.localId === machine.launch.provider.localId)) return invalid();
+      || !matches.some(({ contribution, role }) => role === operation.role && contribution.identity.pluginId === launch.provider.pluginId
+        && contribution.identity.localId === launch.provider.localId)) return invalid();
     const scopes = resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry: params.contributes,
       qualifiedActionId: buildQualifiedPluginContributionKey(identity) });
     if (!scopes) return invalid();
     try {
-      const selected = bindManagedMachineRoleCredentials({ authorizations: scopes, provider: machine.launch.provider,
-        credentials: machine.launch.credentials, qualification: {
-          descriptor: matches.find(candidate => candidate.role === operation.role)!.contribution.definition, launch: machine.launch.choices,
+      const selected = bindManagedMachineRoleCredentials({ authorizations: scopes, provider: launch.provider,
+        credentials: launch.credentials, qualification: {
+          descriptor: matches.find(candidate => candidate.role === operation.role)!.contribution.definition, launch: launch.choices,
         } });
       const expected = projectManagedMachineRolePurposeBindingsV1(selected);
       const teamSelections = binding.purposeBindings.teamResourceSelections ?? [];

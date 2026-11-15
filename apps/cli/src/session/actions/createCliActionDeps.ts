@@ -752,7 +752,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   };
   const sessionContentCredentials = params.credentials ?? params.sessionContentCredentials;
   const connectedServiceAction = params.credentials ? createCliConnectedServiceAction({
-    credentials: params.credentials, ...exactHome, resolveHeaders: resolveServerRequestHeaders, callMachineAction,
+    credentials: params.credentials, ...exactHome, serverId: projectHomeId, resolveHeaders: resolveServerRequestHeaders, callMachineAction,
     ...(params.connectedAccountAuthenticationHost ? { authenticationHost: params.connectedAccountAuthenticationHost } : {}),
     readHomeDomainAction: () => (readEffectiveDeps?.() ?? actionDeps).homeDomainAction,
     ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),

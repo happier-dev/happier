@@ -98,7 +98,7 @@ it.each(['direct', 'targeted'] as const)('conditionally reuses admitted Machine 
             serverHttpBaseUrl: endpoint, runtimeActionMachineId: 'selected-machine',
             serverId: 'account-machine', serverIdentityId: 'account-machine' };
         const { deps } = createCliActionExecutorHarness(host);
-        const retained = createRetainedAccountExecutionRuntime(() => ({ accountExecution: { credentials, serverUrl: endpoint,
+        const retained = createRetainedAccountExecutionRuntime(() => ({ accountExecution: { credentials, serverUrl: endpoint, serverId: 'account-machine',
             machineId: 'selected-machine', isCurrent: () => true } }));
         const run = async () => {
             const attempt = await executeAccountPluginAction({ host, deps, accountRuntime: retained, actionId: 'action.invoke', input, context });

@@ -358,6 +358,7 @@ export async function tryHandleMcpServerCliCommand(params: Readonly<{
       const current = captured!;
       const started = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.signIn.start'].parse(payload);
       const client = createConnectedAccountDaemonClient({ credentials: current.params.credentials,
+        serverId: current.homeId, serverHttpBaseUrl: current.homeUrl,
         machineId: started.machineId, actionExecutor: current.executor, signal: params.signal });
       const described = await client.control({ operation: 'describeService', service: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 });
       if (described.status !== 'described') throw new Error('MCP sign-in service is unavailable');

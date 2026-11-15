@@ -40,7 +40,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
   credentials: StoredCredentials;
   authenticationHost?: CredentialedConnectedAccountAuthenticationHost;
   serverHttpBaseUrl?: string;
-  serverId?: string;
+  serverId: string;
   operationContext?: SavedSecretOperationContextV1;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
   readHomeDomainAction?(): ActionExecutorDeps['homeDomainAction'];
@@ -86,7 +86,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
         // so attempt-only continuations never become unaddressed native RPCs.
         authenticationRuntime ??= import('@/plugins/runtime/accountExecutionRuntime').then(({ resolveAccountExecutionRuntime }) =>
           resolveAccountExecutionRuntime({ ...(signal ? { signal } : {}), accountExecution: {
-            credentials: params.credentials, serverUrl: serverHttpBaseUrl,
+            credentials: params.credentials, serverUrl: serverHttpBaseUrl, serverId: params.serverId,
             isCurrent: () => !signal?.aborted,
             ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
             ...(params.operationContext ? { savedSecretOperationContext: params.operationContext } : {}),

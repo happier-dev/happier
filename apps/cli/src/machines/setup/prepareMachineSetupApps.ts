@@ -54,7 +54,7 @@ async function observeApps(input: MachineSetupLocalPlanInputV1, plan: MachineSet
   const runtime = requests.length ? host.readAppRuntime?.(context) : null;
   const outcomes: readonly MachineSetupAcceptedAppRunObservation[] = runtime
     ? await readMachineSetupAcceptedAppRuns({ homeId: input.homeId, machineId: input.machineId,
-      apps: requests, ...runtime, ...(context.signal ? { signal: context.signal } : {}) }) : [];
+      apps: requests, localSources: plan.sources, ...runtime, ...(context.signal ? { signal: context.signal } : {}) }) : [];
   return pending.map(({ app, origin, start, count }): AppObservation => {
     const address = { sourceIndex: app.sourceIndex, itemIndex: app.itemIndex };
     if (origin?.kind === 'new') return { ...address, kind: 'new' };

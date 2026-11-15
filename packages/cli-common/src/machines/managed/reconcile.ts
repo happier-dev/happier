@@ -30,6 +30,10 @@ export type ManagedNativeInvocationIO = Readonly<{
     beforeNativeEffect?: () => Promise<void>;
 }>;
 export type ManagedNativeInvocation = (role: ManagedNativeRole, body: unknown, io?: ManagedNativeInvocationIO) => Promise<JsonValue | null>;
+export type ManagedReconciliationReportHome = Readonly<{
+    correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1;
+    row(path: 'report' | 'report-intent', body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineFullV1>;
+}>;
 export type ManagedReconciliationHome = Readonly<{
     correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1;
     projectEnrollmentCorrelation(machine: ManagedMachineFullV1, correlation: ManagedEnrollmentFullCorrelationV1): ManagedEnrollmentCorrelationV1;
@@ -118,7 +122,7 @@ async function captureIssuedConfigurationFacts(machine: ManagedMachineFullV1, pr
 /** Observe an issued acquisition by its retained handle, never by issuing another allocation. */
 export async function reconcileManagedAcquisitionIdentity(input: Pick<ManagedMachineReconciliation, 'requestId' | 'provisioner' | 'signal'> & (
     | Pick<ManagedMachineReconciliation, 'action' | 'home'>
-    | Readonly<{ action: 'machines.managed.inspect' | 'machines.managed.delete'; home: Pick<ManagedReconciliationHome, 'correlation' | 'row'> }>),
+    | Readonly<{ action: 'machines.managed.inspect' | 'machines.managed.delete'; home: ManagedReconciliationReportHome }>),
     machine: ManagedMachineFullV1, invoke: ManagedNativeInvocation): Promise<ManagedMachineFullV1> {
     const retained = machine.nativeOperationRef;
     if (retained && (retained.contributionRef.pluginId !== machine.launch.provider.pluginId
@@ -192,7 +196,7 @@ export async function reconcileManagedBoundNativeIntent(input: Readonly<{
     resource: NonNullable<ManagedMachineFullV1['resource']>;
     outstanding: NonNullable<ManagedMachineFullV1['submittedNativeEffect']>;
     provisioner?: MachineProvisionerContributionV1;
-    home: Pick<ManagedReconciliationHome, 'row'>;
+    home: Pick<ManagedReconciliationReportHome, 'row'>;
     invoke: ManagedNativeInvocation;
 }>): Promise<ManagedMachineFullV1> {
     const { machine, resource, outstanding } = input;
@@ -216,7 +220,7 @@ export async function reconcileManagedBoundNativeIntent(input: Readonly<{
 /** Read retained native custody without allocating, waking or enrolling a guest. */
 export async function inspectManagedMachine(input: Pick<ManagedMachineReconciliation,
     'machine' | 'requestId' | 'provisioner' | 'signal' | 'observationOnly'> & Readonly<{
-        home: Pick<ManagedReconciliationHome, 'correlation' | 'row'>;
+        home: ManagedReconciliationReportHome;
         invoke: ManagedNativeInvocation;
         complete?: ManagedMachineReconciliation['bootstrap']['complete'];
         resolveProvisioner?: () => Promise<ManagedMachineReconciliation['provisioner']>;

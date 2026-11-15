@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, normalizeActionsSettingsV1, accountSettingsParse, type ActionExecuteResult } from '@happier-dev/protocol';
 import { createDeploymentSocketHome } from '../../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { auth } from '../../../../server/sources/app/auth/auth';
+import { db } from '../../../../server/sources/storage/db';
 import { ApiClient } from '@/api/api';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
@@ -23,6 +24,7 @@ import { handleActionsCommand } from '@/cli/commands/actions';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import { registerConnectedAccountAttemptTransactionRoutes } from '../../../../server/sources/app/api/routes/connect/connectedAccountAttemptTransactions/registerConnectedAccountAttemptTransactionRoutes';
 import * as sessionSockets from '@/api/session/sockets';
+import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
 import { USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/usage/usageSources';
 
 it('delivers public and private authentication completions through CLI, Home and the installed daemon approval executor', async () => {
@@ -91,8 +93,7 @@ it('delivers public and private authentication completions through CLI, Home and
   const rpc: unknown = Reflect.get(machine, 'rpcHandlerManager');
   if (!(rpc instanceof RpcHandlerManager)) throw new Error('Missing installed RPC manager');
   const service = { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' };
-  let nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'configurationRequired', attemptId: 'connect-attempt',
-    target: { kind: 'attempt', attemptId: 'connect-attempt', service, modeId: 'password' }, missingFieldIds: ['mailbox'] });
+  let nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'awaitingManual', attemptId: 'connect-attempt' });
   let effects = 0;
   let nativeCompletion: Promise<void> | undefined;
   // Replace the native authentication effect only. CLI admission, daemon
@@ -132,24 +133,41 @@ it('delivers public and private authentication completions through CLI, Home and
   let approvalId: string | undefined;
   let requestedDecision: 'approve' | 'reject' = 'approve';
   const client = runWithServerHttpBaseUrl(home.baseUrl, () => createConnectedAccountDaemonClient({ credentials, machineId: home.machineId,
-    onApprovalRequested: async (artifactId, signal, decide) => {
+    serverId, serverHttpBaseUrl: home.baseUrl,
+    onApprovalRequested: async (artifactId, signal) => {
       approvalId = artifactId;
       const read = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
         .execute('approval.request.get', { artifactId }, { surface: 'cli', actionCaller: { kind: 'host' }, signal });
       expect(read.ok).toBe(true);
-      decision = await decide(requestedDecision); return decision;
+      // A separate authenticated app participant decides while the CLI waits.
+      // Its response cannot carry the native result back into the requester.
+      decision = await createCliActionExecutorFromCredentials({
+        credentials: { ...credentials, token: home.token }, machineId: home.machineId,
+      }).execute('approval.request.decide', { artifactId, decision: requestedDecision },
+        { surface: 'rpc', authority: 'present_user', actionCaller: { kind: 'host' }, signal });
+      return decision;
     },
   }));
   cleanup.push(() => client.dispose());
   await expect(client.authenticate({ operation: 'beginConnect', service, modeId: 'password' })).resolves.toEqual(nativeResult);
-  expect(decision).toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: nativeResult } } });
+  expect(decision?.ok).toBe(true);
+  if (decision?.ok) expect(decision.result).not.toHaveProperty('liveExecution');
   const receipt = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
     .execute('approval.request.get', { artifactId: approvalId }, { surface: 'cli', actionCaller: { kind: 'host' } });
   if (!receipt.ok) throw new Error('Missing approval receipt');
   const recorded = ApprovalRequestGetResultV1Schema.parse(receipt.result).request;
   expect(recorded).toMatchObject({ status: 'executed', execution: { ok: true } });
-  expect(recorded.execution?.result).toEqual({ redacted: true });
+  expect(recorded.execution?.result).toEqual({ status: 'awaitingManual', attemptId: 'connect-attempt' });
+  expect(buildActionExecuteResultFromRecordedApprovalExecution(recorded))
+    .toMatchObject({ ok: false, errorCode: 'approval_result_held' });
   expect(effects).toBe(1);
+  const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+  const outsiderToken = await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user',
+    authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] });
+  const inaccessible = await createCliActionExecutorFromCredentials({
+    credentials: { token: outsiderToken, encryption: null, credentialProvenance: 'stored_session' },
+  }).execute('approval.request.get', { artifactId: approvalId }, { surface: 'ui', actionCaller: { kind: 'host' } });
+  expect(inaccessible).toMatchObject({ ok: false, errorCode: 'approval_not_found' });
   // The substituted native producer must publish its real Home address, as
   // beginConnect does, before an operand-free continuation can route to it.
   await runWithServerHttpBaseUrl(home.baseUrl, () => createQualifiedConnectedAccountAttemptTransactionAdapters({
@@ -180,6 +198,7 @@ it('delivers public and private authentication completions through CLI, Home and
   requestedDecision = 'approve';
   const cancellation = new AbortController();
   const cancelledClient = runWithServerHttpBaseUrl(home.baseUrl, () => createConnectedAccountDaemonClient({ credentials,
+    serverId, serverHttpBaseUrl: home.baseUrl,
     machineId: home.machineId, signal: cancellation.signal,
     onApprovalRequested: () => { cancellation.abort(); },
   }));

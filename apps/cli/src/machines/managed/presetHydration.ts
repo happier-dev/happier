@@ -7,11 +7,11 @@ import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetStoredContentV
     openManagedMachinePresetRecipientProjectionV1, readManagedMachinePresetContentOverrideForModeV1,
     resolveManagedMachinePresetResizeOverrideV1,
     type ManagedMachinePresetContentV1, type ManagedMachinePresetNativeControlResultV1,
-    type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+    type ManagedMachinePresetStoredContentCarrierV1, type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedConfigurationFactsV1Schema, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { AcquireResultV1Schema, ProviderObservationV1Schema, projectManagedOpaquePresetObservationV1,
     type AcquireResultV1, type MachineProvisionerSizeV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { ManagedAcquireInputV1Schema, ManagedResizeOutputV1Schema, isManagedOpaquePresetReadV1,
+import { ManagedAcquireInputV1Schema, ManagedResizeOutputV1Schema, isManagedOpaquePresetReadV1, isManagedPresetAcquireInputV1,
     projectManagedOpaquePresetAcquireResultV1, projectManagedOpaquePresetIntentResultV1,
     projectManagedOpaquePresetResizeResultV1, projectManagedEnrollmentCorrelationV1,
     type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -28,7 +28,7 @@ import type { StoredCredentials } from '@/persistence';
 import { ManagedMachineControllerError } from './controllerErrors';
 
 /** Kept inside the existing verified-custody callback; its Account key is zeroed when that callback settles. */
-export type ManagedPresetDefinitionOpener = (content: ManagedMachinePresetStoredContentV1,
+export type ManagedPresetDefinitionOpener = (content: ManagedMachinePresetStoredContentCarrierV1,
     recipients?: readonly unknown[]) => ReturnType<ManagedOpaquePresetContentOpenerV1>;
 
 type PresetContentCarrier = Readonly<{ content: unknown; recipients: readonly unknown[] }>;
@@ -40,13 +40,13 @@ export type ManagedPresetContentCarrier = Readonly<{
 type LocalPresetSnapshot = Readonly<{
     preset: NonNullable<ManagedOpaquePresetMachineV1['preset']>;
     /** Original mode-tagged carrier; never decrypted into a Home request. */
-    content: ManagedMachinePresetStoredContentV1;
+    content: ManagedMachinePresetStoredContentCarrierV1;
     recipients: readonly unknown[];
     opened: ManagedMachinePresetContentV1;
     launch: ManagedMachineFullV1['launch'];
     setup?: NonNullable<ManagedMachineFullV1['machineSetup']>['setup'];
     reviewedFacts?: ManagedMachineFullV1['reviewedFacts'];
-    structural?: ManagedOpaquePresetMachineV1;
+    structural: ManagedOpaquePresetMachineV1;
 }>;
 
 const managedOpaquePresetReview = Symbol('managedOpaquePresetReview');
@@ -76,7 +76,7 @@ export function withManagedOpaquePresetReview<T extends object>(options: T, para
         || !sameStrictJsonValue(machine.controller, opaqueMachine.controller)) return options;
     if (parent.actionId === 'machines.managed.acquire') {
         const acquisition = ManagedAcquireInputV1Schema.safeParse(parent.input);
-        if (!acquisition.success || acquisition.data.selection.kind !== 'preset'
+        if (!acquisition.success || !isManagedPresetAcquireInputV1(acquisition.data)
             || acquisition.data.selection.homeId !== opaqueMachine.homeId
             || acquisition.data.selection.id !== opaqueMachine.preset.id
             || acquisition.data.selection.revision !== opaqueMachine.preset.revision
@@ -171,7 +171,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         }
     }
 
-    async function openContent(machine: ManagedOpaquePresetMachineV1, content: ManagedMachinePresetStoredContentV1,
+    async function openContent(machine: ManagedOpaquePresetMachineV1, content: ManagedMachinePresetStoredContentCarrierV1,
         recipients: readonly unknown[], signal?: AbortSignal): Promise<ManagedMachinePresetContentV1> {
         // The persisted author mode belongs to the admitted snapshot; the
         // daemon's own current mode is only key-currentness evidence for E2EE.
@@ -274,7 +274,7 @@ export function createManagedPresetHydrator(input: Readonly<{
      */
     async function prepareAdmissionAcquire(machine: ManagedOpaquePresetMachineV1, override: unknown,
         provisioner: Pick<MachineProvisionerContributionV1, 'id' | 'title'>, signal?: AbortSignal,
-        heldOpen?: ManagedOpaquePresetContentOpenerV1): Promise<ManagedMachineFullV1> {
+        heldOpen?: ManagedPresetDefinitionOpener): Promise<ManagedMachineFullV1> {
         const snapshot = snapshots.get(machine.id);
         const structuralMachine = snapshot?.structural;
         if (!snapshot || !structuralMachine || !samePreset(snapshot.preset, machine.preset)) {
@@ -283,7 +283,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         const parsedOverride = override === undefined ? undefined : readManagedMachinePresetContentOverrideForModeV1({
             mode: machine.preset.contentEncryptionMode, override,
         });
-        if (override !== undefined && !parsedOverride) throw new ManagedMachineControllerError('credential_unavailable');
+        if (parsedOverride === null) throw new ManagedMachineControllerError('credential_unavailable');
         const openedOverride = parsedOverride === undefined ? undefined
             : heldOpen ? await heldOpen(parsedOverride.content)
                 : await openContent(structuralMachine, parsedOverride.content, snapshot.recipients, signal);

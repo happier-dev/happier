@@ -10,6 +10,7 @@ import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifet
 import { createCredentialedTargetActionCurrentIntent } from './approvals/credentialedTargetActionCurrentIntent';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import type { CliActionExactHomeTarget } from './createCliActionDeps';
 import axios from '@/api/client/credentialAxios';
 import { readCurrentMountedAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
@@ -21,11 +22,11 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 
 /** Selects Account custody for the incumbent runtime and invocation owners. */
 export async function executeAccountPluginAction(params: Readonly<{
-  host: Pick<Parameters<typeof createCliActionExecutorHarness>[0], 'credentials' | 'serverHttpBaseUrl'
+  host: Pick<Parameters<typeof createCliActionExecutorHarness>[0], 'credentials'
     | 'savedSecretOperationContext' | 'isCredentialCurrent' | 'happyHomeDir' | 'resolveServerFeaturesSnapshot'
-    | 'runtimeActionMachineId' | 'serverId' | 'serverIdentityId' | 'onApprovalRequested'
+    | 'runtimeActionMachineId' | 'serverIdentityId' | 'onApprovalRequested'
     | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>
-      & Pick<AccountExecutionRuntimeInput, 'executeTeamCredentialBrokerAction'>;
+      & Pick<AccountExecutionRuntimeInput, 'executeTeamCredentialBrokerAction'> & CliActionExactHomeTarget;
   deps: ActionExecutorDeps;
   actionId: string;
   input: unknown;
@@ -35,6 +36,7 @@ export async function executeAccountPluginAction(params: Readonly<{
 }>): Promise<CurrentProcessPluginActionExecutionAttempt> {
   const credentials = params.host.credentials;
   if (!credentials || !params.host.serverHttpBaseUrl) return { matched: false };
+  const serverId = params.host.serverId;
   const identity = readPluginActionExecutionReference(params.actionId, params.input);
   const pluginId = identity?.pluginId;
   const localId = identity?.localId;
@@ -123,7 +125,7 @@ export async function executeAccountPluginAction(params: Readonly<{
     const runtime = await resolveAccountExecutionRuntime({
       executeTeamCredentialBrokerAction: params.host.executeTeamCredentialBrokerAction,
       externalActionHomeBinding: {
-        ...(params.host.serverId ? { serverId: params.host.serverId } : {}),
+        serverId,
         ...(params.host.serverIdentityId ? { serverIdentityId: params.host.serverIdentityId } : {}),
         ...(params.host.externalActionMachineRequestPrivateKey
           ? { externalActionMachineRequestPrivateKey: params.host.externalActionMachineRequestPrivateKey } : {}),
@@ -135,7 +137,7 @@ export async function executeAccountPluginAction(params: Readonly<{
       ...(params.host.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.host.resolveServerFeaturesSnapshot } : {}),
       accountExecution: { credentials, serverUrl: params.host.serverHttpBaseUrl!, isCurrent, isCredentialCurrent,
         ...(operationContext ? { savedSecretOperationContext: operationContext } : {}),
-        ...(params.host.serverId ? { serverId: params.host.serverId } : {}),
+        serverId,
         ...(serverIdentityId ? { serverIdentityId } : {}),
         ...(machineId ? { machineId } : {}),
         ...(explicitMachineId ? { explicitMachineId } : {}) },

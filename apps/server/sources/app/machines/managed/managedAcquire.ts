@@ -1,13 +1,13 @@
-import { isStoredOpaquePresetMachine } from './managedMachineProjection';
-import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
+import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, isManagedPresetAcquireInputV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineFullV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import {
-    ManagedMachineError, invalidateManagedMachineInTx, projectManagedMachine,
+    ManagedMachineError, invalidateManagedMachineInTx,
     requireManagedControllerInTx, requireManagedHomeInTx, sameManagedInput,
     type ManagedDeclaration,
     createManagedMachineDeclaredSchema,
@@ -75,13 +75,13 @@ export async function admitManagedAcquire(params: Readonly<{
             if (retainedDigest && retainedDigest !== params.requestEnvelopeDigest) throw new ManagedMachineError("request_conflict");
             if (isStoredOpaquePresetMachine(existing)) {
                 const presetContent = readManagedOpaquePresetContent(existing);
-                const machine = projectManagedMachine(existing);
-                if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+                const machine = projectManagedMachineOpaque(existing);
                 return { machine, presetContent,
                     ...(retainedAdmission.presetContentOverride ? { presetContentOverride: retainedAdmission.presetContentOverride } : {}),
                     replayed: true };
             }
-            return { machine: projectManagedMachine(existing), replayed: true };
+            const machine = projectManagedMachineFull(existing);
+            return { machine, replayed: true };
         };
         // Home may already have retained custody before dispatching to the controller.
         // Re-admission is a read, so unrelated publication must not prevent the
@@ -101,7 +101,7 @@ export async function admitManagedAcquire(params: Readonly<{
             await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
             const existing = await existingAdmission(tx);
             if (existing) return existing;
-            if (request.input.selection.kind !== "one-off") {
+            if (isManagedPresetAcquireInputV1(request.input)) {
                 const selected = await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
                     ...request.input.selection, boundController: review.controller });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
@@ -151,8 +151,7 @@ export async function admitManagedAcquire(params: Readonly<{
                     retention, wakeOnAcceptedMessage,
                 } });
                 await invalidateManagedMachineInTx(tx, row);
-                const machine = projectManagedMachine(row);
-                if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+                const machine = projectManagedMachineOpaque(row);
                 return { machine, presetContent,
                     ...(presetContentOverride ? { presetContentOverride } : {}),
                     replayed: false };
@@ -208,7 +207,8 @@ export async function admitManagedAcquire(params: Readonly<{
                 ...(canonical.machineSetup ? { machineSetup: canonical.machineSetup } : {}),
             } });
             await invalidateManagedMachineInTx(tx, row);
-            return { machine: projectManagedMachine(row), replayed: false };
+            const machine = projectManagedMachineFull(row);
+            return { machine, replayed: false };
         }, { intent: 'serializing', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId],
             transactionClass: 'managed-machine-acquire' });
         // Entering this owner can submit a write even if Prisma later rejects its

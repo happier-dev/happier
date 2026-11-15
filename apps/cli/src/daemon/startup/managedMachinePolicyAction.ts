@@ -1,11 +1,11 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, createActionExecutor } from '@happier-dev/protocol';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 /** Configured unused Stops consume rule consent; other policy effects retain shared Ask. */
-export async function executeManagedMachinePolicyAction<Machine extends ManagedMachineV1>(input: Readonly<{
+export async function executeManagedMachinePolicyAction<Machine extends ManagedMachineReadSnapshotV1>(input: Readonly<{
     machine: Machine;
     purpose: ManagedPolicyPurposeV1;
     context: ActionExecutorContext;

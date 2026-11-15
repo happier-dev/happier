@@ -52,7 +52,7 @@ it.each(['current', 'retired', 'mode-denied', 'first-row'] as const)('writes ent
     return lifetime === 'mode-denied' ? { status: 409, data: { status: 'account-mode-mismatch' } }
       : { status: 200, data: { status: 'updated', revision: 2, cursor: 2 } };
   });
-  const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: 'https://subscription.test',
+  const action = createCliConnectedServiceAction({ serverId: 'home', credentials, serverHttpBaseUrl: 'https://subscription.test',
     operationContext,
     isCredentialCurrent: async () => current, resolveHeaders: () => ({ 'X-Captured-Requester': 'price-authority' }),
     callMachineAction: async () => { throw new Error('A subscription price is not machine control'); },
@@ -83,7 +83,7 @@ it.each(['current', 'retired', 'old-server'] as const)('lists saved Account summ
         revisionSemantics: 'legacy_unfenced', credentialRevision: null }], connectedAccountGroupsV4: [] }),
     } };
   });
-  const action = createCliConnectedServiceAction({ credentials: { token: 'summary-requester', encryption: null }, serverHttpBaseUrl: 'https://summary.test',
+  const action = createCliConnectedServiceAction({ serverId: 'home', credentials: { token: 'summary-requester', encryption: null }, serverHttpBaseUrl: 'https://summary.test',
     isCredentialCurrent: async () => current, resolveHeaders: () => ({ 'X-Captured-Requester': 'summary-reader' }),
     async callMachineAction() { throw new Error('Saved summaries do not need a Machine'); },
   });
@@ -119,7 +119,7 @@ it.each(['ready', 'partial'] as const)('reads a cold quota subscription with its
   vi.spyOn(axios, 'get').mockImplementation(async url => boundary(url));
   vi.spyOn(axios, 'post').mockImplementation(async url => boundary(url));
   vi.spyOn(axios, 'request').mockImplementation(async request => boundary(request.url));
-  const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: 'https://cold-price.test',
+  const action = createCliConnectedServiceAction({ serverId: 'home', credentials, serverHttpBaseUrl: 'https://cold-price.test',
     isCredentialCurrent: async () => true, resolveHeaders: () => ({ 'X-Captured-Requester': 'price-reader' }),
     callMachineAction: async () => { throw new Error('No machine read'); } });
   expect(await action({ actionId: 'connectedServices.quota.get', input: { source }, context })).toMatchObject({

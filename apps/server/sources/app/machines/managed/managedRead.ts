@@ -1,4 +1,4 @@
-import { isStoredOpaquePresetMachine } from './managedMachineProjection';
+import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
 import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedOpaquePresetResourceDependencyV1, isManagedOpaquePresetResourceDispositionV1, ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { SharedSavedSecretRefV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -16,7 +16,7 @@ import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { listMachineCandidatesInTx, resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/machineAccess";
 import {
     ManagedMachineError, readManagedMachineInTx, projectManagedMachineInTx,
-    invalidateManagedMachineInTx, projectManagedMachine, readManagedLaunchSnapshot, sameManagedInput, type StoredManagedMachine,
+    invalidateManagedMachineInTx, readManagedLaunchSnapshot, sameManagedInput, type StoredManagedMachine,
     inManagedMachinePublicationTx,
     projectManagedMachinesInTx, projectManagedControllerAccess,
     readManagedAdmissionState,
@@ -92,8 +92,7 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
                 && (row.custodianAccountId === target.accountId
                     || row.controllerMachineId !== null && machineIds.has(row.controllerMachineId));
             if (matchesAccountCustody) {
-                const machine = projectManagedMachine(row);
-                if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+                const machine = projectManagedMachineOpaque(row);
                 dependencies.push(ManagedResourceDependencyV1Schema.parse({
                     managedId: machine.id, homeId: machine.homeId, custodianAccountId: machine.custodianAccountId,
                     intentRevision: machine.intentRevision, controller: machine.controller,
@@ -118,8 +117,7 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
                     ? launch?.provider.pluginId === target.pluginId || credentials.some(credential => credential.service.pluginId === target.pluginId)
                     : credentials.some(credential => sameQualifiedConnectedAccountRef(credential, target.ref));
         if (!matches) continue;
-        const machine = projectManagedMachine(row);
-        if (isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+        const machine = projectManagedMachineFull(row);
         dependencies.push(ManagedResourceDependencyV1Schema.parse({
             managedId: machine.id, homeId: machine.homeId, custodianAccountId: machine.custodianAccountId,
             intentRevision: machine.intentRevision, controller: machine.controller, provider: machine.launch.provider,
@@ -203,11 +201,7 @@ export function projectManagedMachineReadForActor(
     machine: ManagedMachineV1,
     actorAccountId: string,
 ): ManagedMachineReadV1 {
-    if (!isStoredOpaquePresetMachine(row)) {
-        if (isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
-        return machine;
-    }
-    if (!isManagedOpaquePresetMachineV1(machine)) throw new ManagedMachineError('request_conflict');
+    if (!isManagedOpaquePresetMachineV1(machine)) return machine;
     const { content, recipients } = readStoredOpaquePresetLaunch(row.launch);
     return {
         machine,

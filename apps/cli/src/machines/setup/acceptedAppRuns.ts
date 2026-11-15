@@ -7,8 +7,11 @@ import {
 import {
   machineSetupSourceOriginKeyV1,
   type MachineSetupAcceptedAppRunV1,
+  type MachineSetupSourceEntryV1,
   type MachineSetupSourceFactsMapV1,
+  type MachineSetupSourceV1,
 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import type { StoredAppPresetInputV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { readMachineSetupAppIdentityV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -61,9 +64,18 @@ function nativeTargets(run: WorkflowRunGetResultV1, homeId: string, machineId: s
   });
 }
 
+function setupSourceReader(localSources?: MachineSetupSourceV1) {
+  const projected = localSources && projectManagedOpaqueSetupSourcesV1(localSources);
+  return (source: MachineSetupApplyTargetV1['sources'][number] | undefined): MachineSetupSourceEntryV1 | undefined => {
+    if (source?.kind !== 'accountPresetOpaque') return source;
+    const index = projected?.findIndex(candidate => sameStrictJsonValue(candidate, source)) ?? -1;
+    return localSources?.[index];
+  };
+}
+
 /** Associations are accepted bytes, never reconstructed app-{sourceIndex}-{itemIndex} addresses. */
 function acceptedBinding(run: WorkflowRunGetResultV1, targets: readonly MachineSetupApplyTargetV1[], homeId: string,
-  app: App, exactTarget?: MachineSetupApplyTargetV1): AcceptedBinding | undefined {
+  app: App, readSource: ReturnType<typeof setupSourceReader>, exactTarget?: MachineSetupApplyTargetV1): AcceptedBinding | undefined {
   const identity = readMachineSetupAppIdentityV1({ kind: 'app', definition: app.intent,
     ...(app.authoredKey === undefined ? {} : { authoredKey: app.authoredKey }) });
   if (identity === undefined) return undefined;
@@ -72,7 +84,7 @@ function acceptedBinding(run: WorkflowRunGetResultV1, targets: readonly MachineS
     if (exactTarget && !sameStrictJsonValue(target, exactTarget)) continue;
     for (const child of target.appChildren ?? []) {
       if (child.actionId !== 'deployments.deploy' && child.actionId !== 'deployments.templates.instantiate') continue;
-      const item = target.sources[child.sourceIndex]?.setup.items?.[child.itemIndex];
+      const item = readSource(target.sources[child.sourceIndex])?.setup.items?.[child.itemIndex];
       if (item?.kind !== 'app' || readMachineSetupAppIdentityV1(item) !== identity) continue;
       const matches = run.acceptedContext.materializedLeaves.filter(leaf => leaf.kind === 'action'
         && leaf.actionId === child.actionId && sameStrictJsonValue(leaf.actionInput, child.input));
@@ -99,6 +111,7 @@ function acceptedBinding(run: WorkflowRunGetResultV1, targets: readonly MachineS
  */
 export async function prepareMachineSetupAcceptedAppRuns(params: Readonly<{
   input: MachineSetupApplyTargetV1;
+  localSources?: MachineSetupSourceV1;
   context: RpcActionExecutorContext;
   isCurrent(): Promise<boolean>;
   signal?: AbortSignal;
@@ -122,16 +135,17 @@ export async function prepareMachineSetupAcceptedAppRuns(params: Readonly<{
     const run = await readAccepted(runtime, runId);
     if (!run) return null;
     const targets = nativeTargets(run, runtime.homeId, runtime.machineId);
+    const readSource = setupSourceReader(params.localSources);
     // One authenticated Run read covers every reviewed app in this settlement.
     // Native stage preparation already rejects duplicate canonical app intents.
     for (const child of params.input.appChildren) {
-      const item = params.input.sources[child.sourceIndex]?.setup.items?.[child.itemIndex];
+      const source = readSource(params.input.sources[child.sourceIndex]);
+      const item = source?.setup.items?.[child.itemIndex];
       if (item?.kind !== 'app') return null;
       const binding = acceptedBinding(run, targets, runtime.homeId, { intent: item.definition,
-        ...(item.authoredKey === undefined ? {} : { authoredKey: item.authoredKey }) }, params.input);
+        ...(item.authoredKey === undefined ? {} : { authoredKey: item.authoredKey }) }, readSource, params.input);
       const reference = binding?.reference;
       if (!reference || reference.actionId !== child.actionId) return null;
-      const source = params.input.sources[child.sourceIndex];
       if (!source) return null;
       const origin = machineSetupSourceOriginKeyV1(source);
       const prior = facts[origin]?.acceptedAppRuns ?? [];
@@ -183,7 +197,9 @@ function settledOutcome(row: WorkflowInvocationDetailV1, reference: MachineSetup
 /** Finite, caller-owned Account reads for the existing multi-app setup/resume review. */
 export async function readMachineSetupAcceptedAppRuns(params: ReadRuntime & Readonly<{
   apps: readonly App[];
+  localSources?: MachineSetupSourceV1;
 }>): Promise<readonly MachineSetupAcceptedAppRunObservation[]> {
+  const readSource = setupSourceReader(params.localSources);
   const readers = new Map<string, Promise<Awaited<ReturnType<typeof createReader>>>>();
   async function createReader(runId: string) {
     const run = await readAccepted(params, runId);
@@ -267,7 +283,7 @@ export async function readMachineSetupAcceptedAppRuns(params: ReadRuntime & Read
       let pending = readers.get(key);
       if (!pending) { pending = createReader(reference.runId); readers.set(key, pending); }
       const reader = await pending;
-      const binding = reader && acceptedBinding(reader.run, reader.targets, params.homeId, app);
+      const binding = reader && acceptedBinding(reader.run, reader.targets, params.homeId, app, readSource);
       if (!reader || !binding) return unknown();
       // This ordinal comes from the actual accepted definition, never source/item positions.
       const ordinals = reader.run.definition.blocks.flatMap((block, ordinal) =>

@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema, ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema, type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1, type ManagedMachinePresetAccountEncryptionMigrationInventoryV1, type ManagedMachinePresetV1, type ManagedMachinePresetCreateInputV1, type ManagedMachinePresetRecipientCensusInputV1, type ManagedMachinePresetRecipientCensusResultV1, type ManagedMachinePresetUpdateInputV1, type ManagedMachinePresetRevisionInputV1, type ManagedMachinePresetGetInputV1, type ManagedMachinePresetListInputV1, type ManagedMachinePresetGetResultV1, type ManagedMachinePresetListResultV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedOpaqueMachineSetupStateV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ProviderObservationV1Schema, projectManagedOpaquePresetObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -96,7 +97,7 @@ function inheritPresetOwnerArchive(row: StoredPreset, teamArchivedAt: Date | nul
 
 function readStoredPresetContent(row: StoredPreset) {
     if (hasStoredOpaquePresetEnvelope(row.launch)) return readStoredOpaquePresetLaunch(row.launch);
-    if (row.launch !== null && (typeof row.launch !== 'object' || Array.isArray(row.launch))) {
+    if (row.launch !== null && !isJsonObject(row.launch)) {
         throw new ManagedMachineError('invalid_request');
     }
     const { controllerPoolId, controllerDisplayName, ...launch } = row.launch ?? {};
@@ -422,10 +423,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
  */
 function matchesRecipientCensusTarget(input: ManagedMachinePresetRecipientCensusInputV1,
     preset: Pick<ManagedMachinePresetV1, 'owner' | 'controller' | 'controllerPoolId'>): boolean {
-    return (input.owner.kind === preset.owner.kind
-        && (input.owner.kind === 'account'
-            ? input.owner.accountId === preset.owner.accountId
-            : input.owner.teamId === preset.owner.teamId))
+    return sameManagedInput(input.owner, preset.owner)
         && sameManagedInput(input.controller, preset.controller)
         && input.controllerPoolId === preset.controllerPoolId;
 }
@@ -500,7 +498,7 @@ async function readAccountManagedMachinePresetMigrationRowsInTx(
         bindingsPerValue: 1,
     })) {
         snapshots.push(...await tx.managedMachine.findMany({
-            where: { presetId: { in: presetIds } },
+            where: { presetId: { in: [...presetIds] } },
             orderBy: { id: 'asc' },
         }));
     }
@@ -1067,8 +1065,8 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
         || (row.teamAcquireDelegated === true && authority.custodianAccountId !== params.accountId);
     requirePresetCustodianRecipient(preset, authority.custodianAccountId);
     await requirePresetDelegationInTx(tx, row, authority.custodianAccountId, delegated);
+    const controllerAccess = projectManagedControllerAccess(authority.controller, preset.controller);
     return { kind: 'ready', preset, delegated, presetContent,
         custodianAccountId: authority.custodianAccountId,
-        ...(preset.controller && projectManagedControllerAccess(authority.controller, preset.controller)
-            ? { controllerAccess: projectManagedControllerAccess(authority.controller, preset.controller) } : {}) };
+        ...(controllerAccess ? { controllerAccess } : {}) };
 }

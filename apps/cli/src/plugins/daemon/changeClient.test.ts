@@ -18,6 +18,23 @@ const completeReview = createPluginInstallationReviewFixture;
 const absoluteFixturePath = resolve('/tmp/example-plugin-source');
 
 describe('requestUserPluginChange', () => {
+  it('preserves opaque preset responsibility when retrying plugin removal', async () => {
+    const resource = { managedId: 'opaque-review', homeId: 'home', custodianAccountId: 'account',
+      intentRevision: 8, allocation: 'may-exist' as const, opaquePreset: true as const };
+    const committed = { kind: 'committed' as const, pluginId: 'acme.example', desiredGeneration: null,
+      appliedGeneration: null, pendingSurfaces: [] };
+    const requestChange = vi.fn().mockResolvedValueOnce({
+      kind: 'managedResourcesReviewRequired', pluginId: 'acme.example', resources: [resource],
+    }).mockResolvedValueOnce(committed);
+    await expect(requestUserPluginChange({ request: { kind: 'uninstall', pluginId: 'acme.example' }, approval: 'prompt' }, {
+      ensureDaemon: async () => undefined, requestChange, confirm: async () => true,
+    })).resolves.toEqual(committed);
+    expect(requestChange.mock.calls[1]?.[0]).toEqual({ kind: 'uninstall', pluginId: 'acme.example',
+      managedResourceDispositions: [{ managedId: 'opaque-review', expectedIntentRevision: 8,
+        expectedAllocation: 'may-exist', opaquePreset: true, responsibility: 'manual' }],
+    });
+  });
+
   it('reviews exact retained resource responsibility before retrying ordinary plugin removal', async () => {
     const resource = {
       managedId: 'managed-review', homeId: 'home', custodianAccountId: 'account', intentRevision: 8,

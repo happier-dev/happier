@@ -58,7 +58,7 @@ describe('connected purpose Action dependency port', () => {
       writes++;
       return { status: 200, data: { status: 'updated', revision: writes + 1, cursor: writes + 1 } };
     });
-    const action = createCliConnectedServiceAction({ credentials, operationContext, serverHttpBaseUrl: base,
+    const action = createCliConnectedServiceAction({ serverId: 'home', credentials, operationContext, serverHttpBaseUrl: base,
       resolveHeaders: () => ({ Authorization: 'Bearer purpose-account-origin' }),
       callMachineAction: async () => { throw new Error('Account-custodied purpose must not acquire a Machine'); } });
     const execute = (accountId = target.account.accountId) => action({ actionId: 'connectedServices.purposes.default.set',
@@ -127,7 +127,7 @@ describe('connected purpose Action dependency port', () => {
         settingsVersion += 1;
         return { status: 200, data: { status: 'updated', revision, cursor: 4, settingsVersion } };
       });
-      const action = createCliConnectedServiceAction({ credentials,
+      const action = createCliConnectedServiceAction({ serverId: 'home', credentials,
         resolveHeaders: () => ({ authorization: 'Bearer captured-action' }),
         callMachineAction: async () => { throw new Error('Purpose defaults are Account owned'); } });
       const resurrectedDefaults: unknown[] = [];

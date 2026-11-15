@@ -70,7 +70,7 @@ it('uses the containing Session Account runtime for repeated MCP HTTP Actions wi
         contributes: createResolvedContributionRegistry({}) });
     const accountRuntime = createRetainedAccountExecutionRuntime(() => ({ happyHomeDir: home,
         resolveServerFeaturesSnapshot: () => undefined, accountExecution: {
-        credentials, serverUrl: origin, isCurrent: () => accountCurrent, savedSecretOperationContext: operationContext,
+        credentials, serverUrl: origin, serverId: 'account-service-home', isCurrent: () => accountCurrent, savedSecretOperationContext: operationContext,
     } }));
     const nativeLease = createEphemeralPluginRuntimeRegistryLease(native);
     const lease = { ...nativeLease, accountRuntime };

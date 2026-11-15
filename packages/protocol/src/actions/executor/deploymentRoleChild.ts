@@ -181,7 +181,7 @@ export function retainHostReviewedChildCredentialScopeAdmissionV1(policy: HostRe
 }
 
 function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCustodianProof | undefined,
-  parent: HostReviewedParentV1, context: ActionExecutorContext,
+  parent: Pick<HostReviewedParentV1, 'actionId'>, context: ActionExecutorContext,
   binding: NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']>['binding'] | undefined): boolean {
   if (!proof || !binding || !isManagedOpaquePresetReviewedChildRootActionV1(parent.actionId)
     || binding.actionId !== parent.actionId
@@ -206,7 +206,7 @@ function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCust
  * transport owns placement admission.
  */
 export function retainManagedOpaquePresetCustodianAdmissionV1(policy: HostReviewedChildPolicyV1,
-  params: Readonly<{ parent: HostReviewedParentV1; context: ActionExecutorContext;
+  params: Readonly<{ parent: Pick<HostReviewedParentV1, 'actionId'>; context: ActionExecutorContext;
     admission: ManagedOpaquePresetCustodianAdmissionV1 }>): HostReviewedChildPolicyV1 | null {
   const binding = params.context.externalActionExecutionAuthorization?.binding;
   if (!binding || !matchesManagedOpaquePresetCustodianProof({ ...params.admission,

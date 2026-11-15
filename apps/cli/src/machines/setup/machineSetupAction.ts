@@ -91,11 +91,12 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
   creation?: Readonly<{ managedId: string; preset: Readonly<{ id: string; revision: number }> }> }> | null> {
   const response = MachineSetupResolveResultV1Schema.safeParse(params.resolved);
   if (!response.success || !('sources' in response.data)) return null;
+  const resolved = response.data;
   const requested = actionSourcesForHome(params.sources);
   let responseIndex = 0;
   const aligned = params.sources.map(source => source.kind === 'bundledPreset'
-    ? source : response.data.sources[responseIndex++]);
-  if (responseIndex !== response.data.sources.length) return null;
+    ? source : resolved.sources[responseIndex++]);
+  if (responseIndex !== resolved.sources.length) return null;
   const resolvedSources = MachineSetupResolvedSourceV1Schema.safeParse(aligned);
   if (!resolvedSources.success) return null;
   const hasOpaque = requested.some(source => source.kind === 'accountPresetOpaque');

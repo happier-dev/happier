@@ -232,6 +232,7 @@ it.each(['terminal', 'yes', 'decline', 'exhausted', 'remote'] as const)('settles
     const approvalNotice = vi.spyOn(console, 'error').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const client = runWithServerHttpBaseUrl(origin, () => createConnectedAccountDaemonClient({ credentials: boundary.credentials!,
+        serverId: fixture.serverId, serverHttpBaseUrl: origin,
         signal: controller.signal, onApprovalRequested: (_artifactId, _signal, decide) => decide('approve') }));
     let pending: Promise<void> | undefined;
     try {
@@ -366,6 +367,7 @@ it('presents the Ask on a live-attempt cancel and answers it from the same termi
     });
     const presented = vi.fn<(artifactId: string) => void>();
     const client = runWithServerHttpBaseUrl(origin, () => createConnectedAccountDaemonClient({ credentials: boundary.credentials!,
+        serverId: fixture.serverId, serverHttpBaseUrl: origin,
         onApprovalRequested: (artifactId, _signal, decide) => { presented(artifactId); return decide('approve'); } }));
     try {
         const begun = await runWithServerHttpBaseUrl(origin, () => client.authenticate({ operation: 'beginConnect',

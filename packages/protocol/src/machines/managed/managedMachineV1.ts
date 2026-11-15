@@ -297,7 +297,7 @@ export const ManagedMachineReadSnapshotV1Schema = lazyDefinition(() => z.union([
 ]));
 export type ManagedMachineReadSnapshotV1 = z.infer<typeof ManagedMachineReadSnapshotV1Schema>;
 
-export function isManagedOpaquePresetMachineV1(machine: ManagedMachineV1): machine is ManagedOpaquePresetMachineV1 {
+export function isManagedOpaquePresetMachineV1(machine: ManagedMachineReadSnapshotV1): machine is ManagedOpaquePresetMachineV1 {
   return machine.launch === undefined;
 }
 export type RetentionV1 = z.infer<typeof RetentionV1Schema>;

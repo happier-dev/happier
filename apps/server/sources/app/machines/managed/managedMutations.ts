@@ -1,4 +1,4 @@
-import { isStoredOpaquePresetMachine } from './managedMachineProjection';
+import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { requireManagedCreationAccessInTx } from './managedRead';
 import { isManagedResizeActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -296,7 +296,7 @@ export async function admitManagedControl(params: Readonly<{
                             accountId: readManagedEnrollmentAccountId(row), managedId: row.id,
                         }) : null;
                         if (choice && !birth) throw new ManagedMachineError('resource_mismatch');
-                        const retention = projectManagedMachine({ ...row, admittedInput: admission }).retention;
+                        const retention = projectManagedMachineOpaque({ ...row, admittedInput: admission }).retention;
                         data.admittedInput = { ...admission, currentAdmission,
                             ...(choice && birth ? { creationScopeRetention: { ...choice, ...birth,
                                 ...(retention.kind === 'unused' && retention.afterMs > 0 ? { afterMs: retention.afterMs } : {}) } } : {}),
@@ -330,18 +330,18 @@ export async function admitManagedControl(params: Readonly<{
                 if (request.input.controller) {
                     await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller: request.input.controller });
                     await validateManagedLaunchInTx(tx, { accountId: params.actorAccountId, authentication: params.authentication }, {
-                        homeId: row.homeId, controller: request.input.controller, launch: projectManagedMachine(row).launch,
+                        homeId: row.homeId, controller: request.input.controller, launch,
                     });
                 } else {
                     if (params.actorAccountId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
                     if (!declaration.accountAcquire) throw new ManagedMachineError('provider_unavailable');
-                    const current = projectManagedMachine(row);
+                    const current = projectManagedMachineFull(row);
                     const reviewedPrerequisites = current.reviewedFacts?.prerequisites;
                     if (reviewedPrerequisites === undefined && declaration.provisioner.prerequisites.length > 0) {
                         throw new ManagedMachineError('provider_unavailable');
                     }
                     data.reviewedFacts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(declaration.launchSchema),
-                        launch: current.launch, provisioner: declaration.provisioner, optionStatus: 'current',
+                        launch, provisioner: declaration.provisioner, optionStatus: 'current',
                         prerequisites: reviewedPrerequisites ?? [], billing: declaration.billing, retentionCapabilities: declaration.retention,
                         machineOverride: { retention: current.retention, wakeOnAcceptedMessage: current.wakeOnAcceptedMessage },
                         ...(current.preset ? { preset: current.preset } : {}), ...(current.machineSetup ? { setup: current.machineSetup.setup } : {}) });
@@ -360,7 +360,7 @@ export async function admitManagedControl(params: Readonly<{
                         accountId: readManagedEnrollmentAccountId(row), managedId: row.id,
                     }) : null;
                     if (choice && !birth) throw new ManagedMachineError('resource_mismatch');
-                    const retention = projectManagedMachine({ ...row, admittedInput: admission }).retention;
+                    const retention = projectManagedMachineFull({ ...row, admittedInput: admission }).retention;
                     data.admittedInput = { ...admission, currentAdmission,
                         ...(choice && birth ? { creationScopeRetention: { ...choice, ...birth,
                             ...(retention.kind === 'unused' && retention.afterMs > 0 ? { afterMs: retention.afterMs } : {}) } } : {}),

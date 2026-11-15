@@ -12,7 +12,7 @@ import type { resolveExecutablePluginRuntimeRegistry } from './resolveExecutable
 
 type RegistryInput = NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>;
 export type AccountExecutionRuntimeInput = Readonly<{
-    accountExecution: NonNullable<RegistryInput['accountExecution']>;
+    accountExecution: NonNullable<RegistryInput['accountExecution']> & Readonly<{ serverId: string }>;
     externalActionHomeBinding?: RegistryInput['externalActionHomeBinding'];
     executeTeamCredentialBrokerAction?: Parameters<typeof createRequesterConnectedAccountPurposeBindingRuntime>[0]['executeTeamCredentialBrokerAction'];
     /** A containing host's own purpose-binding owner (the Team broker custodian's daemon owner), used instead of a requester one. */
@@ -78,7 +78,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
         // these local services must not depend on the parent's declarations.
         const purposeRuntime = operationContext && accountId ? (() => {
             const credentialApi = createConnectedServiceCredentialApi(authority.credentials);
-            return createRequesterConnectedAccountPurposeBindingRuntime({ operationContext, accountId,
+            return createRequesterConnectedAccountPurposeBindingRuntime({ operationContext, accountId, serverId: authority.serverId,
                 ...(authority.machineId ? { machineId: authority.machineId } : {}),
                 reloadController: credentialRegistryAccess,
                 nativeReloadController: nativeCredentialRegistryAccess,

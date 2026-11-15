@@ -10,7 +10,7 @@ import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secret
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1, ManagedMachineV1, ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { randomUUID } from 'node:crypto';
@@ -56,8 +56,8 @@ type ManagedMachineActionAdapterParams = Readonly<{
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
-    executeManagedPolicyAction?: (machine: ManagedMachineV1, context: ActionExecutorContext,
-        runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>, purpose: ManagedPolicyPurposeV1) => Promise<ManagedMachineV1>;
+    executeManagedPolicyAction?: <Machine extends ManagedMachineReadSnapshotV1>(machine: Machine, context: ActionExecutorContext,
+        runApproved: (context: ActionExecutorContext) => Promise<Machine>, purpose: ManagedPolicyPurposeV1) => Promise<Machine>;
     prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
     acquireRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
 }>;

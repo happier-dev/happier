@@ -9,7 +9,7 @@ import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/m
  * child Action invocation can observe the resulting private proof.
  */
 export function createManagedOpaquePresetReviewedChildPortV1(params: Readonly<{
-  parent: Parameters<typeof retainManagedOpaquePresetCustodianAdmissionV1>[1]['parent'];
+  parent: Readonly<{ actionId: string; input: unknown }>;
   context: ActionExecutorContext;
   /** Host-only admission retained from the exact opaque machine response. */
   custody?: ManagedOpaquePresetCustodianAdmissionV1;

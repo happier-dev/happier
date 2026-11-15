@@ -101,9 +101,8 @@ export async function resolveMachineSetup(params: Readonly<{
         const row = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
         if (params.creationManagedId && row?.id !== params.creationManagedId) throw new ManagedMachineError('resource_mismatch');
         if (row !== null && isStoredOpaquePresetMachine(row)) {
-            const match = (source: MachineSetupSourceApplyEntryV1) => source.kind === 'accountPresetOpaque'
+            const match = (source: MachineSetupSourceApplyEntryV1): source is MachineSetupOpaquePresetSourceV1 => source.kind === 'accountPresetOpaque'
                 && source.presetId === row.presetId && source.presetRevision === row.presetRevision;
-            const creation = { managedId: row.id, preset: { id: row.presetId, revision: row.presetRevision } };
             if ('purpose' in input) {
                 const candidate = input.candidates.find(match);
                 if (!candidate) {
@@ -118,7 +117,8 @@ export async function resolveMachineSetup(params: Readonly<{
                     presetId: candidate.presetId, presetRevision: candidate.presetRevision });
                 if (readManagedEnrollmentAccountId(row) !== target.accountId) throw new ManagedMachineError('permission_denied');
                 if (setup.state === 'skipped') return { purpose: 'creationOrigin' as const };
-                return { purpose: 'creationOrigin' as const, creation };
+                return { purpose: 'creationOrigin' as const,
+                    creation: { managedId: row.id, preset: { id: candidate.presetId, revision: candidate.presetRevision } } };
             }
             if (!params.creationManagedId) throw new ManagedMachineError('invalid_request');
             const opaque = input.sources.find(match);
@@ -144,7 +144,7 @@ export async function resolveMachineSetup(params: Readonly<{
                     },
                     direct,
                 ],
-                creation,
+                creation: { managedId: row.id, preset: { id: opaque.presetId, revision: opaque.presetRevision } },
             };
         }
         if ('purpose' in input) {

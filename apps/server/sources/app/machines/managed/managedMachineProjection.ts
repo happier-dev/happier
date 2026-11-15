@@ -1,6 +1,6 @@
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { ManagedMachineFullV1Schema, ManagedOpaqueMachineSetupStateV1Schema, ManagedOpaquePresetMachineV1Schema, isManagedOpaquePresetMachineV1,
-    type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema, ManagedOpaqueMachineSetupStateV1Schema, ManagedOpaquePresetMachineV1Schema,
+    type ManagedMachineV1, type ManagedMachineFullV1, type ManagedOpaquePresetMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedOpaquePresetObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachinePresetEnvelopeV1Schema, type ManagedMachinePresetEnvelopeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -62,8 +62,7 @@ export function storeOpaquePresetLaunch(input: Readonly<{
 /** Retained raw snapshots stay intact on reads; migration exposes their existing private fields. */
 export function readStoredPresetSnapshotContent(row: StoredManagedMachine): StoredOpaquePresetLaunch {
     if (hasStoredOpaquePresetEnvelope(row.launch)) return readStoredOpaquePresetLaunch(row.launch);
-    const machine = projectManagedMachine(row);
-    if (isManagedOpaquePresetMachineV1(machine)) throw new Error('Expected retained raw managed snapshot');
+    const machine = projectManagedMachineFull(row);
     const admission = readManagedAdmissionState(row.admittedInput);
     const controlIntent = admission.submittedEffect?.intent;
     const nativeControlResult = row.resource !== null && row.nativeOperationRef !== null && controlIntent === 'delete'
@@ -103,32 +102,20 @@ export function readManagedAdmissionState(value: unknown): StoredManagedAdmissio
     return value as StoredManagedAdmission;
 }
 
-/** Project admitted storage through the generic stored reader, never today's provider declaration. */
-export function projectManagedMachine(row: StoredManagedMachine): ManagedMachineV1 {
+function projectManagedMachineStructural(row: StoredManagedMachine) {
     const admission = readManagedAdmissionState(row.admittedInput);
     const submitted = admission.submittedEffect;
     const enrollmentIdentity = admission.computeInput?.enrollmentIdentity;
-    const opaquePreset = isStoredOpaquePresetMachine(row);
-    const storedOpaquePreset = opaquePreset ? readStoredOpaquePresetLaunch(row.launch) : undefined;
-    const resource = opaquePreset || row.resource === null ? undefined : row.resource as ManagedMachineV1['resource'];
     const controller = readManagedController(row);
-    const devcontainerChild = !opaquePreset && controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
-        controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
     const structural = {
         id: row.id, homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         ...(admission.enrollmentAccountId ? { enrollmentAccountId: admission.enrollmentAccountId } : {}),
         ...(row.presetId && row.presetRevision !== null ? { preset: {
             id: row.presetId,
             revision: row.presetRevision,
-            contentEncryptionMode: storedOpaquePreset?.contentEncryptionMode ?? 'plain',
         } } : {}),
         ...(controller ? { controller } : {}),
-        ...(!opaquePreset && enrollmentIdentity ? { enrollmentIdentity } : {}),
         allocation: row.allocation, creationState: row.creationState,
-        ...(!opaquePreset && resource ? { resource } : {}),
-        ...(!opaquePreset && devcontainerChild ? { devcontainerChild } : {}),
-        ...(!opaquePreset && row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),
-        ...(!opaquePreset && row.recovery !== null ? { recovery: row.recovery } : {}),
         ...(row.bootstrapCredentialRef !== null ? { bootstrapCredentialRef: row.bootstrapCredentialRef } : {}),
         ...(admission.bootstrapInstalled ? { bootstrapInstalled: admission.bootstrapInstalled } : {}),
         ...(row.enrolledMachineId !== null ? { enrolledMachineId: row.enrolledMachineId } : {}),
@@ -147,23 +134,46 @@ export function projectManagedMachine(row: StoredManagedMachine): ManagedMachine
         wakeOnAcceptedMessage: admission.creationScopeRetention?.endedAt !== undefined && admission.creationScopeRetention.effect === 'delete'
             ? false : row.wakeOnAcceptedMessage,
         ...(admission.creationScopeRetention ? { creationScopeRetention: admission.creationScopeRetention } : {}),
-        ...(row.observation !== null ? { observation: opaquePreset
-            ? ManagedOpaquePresetObservationV1Schema.parse(row.observation)
-            : row.observation } : {}),
         ...(row.cleanup !== null ? { cleanup: row.cleanup } : {}),
     };
-    if (opaquePreset) {
-        // Parsing the outer envelope proves the row is an opaque preset carrier;
-        // neither branch opens or interprets its private content.
-        return createStoredReadSchema(ManagedOpaquePresetMachineV1Schema).parse({
-            ...structural,
-            ...(row.machineSetup === null ? {} : { machineSetup: ManagedOpaqueMachineSetupStateV1Schema.parse(row.machineSetup) }),
-        });
-    }
+    return { structural, enrollmentIdentity };
+}
+
+/** Project an already selected raw row through the established full stored reader. */
+export function projectManagedMachineFull(row: StoredManagedMachine): ManagedMachineFullV1 {
+    const { structural, enrollmentIdentity } = projectManagedMachineStructural(row);
+    const resource = row.resource === null ? undefined : row.resource as ManagedMachineFullV1['resource'];
+    const controller = structural.controller;
+    const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
+        controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
     return createStoredReadSchema(ManagedMachineFullV1Schema).parse({
         ...structural,
+        ...(structural.preset ? { preset: { ...structural.preset, contentEncryptionMode: 'plain' } } : {}),
+        ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
+        ...(resource ? { resource } : {}),
+        ...(devcontainerChild ? { devcontainerChild } : {}),
+        ...(row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),
+        ...(row.recovery !== null ? { recovery: row.recovery } : {}),
+        ...(row.observation !== null ? { observation: row.observation } : {}),
         launch: row.launch,
         ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
         ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
     });
+}
+
+/** Project an already selected opaque row without opening its private content. */
+export function projectManagedMachineOpaque(row: StoredManagedMachine): ManagedOpaquePresetMachineV1 {
+    const storedOpaquePreset = readStoredOpaquePresetLaunch(row.launch);
+    const { structural } = projectManagedMachineStructural(row);
+    return createStoredReadSchema(ManagedOpaquePresetMachineV1Schema).parse({
+        ...structural,
+        ...(structural.preset ? { preset: { ...structural.preset, contentEncryptionMode: storedOpaquePreset.contentEncryptionMode } } : {}),
+        ...(row.observation !== null ? { observation: ManagedOpaquePresetObservationV1Schema.parse(row.observation) } : {}),
+        ...(row.machineSetup === null ? {} : { machineSetup: ManagedOpaqueMachineSetupStateV1Schema.parse(row.machineSetup) }),
+    });
+}
+
+/** Project admitted storage through the generic stored reader, never today's provider declaration. */
+export function projectManagedMachine(row: StoredManagedMachine): ManagedMachineV1 {
+    return isStoredOpaquePresetMachine(row) ? projectManagedMachineOpaque(row) : projectManagedMachineFull(row);
 }

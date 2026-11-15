@@ -3,7 +3,7 @@ import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetLaunchNameOver
     ManagedMachinePresetStoredContentV1Schema, replaceManagedMachinePresetLaunchNameV1,
     resolveManagedMachinePresetAcquireOverrideV1, type ManagedMachinePresetContentV1,
     type ManagedMachinePresetLaunchNameOverrideV1, type ManagedMachinePresetNativeControlResultV1,
-    type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+    type ManagedMachinePresetStoredContentCarrierV1, type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedMachineFullV1Schema, type ManagedMachineFullV1,
   type ManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -50,7 +50,7 @@ export function readManagedOpaquePresetNativeControlResultV1(machine: Pick<Manag
  */
 export function prepareManagedOpaquePresetReportV1(params: Readonly<{
     machine: ManagedOpaquePresetMachineV1;
-    content: ManagedMachinePresetStoredContentV1;
+    content: ManagedMachinePresetStoredContentCarrierV1;
     recipients: readonly unknown[];
     opened: ManagedMachinePresetContentV1 & Readonly<{ launch: NonNullable<ManagedMachinePresetContentV1['launch']> }>;
     accountId: string;

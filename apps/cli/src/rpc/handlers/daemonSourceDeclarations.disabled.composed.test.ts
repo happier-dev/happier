@@ -93,11 +93,11 @@ it('carries actual disabled GitHub admission through Machine RPC into cold, exac
             lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1, configured,
         }));
         // Canonical Collection testkit supplies persistence at this host-context boundary.
-        const context = { signal: new AbortController().signal, surface: 'cli', services: {
+        const context = { requestId: 'disabled-source-invocation', signal: new AbortController().signal, surface: 'cli', services: {
             storage: { account: { collection: () => collections.sourceInstances } }, targetedContributions: targeted,
             actions: { executeAdmittedTargetedOperation: async () => { throw new Error('Disabled source invoked'); } },
         } } as unknown as TriageDataActionContext;
-        const failure = { class: 'unknown', code: 'plugin_disabled', detail: sourceId };
+        const failure = { class: 'unknown', code: 'plugin_disabled', detail: sourceId, requestId: 'disabled-source-invocation' };
         for (const limit of [0, 10]) {
             const listed = await createTriageListEntriesActionHandler()({ v: 1,
                 sources: { kind: 'selected', sourceInstances: [{ sourceInstanceId: configured.instance.sourceInstanceId, configurationRowId: seeded.rowId }] },
@@ -136,7 +136,7 @@ it('carries actual disabled GitHub admission through Machine RPC into cold, exac
             serverId: 'disabled-source-home', serverIdentityId: 'disabled-source-home' };
         const { deps } = createCliActionExecutorHarness(host);
         const retained = createRetainedAccountExecutionRuntime(() => ({ accountExecution: { credentials,
-            serverUrl: accountEndpoint, machineId: 'machine-source', isCurrent: () => true } }));
+            serverUrl: accountEndpoint, serverId: 'disabled-source-home', machineId: 'machine-source', isCurrent: () => true } }));
         try {
             const result = await executeAccountPluginAction({ host, deps, accountRuntime: retained, actionId: 'action.invoke',
                 input: { action: { pluginId, localId: 'diagnostics' }, input: { key: sourceId } },

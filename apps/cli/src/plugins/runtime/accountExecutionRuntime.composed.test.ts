@@ -109,7 +109,7 @@ it.each([
             const input = { happyHomeDir: directory,
                 ...(fixture.borrowNativeRegistry ? { credentialRuntimeRegistry: native } : {}),
                 resolveServerFeaturesSnapshot: () => ({ status: 'ready' as const, features }),
-                accountExecution: { credentials, serverUrl: home, machineId: 'controller', explicitMachineId: 'controller',
+                accountExecution: { credentials, serverUrl: home, serverId: 'srv_role_credentials', machineId: 'controller', explicitMachineId: 'controller',
                     savedSecretOperationContext, isCurrent: () => current },
             };
             runtime = await resolveAccountExecutionRuntime(input);

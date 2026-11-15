@@ -20,6 +20,7 @@ import {
 import type { CommandContext } from '@/cli/commandRegistry';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
 import { readStoredCredentials } from '@/persistence';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
@@ -109,7 +110,9 @@ function findTarget(
 }
 
 async function createDaemonClient(signal?: AbortSignal, yes = false): Promise<ConnectedAccountDaemonClient> {
-  const credentials = await readStoredCredentials();
+  const serverId = configuration.activeServerId;
+  const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+  const credentials = await readStoredCredentials({ serverId });
   if (!credentials) {
     throw new Error(
       `Not authenticated with Happier. Run ${cmd('happier auth login')} first.`,
@@ -117,7 +120,7 @@ async function createDaemonClient(signal?: AbortSignal, yes = false): Promise<Co
   }
   const { machineId } = await ensureMachineIdForCredentials(credentials);
   let confirmed = yes;
-  return createConnectedAccountDaemonClient({ credentials, machineId, ...(signal ? { signal } : {}),
+  return createConnectedAccountDaemonClient({ credentials, serverId, serverHttpBaseUrl, machineId, ...(signal ? { signal } : {}),
     onApprovalRequested: async (artifactId, confirmationSignal, decide) => {
       console.error(`Waiting for approval: ${artifactId}`);
       let approve = confirmed;
