@@ -88,7 +88,8 @@ export type SessionListDragTopologyDropZone = Readonly<{
 export type SessionListDragTopology = Readonly<{
     /** Source-excluded sibling insertion positions; null is the append edge. */
     insertionPositionsByContainerId: ReadonlyMap<string, ReadonlyMap<string | null, number>>;
-    rows: ReadonlyArray<SessionListDragTopologyRow>;
+    /** Structural rows by tree row id, in visible order. */
+    rowsById: ReadonlyMap<string, SessionListDragTopologyRow>;
     dropZones: ReadonlyArray<SessionListDragTopologyDropZone>;
     rowMetadataById: ReadonlyMap<string, SessionListTreeRowMetadata>;
     containerMetadataById: ReadonlyMap<string, SessionListTreeContainerMetadata>;

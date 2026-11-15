@@ -82,8 +82,8 @@ describe('buildSessionListDragSnapshot', () => {
         });
 
         // Topology rows carry structural identity only — no `bounds` field at all.
-        expect(snapshot.topology.rows.length).toBeGreaterThan(0);
-        for (const row of snapshot.topology.rows) {
+        expect(snapshot.topology.rowsById.size).toBeGreaterThan(0);
+        for (const row of snapshot.topology.rowsById.values()) {
             expect(row).not.toHaveProperty('bounds');
             expect(typeof row.rowId).toBe('string');
             expect(typeof row.depth).toBe('number');
