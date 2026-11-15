@@ -1,6 +1,8 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import axios from 'axios';
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentV1Schema, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
@@ -177,16 +179,21 @@ it.each([false, true])('persists independent generated credentials from a bundle
             }
             const prepared = await fixture.inHome(() => templates.prepare(input, { runtimeAccountId: 'account-cli-fixture' }));
             expect(prepared.input).toEqual(input);
-            // The reviewed bindings child commits at the same Home persistence boundary.
+            // The reviewed bindings child commits at the same Home persistence boundary through
+            // the real bindings patch owner, which mints each new variable's grant reference.
+            let sealedBindings: typeof current.content.bindings = [];
             const bindingsChild: HostReviewedChildPortV1 = { invoke: async request => {
-                const bindings = request.input as { set: typeof current.content.bindings };
-                current.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, bindings: bindings.set });
+                const bindings = request.input as { set: typeof current.content.bindings; remove: [] };
+                sealedBindings = applyEnvironmentSecretBindingsPatchV1(current.content.bindings, bindings, randomUUID);
+                current.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, bindings: sealedBindings });
                 current.environment.revision++;
                 return { ok: true, result: { ok: true, environmentId: current.environment.id, revision: current.environment.revision } };
             } };
             const result = await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture',
                 hostReviewedChild: bindingsChild }));
             expect(result).toMatchObject({ kind: 'applied', savedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] });
+            // Grants are sealed to the writer's references; the template commit must not replace them.
+            expect(current.content.bindings).toEqual(sealedBindings);
         }
         const stored = DeploymentEnvironmentContentV1Schema.parse(current.content);
         expect(stored.template?.data?.map(data => ({ service: data.service, variables: data.variables, backup: data.logicalBackup })))

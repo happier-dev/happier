@@ -392,6 +392,10 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
+            // The bindings writer mints each new variable's grant reference and seals to it.
+            // A later content write carries its stored bindings, never this local copy.
+            const readCommittedBindings = async () =>
+                (await host.readEnvironment({ environmentId: environmentId!, context })).content.bindings;
             const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update', input: Parameters<Host['storage']>[1]) => {
                 const result = await host.storage(actionId, input, context, storagePreparation);
                 if ('ok' in result && !result.ok && 'errorCode' in result) return refuse(result);
@@ -421,7 +425,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 await commitBindings(content.bindings);
                 phase = 'metadata';
                 const metadata = await commitTemplateMetadata(DeploymentEnvironmentContentV1Schema.parse({ ...content,
-                    template: { ...finalPrepared.template, definition: current.content.definition } }), environmentId, revision, input, context, plan.contentAuthority);
+                    bindings: await readCommittedBindings(), template: { ...finalPrepared.template, definition: current.content.definition } }), environmentId, revision, input, context, plan.contentAuthority);
                 return { kind: 'pullRequest', environmentId, revision: metadata.revision, savedSecrets,
                     pullRequest: published.pullRequest, headCommit: published.headCommit, branchName: published.branchName };
             }
@@ -472,7 +476,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             await commitBindings(content.bindings);
             if (input.environment.kind === 'existing') {
                 phase = 'metadata';
-                const finalContent = DeploymentEnvironmentContentV1Schema.parse({ ...content, template: { ...finalPrepared.template, definition: appliedDefinition } });
+                const finalContent = DeploymentEnvironmentContentV1Schema.parse({ ...content, bindings: await readCommittedBindings(),
+                    template: { ...finalPrepared.template, definition: appliedDefinition } });
                 const result = await commitTemplateMetadata(finalContent, environmentId!, revision!, input, context, plan.contentAuthority);
                 environmentId = result.environmentId; revision = result.revision;
             }
