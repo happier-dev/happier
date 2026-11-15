@@ -30,6 +30,52 @@ means the owner's value; never copy a number from this file into a component.
 5. **What happens while it loads, when it fails, offline, empty, and on a phone?** Decide these now;
    they are part of the design, not polish.
 
+## Information design comes before components
+
+A surface is information first and components second. The usual way a Happier screen comes out
+"basic" is skipping this step: reaching for `ItemGroup` and `Item` because they are the nearest
+owner, and pouring data into settings rows. Rows on sheets are the right shape for one kind of
+content only. Decide the shape of the information, then pick the owner that already draws that shape.
+
+**1. Write the information inventory.** List what the person needs from this surface: the facts, the
+states, the things they act on, and the actions. For each, note how often it changes, how much it
+matters, and whether it is one value, a few named values, a set of similar records, a time series,
+or a body of text.
+
+**2. Set the information hierarchy, three tiers.**
+- *Glance*: what must be understood in about a second, without reading (the state that needs them,
+  the identity, the headline number). It gets position, size and the one place where colour speaks.
+- *Scan*: what the person compares or picks from (the records, the facts beside each one). It gets a
+  consistent anatomy so the eye can run down a column.
+- *On demand*: detail, history, configuration, rare actions. It lives one press away (a detail pane,
+  a disclosure, the "…" menu, a pushed page), not on the surface at rest.
+If everything is tier two, nothing leads and the page reads flat. If tier three sits at rest, the
+page reads busy.
+
+**3. Classify each region by content kind, then use that kind's owner.**
+
+| Content kind | What the person does | Shape | Owner (see `references/components.md`) |
+| --- | --- | --- | --- |
+| Configure | change a preference or setting | sections on sheets, one row per decision | `ItemGroup` + `Item` (+ `SettingRow`) |
+| Browse and act | find, compare, open, act on records | flat list or table with one row anatomy, inset hairlines, section titles; grid or cards only when the thing is visual | `Collection` (list, table, board, grid) + `DetailsPaneHost` |
+| Monitor | see health and change over time | status first; meters, sparklines, check history bars, counts that speak only when off | `Status`, the shared meters and sparklines, `WidgetFrame` |
+| Read | understand one thing | identity header with its facts line, then the content itself | `PageHeader` (+ mark, `meta`), sections without sheets, `DetailsPaneHost` |
+| Create | make something new | a flow: few choices, the next step visible, a live preview where it helps | the shared sheet or flow owner, `SelectionTiles`, the Composer |
+| Navigate | go somewhere | short index, title-only rows or tiles | `Item` with chevron in a short list, tab bars, columns |
+
+A page usually mixes kinds: an entity page reads (header and facts), monitors (health), lets you
+browse (its services) and keeps configuration one press away. Give each region its own shape.
+
+**4. Smell test before building.** If the planned page is only `ItemGroup`s of `Item`s and it is not a
+settings page, the shape is wrong. Records belong in a Collection, health belongs in status and
+history, an entity belongs in a header with facts. Fix the shape, not the padding.
+
+**5. Reuse, then refine, then build once.** Every kind above has an owner. When an owner cannot show
+the information well (an uptime bar, a richer record row), refine that owner for every consumer or
+add the missing presentation once in `@happier-dev/plugin-ui`. Never a page-local look-alike. Approved
+labs show each kind done well: `.happier/design-lab/pfc-redesign/` (browse, read, monitor),
+`phone-lists-1115/` (browse on phones), `monitoring-1115/` (monitor).
+
 ## Presentation continuity
 
 Apply apps/ui/AGENTS.md's stable component topology rule across pane, dialog, anchored popover and phone sheet presentations. Keep one mounted input or operation body through `useRetainedPlacement` in `apps/ui/sources/modal/components/RetainedModalFrame.tsx` (a0fcf7f04db, 0c74336595a).
@@ -61,7 +107,8 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
 - Meta in one right-aligned tabular column; mono only for ids, paths, code and shortcuts.
 - Colour means state: amber needs you, rose failed; glyphs stay ink.
 
-**Anatomy** (configuration and detail pages; see `references/anatomy.md`)
+**Anatomy** (configuration pages; other kinds take their shape from "Information design comes
+before components"; see `references/anatomy.md`)
 
 - Page header: title + one-sentence purpose. Sections: sentence-case title, description _above_ the
   rows, one sheet. No uppercase group labels, no explanatory footers under rows.
@@ -125,6 +172,9 @@ personal present, one hero, one rhythm, inviting empty states. Read it before de
 
 ## The working loop
 
+0. **Shape the information** ("Information design comes before components" above): inventory,
+   three-tier hierarchy, a content kind per region, the smell test. Write it in your report or brief
+   in a few lines before writing code; a reviewer checks the page against it.
 1. **Find the canonical owner** for every element you will render (`references/components.md`),
    and search for an existing same-concept component before writing one. A second component for an
    existing concept is a defect even if it looks better; so is a local edge, grey, radius or shadow

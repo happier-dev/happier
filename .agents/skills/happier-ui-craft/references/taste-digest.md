@@ -7,6 +7,9 @@ conflict; exact values come from the named code owners, never from generic taste
 ## Read the surface before styling it
 
 - Name the person, task, frequency, urgency, consequence, and one primary purpose.
+- Shape the information before picking components: inventory, three tiers (glance, scan, on
+  demand), a content kind per region. Settings rows on sheets are for configuration only
+  (SKILL.md → "Information design comes before components").
 - Establish identity first, then blockers, common actions, rare detail, and destructive actions last.
 - Choose one primary action per view. Make alternatives quieter and keep destructive work separate.
 - Start from the approved lab scene or closest shipped Happier screen, not a blank composition.

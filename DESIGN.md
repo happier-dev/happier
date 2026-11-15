@@ -175,6 +175,16 @@ Every screen should answer without effort:
 - What can I do next?
 - How do I go back, cancel, defer, or recover?
 
+### Information design
+
+Shape the information before choosing components. Inventory what the person needs, rank it
+(glance: understood in a second; scan: compared and picked from; on demand: one press away), and
+give each region the shape of its content: configuration on sheets of rows, records in a list or
+table, health as status and history, an entity as a header with its facts, creation as a flow. Rows
+on sheets are the configuration shape only; a page of anything else built from them reads like
+settings and looks basic. The method and the owner for each kind live in
+`.agents/skills/happier-ui-craft` → "Information design comes before components".
+
 ### Visual hierarchy
 
 - Establish one dominant purpose per screen or pane.
@@ -1077,6 +1087,8 @@ Reject or revisit designs that exhibit:
 - generic assistant-product aesthetics with no Happier-specific point of view;
 - “minimalism” that removes hierarchy, context, or discoverability;
 - excessive cards, pills, glass, borders, glows, or gradients without semantic purpose;
+- pages that pour records, health or an entity's facts into settings rows on sheets because rows were
+  the nearest component, instead of the shape the information needs (see "Information design");
 - dense settings or dashboards where every control has equal emphasis;
 - mobile layouts that are merely compressed desktop screens;
 - desktop layouts that waste space because they are enlarged mobile stacks;

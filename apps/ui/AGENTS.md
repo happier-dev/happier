@@ -89,8 +89,13 @@ Doctrine: `../../DESIGN.md` → "Configuration surfaces". Shared ownership: [Col
   `ItemGroup` and `Item` below it take the page anatomy automatically; menus and popovers reset to
   the grouped look in `FloatingOverlay`. Do not hand-build section headers, row dividers, sheets or
   dropdown triggers.
-- **Sections:** use `ItemGroup` `title` + `description` (+ `action`), not `footer`, on pages.
-- **Rows:** `Item` with one right-side control. Set `accessoryLayout="adaptive"` for segmented
+- **Shape first:** these page, section and row rules are the configuration shape. Before building
+  any page, decide its information hierarchy and the content kind of each region (configure, browse
+  and act, monitor, read, create, navigate) by `.agents/skills/happier-ui-craft` → "Information design
+  comes before components". Records go in a `Collection`, health in status and history, an entity in
+  a header with facts. A non-settings page made only of `ItemGroup`s of `Item`s is the wrong shape.
+- **Sections:** use `ItemGroup` `title` + `description` (+ `action`), not `footer`, on configuration pages.
+- **Rows:** on configuration pages, `Item` with one right-side control. Set `accessoryLayout="adaptive"` for segmented
   controls and field selects, and `"stacked"` for visual pickers and text areas. Preference rows pass
   no `icon`; identity marks (agent, provider, service, machine, avatar) stay.
 - **Visual pickers:** `SelectionTiles variant="visual"` with `preview` elements that render the real

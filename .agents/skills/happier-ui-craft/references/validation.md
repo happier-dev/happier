@@ -174,6 +174,15 @@ These rules come from the Teams/Home program (2026-10-11). Every finding list wa
 
 Run it on the rendered screen, not the code.
 
+**Information design**
+
+- [ ] The lane wrote the page's information inventory, three tiers (glance, scan, on demand) and a
+      content kind per region before building, and the page matches it.
+- [ ] Each region has its kind's shape: records in a Collection, health as status and history, an
+      entity as a header with facts, configuration on sheets. A non-settings page that is only
+      `ItemGroup`s of `Item`s fails this row.
+- [ ] Tier one reads in about a second without reading every line; tier three is not at rest.
+
 **Hierarchy**
 
 - [ ] The first thing on the page is its identity or purpose.

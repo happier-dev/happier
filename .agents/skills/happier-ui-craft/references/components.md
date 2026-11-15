@@ -21,11 +21,17 @@ owner, do not create one. Paths are under `apps/ui/sources/` unless stated.
 
 ## Structure
 
+Pick by content kind first (SKILL.md → "Information design comes before components"): configure →
+`ItemGroup` + `Item`; browse and act → `Collection`; monitor → `Status`, meters, sparklines and check
+history in `WidgetFrame`; read → `PageHeader` with facts, then the content; create → the shared flow
+or sheet. The `ItemGroup` and `Item` rows below are the configuration shape, not the default for
+every page.
+
 | Need | Use |
 | --- | --- |
 | A configuration or detail page | `ItemList` (page presentation by default) + `PageHeader` (`components/ui/layout/PageHeader.tsx`: title, description, `actions`, `leading` mark, `meta` facts with icons, and a back slot filled by the navigation chrome); settings use `SettingsPageHeader`. Non-page lists explicitly use `presentation="grouped"`. |
-| A section | `ItemGroup` with `title`, `description`, optional `action` (drops beneath the title on narrow widths); `surface="none"` for sheetless content (tiles, a button row) |
-| A row | `Item` |
+| A configuration section | `ItemGroup` with `title`, `description`, optional `action` (drops beneath the title on narrow widths); `surface="none"` for sheetless content (tiles, a button row) |
+| A configuration or navigation row | `Item` (records you browse and act on are Collection rows, not `Item`s on a sheet) |
 | A described catalog record, including a narrow Settings column | Shared `catalogRow` role in `HAPPIER_COLLECTION_LIST_METRICS`, selected by the Collection binding; core `Item` and public `List.Item` consume it. Preference subtitles do not select it. |
 | A card in a grid, shelf or Board | Existing `Collection` → `CollectionCards` → portable `HappierWidgetFrame`; use `card.headerRight`, `card.facts`, `card.body`, never a replacement frame |
 | A rich widget | Existing public/core `WidgetFrame` over the same portable chrome; retain disclosure, Resource/body demand, manipulation and independent controls |
