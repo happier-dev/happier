@@ -1,4 +1,5 @@
 import { readGithubAbsoluteWebUrl } from '../locator.js';
+import type { GithubTriageReviewRevisionV1 } from '../types.js';
 
 import type { GithubOverviewResultV1 } from './contracts.js';
 
@@ -28,6 +29,19 @@ function readTimestamp(value: unknown): number | null {
 
 function readCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+/** One native endpoint projection for exact observations and mounted PR detail reads. */
+export function readGithubPullRequestReviewRevision(
+  raw: Readonly<Record<string, unknown>>,
+  headRevision: string | null,
+): GithubTriageReviewRevisionV1 | null {
+  const base = isRecord(raw.base) ? raw.base : null;
+  const head = isRecord(raw.head) ? raw.head : null;
+  const baseSha = base === null ? null : readTrimmed(base.sha);
+  const headSha = head === null ? null : readTrimmed(head.sha);
+  if (baseSha === null || headSha === null || headRevision === null || headSha !== headRevision) return null;
+  return Object.freeze({ baseSha, headSha, nativeRevision: headRevision });
 }
 
 /** Reads the provider's ordered name/login collection only when it supplied one. */
@@ -128,6 +142,7 @@ export function projectGithubPullRequestOverview(
   const headBranch = head === null ? null : readTrimmed(head.ref);
   const baseBranch = base === null ? null : readTrimmed(base.ref);
   const headRevision = head === null ? null : readTrimmed(head.sha);
+  const revision = readGithubPullRequestReviewRevision(raw, headRevision);
   const requestedReviewers = readRequestedReviewers(raw);
   const additions = readCount(raw.additions);
   const deletions = readCount(raw.deletions);
@@ -150,6 +165,7 @@ export function projectGithubPullRequestOverview(
     ...(baseBranch === null ? {} : { baseBranch }),
     ...(requestedReviewers === null ? {} : { requestedReviewers }),
     ...(headRevision === null ? {} : { headRevision }),
+    ...(revision === null ? {} : { baseRevision: revision.baseSha }),
     ...(additions === null ? {} : { additions }),
     ...(deletions === null ? {} : { deletions }),
     ...(changedFiles === null ? {} : { changedFiles }),

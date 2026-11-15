@@ -33,6 +33,7 @@ import {
   projectGithubIssueOverview,
   projectGithubPullRequestOverview,
   readGithubNamedMembers,
+  readGithubPullRequestReviewRevision,
   type GithubIssueOverviewV1,
   type GithubPullRequestOverviewV1,
 } from './detail/overview.js';
@@ -377,19 +378,7 @@ export type GithubPullRequestReadV1 = Readonly<{
   overview: GithubPullRequestOverviewV1 | null;
 }>;
 
-export function readGithubPullRequestReviewRevision(
-  raw: Readonly<Record<string, unknown>>,
-  headRevision: string | null,
-): GithubTriageReviewRevisionV1 | null {
-  const base = isRecord(raw.base) ? raw.base : null;
-  const head = isRecord(raw.head) ? raw.head : null;
-  const baseSha = base === null ? null : readNonEmptyString(base.sha);
-  const headSha = head === null ? null : readNonEmptyString(head.sha);
-  if (baseSha === null || headSha === null || headRevision === null || headSha !== headRevision) {
-    return null;
-  }
-  return Object.freeze({ baseSha, headSha, nativeRevision: headRevision });
-}
+export { readGithubPullRequestReviewRevision } from './detail/overview.js';
 
 function readGithubPullRequestSourceTip(
   raw: Readonly<Record<string, unknown>>,

@@ -454,6 +454,7 @@ describe('GitHub overview plane', () => {
           { kind: 'team', subject: 'client-platform' },
         ],
         headRevision: HEAD_SHA,
+        baseRevision: BASE_SHA,
         additions: 214,
         deletions: 88,
         changedFiles: 12,

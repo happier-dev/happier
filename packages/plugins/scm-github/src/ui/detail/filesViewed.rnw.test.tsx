@@ -24,6 +24,8 @@ import {
 } from '../../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from '../../triage/fileViewedContracts.js';
+import { projectGithubPullRequestOverview } from '../../triage/detail/overview.js';
+import { GithubOverviewResultV1Schema } from '../../triage/detail/contracts.js';
 import { renderSurface } from '../renderSurface.js';
 import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../../triage/src/ui/sourcePanelActions.test-support.js';
 import { createTriageEphemeralSharedScopeFixture } from '../../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
@@ -39,9 +41,10 @@ const SOURCE_CONTRIBUTION = Object.freeze({
 const BASE = 'a'.repeat(40);
 const HEAD = 'b3f1c0a9d2e4f60718293a4b5c6d7e8f90a1b2c3';
 
-function launchInput(): JsonValue {
+function launchInput(withRevision = true): JsonValue {
   return {
     v: 1,
+    panel: 'files',
     instance: {
       v: 1,
       instance: {
@@ -78,7 +81,7 @@ function launchInput(): JsonValue {
         scopeLabel: 'octo-org/example-app',
         state: { presentation: 'active', nativeLabel: 'Open' },
         facts: [],
-        reviewRevision: { baseSha: BASE, headSha: HEAD, nativeRevision: HEAD },
+        ...(withRevision ? { reviewRevision: { baseSha: BASE, headSha: HEAD, nativeRevision: HEAD } } : {}),
       },
       viewer: { involvement: ['reviewRequested'] },
     },
@@ -146,6 +149,7 @@ function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
 
 async function mountFiles(
   source: ScmFileViewedSource,
+  withRevision = true,
 ): Promise<PluginUiTestkit> {
   const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
@@ -167,12 +171,19 @@ async function mountFiles(
           return request.comparison === null ? null : source;
         },
       }),
-      launchInput: launchInput(),
+      launchInput: launchInput(withRevision),
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = typeof action === 'string' ? action : action.localId;
           if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
           dispatched.push(localId);
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview) {
+            return GithubOverviewResultV1Schema.parse({
+              kind: 'overview', kindId: 'pull-request', observedAtMs: 1_760_000_700_001,
+              ...projectGithubPullRequestOverview({ title: 'Current PR', state: 'open',
+                head: { sha: HEAD, ref: 'feature' }, base: { sha: BASE, ref: 'main' } }),
+            });
+          }
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles) {
             const filePath = (input as { filePath?: string }).filePath;
             return filePath === undefined ? FILES_PAGE : {
@@ -209,9 +220,6 @@ async function mountFiles(
     })) as PluginUiTestkit;
   });
   mounted.push(fixture);
-  await act(async () => {
-    await fixture.press(await fixture.getByRole('tab', { name: 'Files' }));
-  });
   return fixture;
 }
 
@@ -232,6 +240,14 @@ afterEach(async () => {
 });
 
 describe('GitHub Files panel Viewed marks', () => {
+  it('uses the exact Overview revision when the launch observation has none', async () => {
+    const { source } = createHostViewedSource({});
+    await mountFiles(source, false);
+    expect(dispatched.filter(id => id === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview)).toHaveLength(1);
+    expect(requests.at(-1)?.comparison?.endpoints).toEqual({ before: BASE, after: HEAD });
+    expect(document.body.textContent).toContain('0 of 4 viewed');
+  });
+
   it('joins the host Viewed owner for this PR head with its own read/set Actions', async () => {
     const { source } = createHostViewedSource({ 'src/alpha.ts': 'viewed' });
     await mountFiles(source);
@@ -336,9 +352,6 @@ describe('GitHub Files panel Viewed marks', () => {
       })) as PluginUiTestkit;
     });
     mounted.push(fixture);
-    await act(async () => {
-      await fixture.press(await fixture.getByRole('tab', { name: 'Files' }));
-    });
     expect(document.body.textContent).toContain('src/alpha.ts');
     await expect(fixture.getByRole('checkbox')).rejects.toThrow();
     expect(reviews).toHaveLength(0);

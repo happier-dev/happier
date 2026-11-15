@@ -6,18 +6,19 @@ import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1
 import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 
 import { buildGithubPullRequestComparisonSourceV1 } from '../../triage/mapping/protocol.js';
+import type { GithubOverviewValueV1 } from './overviewReader.js';
 
 /**
  * The PR's Viewed source for the native Files panel: the host's one Viewed owner for this Account, PR
  * and head, the same source core's PR Files joins. Null until it answers for the current head.
  */
 export function useGithubFileViewedSource(
-  input: TriageDetailSurfaceInputV1): ScmFileViewedSource | null {
+  input: TriageDetailSurfaceInputV1, overview: GithubOverviewValueV1 | null): ScmFileViewedSource | null {
   const surface = useSurfaceContext();
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = input.observation.locator.routingToken;
-  const baseSha = input.observation.snapshot.reviewRevision?.baseSha;
-  const headSha = input.observation.snapshot.reviewRevision?.headSha;
+  const baseSha = overview?.kindId === 'pull-request' ? overview.baseRevision : input.observation.snapshot.reviewRevision?.baseSha;
+  const headSha = overview?.kindId === 'pull-request' ? overview.headRevision : input.observation.snapshot.reviewRevision?.headSha;
   const comparison = React.useMemo(() => {
     const revision =
       baseSha === undefined || headSha === undefined

@@ -718,6 +718,8 @@ export const GithubOverviewResultV1Schema = defineProtocolUnion([
     baseBranch: LabelSchema.optional(),
     requestedReviewers: defineProtocolArray(GithubRequestedReviewerV1Schema).optional(),
     headRevision: IdentifierSchema.optional(),
+    /** Base tip from the same exact PR read as headRevision. */
+    baseRevision: IdentifierSchema.optional(),
     additions: CountSchema.optional(),
     deletions: CountSchema.optional(),
     /** GitHub's own count of changed files in the whole pull request (`changed_files`). */

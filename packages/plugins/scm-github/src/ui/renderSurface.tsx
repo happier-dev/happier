@@ -2851,11 +2851,13 @@ function quietRowActions(
 /** The source List, with one disclosed file and the existing paging lifecycle. */
 function FilesPanel({
   input,
+  overview,
   focusPath,
   onFocusPath,
   totalFiles,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
+  overview: GithubOverviewControllerV1['value'];
   /** GitHub's count of every file the pull request changes, from the Overview read when it has answered. */
   totalFiles: number | undefined;
   /** The detail's one "which file Files opens" fact: the reader's pick in Overview or an agent's open intent. */
@@ -2868,7 +2870,7 @@ function FilesPanel({
   const { state } = controller;
   const { active } = useTabPanelActivity();
   // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner.
-  const viewed = useGithubFileViewedSource(input);
+  const viewed = useGithubFileViewedSource(input, overview);
   const viewedCount = useViewedFileCount(viewed);
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
@@ -4794,7 +4796,8 @@ function GithubDetailBody({
   // The header is outside the body tabs. Its facts and confirmed writer belong
   // to this mounted detail, even while a sibling tab hides the source body.
   const activity = publishesPrimaryWrite ? detailActivity : tabActivity;
-  const readWhenActive = input.panel === 'overview' || publishesPrimaryWrite;
+  const readWhenActive = input.panel === 'overview' || publishesPrimaryWrite
+    || (kindId === 'pull-request' && (input.panel === 'files' || (input.panel === undefined && selected === 'files')));
   // A shown checks consumer reads the checks this Overview read states.
   const checksDemanded = useGithubChecksDemanded();
   const propertiesDemanded = kindId === 'pull-request' && input.panel === 'actions';
@@ -4840,7 +4843,7 @@ function GithubDetailBody({
       />
     ),
     timeline: <TimelinePanel locale={locale} nowMs={nowMs} />,
-    files: <FilesPanel input={input} focusPath={focusPath} onFocusPath={setFocusPath}
+    files: <FilesPanel input={input} overview={overview.value} focusPath={focusPath} onFocusPath={setFocusPath}
       totalFiles={overview.value?.kindId === 'pull-request' ? overview.value.changedFiles : undefined} />,
     checks: <ChecksPanel locale={locale} nowMs={nowMs} signal={detailActivity.activeSignal} />,
     feedback: (
