@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isPluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
@@ -20,6 +21,13 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/run
 type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
 type ReadObservation = NonNullable<NonNullable<ActionExecutorContext['machineServiceLogsResource']>['observation']>
     & Readonly<{ invalidate(digest: string): void }>;
+
+/** Keep an Action's typed refusal inside its original invocation, including its carried native review. */
+export function readDaemonHostResourceActionFailure(error: unknown): ActionExecuteFailure | null {
+    if (!isPluginError(error)) return null;
+    const failure = ActionExecuteFailureSchema.safeParse(error.cause);
+    return failure.success && failure.data.errorCode === error.code ? failure.data : null;
+}
 
 /** Host references borrow Action admission; this adapter owns no log source or policy. */
 export function createDaemonHostResourceRead(input: Readonly<{
@@ -114,7 +122,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
             } } : {}),
         });
         await current(context);
-        if (!result.ok) throw new PluginError({ code: result.errorCode, message: result.error });
+        if (!result.ok) throw new PluginError({ code: result.errorCode, message: result.error }, { cause: result });
         const deploymentLogs = reference.hostRead === 'deployments.logs' ? DeploymentActionOutputSchemasV1['deployments.logs.read'].parse(result.result) : null;
         if (deploymentLogs && !deploymentLogs.ok) throw new PluginError({ code: deploymentLogs.error });
         const edge = reference.hostRead === 'deployments.health.edge'

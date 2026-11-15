@@ -12,7 +12,7 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { projectMachineRecipeReadTarget } from '@/machines/setup/machineRecipeActionDeps';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
-import { createDaemonHostResourceRead } from './daemonHostResourceRead';
+import { createDaemonHostResourceRead, readDaemonHostResourceActionFailure } from './daemonHostResourceRead';
 import { openDaemonActionReadWatch } from './actionReadWatch';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -2551,6 +2551,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 return DaemonPluginUiResourceReadResponseSchema.parse({ ok: true, resource: request.data.resource,
                     contentType: 'application/json', digest: value.digest, bytesBase64: value.bytes.toString('base64') });
             } catch (error) {
+                if (context?.originalActionEnvelope && readDaemonHostResourceActionFailure(error)) throw error;
                 return { ok: false, code: isPluginError(error) ? error.code : 'service_unavailable', reason: 'unavailable' };
             }
         }
@@ -2813,6 +2814,8 @@ export function registerDaemonContributionRegistryProjectionHandler(
             }
             return DaemonPluginUiResourceWatchOpenResponseSchema.parse({ ok: true, ...opened });
         } catch (error) {
+            if (!('callerPluginId' in request.data) && context?.originalActionEnvelope
+                && readDaemonHostResourceActionFailure(error)) throw error;
             return DaemonPluginUiResourceWatchOpenResponseSchema.parse(
                 readPluginUiResourceWatchFailure(error),
             );

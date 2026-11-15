@@ -1,3 +1,6 @@
+import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
+import { confirmOwnUiRefusal } from './actions/executeMachineActionAtDaemon';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
@@ -1246,12 +1249,26 @@ async function invokeHostLogsResource(
         if (options.accountId && account.accountId !== options.accountId) return {
             ok: false, code: 'action_account_scope_changed', reason: 'unavailable',
         };
-        const actionId = resource.hostRead === 'machines.services.list' ? 'machines.services.list'
-            : resource.hostRead === 'deployments.health.edge' ? 'deployments.health.current'
-            : resource.hostRead === 'deployments.logs' ? 'deployments.logs.read' : 'machines.services.logs.read';
-        const result = await executeOriginalAccountMachineAction({ account, actionId,
-            requestId: randomUUID(), machineId, input: resource.input, resourceContinuation: continuation,
-            ...(options.signal ? { signal: options.signal } : {}) });
+        const actionId = resolvePluginUiHostReadActionIdV1(resource.hostRead);
+        const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            runtimeAccountId: account.accountId, serverId: account.serverId, serverIdentityId: account.serverIdentityId,
+            actionRequestId: randomUUID(), externalActionTarget: { kind: 'machine', machineId },
+            ...(options.signal ? { signal: options.signal } : {}) };
+        const issue = (input: unknown, invocationContext: ActionExecutorContext, confirmed = false) => {
+            const invocation = confirmed ? projectExternalActionRequesterInvocationV1({ actionId,
+                context: invocationContext, account, target: { kind: 'machine', machineId } }) : null;
+            if (confirmed && !invocation) return Promise.resolve({ ok: false as const,
+                errorCode: 'admission_unavailable', error: 'admission_unavailable' });
+            return executeOriginalAccountMachineAction({ account, actionId, requestId: invocationContext.actionRequestId!,
+                machineId, input, resourceContinuation: continuation, ...(invocation ? { invocation } : {}),
+                ...(options.signal ? { signal: options.signal } : {}) });
+        };
+        const first = await issue(resource.input, context);
+        const result = await confirmOwnUiRefusal(actionId, resource.input, context, first, async args => {
+            const { createActionConfirmationPresenter } = await import('./actions/actionConfirmationPresenter');
+            return createActionConfirmationPresenter(account)(args);
+        }, (input, reviewDigest) => issue(input, bindPresentUserActionConfirmation(actionId, input,
+            { ...context, actionRequestId: randomUUID() }, reviewDigest), true));
         return result.ok ? result.result : { ok: false, code: result.errorCode, reason: 'unavailable' };
     } finally { account.dispose(); }
 }

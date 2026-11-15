@@ -213,6 +213,10 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { legacyPidSessionTrackingKey, trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
+vi.mock('../../../../ui/sources/modal', async () => (
+  await import('../../../../ui/sources/dev/testkit/mocks/modal')
+).createModalModuleMock().module);
+
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 // Load runtime consumers only after the canonical transport boundaries are installed.
@@ -220,7 +224,8 @@ const { TokenStorage } = await import('../../../../ui/sources/auth/storage/token
 const provisionerCatalog = await loadManagedProvisionerCatalogForTests();
 const { captureLazyActionAccountContext } = await import('../../../../ui/sources/sync/ops/actions/actionAccountContext');
 const { executeOriginalAccountMachineAction } = await import('../../../../ui/sources/sync/api/externalActionAccountTransport');
-const { machinePluginUiResourceRead } = await import('../../../../ui/sources/sync/ops/machineContributionRegistryProjection');
+const { machinePluginUiResourceRead, machinePluginUiResourceWatchOpen, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchClose } = await import('../../../../ui/sources/sync/ops/machineContributionRegistryProjection');
+const { Modal } = await import('../../../../ui/sources/modal');
 
 describe('managed catalog original Account transport', () => {
   let database: LightSqliteHarness;
@@ -2329,9 +2334,8 @@ describe('managed catalog original Account transport', () => {
     }
   });
 
-  it.each(['plain', 'e2ee', 'unavailable', 'cancel-watch', 'denied', 'read-authority'] as const)('continues original Account logs after real Ask approval through the registered Resource watch (%s)', async scenario => {
+  it.each(['plain', 'e2ee', 'unavailable', 'cancel-watch', 'denied', 'read-authority'] as const)('continues original Account logs after real UI review through the registered Resource watch (%s)', async scenario => {
     const mode = scenario === 'e2ee' || scenario === 'cancel-watch' ? 'e2ee' : 'plain';
-    const phaseLog = vi.spyOn(logger, 'warnLocalFile');
     const logsPolicy = normalizeActionsSettingsV1({ v: 1, actions: {
       'machines.services.logs.read': { approvalRequiredSurfaces: ['ui'] },
     } });
@@ -2487,14 +2491,9 @@ describe('managed catalog original Account transport', () => {
       app.get('/v1/account/profile', async () => ({ id: account.id }));
       app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
         capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
-      let approvalCreated: (artifactId: string) => void = () => {};
-      const created = new Promise<string>(resolve => { approvalCreated = resolve; });
-      app.addHook('onResponse', async (request: FastifyRequest) => {
-        if (request.method === 'POST' && request.url === '/v1/artifacts' && request.body
-          && typeof request.body === 'object' && 'id' in request.body && typeof request.body.id === 'string') {
-          approvalCreated(request.body.id);
-        }
-      });
+      let reviewShown: (config: Parameters<typeof Modal.show>[0]) => void = () => {};
+      const shown = new Promise<Parameters<typeof Modal.show>[0]>(resolve => { reviewShown = resolve; });
+      vi.spyOn(Modal, 'show').mockImplementation(config => { reviewShown(config); return 'native-logs-review'; });
       registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc: async request => {
         const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
         const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
@@ -2572,69 +2571,53 @@ describe('managed catalog original Account transport', () => {
       const page = { kind: 'page', page: { sourceRevision: 'user/account-worker.service',
         text: 'original Account native bytes', nextCursor: null, truncated: false } };
       const subscriptionId = 'original-account-logs';
-      const bootstrapResource = { hostRead: 'machines.services.logs', input: actionInput,
+      const bootstrapResource = { hostRead: 'machines.services.logs' as const, input: actionInput,
         expectedGeneration: detail.service.generation, sourceRevision: page.page.sourceRevision };
       expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 0, watches: 0, disposals: 0 });
       // A Resource starts with the complete source reference supplied by the
       // preceding finite read. Subscribe independently revalidates its policy.
-      const bootstrapRequest = { ...request, requestId: 'account-logs-open', resourceContinuation: {
-        method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
-        params: { machineId: target.machineId, subscriptionId, resource: bootstrapResource },
-      } };
+      const resourceOptions = { serverId: uiServerId, accountId: account.id,
+        signal: invocationLifetime.signal, subscriptionId, resource: bootstrapResource };
+      const open = () => machinePluginUiResourceWatchOpen(target.machineId, resourceOptions);
       if (scenario === 'unavailable') {
-        expect(await executeOriginalAccountMachineAction(bootstrapRequest))
-          .toMatchObject({ ok: false, errorCode: 'service_admission_unavailable' });
+        expect(await open()).toMatchObject({ supported: true, result: { ok: false, code: 'service_admission_unavailable' } });
         expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 0, watches: 0, disposals: 0 });
         return;
       }
-      pending = executeOriginalAccountMachineAction(bootstrapRequest);
-      const first = await Promise.race([created.then(artifactId => ({ kind: 'created' as const, artifactId })),
-        pending.then(result => ({ kind: 'settled' as const, result }))]);
-      const phases = phaseLog.mock.calls.filter(call => call[0] === '[external-action-phase]').map(call => {
-        const fact = call[1] as Readonly<{ phase?: string; refusalBranch?: string; errorClass?: string }>;
-        return { phase: fact.phase, refusalBranch: fact.refusalBranch, errorClass: fact.errorClass };
-      });
-      expect(first, first.kind === 'settled' ? JSON.stringify({ result: first.result, phases }) : undefined)
-        .toMatchObject({ kind: 'created', artifactId: expect.any(String) });
-      if (first.kind !== 'created') throw new Error('Expected real pending logs approval Artifact');
-      const coordinator = getSharedBlockingApprovalCoordinator();
-      const held = await Promise.race([pending.then(result => ({ kind: 'settled' as const, result })),
-        vi.waitFor(() => expect(coordinator.getLiveWaiterCount(first.artifactId)).toBe(1))
-          .then(() => ({ kind: 'waiting' as const }))]);
-      expect(held).toEqual({ kind: 'waiting' });
+      const pendingOpen = open();
+      pending = pendingOpen;
+      const first = await Promise.race([shown.then(config => ({ kind: 'review' as const, config })),
+        pendingOpen.then(result => ({ kind: 'settled' as const, result }))]);
+      expect(first).toMatchObject({ kind: 'review', config: { props: {
+        actionId: 'machines.services.logs.read', actionArgs: actionInput, preview: expect.any(Object),
+      } } });
+      if (first.kind !== 'review') throw new Error('Expected the actual carried native logs review');
       expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 0, watches: 0, disposals: 0 });
-      // The person decision re-enters the same authenticated Home and installed
-      // receiver; its authority comes from the Account bearer at that boundary.
-      expect(await executeOriginalAccountMachineAction({ account: captured, actionId: 'approval.request.decide',
-        machineId: target.machineId, requestId: 'account-logs-approve',
-        input: { artifactId: first.artifactId, decision: scenario === 'denied' ? 'reject' : 'approve' }, signal: invocationLifetime.signal }))
-        .toMatchObject({ ok: true });
-      const opened = await pending;
+      expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(0);
+      const props = first.config.props;
+      if (!props || typeof props !== 'object' || !('onAnswer' in props) || typeof props.onAnswer !== 'function')
+        throw new Error('Expected native review decision boundary');
+      props.onAnswer(scenario !== 'denied');
+      const opened = await pendingOpen;
       if (scenario === 'denied') {
-        expect(opened).toMatchObject({ ok: true, result: { ok: false, code: 'approval_rejected' } });
+        expect(opened).toMatchObject({ supported: true, result: { ok: false, code: 'approval_canceled' } });
         expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 0, watches: 0, disposals: 0 });
+        expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(0);
         return;
       }
-      expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { ok: true, subscriptionId, digest: expect.any(String) } });
+      expect(opened).toMatchObject({ supported: true, result: { ok: true, subscriptionId, digest: expect.any(String) } });
       expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 1, watches: 1, disposals: 0 });
       const resource = bootstrapResource;
       const watchTarget = { machineId: target.machineId, subscriptionId, resource };
-      const continueResource = (requestId: string, method:
-        | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
-        | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
-        | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT
-        | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, params: unknown) => {
-        const continuation = { ...request, requestId, resourceContinuation: { method, params } };
-        return executeOriginalAccountMachineAction(continuation);
-      };
+      const readOptions = { serverId: uiServerId, accountId: account.id, signal: invocationLifetime.signal, resource };
       // OPEN's Home response has settled, including original invocation cleanup.
       // Only now may the genuine native event exercise retained requester ports.
       await nativeWatchReady;
       releaseNativeEvent();
-      expect(await continueResource('account-logs-next', RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT, watchTarget))
-        .toMatchObject({ ok: true, result: { ok: true, status: 'event', event: { kind: 'invalidated' } } });
+      expect(await machinePluginUiResourceWatchNext(target.machineId, resourceOptions))
+        .toMatchObject({ supported: true, result: { ok: true, status: 'event', event: { kind: 'invalidated' } } });
       expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 1, watches: 1, disposals: 0 });
-      expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(1);
+      expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(0);
       if (scenario === 'read-authority') {
         if (!resourceContext) throw new Error('Expected genuine original Account Resource admission');
         const read = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ);
@@ -2642,13 +2625,25 @@ describe('managed catalog original Account transport', () => {
         const close = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE);
         if (!read || !next || !close) throw new Error('Expected registered native Resource handlers');
         const readTarget = { machineId: target.machineId, resource };
-        // Reuse the real retained OPEN context, not copied private symbols or
-        // a new root that Home could reject before reaching Resource admission.
-        expect(await read(readTarget, resourceContext)).toMatchObject({ ok: true });
+        // A later READ is its own admission. The OPEN's one-shot native
+        // confirmation cannot authorize it; the real UI presents its new review.
+        const readShown = new Promise<Parameters<typeof Modal.show>[0]>(resolve => { reviewShown = resolve; });
+        const pendingRead = machinePluginUiResourceRead(target.machineId, readOptions);
+        pending = pendingRead;
+        const nextReview = await Promise.race([readShown.then(config => ({ kind: 'review' as const, config })),
+          pendingRead.then(result => ({ kind: 'settled' as const, result }))]);
+        expect(nextReview).toMatchObject({ kind: 'review', config: { props: {
+          actionId: 'machines.services.logs.read', actionArgs: actionInput, preview: expect.any(Object),
+        } } });
+        if (nextReview.kind !== 'review') throw new Error('Expected the READ admission native review');
+        expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 1, watches: 1, disposals: 0 });
+        const readProps = nextReview.config.props;
+        if (!readProps || typeof readProps !== 'object' || !('onAnswer' in readProps) || typeof readProps.onAnswer !== 'function')
+          throw new Error('Expected native READ decision boundary');
+        readProps.onAnswer(true);
+        expect(await pendingRead).toMatchObject({ supported: true, result: { ok: true } });
         const beforeAuthorityLoss = JSON.parse(await readFile(nativeState, 'utf8'));
-        // These handler calls retain the OPEN invocation's admitted execution;
-        // they do not mint new finite Action requests or require native rereads.
-        expect(beforeAuthorityLoss).toEqual({ reads: 1, watches: 1, disposals: 0 });
+        expect(beforeAuthorityLoss).toEqual({ reads: 2, watches: 1, disposals: 0 });
         rootCurrentness = 'expired';
         const accessLoss = handlers.get(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS);
         if (!accessLoss) throw new Error('Expected installed Machine access-loss receiver');
@@ -2661,9 +2656,10 @@ describe('managed catalog original Account transport', () => {
           .toEqual({ reads: beforeAuthorityLoss.reads, watches: beforeAuthorityLoss.watches, disposals: 1 });
         // A fresh continuation is refused at Home. Releasing the watch also
         // retires its private requester custody, so the old context refuses.
-        expect(await continueResource('account-logs-after-loss', RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, readTarget))
-          .toMatchObject({ ok: false });
+        expect(await machinePluginUiResourceRead(target.machineId, readOptions))
+          .toMatchObject({ supported: true, result: { ok: false } });
         expect(currentnessRefusals).toBeGreaterThan(0);
+        expect(await read(readTarget, resourceContext)).toMatchObject({ ok: false });
         expect.soft(await next({ ...watchTarget, waitMs: DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS }, resourceContext))
           .toMatchObject({ ok: false, code: 'expired_resource' });
         await vi.waitFor(async () => expect(JSON.parse(await readFile(nativeState, 'utf8')))
@@ -2673,7 +2669,7 @@ describe('managed catalog original Account transport', () => {
         expect(await close(watchTarget, resourceContext)).toMatchObject({ ok: true, closed: false });
         expect(JSON.parse(await readFile(nativeState, 'utf8')))
           .toEqual({ reads: beforeAuthorityLoss.reads, watches: beforeAuthorityLoss.watches, disposals: 1 });
-        expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(1);
+        expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(0);
         return;
       }
       if (scenario === 'cancel-watch') {
@@ -2682,14 +2678,13 @@ describe('managed catalog original Account transport', () => {
           .toEqual({ reads: 1, watches: 1, disposals: 1 }));
         return;
       }
-      expect(await continueResource('account-logs-close', RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, watchTarget))
-        .toMatchObject({ ok: true, result: { ok: true, closed: true } });
+      await machinePluginUiResourceWatchClose(target.machineId, resourceOptions);
       expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 1, watches: 1, disposals: 1 });
       const staleRequest = { ...request, requestId: 'account-logs-stale',
         machineServiceLogsGeneration: { expectedGeneration: 'retired-generation' } };
       expect(await executeOriginalAccountMachineAction(staleRequest)).toMatchObject({ ok: false, errorCode: 'service_generation_changed' });
       expect(JSON.parse(await readFile(nativeState, 'utf8'))).toEqual({ reads: 1, watches: 1, disposals: 1 });
-      expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(1);
+      expect(await db.artifact.count({ where: { accountId: account.id } })).toBe(0);
     } finally {
       invocationLifetime.abort();
       await pending?.catch(() => undefined);

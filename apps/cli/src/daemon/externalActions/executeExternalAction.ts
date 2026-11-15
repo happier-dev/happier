@@ -1,3 +1,4 @@
+import { readDaemonHostResourceActionFailure } from '@/rpc/handlers/daemonHostResourceRead';
 import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -1058,6 +1059,8 @@ async function executeExternalActionRequest(input: Readonly<{
     refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
     // Policy preparation runs before protocol execution. Preserve its known
     // refusal without exposing a schema error's input, cause or message.
+    const actionFailure = logsOperands.resourceContinuation && !context.signal?.aborted
+      ? readDaemonHostResourceActionFailure(error) : null;
     const errorCode = logsOperands.resourceContinuation && context.signal?.aborted ? 'cancelled'
       : logsOperands.resourceContinuation && isPluginError(error) ? error.code
       : error instanceof AccountSettingsContentInvalidError ? error.code
@@ -1066,11 +1069,11 @@ async function executeExternalActionRequest(input: Readonly<{
       v: 1,
       actionId: actionId.data,
       requestId,
-      execution: errorCode === 'internal_error' ? projectUnexpectedActionFailureV1(null, requestId) : {
+      execution: actionFailure ?? (errorCode === 'internal_error' ? projectUnexpectedActionFailureV1(null, requestId) : {
         ok: false,
         errorCode,
         error: errorCode,
-      },
+      }),
     });
   }
   if (!internalExecution.ok && internalExecution.errorCode === 'target_unavailable' && !actionRefusalWitnessed) {

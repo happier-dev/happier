@@ -7180,9 +7180,12 @@ plugin caller policy: arbitrary mounted plugins remain refused. In 0.3 developme
 source, the original-Account UI transport carries these protected operands through
 the existing Home-admitted logs Action. READ and OPEN retain normal approval;
 the preceding finite page is a separate admission, and subscribe/resume revalidates
-the current Account and service owner. Blocking approval retains the same private
-requester and executor for the Resource lifetime, without persisting those private
-ports in the approval Artifact. NEXT and CLOSE bind the captured Account and complete
+the current Account and service owner. A receiving executor's carried native review
+travels in the existing Action failure envelope to the originating UI's shared
+confirmation presenter. Confirmation re-enters that same captured Account with the
+review digest; refusal or cancellation installs no watcher. This native review has
+no approval Artifact. The admitted Resource retains its private requester and
+executor for its lifetime. NEXT and CLOSE bind the captured Account and complete
 reference, including generation, source and cursor. Cancellation or native-owner
 retirement releases that exact watcher. Plain and E2EE composed checks exercise this
 path through Home and an installed test adapter; they do not establish bundled native
