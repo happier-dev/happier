@@ -10,6 +10,7 @@ import {
   WorkflowSessionAuthoringSelectionSchema,
   WorkflowInputDefinitionSchema,
   WorkflowStepSchema,
+  WorkflowStepSelectionV1Schema,
   workflowInputTitle,
   workflowInputToFieldHint,
   type WorkflowDefinitionV1,
@@ -209,6 +210,18 @@ describe('workflow definition normalization', () => {
       code: 'invalid_input', path: '/blocks/0/input/title', blockId: 'child',
     }));
     expect(validateWorkflowDefinition(definition('Release')).valid).toBe(true);
+  });
+  it('opens retained literal engine choices as flat selections and preserves bindings', () => {
+    const engine = { agentTarget: CLAUDE_AGENT_TARGET, effort: 'low' };
+    const retained = { engine };
+    expect(createStoredReadSchema(WorkflowStepSelectionV1Schema).parse(retained)).toMatchObject({
+      agentTarget: CLAUDE_AGENT_TARGET,
+      sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } },
+    });
+    expect(createStoredReadSchema(WorkflowStepSelectionV1Schema).parse({ engine: { role: 'reviewer' } }))
+      .toEqual({ roleId: 'reviewer' });
+    expect(createStoredReadSchema(WorkflowStepSelectionV1Schema).parse({ engine: { kind: 'input', name: 'reviewer' } }))
+      .toMatchObject({ engine: { kind: 'input', name: 'reviewer' } });
   });
   it('round-trips run when through canonical, ingress, insertion and stored block parsing', () => {
     for (const runWhen of ['success', 'failure', 'always']) {

@@ -60,7 +60,8 @@ describe('finite Project command Workflow completion', () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
-  it.each(['setup', 'script', 'consent'] as const)('retains accepted script custody through the real %s boundary', async failedPhase => {
+  it.each(['setup', 'script', 'consent', 'script-without-context-home'] as const)('retains accepted script custody through the real %s boundary', async scenario => {
+    const failedPhase = scenario === 'script-without-context-home' ? 'script' : scenario;
     expect(getActionSpec('projects.script.run').operation).toBeDefined();
     const root = await mkdtemp(join(tmpdir(), 'happier-finite-workflow-'));
     roots.push(root);
@@ -195,7 +196,9 @@ describe('finite Project command Workflow completion', () => {
           ...(options?.localActionContext?.actionRequestId ? { requestId: options.localActionContext.actionRequestId } : {}),
           ...(options?.signal ? { signal: options.signal } : {}),
         }) } });
-    const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId: 'home',
+    // The production Workflow context carries no Home id; the admitted Action input selects it.
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+      ...(scenario === 'script-without-context-home' ? {} : { serverId: 'home' }),
       actionsSettings: settings };
     const store = createInMemoryWorkflowCoordinatorStore();
     let downstream = false;
@@ -313,10 +316,12 @@ describe('finite Project command Workflow completion', () => {
       expect(terminals.getCustody(scriptOperation.domainRef.terminalId)).toMatchObject({ rootPath: root,
         requesterAccountId: 'account', installationId: 'installation' });
       expect(downstream).toBe(false);
-      processes[1]!.exit(7);
+      processes[1]!.exit(scenario === 'script-without-context-home' ? 23 : 7);
     }
     const errorCode = failedPhase === 'setup' ? 'project_setup_step_failed' : 'project_command_step_failed';
     expect(await executing).toMatchObject({ state: 'interrupted', reason: errorCode });
+    expect(store.list().find(row => row.blockId === 'script')).toMatchObject({ lifecycle: 'failed', reason: errorCode,
+      execution: { awaitedOperations: [{ operationId: 'finite' }] } });
     expect(await waiting).toMatchObject({ ok: true, result: { disposition: 'matched', snapshot: { state: 'failed',
       error: { errorCode }, domainRef: { kind: 'projectCommand', purpose: failedPhase, terminalId: expect.any(String) } } } });
     expect(downstream).toBe(false);

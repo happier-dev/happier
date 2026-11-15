@@ -1855,10 +1855,16 @@ async function executeActionBlock(
     captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
   }
   let noRunsLaunched = false;
+  let readOnlyAction = builtinActionId.success && getActionSpec(builtinActionId.data).sideEffectClass === 'read';
   const prepareCompletion = async (invoked: ActionExecuteResult, serverId?: string | null) => {
-    const declaration = frozen.actionContract!.completion && builtinActionId.success ? getActionSpec(builtinActionId.data).completion : undefined;
+    const spec = builtinActionId.success ? getActionSpec(builtinActionId.data) : undefined;
+    const declaration = frozen.actionContract!.completion ? spec?.completion : undefined;
     if (frozen.actionContract!.completion && !declaration) return await fail('outcome_uncertain', 'outcome_uncertain');
-    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: serverId ?? undefined,
+    // The admitted input selects the Home through the same Action declaration
+    // used by dispatch; Workflow host context need not repeat that selector.
+    const completionServerId = row!.execution?.kind === 'action'
+      ? spec?.invocationServerIdForInput?.(row!.execution.input) ?? serverId : serverId;
+    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: completionServerId ?? undefined,
       ...(row!.execution?.kind === 'action' ? { input: row!.execution.input } : {}) });
     if (phase.kind === 'awaiting' && row!.execution?.kind === 'action') {
       completionState = phase.state;
@@ -1927,6 +1933,7 @@ async function executeActionBlock(
       const definition = ActionDefinitionV1Schema.safeParse(described.ok && isWorkflowJsonObject(described.result)
         ? described.result.actionSpec : null);
       if (!definition.success) return await fail('target_unavailable', 'failed', true);
+      readOnlyAction = definition.data.sideEffectClass === 'read';
       const projection = projectTargetActionApprovalInput(contributedAction ? input : input.input,
         (definition.data.inputHints?.fields ?? []).filter(field => field.widget === 'secret').map(field => field.path));
       if (!projection || contributedAction && !isWorkflowJsonObject(projection.input)) return await fail('invalid_input', 'failed', true);
@@ -1955,6 +1962,14 @@ async function executeActionBlock(
       catch { return undefined; }
     });
     if (!invoked || (!invoked.ok && invoked.errorCode === 'action_failed')) {
+      // A failed read cannot leave an unknown mutation. Keep it interrupted so
+      // the person can Retry, while writes retain their no-replay uncertainty.
+      if (readOnlyAction) {
+        const failure = invoked ? prepareActionCompletionV1(undefined, invoked) : undefined;
+        return await fail('action_failed', 'failed', true,
+          failure?.kind === 'failed' && 'value' in failure ? failure.value : undefined,
+          invoked && !invoked.ok ? invoked.failureCause : undefined);
+      }
       return await fail('outcome_uncertain', 'outcome_uncertain', false, undefined, invoked && !invoked.ok ? invoked.failureCause : undefined);
     }
     if (!invoked.ok && isActionOutcomeUnknownErrorCodeV1(invoked.errorCode)) {

@@ -281,6 +281,8 @@ export const WorkflowEngineSelectionV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type WorkflowEngineSelectionV1 = z.infer<typeof WorkflowEngineSelectionV1Schema>;
 export const WorkflowStepSelectionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowStepExecutionSelectionSchema, {
+  /** The Role that runs the step, as the New Session role chip writes it. */
+  roleId: SessionSpawnNewSelectionV2BaseSchema.shape.roleId,
   engine: z.optional(WorkflowEngineSelectionV1Schema),
   participant: z.optional(WorkflowParticipantBindingV1Schema),
   executionTarget: z.optional(WorkflowLeafExecutionTargetV1Schema),
@@ -298,7 +300,27 @@ export const WorkflowStepSelectionV1Schema = lazyZodSchema(() => (<T extends z.Z
   }
 })));
 export type WorkflowStepSelectionV1 = z.infer<typeof WorkflowStepSelectionV1Schema>;
-defineStoredReadProjection(WorkflowStepSelectionV1Schema, () => (<I extends zMini.core.$ZodType, O extends zMini.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as zMini.ZodMiniPipe<I, O>)(z.transform(projectStoredCapabilitySelection), createStoredReadSchema(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(WorkflowStepSelectionV1Schema)))));
+/** Retained pre-flat Runs keep their admitted engine choice at the stored-read boundary. */
+function projectStoredStepSelection(raw: unknown): unknown {
+  const projected = projectStoredCapabilitySelection(raw);
+  if (!projected || typeof projected !== 'object' || Array.isArray(projected)) return projected;
+  const record = projected as Record<string, unknown>;
+  const literal = WorkflowLiteralEngineSelectionV1Schema.safeParse(record.engine);
+  if (!literal.success) return projected;
+  const { engine: _engine, ...selection } = record;
+  if ('role' in literal.data) return { ...selection, roleId: literal.data.role };
+  const config = WorkflowStepExecutionSelectionSchema.shape.sessionConfigOptionOverrides.safeParse(selection.sessionConfigOptionOverrides);
+  if (!config.success) return projected;
+  return { ...selection, agentTarget: literal.data.agentTarget,
+    ...(literal.data.modelSelection !== undefined ? { modelSelection: literal.data.modelSelection } : {}),
+    ...(literal.data.effort !== undefined ? { sessionConfigOptionOverrides: {
+      v: 1, updatedAt: config.data?.updatedAt ?? 0,
+      overrides: { ...config.data?.overrides, reasoning_effort: { value: literal.data.effort, updatedAt: 0 } },
+    } } : {}),
+  };
+}
+
+defineStoredReadProjection(WorkflowStepSelectionV1Schema, () => (<I extends zMini.core.$ZodType, O extends zMini.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as zMini.ZodMiniPipe<I, O>)(z.transform(projectStoredStepSelection), createStoredReadSchema(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(WorkflowStepSelectionV1Schema)))));
 
 /** An authored block title; blank input restores the derived presentation label. */
 export const WorkflowBlockNameV1Schema = lazyZodSchema(() => z.optional(z.pipe(z.string().check(z.trim()), z.transform((name) => name || undefined))));
