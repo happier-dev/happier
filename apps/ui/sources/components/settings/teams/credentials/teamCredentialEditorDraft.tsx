@@ -13,7 +13,7 @@ import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machineP
 import { useMachinePoolProjections } from '@/sync/engine/machines/useMachinePoolProjections';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineAdministrationTargetPickerRows } from '@/sync/domains/machines/administration/useTargetSelection';
-import { useActiveServerAccountScope, useMachineListByServerId } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
 import {
     brokerPoolChoiceLabel,
@@ -472,13 +472,13 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
         testIDPrefix,
     } = props;
     const activeScope = useActiveServerAccountScope();
-    const machineLists = useMachineListByServerId();
+    const homeMachines = useMachineListForServer(scope.serverId);
     const pickerRows = useMachineAdministrationTargetPickerRows();
     const machines = React.useMemo(() => (
         activeScope?.serverId === scope.serverId && activeScope.accountId === scope.accountId
-            ? machineLists[scope.serverId] ?? NO_MACHINES
+            ? homeMachines ?? NO_MACHINES
             : NO_MACHINES
-    ), [activeScope, machineLists, scope.accountId, scope.serverId]);
+    ), [activeScope, homeMachines, scope.accountId, scope.serverId]);
     // A resource whose Home offers no Pool for this source has no Pool decision
     // to make, so its custodian's unrelated personal Pool catalog is never
     // hydrated to render an empty group.

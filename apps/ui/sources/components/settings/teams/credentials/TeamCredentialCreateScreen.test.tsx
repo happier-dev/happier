@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { PrivateLabelRecipientCensusResponseV1Schema } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createProviderConnectionViewFixture, createProviderConnectionsDescribeFixture, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -90,6 +91,9 @@ async function addHome(options?: Readonly<{ machinePoolsEnabled?: boolean }>): P
     });
     harness.answer(serverId, CREATE_PATH, {
         body: teamCredentialResourceFixture({ id: 'resource-created' }),
+    });
+    harness.answer(serverId, '/v1/account/private-labels/recipient-census', {
+        body: PrivateLabelRecipientCensusResponseV1Schema.parse({ contentEncryptionMode: 'plain', recipients: [] }),
     });
     return serverId;
 }
@@ -931,7 +935,7 @@ describe('TeamCredentialCreateScreen', () => {
         // offer would silently follow a Pool that had been recreated.
         expect(sent).toMatchObject({
             teamId: 'team-1',
-            displayName: candidate.label,
+            displayName: { content: { t: 'plain', v: candidate.label }, recipients: [] },
             deliveryPolicy: { preferredAllowedModes: ['brokered'] },
             source: candidate.source,
             sessionUsePolicy: 'team_context_required',

@@ -12,7 +12,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { useMachineListForServer } from '@/sync/domains/state/storage';
+import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
@@ -44,10 +44,18 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
 ) {
     const { state } = props;
     const { theme } = useUnistyles();
-    const machines = useMachineListForServer(state.serverId) ?? EMPTY_MACHINES;
+    const machines = useMachineListForServer(state.serverId, state.editable) ?? EMPTY_MACHINES;
     // The accessible inventory supplies candidates; the server checks audience
     // usability when saving the default and returns a typed refusal if needed.
     const placement = state.defaults.placement;
+    const selectedMachineId = placement?.kind === 'machine' && placement.target.serverId === state.serverId
+        ? placement.target.machineId : null;
+    const selectReadOnlyMachineTitle = React.useCallback((inventory: readonly Machine[]) => {
+        if (state.editable || !selectedMachineId) return null;
+        const machine = inventory.find(candidate => candidate.id === selectedMachineId);
+        return machine ? resolveMachineDisplayNames(inventory).get(machine.id) ?? getMachineDisplayName(machine) ?? machine.id : null;
+    }, [selectedMachineId, state.editable]);
+    const readOnlyMachineTitle = useMachineListForServerSelection(state.serverId, selectReadOnlyMachineTitle);
     const [open, setOpen] = React.useState(false);
     // Load selectable targets only while open; a closed field reads only its selected record.
     const serverIds = React.useMemo(() => open ? [state.serverId] : [],
@@ -70,15 +78,14 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
     [open, presetRows, selectedPreset, state.teamId]);
     const { binding } = useServerCredentialAccountScopeBinding(state.serverId);
     const allOffers = useManagedMachineSelectionOffers({ homeId, binding, serverId: state.serverId,
-        presets: offerPresets, machines, configure: choosePreset });
+        presets: offerPresets, configure: choosePreset });
     // Only saved preset identities can be persisted as member defaults; one-off reviews cannot.
     const offers = React.useMemo(() => allOffers.filter(offer => offer.kind === 'preset'), [allOffers]);
     const selectedPresetTitle = placement?.kind === 'preset' ? offers.find(offer =>
         offer.homeId === placement.homeId && offer.presetId === placement.presetId)?.title
         ?? selectedRecord.state.value?.name : undefined;
-    const selectedMachine = placement?.kind === 'machine' && placement.target.serverId === state.serverId
-        ? machines.find(machine => machine.id === placement.target.machineId) ?? null : null;
-    const unseen = placement === undefined || selectedMachine || selectedPresetTitle ? null : t(
+    const selectedMachine = machines.find(machine => machine.id === selectedMachineId) ?? null;
+    const unseen = placement === undefined || selectedMachine || readOnlyMachineTitle || selectedPresetTitle ? null : t(
         placement.kind === 'preset' ? 'teams.settings.memberDefaults.preset' : 'teams.settings.memberDefaults.unavailableMachine');
     const note = props.conflict ? state.conflictNote : null;
     const error = open ? presetState?.error : placement?.kind === 'preset' ? selectedRecord.state.error : null;
@@ -120,9 +127,7 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             title={t('teams.settings.memberDefaults.machine')}
             subtitle={note ?? undefined}
             subtitleLines={0}
-            detail={selectedPresetTitle ?? (selectedMachine
-                ? resolveMachineDisplayNames(machines).get(selectedMachine.id) ?? getMachineDisplayName(selectedMachine) ?? selectedMachine.id
-                : unseen ?? t('teams.settings.memberDefaults.none'))}
+            detail={selectedPresetTitle ?? readOnlyMachineTitle ?? unseen ?? t('teams.settings.memberDefaults.none')}
             icon={<Icon name="desktop" size={24} color={theme.colors.text.secondary} />}
             mode="info"
             showChevron={false}

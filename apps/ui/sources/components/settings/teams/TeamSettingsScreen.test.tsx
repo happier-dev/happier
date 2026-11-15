@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture, teamCredentialResourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -164,6 +165,52 @@ afterEach(() => {
 });
 
 describe('TeamSettingsScreen', () => {
+    it('keeps a read-only member machine default settled when another machine changes', async () => {
+        const serverId = await addHomeWithTeam(teamSummaryFixture());
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { TeamMemberMachineDefaultRow } = await import('./defaults/TeamMemberMachineDefaultRow');
+        const machine = createMachineFixture({ id: 'selected' });
+        const other = createMachineFixture({ id: 'other', metadata: { ...machine.metadata!, host: 'other.local' } });
+        storage.setState({ profileScope: { serverId, accountId: 'account-ada' },
+            machineListByServerId: { [serverId]: [machine, other] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="default" onRender={() => { commits += 1; }}>
+            <TeamMemberMachineDefaultRow testID="member-default" conflict={false} state={{
+                serverId, teamId: 'team-1', defaults: { placement: { kind: 'machine', target: { serverId, machineId: machine.id } } },
+                editable: false, disabled: false, conflictNote: '', save: () => {},
+            }} />
+        </React.Profiler>);
+        const before = commits;
+        await act(async () => storage.setState({ machineListByServerId: { [serverId]: [machine, { ...other, activeAt: 42 }] } }));
+        expect(commits).toBe(before);
+        await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...machine,
+            metadata: { ...machine.metadata!, host: 'renamed.local' } }, other] } }));
+        expect(screen.getTextContent()).toContain('renamed.local');
+        await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...machine,
+            metadata: { ...machine.metadata!, host: 'renamed.local' } }, { ...other,
+            metadata: { ...other.metadata!, displayName: 'renamed.local' } }] } }));
+        expect(screen.getTextContent()).toContain('renamed.local ·');
+    });
+
+    it('keeps credential broker placement settled when another Home inventory changes', async () => {
+        const serverId = await addHomeWithTeam(teamSummaryFixture());
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { TeamCredentialBrokerPlacementSection } = await import('./credentials/teamCredentialEditorDraft');
+        storage.setState({ profileScope: { serverId, accountId: 'account-ada' },
+            machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        let commits = 0;
+        await renderScreen(<React.Profiler id="broker" onRender={() => { commits += 1; }}>
+            <TeamCredentialBrokerPlacementSection scope={{ serverId, accountId: 'account-ada' }}
+                brokerPresentation={teamCredentialResourceFixture().brokerPresentation} savedPlacement={null}
+                placement={null} disabled={false} onChange={() => {}} testIDPrefix="broker" />
+        </React.Profiler>);
+        const before = commits;
+        await act(async () => storage.setState({ machineListByServerId: {
+            ...storage.getState().machineListByServerId, 'unrelated-home': [createMachineFixture()],
+        } }));
+        expect(commits).toBe(before);
+    });
+
     it('classifies an initial Team 503 as a server read failure, not an unreachable Home', async () => {
         const serverId = await addHomeWithTeam(teamSummaryFixture());
         harness.answer(serverId, '/v1/teams/get', { status: 503 });
