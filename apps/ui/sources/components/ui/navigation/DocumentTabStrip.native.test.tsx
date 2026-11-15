@@ -1,11 +1,17 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { DocumentTabStrip } from './DocumentTabStrip';
 
+const legendList = vi.hoisted(() => ({ state: null as null | import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState }));
+// The rail's virtualized list is a third-party rendering boundary; the testkit's recycler substitute renders its cells.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({}, state => { legendList.state = state; });
+});
 installPanelCommonModuleMocks({ reactNative: async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' }, { View: 'View', ScrollView: 'ScrollView', Pressable: 'Pressable' });
@@ -43,7 +49,7 @@ describe('native DocumentTabStrip geometry', () => {
         await act(async () => {
             if (variant === 'bar') screen.root.find(node => typeof node.type === 'string' && String(node.type) === 'View' && node.props.accessibilityRole === 'tablist')
                 .props.onLayout({ nativeEvent: { layout: { x: 200, y: 0, width: 100, height: 40 } } });
-            else screen.root.findByType('ScrollView').props.onScroll({ nativeEvent: { contentOffset: { x: 200, y: 0 } } });
+            else screen.root.findByType(variant === 'rail' ? 'LegendList' : 'ScrollView').props.onScroll({ nativeEvent: { contentOffset: { x: 200, y: 0 } } });
         });
         expect(runtime.getSnapshot().targetId).toBeNull();
         await act(async () => { carry.move({ x: 250, y: 20 }); });

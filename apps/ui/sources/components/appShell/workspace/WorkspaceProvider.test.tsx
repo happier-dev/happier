@@ -1645,7 +1645,7 @@ describe('consumed workspace navigation owner', () => {
         });
         storage.setState({ artifacts: { 'request-a': artifact('open') } });
         function PhoneTitles() {
-            return React.createElement('PhoneTitles', { tabs: usePhoneWorkspaceTabs() });
+            return React.createElement('PhoneTitles', { tabs: usePhoneWorkspaceTabs(null) });
         }
         const screen = await renderScreen(<WorkspaceProvider enabled={!phone} phone={phone} catalog={catalog}>
             {navigation => <>

@@ -51,8 +51,12 @@ const noop = () => {};
  * The phone's view of the canonical workspace owner: the same tab instances the desktop strip shows,
  * recomposed for one screen (a desktop split is one tab holding its panes). Not a store — every read
  * and write goes through `WorkspaceProvider`.
+ *
+ * `contentDemandKeys`: the tabs whose Session content this reader demands so they can be named (the
+ * rail's mounted window); null for every tab (a page that lists them all). Titles of other tabs come
+ * from content already held or the title saved with the layout.
  */
-export function usePhoneWorkspaceTabs(): PhoneWorkspaceTabs {
+export function usePhoneWorkspaceTabs(contentDemandKeys: ReadonlySet<string> | null): PhoneWorkspaceTabs {
     const phone = useOptionalWorkspaceNavigation(value => value?.phone ?? null);
     const state = useOptionalWorkspaceNavigation(value => value?.state ?? null);
     const isSessionVisible = useSessionRecordingVisibility(phone !== null);
@@ -73,7 +77,7 @@ export function usePhoneWorkspaceTabs(): PhoneWorkspaceTabs {
         return [{ key: tab.id, instanceKey: pane.id, ref: pane.target, fallbackTitle: state?.fallbackTitlesByTabId[pane.id] }];
     })), [projected, state?.fallbackTitlesByTabId]);
     const catalog = phone?.catalog ?? null;
-    const titles = useDestinationInstanceTitles(catalog ?? NO_CATALOG, titleEntries);
+    const titles = useDestinationInstanceTitles(catalog ?? NO_CATALOG, titleEntries, contentDemandKeys);
     const tabs = React.useMemo((): readonly PhoneWorkspaceTab[] => projected.map((tab) => {
         const pane = tab.panes.find((item) => item.id === tab.activeTabId) ?? tab.panes[0];
         const href = catalog ? hrefForDestinationRef(catalog, pane.target) : null;

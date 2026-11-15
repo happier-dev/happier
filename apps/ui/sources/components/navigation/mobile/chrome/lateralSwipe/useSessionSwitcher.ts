@@ -61,6 +61,8 @@ const FLICK_BURST_MS = 1500;
 
 type Burst = { rows: readonly SessionSwitcherRow[]; index: number; cycle: boolean; timer: ReturnType<typeof setTimeout> | null };
 
+const NO_DEMANDED_TABS: ReadonlySet<string> = new Set();
+
 export type SessionSwitcher = Readonly<{
     /** Reads every row the gestures can show, once per touch. */
     prepare: () => SessionSwitcherPrepared;
@@ -74,7 +76,8 @@ export type SessionSwitcher = Readonly<{
 
 export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; serverId: string | null }>): SessionSwitcher {
     const cursor = useSessionNavigationCursor();
-    const phoneTabs = usePhoneWorkspaceTabs();
+    // The switcher reads its rows once per touch; it names tabs from content already held, demanding none.
+    const phoneTabs = usePhoneWorkspaceTabs(NO_DEMANDED_TABS);
     const upSource: SessionSwitcherSource = useSetting('sessionSwitcherDragUpSource') === 'list' ? 'list' : 'recent';
     const sideSource: SessionSwitcherSource = useSetting('sessionCockpitSwipeSource') === 'recent' ? 'recent' : 'list';
     const draftScope = useActiveServerAccountScope();

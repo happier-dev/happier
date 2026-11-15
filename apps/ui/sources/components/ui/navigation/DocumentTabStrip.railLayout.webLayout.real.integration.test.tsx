@@ -23,6 +23,15 @@ vi.mock(
 );
 
 installWebLayoutBridge();
+// jsdom has no scrollBy; the real Legend runtime scrolls the rail with it (a platform gap, not app logic).
+Object.defineProperty(HTMLElement.prototype, 'scrollBy', {
+  configurable: true,
+  value(this: HTMLElement, options: ScrollToOptions) {
+    this.scrollLeft += options.left ?? 0;
+    this.scrollTop += options.top ?? 0;
+    this.dispatchEvent(new Event('scroll'));
+  },
+});
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
@@ -41,7 +50,7 @@ const { DocumentTabStrip } = await import('./DocumentTabStrip');
 const { createEntityDragDropRuntime } = await import('@/components/ui/treeDragDrop/entityDragDropRuntime');
 const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
 
-it('keeps every tab of a crowded rail at its own width, with a 44 pt finger target that never overlaps its neighbour', async () => {
+async function renderRail(activeTabKey: string) {
   const scope = { serverId: 'home', accountId: 'account' };
   const runtime = createEntityDragDropRuntime();
   const tabs = Array.from({ length: TAB_COUNT }, (_, index) => ({
@@ -62,7 +71,7 @@ it('keeps every tab of a crowded rail at its own width, with a 44 pt finger targ
           <DocumentTabStrip
             variant="rail"
             tabs={tabs}
-            activeTabKey="t30"
+            activeTabKey={activeTabKey}
             accessibilityLabel="Open tabs"
             onActivate={() => {}}
             onPin={() => {}}
@@ -90,14 +99,37 @@ it('keeps every tab of a crowded rail at its own width, with a 44 pt finger targ
     viewport: { width: 390, height: 300 },
     settle: (replay) => act(replay),
   });
-  const frames = tabs.map((tab) =>
-    layout.rect(`document-tab-frame-${tab.key}`),
-  );
-  // Every tab keeps a full finger target across, laid out after its neighbour (no shared slot).
-  expect(frames.map((frame, index) => ({ index, width: Math.round(frame.width) })).filter(entry => entry.width < 44)).toEqual([]);
+  // The rail is virtualized: only the pills near its viewport are mounted (and measured).
+  const mounted = tabs.flatMap((tab) => {
+    const frame = layout.rects.get(`document-tab-frame-${tab.key}`)?.[0];
+    return frame ? [{ key: tab.key, frame }] : [];
+  });
+  return { layout, mounted };
+}
+
+it('mounts a window of a crowded rail, each tab at its own width with a 44 pt finger target that never overlaps its neighbour', async () => {
+  const { layout, mounted } = await renderRail('t1');
+  expect(mounted.length).toBeGreaterThan(2);
+  expect(mounted.length).toBeLessThan(TAB_COUNT / 2);
+  const frames = mounted.map((entry) => entry.frame);
+  // Every mounted tab keeps a full finger target across, laid out after its neighbour (no shared slot).
+  expect(mounted.filter((entry) => Math.round(entry.frame.width) < 44).map((entry) => entry.key)).toEqual([]);
   expect(frames.slice(1).filter((frame, index) => frame.left < frames[index]!.right)).toEqual([]);
+  // Pills sit inside the rail's finger-tall band, not above or below it.
+  for (const frame of frames) expect(frame.height).toBeGreaterThanOrEqual(30);
   // A pinned tab is its mark alone, but still a full finger target.
   expect(layout.rect('tab-t0').width).toBeGreaterThanOrEqual(44);
   // A titled tab shows its title rather than collapsing to its mark.
-  expect(layout.rect('tab-t5').width).toBeGreaterThan(70);
+  expect(layout.rect('tab-t2').width).toBeGreaterThan(70);
+  // The pills are painted inside the rail's scroll clip, not clipped away by a collapsed scroller.
+  expect(layout.rect('tab-t2').receivesPointer).toBe(true);
+});
+
+it('mounts and shows the open tab deep in a crowded rail', async () => {
+  const { mounted } = await renderRail('t40');
+  expect(mounted.length).toBeLessThan(TAB_COUNT / 2);
+  // The rail scrolled its window to the open tab: it is mounted, and the start of the rail is not.
+  // (The measuring page does not keep the list's scroll offset, so positions are content positions.)
+  expect(mounted.map((entry) => entry.key)).toContain('t40');
+  expect(mounted.map((entry) => entry.key)).not.toContain('t5');
 });

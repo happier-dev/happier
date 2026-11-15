@@ -120,7 +120,7 @@ it('keeps an unavailable phone workspace settled across parent renders', async (
     fixture = await createSessionFilesViewFixture();
     const { usePhoneWorkspaceTabs } = await import('@/components/appShell/workspace/usePhoneWorkspaceTabs');
     let renders = 0;
-    const hook = await renderHook(() => { renders++; return usePhoneWorkspaceTabs(); });
+    const hook = await renderHook(() => { renders++; return usePhoneWorkspaceTabs(null); });
     const initial = hook.getCurrent();
     expect(initial).toMatchObject({ available: false, tabs: [], activeTabId: null });
     const before = renders;

@@ -97,7 +97,12 @@ const styles = StyleSheet.create((theme) => ({
  * history step); the open tab carries its close. Hidden below two tabs.
  */
 export const PhoneOpenTabsRail = React.memo(function PhoneOpenTabsRail() {
-    const phoneTabs = usePhoneWorkspaceTabs();
+    // Session content is demanded for the pills the rail has mounted (its window), not every open tab.
+    const [mountedTabKeys, setMountedTabKeys] = React.useState<ReadonlySet<string>>(NO_MOUNTED_TABS);
+    const reportMountedTabKeys = React.useCallback((keys: readonly string[]) => {
+        setMountedTabKeys(current => current.size === keys.length && keys.every(key => current.has(key)) ? current : new Set(keys));
+    }, []);
+    const phoneTabs = usePhoneWorkspaceTabs(mountedTabKeys);
     const scope = useActiveServerAccountScope();
     const runtime = useEntityDragDropRuntime();
     const dragBindingId = React.useId();
@@ -189,6 +194,7 @@ export const PhoneOpenTabsRail = React.memo(function PhoneOpenTabsRail() {
                 entityDragSource={entityDragSource}
                 tabNativeId={railTabNativeId}
                 railTrailing={trailing}
+                onMountedTabKeysChange={reportMountedTabKeys}
                 testIds={RAIL_TEST_IDS}
             />
             {activeTab && activeTab.panes.length > 1 && catalog ? (
@@ -239,6 +245,7 @@ const PhoneSplitPager = React.memo(function PhoneSplitPager(props: Readonly<{
 });
 
 const noop = () => {};
+const NO_MOUNTED_TABS: ReadonlySet<string> = new Set();
 const railTabNativeId = (key: string) => `phone-rail-tab-${key}`;
 const RAIL_TEST_IDS = {
     tab: (key: string) => `phone-rail-tab-${key}`,

@@ -30,6 +30,8 @@ vi.mock('react-native', async () => {
     module.Platform.select = values => values[route.platform] ?? values.default;
     return module;
 });
+// Virtualized lists (the phone rail among them) are a third-party rendering boundary; the testkit's recycler renders their cells.
+vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock());
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();

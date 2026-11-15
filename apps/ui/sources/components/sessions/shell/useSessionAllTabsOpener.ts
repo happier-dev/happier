@@ -127,7 +127,8 @@ export function useSessionAllTabsPage(session: Readonly<{ sessionId: string; ser
     done: () => void;
 }> {
     const router = useRouter();
-    const phoneTabs = usePhoneWorkspaceTabs();
+    // The page names every open tab, so it demands every tab's content while it is open.
+    const phoneTabs = usePhoneWorkspaceTabs(null);
     const navigateToSession = useNavigateToSession();
     const [snapshot] = React.useState(() => readSessionAllTabs({ session, phoneTabs }));
     const latest = React.useRef({ phoneTabs, navigateToSession });

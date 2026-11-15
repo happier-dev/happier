@@ -7,6 +7,12 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 
+const legendList = vi.hoisted(() => ({ state: null as null | import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState }));
+// The rail's virtualized list is a third-party rendering boundary; the testkit's recycler substitute renders its cells.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({}, state => { legendList.state = state; });
+});
 vi.mock('react-native', () => vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());

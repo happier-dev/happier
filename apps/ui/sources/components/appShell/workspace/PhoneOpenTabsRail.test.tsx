@@ -19,6 +19,12 @@ import type { TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop/entityDragGestureAdapter';
 import { DocumentTabStrip, type DocumentTabItem } from '@/components/ui/navigation/DocumentTabStrip';
 
+const legendList = vi.hoisted(() => ({ state: null as null | import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState }));
+// The rail's virtualized list is a third-party rendering boundary; the testkit's recycler substitute renders its cells.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItemLimit: 12 }, state => { legendList.state = state; });
+});
 const platformBoundary = vi.hoisted(() => ({ os: 'web' }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     View: 'View', ScrollView: 'ScrollView', Pressable: 'Pressable',
@@ -113,20 +119,47 @@ describe('phone production tab carry', () => {
         expect(screen.root.findByType(DocumentTabStrip).props.activeTabKey).toBe('restored-61');
         await screen.unmount();
     });
+    it('mounts and names only the rail tabs near its viewport, independent of how many Session tabs are open', async () => {
+        const { isSessionListRowVisible } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+        storage.setState({ profileScope: scope });
+        // Rail tab rows mounted, and Sessions whose list-display content the rail demands, with T open Session tabs.
+        const census = async (count: number) => {
+            const h = harness();
+            const ids = Array.from({ length: count }, (_, index) => `rail-${count}-${index}`);
+            for (const id of ids) h.workspace.dispatch({ type: 'openTab', groupId: 'group:1', tab: {
+                id: `tab-${id}`, target: { kind: 'session', params: { id, ...scope } }, pinned: false, preview: false } });
+            h.workspace.dispatch({ type: 'activateTab', groupId: 'group:1', tabId: 'session-tab' });
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>);
+            expect(screen.root.findByType(DocumentTabStrip).props.tabs).toHaveLength(count + 2);
+            const mounted = screen.root.findAll(node => typeof node.type === 'function' && node.type.name === 'DocumentBarTabRow').length;
+            const demanded = ids.filter(id => isSessionListRowVisible(id, scope.serverId)
+                && !isSessionListRowVisible(id, scope.serverId, 'session')).length;
+            await screen.unmount();
+            return { mounted, demanded };
+        };
+        const small = await census(40);
+        const large = await census(400);
+        expect({ small, large,
+            sameWindow: large.mounted === small.mounted,
+            withinViewport: small.mounted > 0 && small.mounted < 40,
+            demandFollowsWindow: small.demanded <= small.mounted && large.demanded <= large.mounted,
+        }).toMatchObject({ sameWindow: true, withinViewport: true, demandFollowsWindow: true });
+    });
     it('reveals the active wrapped tab from its rail position rather than its local source position', async () => {
         storage.setState({ profileScope: scope });
-        const h = harness();
-        const offsets: number[] = [];
-        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>, {
-            createNodeMock: element => String(element.type) === 'ScrollView' ? { scrollTo: (options: { x: number }) => offsets.push(options.x) } : null,
+        const h = harness(true);
+        h.workspace.dispatch({ type: 'activateTab', groupId: 'group:1', tabId: 'settings-tab' });
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>);
+        const strip = screen.root.findByType(DocumentTabStrip).props as { tabs: readonly DocumentTabItem[]; activeTabKey: string | null };
+        const railIndex = strip.tabs.findIndex(tab => tab.key === strip.activeTabKey);
+        expect(railIndex).toBeGreaterThan(0);
+        const list = legendList.state!;
+        list.refHandle.scrollToIndex.mockClear();
+        // The list first reports only the first pill wholly in view: the open tab lies after it in the rail.
+        await act(async () => {
+            list.props.onViewableItemsChanged({ viewableItems: [{ key: strip.tabs[0]!.key, index: 0, item: null, isViewable: true }], changed: [] });
         });
-        const scroll = screen.root.find(node => String(node.type) === 'ScrollView' && node.props.accessibilityRole === 'tablist');
-        await act(async () => { scroll.props.onLayout({ nativeEvent: { layout: { width: 100 } } }); });
-        const item = scroll.children.find(child => typeof child === 'object' && child.findAll(node => node.props.testID === 'phone-rail-tab-inbox-tab').length > 0);
-        if (!item || typeof item !== 'object') throw new Error('Expected the active rail item');
-        const outer = String(item.type) === 'View' ? item : item.find(node => String(node.type) === 'View');
-        await act(async () => { outer.props.onLayout({ nativeEvent: { layout: { x: 300, width: 80 } } }); });
-        expect(offsets.some(x => x > 0)).toBe(true);
+        expect(list.refHandle.scrollToIndex).toHaveBeenLastCalledWith(expect.objectContaining({ index: railIndex, viewPosition: 1 }));
         await screen.unmount();
     });
     it.each(['ios', 'android'] as const)('uses the shared native carry adapter on %s and preserves scroll/tap cancellation', async platform => {
@@ -162,7 +195,7 @@ describe('phone production tab carry', () => {
         const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>);
         await act(async () => { screen.pressByTestId('phone-rail-tab-session-tab'); });
         expect(h.activated).toEqual(['session-tab']);
-        for (const scroll of screen.root.findAll(node => String(node.type) === 'ScrollView' && typeof node.props.onScroll === 'function')) {
+        for (const scroll of screen.root.findAll(node => String(node.type) === 'LegendList' && typeof node.props.onScroll === 'function')) {
             await act(async () => { scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 200, y: 0 } } }); });
         }
         expect(runtime.getSnapshot().phase).toBe('idle');

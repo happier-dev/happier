@@ -96,7 +96,7 @@ const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
 } });
 
 function Probe() {
-    const tabs = usePhoneWorkspaceTabs();
+    const tabs = usePhoneWorkspaceTabs(null);
     const workspace = useOptionalWorkspaceNavigation();
     const rowMenu = useWorkspaceOpenActions('/session/B7?serverId=home-a');
     return React.createElement('PhoneTabs', { tabs, workspace, rowMenu });
@@ -104,7 +104,7 @@ function Probe() {
 
 function SwitcherProbe() {
     const switcher = useSessionSwitcher({ sessionId: 'B', serverId: 'home-a' });
-    const phoneTabs = usePhoneWorkspaceTabs();
+    const phoneTabs = usePhoneWorkspaceTabs(null);
     const shared = useSessionSwitcherState();
     return React.createElement('SwitcherProbe', { switcher, phoneTabs, shared });
 }

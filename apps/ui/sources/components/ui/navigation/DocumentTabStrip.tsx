@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { I18nManager, Image, Platform, Pressable, ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
+import { I18nManager, Image, Platform, Pressable, ScrollView, View, type LayoutChangeEvent, type ViewStyle, type ViewToken } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -27,6 +27,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { createEntityDragGestureAdapter, ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop/entityDragGestureAdapter';
 import { resolveTreeDropAutoscrollTarget } from '@/components/ui/treeDragDrop/autoscroll/useTreeDropAutoscroll';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
+import { VirtualizedList, type VirtualizedListRef, type VirtualizedListRenderItemInfo } from '@/components/ui/lists/virtualized';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { resolveHorizontalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 
@@ -176,8 +177,9 @@ export type DocumentTabStripProps<T extends DocumentTabItem> = Readonly<{
     /** `bar` only: the surface under the strip, which its edge fades blend into. */
     barFadeColor?: string;
     /**
-     * `bar` only: the keys of the tabs the bar has mounted (pinned marks plus the window near its viewport),
-     * reported when that set changes, so an owner can demand per-tab content for those tabs only.
+     * `bar` and `rail`: the keys of the tabs the strip has mounted (the bar's pinned marks plus its window near
+     * the viewport; the rail's virtualized window), reported when that set changes, so an owner can demand
+     * per-tab content for those tabs only.
      */
     onMountedTabKeysChange?: (keys: readonly string[]) => void;
 }>;
@@ -215,6 +217,8 @@ const BAR_CLOSE_LEADING_REACH_PX = Math.max(0, HAPPIER_POINTER_MINIMUM_INTERACTI
  */
 const RAIL_TOUCH_PX = HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE;
 const RAIL_TAB_REACH_PX = (RAIL_TOUCH_PX - B.tabHeightPx) / 2;
+/** A rail pill is as wide as its glyph and name, up to this. */
+const RAIL_TAB_MAX_WIDTH_PX = 168;
 /** The open rail tab's close takes a finger's width from its own tab (already open, so nothing is lost). */
 const RAIL_CLOSE_LEADING_REACH_PX = Math.max(0, RAIL_TOUCH_PX - B.trailingSlotPx - B.tabPaddingEndPx);
 /**
@@ -437,17 +441,31 @@ const stylesheet = StyleSheet.create((theme) => ({
     railViewport: {
         position: 'relative',
     },
-    railContent: {
-        alignItems: 'center',
-        gap: theme.space.s6,
+    /**
+     * The virtualized rail places each pill absolutely along its axis, so neither the list nor its content
+     * takes a height from the pills: both are a finger tall, and each cell centres its pill in that height
+     * (the reach above and below the 30 pt pill stays inside the clip).
+     */
+    railScroll: {
+        // The list's own fill style is `flex: 1` (a zero basis), which would override this height.
+        flexGrow: 0,
+        flexBasis: 'auto',
+        height: RAIL_TOUCH_PX,
+    },
+    railListContent: {
+        height: RAIL_TOUCH_PX,
+        columnGap: theme.space.s6,
         paddingHorizontal: theme.space.s12,
-        paddingVertical: RAIL_TAB_REACH_PX,
+    },
+    railCell: {
+        height: RAIL_TOUCH_PX,
+        justifyContent: 'center',
     },
     railTab: {
         borderRadius: B.tabHeightPx / 2,
         borderColor: theme.colors.border.default,
         minWidth: RAIL_TOUCH_PX,
-        maxWidth: 168,
+        maxWidth: RAIL_TAB_MAX_WIDTH_PX,
         flexShrink: 0,
     },
     /**
@@ -1060,69 +1078,122 @@ function DocumentBar<T extends DocumentTabItem>(props: Readonly<{
 /** The rail's scrolled-edge fade: the bar's 20. */
 const RAIL_EDGE_FADE_PX = 20;
 const RAIL_TAB_HIT_REACH = Object.freeze({ top: RAIL_TAB_REACH_PX, bottom: RAIL_TAB_REACH_PX, left: 0, right: 0 });
+/** The room the rail keeps between a revealed open tab and the screen edge. */
+const RAIL_REVEAL_INSET_PX = 12;
+const RAIL_VIEWABILITY = Object.freeze({ itemVisiblePercentThreshold: 100 });
+const NO_MOUNTED_RAIL_TABS: ReadonlySet<string> = new Set();
+
+/** One mounted rail tab: it tells the rail while it is mounted, so the rail can name its window. */
+function DocumentRailCell(props: Readonly<{ tabKey: string; onMounted: (key: string, mounted: boolean) => void; children: React.ReactNode }>) {
+    const { tabKey, onMounted } = props;
+    React.useLayoutEffect(() => {
+        onMounted(tabKey, true);
+        return () => onMounted(tabKey, false);
+    }, [tabKey, onMounted]);
+    return <>{props.children}</>;
+}
 
 /**
- * The phone's open-tabs rail: the bar's tabs as scrolling pills. The open tab is kept in view when it
- * changes (a tab opened from elsewhere, a preview replaced), without animating on arrival.
+ * The phone's open-tabs rail: the bar's tabs as scrolling pills. A person can keep hundreds of tabs open, so
+ * the rail mounts only the pills near its viewport through the canonical virtualized list, and reports
+ * them so per-tab content is demanded for those alone. The open tab is kept in view when it changes (a tab
+ * opened from elsewhere, a preview replaced), without animating on arrival.
  */
 function DocumentRail<T extends DocumentTabItem>(props: Readonly<{
     strip: DocumentTabStripProps<T>;
     rowProps: (tab: T, index: number) => DocumentTabRowProps<T>;
 }>) {
     const styles = stylesheet;
-    const { strip } = props;
+    const { strip, rowProps } = props;
     const { theme } = useUnistyles();
-    const { scrollRef, frames, viewport, reveal, registerFrameNode } = useRevealedActiveTab(strip.activeTabKey);
+    const listRef = React.useRef<VirtualizedListRef | null>(null);
     // A scrolled edge fades out, as the bar's does, instead of cutting a pill hard at the screen edge.
     const fades = useScrollEdgeFades({ enabledEdges: { left: true, right: true }, overflowThreshold: 2, edgeThreshold: 2 });
     const webEdgeMask = React.useMemo(() => (Platform.OS === 'web'
         ? resolveHorizontalScrollEdgeMaskStyle(fades.visibility, { fadeSize: RAIL_EDGE_FADE_PX }) : null), [fades.visibility]);
+    const mountedKeysRef = React.useRef(new Set<string>());
+    const [mountedKeys, setMountedKeys] = React.useState<ReadonlySet<string>>(NO_MOUNTED_RAIL_TABS);
+    const onMounted = React.useCallback((key: string, mounted: boolean) => {
+        const keys = mountedKeysRef.current;
+        if (mounted) keys.add(key); else keys.delete(key);
+        setMountedKeys(current => current.size === keys.size && [...keys].every(each => current.has(each)) ? current : new Set(keys));
+    }, []);
+    const mountedTabs = strip.tabs.filter(tab => mountedKeys.has(tab.key));
+    const mountedTabKeySignature = mountedTabs.map(tab => tab.key).join('\u0000');
+    const onMountedTabKeysChange = strip.onMountedTabKeysChange;
+    React.useEffect(() => {
+        onMountedTabKeysChange?.(mountedTabKeySignature ? mountedTabKeySignature.split('\u0000') : []);
+    }, [mountedTabKeySignature, onMountedTabKeysChange]);
+    // The open tab is revealed only when it is not already wholly in view: from the side it lies on,
+    // with the rail's inset, and only once the list has said what is in view.
+    const latest = React.useRef({ tabs: strip.tabs, activeTabKey: strip.activeTabKey });
+    latest.current = { tabs: strip.tabs, activeTabKey: strip.activeTabKey };
+    const inView = React.useRef<Readonly<{ keys: ReadonlySet<string>; first: number }> | null>(null);
+    const reveal = React.useCallback(() => {
+        const { tabs, activeTabKey } = latest.current;
+        const seen = inView.current;
+        if (!seen || activeTabKey === null || seen.keys.has(activeTabKey)) return;
+        const index = tabs.findIndex(tab => tab.key === activeTabKey);
+        if (index < 0) return;
+        const before = index < seen.first;
+        void listRef.current?.scrollToIndex({ index, animated: false, viewPosition: before ? 0 : 1,
+            viewOffset: before ? RAIL_REVEAL_INSET_PX : -RAIL_REVEAL_INSET_PX });
+    }, []);
+    // A tab arriving or leaving beside the open one moves it too. The list's pixel extent is no signal:
+    // it changes whenever a pill is first measured, including while the person scrolls away.
+    React.useEffect(() => { reveal(); }, [reveal, strip.activeTabKey, strip.tabs.length]);
+    const onViewableItemsChanged = React.useCallback((info: Readonly<{ viewableItems: readonly ViewToken[] }>) => {
+        const indexes = info.viewableItems.flatMap(item => typeof item.index === 'number' ? [item.index] : []);
+        const wasKnown = inView.current !== null;
+        inView.current = indexes.length === 0 ? null : {
+            keys: new Set(info.viewableItems.map(item => item.key)), first: Math.min(...indexes),
+        };
+        if (!wasKnown) reveal();
+    }, [reveal]);
+    const renderItem = React.useCallback(({ item, index }: VirtualizedListRenderItemInfo<T>) => (
+        <DocumentRailCell key={item.key} tabKey={item.key} onMounted={onMounted}>
+            <View testID={`document-tab-frame-${toTestIdSafeValue(item.key)}`} style={stylesheet.railCell}>
+                <DocumentBarTab {...rowProps(item, index)} rail emphasis="unfocused"
+                    heightPx={B.tabHeightPx} dropRing={false} endMark={false} />
+            </View>
+        </DocumentRailCell>
+    ), [onMounted, rowProps]);
     return (
-        <View style={styles.railViewport}>
-        <ScrollView
-            ref={scrollRef}
-            horizontal
-            // Web fades the pills themselves (the header may be translucent); native paints the header's colour.
-            style={webEdgeMask}
-            contentContainerStyle={styles.railContent}
-            showsHorizontalScrollIndicator={false}
-            onLayout={(event) => {
-                viewport.current = { ...viewport.current, width: event.nativeEvent.layout.width };
-                fades.onViewportLayout(event);
-                reveal(strip.activeTabKey, false);
-                void strip.entityDragDrop?.runtime.refreshMeasurements();
-            }}
-            onContentSizeChange={(width, height) => {
-                fades.onContentSizeChange(width, height);
-                // Tabs arriving or leaving beside the open one move it without a layout event of its own.
-                reveal(strip.activeTabKey, false);
-            }}
-            onScroll={(event) => {
-                viewport.current = { ...viewport.current, x: event.nativeEvent.contentOffset.x };
-                fades.onScroll(event);
-                void strip.entityDragDrop?.runtime.refreshMeasurements();
-            }}
-            scrollEventThrottle={32}
-            accessibilityRole="tablist" role={Platform.OS === 'web' ? 'presentation' : undefined}
-            accessibilityLabel={Platform.OS === 'web' ? undefined : strip.accessibilityLabel}
-        >
-            <DocumentTabAccessibilityList label={strip.accessibilityLabel} tabIds={strip.tabs.map(tab => strip.tabNativeId(tab.key))} />
-            {strip.tabs.map((tab, tabIndex) => (
-                <View key={tab.key} testID={`document-tab-frame-${toTestIdSafeValue(tab.key)}`} ref={(node) => registerFrameNode(tab.key, node)} onLayout={(event) => {
-                    const { x, width } = event.nativeEvent.layout;
-                    frames.current.set(tab.key, { x, width });
-                    if (tab.key === strip.activeTabKey) reveal(tab.key, false);
-                }}>
-                    <DocumentBarTab {...props.rowProps(tab, tabIndex)} rail emphasis="unfocused"
-                        heightPx={B.tabHeightPx} dropRing={false} endMark={false} />
-                </View>
-            ))}
-            {strip.railTrailing ?? null}
-        </ScrollView>
-        {Platform.OS === 'web' ? null : <ScrollEdgeFades color={theme.colors.chrome.header.background} size={RAIL_EDGE_FADE_PX} edges={fades.visibility} />}
+        <View style={styles.railViewport} accessibilityRole="tablist" role={Platform.OS === 'web' ? 'presentation' : undefined}
+            accessibilityLabel={Platform.OS === 'web' ? undefined : strip.accessibilityLabel}>
+            <DocumentTabAccessibilityList label={strip.accessibilityLabel} tabIds={mountedTabs.map(tab => strip.tabNativeId(tab.key))} />
+            <VirtualizedList
+                ref={listRef}
+                horizontal
+                data={strip.tabs}
+                keyExtractor={railTabKey}
+                renderItem={renderItem}
+                extraData={strip.activeTabKey}
+                estimatedItemSize={RAIL_TAB_MAX_WIDTH_PX}
+                // Web fades the pills themselves (the header may be translucent); native paints the header's colour.
+                style={[styles.railScroll, webEdgeMask]}
+                contentContainerStyle={styles.railListContent}
+                showsHorizontalScrollIndicator={false}
+                ListFooterComponent={strip.railTrailing ?? null}
+                viewabilityConfig={RAIL_VIEWABILITY}
+                onViewableItemsChanged={onViewableItemsChanged}
+                onLayout={(event) => {
+                    fades.onViewportLayout(event);
+                    void strip.entityDragDrop?.runtime.refreshMeasurements();
+                }}
+                onContentSizeChange={fades.onContentSizeChange}
+                onScroll={(event) => {
+                    fades.onScroll(event);
+                    void strip.entityDragDrop?.runtime.refreshMeasurements();
+                }}
+                scrollEventThrottle={32}
+            />
+            {Platform.OS === 'web' ? null : <ScrollEdgeFades color={theme.colors.chrome.header.background} size={RAIL_EDGE_FADE_PX} edges={fades.visibility} />}
         </View>
     );
 }
+
+function railTabKey(tab: DocumentTabItem): string { return tab.key; }
 
 function stopPropagation(event: unknown) {
     if (event && typeof (event as ScrollPropagationEvent).stopPropagation === 'function') {

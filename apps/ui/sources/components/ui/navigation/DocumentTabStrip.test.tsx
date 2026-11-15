@@ -32,6 +32,12 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 const isHostScrollView = (type: unknown) => type === 'ScrollView';
 
 installPanelCommonModuleMocks();
+const legendList = vi.hoisted(() => ({ state: null as null | import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState }));
+// The rail's virtualized list is a third-party rendering boundary; the testkit's recycler substitute renders its cells.
+vi.mock('@legendapp/list/react-native', async () => {
+  const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+  return createLegendListModuleMock({}, (state) => { legendList.state = state; });
+});
 
 // Resolve the real material graph during collection, rather than charging its
 // first source transform to one interaction test's deadline on a busy worker.
@@ -1236,9 +1242,8 @@ describe('DocumentTabStrip actions', () => {
     );
   });
 
-  it('keeps the open rail tab in view from the live tab positions, not a stale measured layout', async () => {
+  it('reveals the open rail tab from the side it lies on, only when it is not wholly in view', async () => {
     const keys = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const scrollTo = vi.fn();
     const strip = (active: string) => (
       <DocumentTabStrip
         variant="rail"
@@ -1260,39 +1265,33 @@ describe('DocumentTabStrip actions', () => {
         testIds={{ tab: (id) => `tab-${id}` }}
       />
     );
-    // The platform's live positions: six 120 px tabs. The layout events below report none of them.
-    const screen = await renderScreen(strip('a'), {
-      createNodeMock: (element) => {
-        if (isHostScrollView(element.type)) return { scrollTo };
-        const frame = /^document-tab-frame-(.+)$/.exec(
-          String(element.props?.testID ?? ''),
-        )?.[1];
-        return frame
-          ? { offsetLeft: keys.indexOf(frame) * 122, offsetWidth: 120 }
-          : null;
-      },
-    });
-    const scroller = screen.root.findAll((node) =>
-      isHostScrollView(node.type),
-    )[0]!;
-    await act(async () => {
-      scroller.props.onLayout?.({
-        nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 30 } },
+    const screen = await renderScreen(strip('a'));
+    const list = legendList.state!;
+    const scrollToIndex = list.refHandle.scrollToIndex;
+    // The list reports what is wholly in view (the platform's measured positions).
+    const inView = async (...visible: string[]) => {
+      await act(async () => {
+        list.props.onViewableItemsChanged({
+          viewableItems: visible.map((key) => ({ key, index: keys.indexOf(key), item: null, isViewable: true })),
+          changed: [],
+        });
       });
-    });
-    scrollTo.mockClear();
+    };
+    await inView('a', 'b', 'c');
+    scrollToIndex.mockClear();
     await screen.update(strip('f'));
-    expect(scrollTo).toHaveBeenLastCalledWith(
-      expect.objectContaining({ x: 5 * 122 + 120 - 300 + 12 }),
+    expect(scrollToIndex).toHaveBeenLastCalledWith(
+      expect.objectContaining({ index: 5, viewPosition: 1, viewOffset: -12, animated: false }),
     );
-    // Tabs arriving beside the open one resize the content without a layout event of the open tab's own.
-    scrollTo.mockClear();
-    await act(async () => {
-      scroller.props.onContentSizeChange?.(6 * 122, 30);
-    });
-    expect(scrollTo).toHaveBeenCalledWith(
-      expect.objectContaining({ x: 5 * 122 + 120 - 300 + 12 }),
+    scrollToIndex.mockClear();
+    await screen.update(strip('b'));
+    expect(scrollToIndex).not.toHaveBeenCalled();
+    await inView('d', 'e', 'f');
+    await screen.update(strip('a'));
+    expect(scrollToIndex).toHaveBeenLastCalledWith(
+      expect.objectContaining({ index: 0, viewPosition: 0, viewOffset: 12, animated: false }),
     );
+    await screen.unmount();
   });
 
   it('takes a carried item only at a tab inside the visible strip, never at one scrolled out of view', async () => {
