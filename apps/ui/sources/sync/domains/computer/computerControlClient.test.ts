@@ -32,7 +32,7 @@ describe('computer Action-answer projection', () => {
             expect(projection.getSnapshot().selection).toBe(initial.selection);
             expect(projection.getSnapshot().status?.target).toBe(controlled.status?.target);
             const agentStatus = projection.getSnapshot().status;
-            projection.applySelection({ ...structuredClone(selection), access: 'view' });
+            projection.applySelection({ ...structuredClone(selection), access: 'see' });
             expect(projection.getSnapshot().selection?.approvalDisplay).toBe(initial.selection?.approvalDisplay);
             expect(projection.getSnapshot().status).toBe(agentStatus);
             expect(publications).toBe(4);
