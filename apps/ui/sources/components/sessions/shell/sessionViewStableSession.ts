@@ -103,8 +103,27 @@ function buildShellVisibleAgentStateRequestSignatureValue(
     return signature.length > 0 ? signature : null;
 }
 
+// Turn starts, agent state and metadata grow with the Session and keep their identity across the
+// per-message Session updates of a streamed turn, while this signature is rebuilt on each of them:
+// each part is serialized once per retained value.
+function createShellSignaturePartSerializer<T>(project: (value: T) => unknown): (value: T) => string {
+    const serializedByValue = new WeakMap<object, string>();
+    return (value) => {
+        if (value === null || typeof value !== 'object') return JSON.stringify(project(value)) ?? 'null';
+        const cached = serializedByValue.get(value);
+        if (cached !== undefined) return cached;
+        const serialized = JSON.stringify(project(value)) ?? 'null';
+        serializedByValue.set(value, serialized);
+        return serialized;
+    };
+}
+
+const serializeShellSequenceSetPart = createShellSignaturePartSerializer(buildShellVisibleSequenceSetSignatureValue);
+const serializeShellAgentStateRequestsPart = createShellSignaturePartSerializer(buildShellVisibleAgentStateRequestSignatureValue);
+const serializeShellMetadataPart = createShellSignaturePartSerializer(buildShellVisibleMetadataSignatureValue);
+
 export function buildSessionViewShellSessionSignature(session: Session): string {
-    return JSON.stringify({
+    return [JSON.stringify({
         id: session.id,
         serverId: normalizeServerId((session as { serverId?: unknown }).serverId),
         hasTranscriptHistory: (session.seq ?? 0) > 0,
@@ -134,14 +153,13 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
         pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
         pendingActivationFailureDetails: session.pendingActivationFailureDetails ?? null,
-        rollbackEligibleTurnStarts: buildShellVisibleSequenceSetSignatureValue(
-            session.rollbackEligibleTurnStarts,
-        ),
         latestUsage: buildShellVisibleLatestUsageSignatureValue(session.latestUsage),
-        agentStateRequests: buildShellVisibleAgentStateRequestSignatureValue(session.agentState),
-        sharedMetadata: buildShellVisibleMetadataSignatureValue(session.metadata),
-        ownerMetadata: buildShellVisibleMetadataSignatureValue(readSessionOwnerMetadataView(session)),
-    });
+    }),
+    serializeShellSequenceSetPart(session.rollbackEligibleTurnStarts),
+    serializeShellAgentStateRequestsPart(session.agentState),
+    serializeShellMetadataPart(session.metadata),
+    serializeShellMetadataPart(readSessionOwnerMetadataView(session)),
+    ].join('\u0000');
 }
 
 export function selectSessionViewShellSessionForRouteState(

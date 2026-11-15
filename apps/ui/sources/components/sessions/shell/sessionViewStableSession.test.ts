@@ -1332,3 +1332,32 @@ describe('useSessionViewShellSession', () => {
         }
     });
 });
+
+describe('buildSessionViewShellSessionSignature per-arrival cost', () => {
+    it('does not re-read turn starts, agent state or metadata that a streamed session update left untouched', () => {
+        let reads = 0;
+        const countReads = <T extends object>(value: T): T => new Proxy(value, {
+            get(target, property, receiver) {
+                reads += 1;
+                return Reflect.get(target, property, receiver);
+            },
+            ownKeys(target) {
+                reads += 1;
+                return Reflect.ownKeys(target);
+            },
+        });
+        const base = createSession({
+            rollbackEligibleTurnStarts: countReads([1, 3]),
+            agentState: countReads({ requests: { r1: { tool: 'Bash', kind: 'permission', arguments: {}, createdAt: 1 } } }),
+            metadata: countReads({ ...createSession().metadata! }),
+        } as unknown as Partial<Session>);
+        const baseSignature = buildSessionViewShellSessionSignature(base);
+        reads = 0;
+
+        // A streamed turn publishes a new session record per message, with the same nested records.
+        const signatures = [26, 27, 28].map((seq) => buildSessionViewShellSessionSignature({ ...base, seq }));
+
+        expect(signatures.every((signature) => signature === baseSignature)).toBe(true);
+        expect(reads).toBe(0);
+    });
+});
