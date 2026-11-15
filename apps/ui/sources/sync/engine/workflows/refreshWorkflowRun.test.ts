@@ -6,7 +6,8 @@ import type { WorkflowRunAcceptedContextV1 } from '@happier-dev/protocol/workflo
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { applyPlannedChangeActions } from '@/sync/runtime/orchestration/changesApplier';
@@ -18,7 +19,7 @@ installDisconnectedServerSocketBoundary();
 beforeAll(loadSyncSingletonForTests);
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { refreshWorkflowRunById, refreshWorkflowRunsByIds } = await import('./refreshWorkflowRun');
-const { workflowRunRowFromSummary, workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
+const { workflowRunRowFromAutomationRun, workflowRunRowFromSummary, workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { readDestinationInstanceTitle, resolveCompactAppDestinations, useDestinationInstanceTitles } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
@@ -201,6 +202,33 @@ describe('refreshWorkflowRunById through the real Account summary and store owne
         home.answer(serverId, route, { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });
         await refreshWorkflowRunById(run.id);
         expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]).toBeUndefined();
+    });
+
+    it('preserves an Automation-only Run and its window when the Workflow exact list omits it', async () => {
+        const automation = createAutomationRunFixture({ id: 'contributed-action-run', state: 'failed' });
+        const deleted = createWorkflowRunSummaryFixture({ id: 'deleted-managed-run', ownerAccountId: run.ownerAccountId,
+            origin: { kind: 'automation', automationId: 'managed-automation' } });
+        storage.getState().applyWorkflowRunListPage({ windowId: 'automationAttention', runs: [],
+            automationRuns: [automation], mode: 'replace', nextCursor: 'automation-tail' });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(deleted),
+            workflowRunRowFromAutomationRun(createAutomationRunFixture({ id: deleted.id, automationId: 'managed-automation' }))]);
+        const retained = storage.getState().workflowRunsById[workflowRunStoreKey(automation.id)];
+        const window = storage.getState().workflowRunListWindows.automationAttention;
+        expect(retained).toMatchObject({ summary: null, automation });
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(deleted.id)]).toMatchObject({
+            summary: { id: deleted.id }, automation: { id: deleted.id },
+        });
+        expect(window).toMatchObject({ runIds: [automation.id], nextCursor: 'automation-tail' });
+        home.answer(serverId, route, { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the test Home Account lifetime');
+
+        await refreshWorkflowRunsByIds([automation.id, deleted.id], { accountLifetime, fence: accountLifetime });
+
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(automation.id)]).toBe(retained);
+        expect(storage.getState().workflowRunListWindows.automationAttention).toBe(window);
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(deleted.id)]).toBeUndefined();
+        expect(home.requestsFor(route)).toHaveLength(1);
     });
 
     it('rejects non-authoritative storage failures and preserves the existing row for retry', async () => {

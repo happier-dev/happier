@@ -79,8 +79,9 @@ export function refreshWorkflowRunSummaries(
  * usage, a history-proportional cost no background invalidation or transcript
  * placeholder may pay. Explicit Run detail keeps that read.
  *
- * A Run the Home no longer lists is authoritatively deleted, so its row is
- * removed. Any failure rejects with the rows untouched, so the caller holds its
+ * A previously known Workflow the Home no longer lists is removed. An
+ * Automation-only REST projection is outside this list's custody predicate,
+ * so omission cannot remove it. Any failure rejects with the rows untouched, so the caller holds its
  * durable cursor and retries instead of losing the invalidation.
  *
  * `fence` is the caller's Account lifetime. A read that completes after that
@@ -129,7 +130,11 @@ export async function refreshWorkflowRunsByIds(
         undefined, callerAccessByRunId[run.id])), scope);
     for (const run of listed) publishInvocationProvenance(run, provenance, scope);
     const listedIds = new Set(listed.map(run => run.id));
-    for (const runId of ids) if (!listedIds.has(runId)) state.removeWorkflowRun(runId, scope);
+    for (const runId of ids) {
+        if (!listedIds.has(runId) && state.workflowRunsById[workflowRunStoreKey(runId, scope)]?.summary) {
+            state.removeWorkflowRun(runId, scope);
+        }
+    }
 }
 
 /** One exact Run: the batched owner with a single id. */

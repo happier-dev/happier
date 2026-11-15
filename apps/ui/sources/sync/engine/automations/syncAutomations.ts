@@ -5,6 +5,7 @@ import type {
 } from '@/sync/domains/automations/automationTypes';
 import { createAutomationDefinitionSummary, createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
 import {
+    getAutomationDefinition,
     listAutomationDefinitions,
     listAutomationDefinitionDetails,
     type AutomationRequestContext,
@@ -26,6 +27,7 @@ import {
 } from '@happier-dev/protocol/automations/automationDefinitionDisplayReaderV1';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { deriveAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 async function openAutomationListDisplays<T extends AutomationDefinitionListResponse['automations'][number]>(params: Readonly<{
     credentials: AuthCredentials;
@@ -69,6 +71,29 @@ async function openAutomationListDisplays<T extends AutomationDefinitionListResp
         throw Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' });
     }
     return automations;
+}
+
+/** Exact demanded definition names, opened by the same private-display owner as Automation lists. */
+export async function readAutomationDefinitionDisplaysByIds(
+    automationIds: readonly string[],
+    options: Readonly<{ accountLifetime: ServerAccountScopeLifetime; signal?: AbortSignal }>,
+): Promise<readonly Readonly<{ automationId: string; displayName: string }>[]> {
+    const ids = [...new Set(automationIds)];
+    const shouldContinue = () => options.accountLifetime.isCurrent() && !options.signal?.aborted;
+    if (ids.length === 0 || !shouldContinue()) return [];
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const context = await captureLazyActionAccountContext(options.accountLifetime.scope.serverId, options.signal);
+    try {
+        if (!areServerAccountScopesEqual(context.accountLifetime.scope, options.accountLifetime.scope)) return [];
+        const rows = await runTasksWithLimit(ids.map(id => async () => {
+            if (!shouldContinue()) return null;
+            return getAutomationDefinition(context.credentials, id, context).catch(() => null);
+        }), loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit);
+        if (!shouldContinue()) return [];
+        const opened = await openAutomationListDisplays({ credentials: context.credentials, requestContext: context,
+            serverId: context.serverId, automations: rows.filter(row => row !== null), shouldContinue });
+        return shouldContinue() ? opened.flatMap(row => row.name ? [{ automationId: row.id, displayName: row.name }] : []) : [];
+    } finally { context.dispose(); }
 }
 
 /** Only a proven source-status change can omit the presented Run-window refresh. */
