@@ -43,7 +43,7 @@ import {
   type AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { buildMissingAgentCliCommandErrorMessage } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
-import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
+import { readHeldNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/heldNativeAgentCliAuthStatus';
 import {
   resolveAgentCliLaunchSpecForSession,
   type AgentCliLaunchSpec,
@@ -553,6 +553,8 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   }
 
   let agentCliLaunchSpec: AgentCliLaunchSpec | undefined;
+  // One executable admission per spawn: the final launch reuses this decision.
+  let agentCliAdmitted = false;
   const preliminaryIsolation = params.providerBindingPrerequisitesOnly ? params.agentIsolation?.read() : undefined;
   const memberLaunchPending = preliminaryIsolation
     && resolveMachineAgentExecutionPlacementV1({ policy: preliminaryIsolation, platform: process.platform }) === 'member';
@@ -576,6 +578,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       };
     }
     agentCliLaunchSpec = agentCliValidation.launchSpec;
+    agentCliAdmitted = true;
   }
 
   if (!params.runtimePrerequisitesAlreadyResolved && params.daemonSpawnHooks?.resolveRuntimePrerequisites) {
@@ -799,7 +802,9 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     }
   }
   if (resolvedAgentId) {
-    const validation = await validateAgentCliLaunch(resolvedAgentId, effectiveAgentEnvironment);
+    const validation = agentCliAdmitted
+      ? { ok: true as const, launchSpec: agentCliLaunchSpec }
+      : await validateAgentCliLaunch(resolvedAgentId, effectiveAgentEnvironment);
     if (!validation.ok) {
       return {
         ok: false,
@@ -846,18 +851,26 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     // Selected Connected Accounts have already passed purpose admission and
     // materialization, including native files/environment and request auth.
     // Their credential authority supersedes an unrelated ambient sign-in probe.
-    const auth = !agentCliLaunchSpec || params.providerBindingContext || hasConnectedAccountAuth || hasAcceptedTeamPinnedInference
+    const nativeAuthLaunch = params.providerBindingContext || hasConnectedAccountAuth || hasAcceptedTeamPinnedInference
+      ? undefined
+      : agentCliLaunchSpec;
+    const authCatalogEntry = nativeAuthLaunch && params.pluginRuntimeRegistry
+      ? await (params.pluginRuntimeRegistry.acquireAgentCatalogEntry
+        ? params.pluginRuntimeRegistry.acquireAgentCatalogEntry(resolvedAgentId)
+        : params.pluginRuntimeRegistry.contributes.catalogEntriesById[resolvedAgentId])
+      : undefined;
+    const nativeHome = authCatalogEntry
+      ? (await authCatalogEntry.getConnectedServiceStateSharingDescriptor?.())?.nativeHome
+      : undefined;
+    const auth = !nativeAuthLaunch
       ? null
-      : await detectNativeAgentCliAuthStatus({
+      : await readHeldNativeAgentCliAuthStatus({
         agentId: resolvedAgentId,
-        resolvedPath: agentCliLaunchSpec.resolvedPath,
+        resolvedPath: nativeAuthLaunch.resolvedPath,
         processEnv: effectiveAgentEnvironment,
-        ...(params.pluginRuntimeRegistry ? {
-          authSpec: await (params.pluginRuntimeRegistry.acquireAgentCatalogEntry
-            ? await params.pluginRuntimeRegistry.acquireAgentCatalogEntry(resolvedAgentId)
-            : params.pluginRuntimeRegistry.contributes.catalogEntriesById[resolvedAgentId]
-          )?.getCliAuthSpec?.() ?? null,
-        } : {}),
+        ...(nativeHome ? { nativeHome } : {}),
+        authEnvironmentVariables: selectedAgentCredentialEnvironmentVariables,
+        ...(params.pluginRuntimeRegistry ? { authSpec: await authCatalogEntry?.getCliAuthSpec?.() ?? null } : {}),
       });
     if (auth?.state === 'logged_out') {
       return {

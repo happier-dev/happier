@@ -2,7 +2,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { PluginManifestV2Schema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as CODEX_MANIFEST } from '@happier-dev/plugins-codex/manifest';
 import { PLUGIN_MANIFEST as ANTIGRAVITY_MANIFEST } from '@happier-dev/plugins-antigravity/manifest';
@@ -249,8 +249,14 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
         profileEnvironmentVariables: { OPENAI_API_KEY: '${CUSTODIAN_PRIVATE_KEY}' },
         processEnv: { ...params.processEnv, CUSTODIAN_PRIVATE_KEY: 'alice-private-key' },
       })).resolves.toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AUTH_ENV_UNEXPANDED });
-      await rm(join(connectedHome, 'auth.json'));
-      await expect(resolveSpawnChildEnvironment(params)).resolves.toMatchObject({
+      // A connected home never observed signed in is refused before launch. (The signed-in
+      // fact for `connectedHome` is held; a credential removed under it surfaces at provider
+      // start instead: P03 redesign plan r2, S4 / accepted imperfection #8.)
+      const signedOutHome = join(home, 'connected-signed-out');
+      await mkdir(signedOutHome);
+      await expect(resolveSpawnChildEnvironment({ ...params,
+        connectedServiceAuth: { ...params.connectedServiceAuth!, env: { CODEX_HOME: signedOutHome } },
+      })).resolves.toMatchObject({
         ok: false, errorCode: 'agent_signed_out', agentId: 'codex',
       });
     } finally {
@@ -514,6 +520,48 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
         logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
       });
       expect(result).toMatchObject({ ok: false, errorCode: 'agent_signed_out', agentId: 'codex', cleanupOnFailure: cleanup });
+    } finally {
+      await removeTempDir(home);
+    }
+  });
+
+  it('holds the signed-in Agent fact per binary identity and config dir instead of probing every spawn', async () => {
+    const home = await createTempDir('happier-spawn-held-auth-', tmpdir());
+    try {
+      if (process.platform === 'win32') return;
+      // The installed CLI is the process boundary: it records each invocation.
+      const log = join(home, 'invocations.log');
+      const writeCli = (exitCode: number) => writeExecutableShimSync({ dir: home, fileName: 'codex',
+        contents: `#!/bin/sh\n${exitCode === 0 ? '' : '# signed out\n'}echo "$*" >> '${log}'\nexit ${exitCode}\n` });
+      const cli = writeCli(0);
+      const otherHome = join(home, 'other-codex-home');
+      await mkdir(otherHome, { recursive: true });
+      // The real activated Codex plugin supplies its auth probe and native-home declaration.
+      const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+      onTestFinished(async () => await fixture.dispose());
+      const spawn = async (codexHome: string) => await resolveSpawnChildEnvironment({
+        happyHomeDir: fixture.happyHomeDir,
+        pluginRuntimeRegistry: fixture.registry,
+        options: { directory: home, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } },
+        profileEnvironmentVariables: {},
+        daemonSpawnHooks: { resolveRuntimePrerequisites: async () => ({ ok: true }) },
+        processEnv: { PATH: '', HOME: home, USERPROFILE: home, CODEX_HOME: codexHome, HAPPIER_HOME_DIR: fixture.happyHomeDir, HAPPIER_CODEX_PATH: cli, HAPPIER_JS_RUNTIME_PATH: process.execPath },
+        logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
+      });
+      const authProbes = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n')
+        .filter((line) => line.includes('login status')).length;
+
+      for (let index = 0; index < 3; index += 1) expect(await spawn(home)).toMatchObject({ ok: true });
+      expect(await authProbes()).toBe(1);
+      expect(await spawn(otherHome)).toMatchObject({ ok: true });
+      expect(await authProbes()).toBe(2);
+      // A replaced binary changes its stat identity and is observed again.
+      writeCli(1);
+      expect(await spawn(home)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+      expect(await authProbes()).toBe(3);
+      // A signed-out observation is never held: signing in is seen on the next spawn.
+      expect(await spawn(home)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+      expect(await authProbes()).toBe(4);
     } finally {
       await removeTempDir(home);
     }
