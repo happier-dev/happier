@@ -190,6 +190,11 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 	if err != nil || response == nil {
 		return response, err
 	}
+	if t.entry.Provider == ProviderMeta {
+		if err := normalizeMetaQuotaResponse(response); err != nil {
+			return nil, err
+		}
+	}
 	status := response.StatusCode
 	switch status {
 	case http.StatusUnauthorized:

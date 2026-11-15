@@ -2472,6 +2472,13 @@ MCP servers and Happier Actions keep their existing exposure policy. Codex
 unknown custom models use eager schemas, and its removed tool-search feature
 flags cannot enable deferral.
 
+In 0.3 development, the managed Meta transport presents a subscription-quota
+429 as OpenAI-compatible `insufficient_quota`. It recognizes Meta's structured
+rate-limit error with a reset and its subscription-quota marker, retains the
+reset and `Retry-After`, and leaves transient throttling unchanged. This lets
+Codex settle exhausted quota instead of sleeping until the reset. The gateway
+does not add retries or shorten the upstream reset.
+
 The managed-family owner is the plugin's
 `src/provider/managedContract.ts`. Its executable rows generate Go executor descriptors,
 registration seeds and static catalogs in the same pass; Provider contributions

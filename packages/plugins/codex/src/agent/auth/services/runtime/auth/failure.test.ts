@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { classifyCodexConnectedServiceAuthFailure } from './failure.js';
 
 describe('classifyCodexConnectedServiceAuthFailure', () => {
+  it('preserves the reset on a managed Meta terminal quota refusal', () => {
+    expect(classifyCodexConnectedServiceAuthFailure({
+      error: { error: { code: 'insufficient_quota', type: 'rate_limit_error', resets_at: 1794787200 } },
+      serviceId: 'happier.agent.muse/muse-account', profileId: 'member', groupId: null,
+      providerErrorPath: true,
+    })).toMatchObject({ kind: 'usage_limit', limitCategory: 'usage_limit', resetsAtMs: 1794787200000 });
+  });
   it('preserves provider timing on an already classified usage-limit path without changing milliseconds to seconds', () => {
     expect(classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,

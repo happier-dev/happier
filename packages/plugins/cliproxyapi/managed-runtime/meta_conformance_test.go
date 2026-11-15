@@ -7,6 +7,55 @@ import (
 	"testing"
 )
 
+// Only the external Meta transport is replaced; the managed lease, SDK executor,
+// selector and downstream Responses handler remain real.
+type metaQuotaTransport struct {
+	calls int
+	body  string
+}
+
+func (t *metaQuotaTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.calls++
+	return &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(t.body)),
+		Request:    request,
+	}, nil
+}
+
+func TestManagedMetaStreamingQuotaRefusalReachesResponsesClient(t *testing.T) {
+	for _, refusal := range []struct{ name, message, code string }{
+		{"hard quota", "Subscription quota exhausted", "insufficient_quota"},
+		{"transient rate limit", "Too many requests", "rate_limit_exceeded"},
+	} {
+		t.Run(refusal.name, func(t *testing.T) {
+			testCase := metaProtocolCases()[1]
+			cfg := crossProtocolConfig(t, testCase)
+			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("meta-fixture-key", map[string]string{"x-api-version": "1.0.0"})}}
+			// Field shape captured on nl3, 2026-11-15; message is the pinned
+			// SDK's documented subscription fixture, never recorded by the observer.
+			upstream := &metaQuotaTransport{body: `{"error":{"message":"` + refusal.message + `","type":"rate_limit_error","code":"rate_limit_exceeded","resets_at":1794787200}}`}
+			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancel, result := runGateway(t, gateway)
+			defer stopGateway(t, cancel, result)
+			_ = awaitManagedHealthIdentity(t, cfg)
+			response := postJSON(t, cfg, testCase.path, testCase.request)
+			defer response.Body.Close()
+			body := readResponse(t, response)
+			if response.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, `"code":"`+refusal.code+`"`) || !strings.Contains(body, `"resets_at":1794787200`) || response.Header.Get("Retry-After") == "" {
+				t.Fatalf("Meta quota refusal lost status, classification or reset: %d %s", response.StatusCode, body)
+			}
+			if upstream.calls != 1 {
+				t.Fatalf("quota refusal replayed upstream: %d requests", upstream.calls)
+			}
+		})
+	}
+}
+
 func metaProtocolCases() []crossProtocolCase {
 	cases := crossProtocolCases()[:3]
 	for index := range cases {
