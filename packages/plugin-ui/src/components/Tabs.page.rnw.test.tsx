@@ -1,5 +1,5 @@
 import { act, Component, useEffect, useState, type ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { View } from 'react-native';
@@ -9,6 +9,11 @@ import { Text } from './Text.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import { PluginError } from '@happier-dev/plugin-sdk';
+
+// These suites assert panel and Action semantics, not press timing: without a frame clock a press reaches its owner
+// at once (`useHappierTabSelection`; the frame hand-off has its own test in Tabs.rnw.test.tsx).
+beforeEach(() => { vi.stubGlobal('requestAnimationFrame', undefined); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('page Tabs host projection', () => {
   it('draws a page strip in the host page-tab presentation; in-body Tabs keep the underline', async () => {

@@ -96,6 +96,7 @@ export function NewSessionActionDefaults(props: Readonly<{
                     { id: 'review', label: t('newSession.actionDefault.review') },
                     { id: 'start', label: t('newSession.actionDefault.start') },
                 ]} activeTabId={actionDefault.launchMode} onSelectTab={launchMode => update({ launchMode })}
+                    role="radiogroup" accessibilityLabel={t('newSession.actionDefault.launchMode')}
                     testIDPrefix="new-session-action-default-launch" />
                 <View style={styles.disclosure}>
                     <RoundButton testID="new-session-action-default-save" title={t('common.save')}

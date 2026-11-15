@@ -33,6 +33,7 @@ import { HappierText } from '../text/Text.js';
 import { readHappierTypeRoleTabular, resolveHappierTypeRoleStyle } from '../text/typeRole.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
+import { useHappierTabSelection } from './tabSelection.js';
 
 /** A tab's pointer height (lab `.tabs .tb`); a native touch platform's floor still wins. */
 const TAB_STRIP_HEIGHT = 38;
@@ -373,6 +374,10 @@ export function HappierTabs(props: Readonly<{
     reportedDuplicates.current = duplicateTabValues;
   });
   const selected = tabs.find((tab) => tab.value === props.value) ?? tabs.find((tab) => !tab.disabled);
+  // The strip answers a press in the next frame; the owner's value still decides the panel, so the chosen panel is
+  // built after that frame has painted (`useHappierTabSelection`).
+  const [shownValue, select] = useHappierTabSelection(props.value, props.onValueChange);
+  const shown = shownValue === props.value ? selected : tabs.find((tab) => tab.value === shownValue) ?? selected;
   const stripTabs = props.stripValues === undefined ? tabs
     : props.stripValues.flatMap(value => { const tab = tabs.find(candidate => candidate.value === value); return tab ? [tab] : []; });
   const glyphOnly = resolveHappierTabGlyphOnly({ labels: props.labels, tabs: stripTabs });
@@ -438,7 +443,7 @@ export function HappierTabs(props: Readonly<{
   // still offers exactly one Tab-reachable trigger instead of none.
   const tabStopIndex = resolveHappierRovingTabStop({
     entries: stripTabs.map((tab) => ({ disabled: isHappierTabDisabled(tab) })),
-    selectedIndex: selected === undefined ? -1 : stripTabs.indexOf(selected),
+    selectedIndex: shown === undefined ? -1 : stripTabs.indexOf(shown),
   });
 
   // A source withdraws a tab while a reader is standing on its trigger, or on a
@@ -500,7 +505,7 @@ export function HappierTabs(props: Readonly<{
         >
           {stripTabs.map((tab, stripIndex) => {
             const tabIndex = tabs.indexOf(tab);
-            const isSelected = isHappierTabSelected(selected?.value ?? '', tab.value);
+            const isSelected = isHappierTabSelected(shown?.value ?? '', tab.value);
             // Values are opaque product keys and may contain whitespace. Indexes
             // keep ARIA token identities valid without normalizing author data.
             const tabId = `${instanceId}-tab-${tabIndex}`;
@@ -529,11 +534,11 @@ export function HappierTabs(props: Readonly<{
                   if (nextIndex === null) return false;
                   const next = stripTabs[nextIndex];
                   if (!next) return false;
-                  props.onValueChange(next.value);
+                  select(next.value);
                   if (nextIndex !== stripIndex) tabRefs.current.get(next.value)?.focus?.();
                   return true;
                 }}
-                onPress={() => props.onValueChange(tab.value)}
+                onPress={() => select(tab.value)}
                 onFocusChange={(isFocused) => { recordFocusWithin(tab.value, isFocused); }}
                 testID={`${props.testID ?? 'tabs'}:${tab.value}`}
                 // The strip's scroller clips above and below; sideways each tab reaches half the gap.

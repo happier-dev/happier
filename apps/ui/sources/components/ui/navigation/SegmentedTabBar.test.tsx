@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SegmentedTab } from './SegmentedTabBar';
 import { installNavigationCommonModuleMocks } from './navigationTestHelpers';
@@ -46,6 +46,11 @@ const { useUnistyles } = await import('react-native-unistyles');
 await import('./SegmentedTabBar');
 
 const theme = lightTheme;
+
+// Selection, keyboard and overflow semantics are frame-independent: these suites run without a frame clock, where a
+// press reaches its owner at once. The press-feedback suite below installs the frame clock and owns the timing.
+beforeEach(() => { vi.stubGlobal('requestAnimationFrame', undefined); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 const TABS: ReadonlyArray<SegmentedTab<'alpha' | 'beta' | 'gamma'>> = [
   { id: 'alpha', label: 'Alpha' },
@@ -896,7 +901,8 @@ describe('SegmentedTabBar', () => {
   it('roves focus across tabs and supports Arrow, Home, End, Space, and single-fire Enter', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const onSelectTab = vi.fn();
-    const focusByTestId = new Map<string, ReturnType<typeof vi.fn>>();
+    // Counted per tab, not per mock: an unmeasured test row may remount its last tab (fit keying) between renders.
+    const focusCalls = new Map<string, number>();
     const screen = await renderScreen(
       <SegmentedTabBar
         tabs={TABS}
@@ -911,9 +917,7 @@ describe('SegmentedTabBar', () => {
           const testID = (element.props as { testID?: string }).testID;
           if (typeof testID !== 'string' || !testID.startsWith('seg:'))
             return {};
-          const focus = vi.fn();
-          focusByTestId.set(testID, focus);
-          return { focus };
+          return { focus: () => { focusCalls.set(testID, (focusCalls.get(testID) ?? 0) + 1); } };
         },
       },
     );
@@ -937,7 +941,7 @@ describe('SegmentedTabBar', () => {
       beta.props.onKeyDown(keyEvent('ArrowRight'));
     });
     expect(onSelectTab).toHaveBeenLastCalledWith('gamma');
-    expect(focusByTestId.get('seg:gamma')).toHaveBeenCalledOnce();
+    expect(focusCalls.get('seg:gamma')).toBe(1);
 
     await act(async () => {
       beta.props.onKeyDown(keyEvent('ArrowLeft'));
@@ -1869,6 +1873,108 @@ describe('SegmentedTabBar plain labels', () => {
         node.findAll((child) => String(child.type) === 'Glyph'),
       ).toHaveLength(1);
       expect(node.props.accessibilityLabel).toBe(tab.label);
+    }
+  });
+});
+
+describe('SegmentedTabBar press feedback (P03-TAB-SWITCH)', () => {
+  /** The browser's frame clock: the one boundary that decides when a selection can paint. */
+  function installFrameClock() {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames[id - 1] = () => {}; });
+    return {
+      /** Paint one frame, then let the tasks queued during it run. */
+      async paint() {
+        await act(async () => {
+          for (const callback of frames.splice(0)) callback(0);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      },
+    };
+  }
+
+  type Id = 'alpha' | 'beta' | 'gamma';
+  /** A controlled bar whose owner builds a surface for each tab, as a page's tabs do. */
+  async function renderOwnedBar() {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const built: Id[] = [];
+    function Surface(props: Readonly<{ id: Id }>) {
+      React.useLayoutEffect(() => { built.push(props.id); }, [props.id]);
+      return null;
+    }
+    function Owner() {
+      const [active, setActive] = React.useState<Id>('alpha');
+      return <>
+        <SegmentedTabBar tabs={TABS} activeTabId={active} onSelectTab={setActive} testIDPrefix="seg" />
+        <Surface key={active} id={active} />
+      </>;
+    }
+    const screen = await renderScreen(<Owner />);
+    built.length = 0;
+    const selected = (id: Id) => requireTab(screen, `seg:${id}`).props['aria-selected'];
+    return { screen, built, selected };
+  }
+
+  // The press commits to its owner at once; only the owner's surface build defers (a transition), and it is built once.
+  it('shows the pressed tab, commits it to its owner at once, and builds the owner\'s surface once', async () => {
+    const clock = installFrameClock();
+    try {
+      const { screen, built, selected } = await renderOwnedBar();
+      act(() => { screen.pressByTestId('seg:beta'); });
+      expect({ beta: selected('beta'), alpha: selected('alpha'), built: [...built] })
+        .toEqual({ beta: true, alpha: false, built: ['beta'] });
+      await clock.paint();
+      expect({ beta: selected('beta'), built: [...built] }).toEqual({ beta: true, built: ['beta'] });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('leaves the owner on the last of two quick presses', async () => {
+    const clock = installFrameClock();
+    try {
+      const { screen, built, selected } = await renderOwnedBar();
+      act(() => { screen.pressByTestId('seg:beta'); });
+      act(() => { screen.pressByTestId('seg:gamma'); });
+      expect(selected('gamma')).toBe(true);
+      await clock.paint();
+      expect({ gamma: selected('gamma'), beta: selected('beta'), last: built.at(-1) })
+        .toEqual({ gamma: true, beta: false, last: 'gamma' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // UI refinements ruling 2026-11-15 08:53Z: a press commits at once, so the next action (a Save) sees the new value.
+  it('commits a press to its owner before any frame paints', async () => {
+    const clock = installFrameClock();
+    try {
+      const { SegmentedTabBar } = await import('./SegmentedTabBar');
+      const committed = vi.fn();
+      const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={committed} testIDPrefix="seg" />);
+      act(() => { screen.pressByTestId('seg:beta'); });
+      expect(committed.mock.calls).toEqual([['beta']]);
+      await clock.paint();
+      expect(committed.mock.calls).toEqual([['beta']]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('returns to the owner\'s tab when the owner does not take the pressed one', async () => {
+    const clock = installFrameClock();
+    try {
+      const { SegmentedTabBar } = await import('./SegmentedTabBar');
+      const refused = vi.fn();
+      const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={refused} testIDPrefix="seg" />);
+      act(() => { screen.pressByTestId('seg:beta'); });
+      await clock.paint();
+      expect({ called: refused.mock.calls, alpha: requireTab(screen, 'seg:alpha').props['aria-selected'],
+        beta: requireTab(screen, 'seg:beta').props['aria-selected'] })
+        .toEqual({ called: [['beta']], alpha: true, beta: false });
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

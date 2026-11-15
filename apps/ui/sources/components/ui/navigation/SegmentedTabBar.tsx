@@ -18,6 +18,7 @@ import {
     resolveHappierTabGlyphOnly,
     resolveHappierTabKeySelection,
     useHappierHitArea,
+    useHappierTabSelection,
     useHappierMaterialColorResolver,
     happierMaterialGradient,
     type HappierTabLabels,
@@ -605,7 +606,13 @@ const SegmentedTabPressable = React.forwardRef<React.ElementRef<typeof Pressable
     );
 });
 
-function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) {
+function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps<T>) {
+    // A view switch shows the pressed segment before its owner builds the chosen view (`useHappierTabSelection`); every
+    // press path below (segment, arrow keys, More) goes through the same `select`. A value choice builds no view: its
+    // owner takes the value at once, as a field does.
+    const [pressedTabId, selectPressed] = useHappierTabSelection(controlled.activeTabId, controlled.onSelectTab);
+    const viewSwitch = controlled.role !== 'radiogroup';
+    const props = viewSwitch ? { ...controlled, activeTabId: pressedTabId, onSelectTab: selectPressed } : controlled;
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();

@@ -1,6 +1,6 @@
 import { act, useState } from 'react';
 import { Text as NativeText } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -15,6 +15,10 @@ function mountTabs(element: React.ReactElement, context = createSurfaceContext()
     </PluginUiProvider>,
   );
 }
+
+// The selection and keyboard suites assert semantics, not timing: without a frame clock a press reaches its owner at once.
+beforeEach(() => { vi.stubGlobal('requestAnimationFrame', undefined); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('controlled Tabs', () => {
   it('includes a text-only active panel in tab order and yields to asynchronously arriving controls', async () => {
@@ -412,6 +416,52 @@ describe('tab labels', () => {
     try {
       expect(mount.container.querySelector('[data-testid="mixed:chat"]')?.textContent).toBe('cChat');
       expect(mount.container.querySelector('[data-testid="mixed:files"]')?.textContent).toBe('Files');
+    } finally { mount.unmount(); }
+  });
+});
+
+describe('a press on a tab whose panel is costly to build', () => {
+  function installFrameClock() {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    return {
+      async paint() {
+        await act(async () => {
+          for (const frame of frames.splice(0)) frame(0);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        });
+      },
+    };
+  }
+
+  // UI refinements ruling 2026-11-15 08:53Z: the press commits to the owner at once; its panel builds in the owner's
+  // transition, so the strip paints first in a browser, and the last press is the panel shown.
+  it('commits each press to its owner at once and shows the last pressed tab\'s panel', async () => {
+    const clock = installFrameClock();
+    const theme = createSurfaceContext().theme;
+    const built: string[] = [];
+    function Panel(props: Readonly<{ value: string }>) { built.push(props.value); return <NativeText>{props.value}</NativeText>; }
+    function Owned() {
+      const [value, setValue] = useState('activity');
+      return <HappierTabs theme={theme} value={value} onValueChange={setValue} ariaLabel="Views" testID="views">
+        <TabDescriptor value="activity" title="Activity"><Panel value="activity" /></TabDescriptor>
+        <TabDescriptor value="logs" title="Logs"><Panel value="logs" /></TabDescriptor>
+        <TabDescriptor value="files" title="Files"><Panel value="files" /></TabDescriptor>
+      </HappierTabs>;
+    }
+    function TabDescriptor(_props: HappierTabDescriptor) { return null; }
+    const mount = mountThroughReactNativeWeb(<Owned />);
+    try {
+      const selected = () => [...mount.container.querySelectorAll<HTMLElement>('[role="tab"]')].map(tab => tab.getAttribute('aria-selected'));
+      built.length = 0;
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="views:logs"]')?.click(); });
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="views:files"]')?.click(); });
+      expect({ selected: selected(), last: built.at(-1) }).toEqual({ selected: ['false', 'false', 'true'], last: 'files' });
+      const buildsBeforePaint = built.length;
+      await clock.paint();
+      // Nothing was left to hand over in the frame: no further panel work.
+      expect({ selected: selected(), builds: built.length }).toEqual({ selected: ['false', 'false', 'true'], builds: buildsBeforePaint });
     } finally { mount.unmount(); }
   });
 });

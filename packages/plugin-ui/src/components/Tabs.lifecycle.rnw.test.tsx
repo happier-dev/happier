@@ -1,5 +1,5 @@
 import { act, startTransition, StrictMode, Suspense, useEffect, useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -41,6 +41,11 @@ async function selectTab(container: HTMLElement, index: number): Promise<void> {
     readTabs(container)[index]?.click();
   });
 }
+
+// These suites assert panel and Action semantics, not press timing: without a frame clock a press reaches its owner
+// at once (`useHappierTabSelection`; the frame hand-off has its own test in Tabs.rnw.test.tsx).
+beforeEach(() => { vi.stubGlobal('requestAnimationFrame', undefined); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Tabs panel retention and active interval', () => {
   it('unmounts a panel that declares no retention, so an incumbent caller keeps its cleanup', async () => {

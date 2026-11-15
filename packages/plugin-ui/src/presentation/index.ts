@@ -8,6 +8,9 @@ export * from './index.public.js';
 export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender } from './layout/PageCountLine.js';
 // Host-only: how a shrink-wrapping container (a popover, a capture window) places a sized state.
 export { HappierSurfaceStateFit } from './state/InfoState.js';
+// Host-only: a tab bar shows the pressed tab before its owner builds the new surface (P03-TAB-SWITCH). Core bars and
+// the public Tabs draw through it; not part of the governed public plugin API.
+export { useHappierTabSelection } from './navigation/tabSelection.js';
 // Host-only: a body presented away from its shell (a retained popover or dialog body) reads the shell's material plane.
 export { HappierMaterialPlaneTransfer, useContainingHappierMaterialPlane } from './layout/Surface.js';
 // Host-only: the one roving tab-stop rule, for app composites that bind their own focus targets (the composer's
