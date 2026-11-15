@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { RefreshControl } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -44,7 +44,7 @@ export const EmbedsListScreen = React.memo(function EmbedsListScreen() {
         if (result !== true) fireAndForget(result, { tag });
     }, [router]);
     const openNew = React.useCallback(() => push(EMBEDS_NEW_PATH, 'EmbedsListScreen.new'), [push]);
-    const openEmbed = React.useCallback((token: AccountApiTokenSummaryV1) => push(embedDetailPath(token.tokenId), 'EmbedsListScreen.open'), [push]);
+    const openEmbed = React.useCallback((token: ApiTokenSettingsToken) => push(embedDetailPath(token.tokenId), 'EmbedsListScreen.open'), [push]);
     const empty = presentation === 'empty' || presentation === 'emptyWithRetry';
     const stale = presentation === 'listWithRetry' || presentation === 'emptyWithRetry';
 

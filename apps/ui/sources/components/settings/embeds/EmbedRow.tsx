@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 
 import { ApiTokenStatusGlyph } from '@/components/settings/apiTokens/ApiTokenStatusGlyph';
 import { buildApiTokenRowPresentation, resolveApiTokenStatusLabel } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
@@ -15,12 +15,12 @@ import { formatEmbedSummary, type EmbedSummaryNames } from './embedPresentation'
  * on the list page (with a chevron).
  */
 export const EmbedRow = React.memo(function EmbedRow(props: Readonly<{
-    token: AccountApiTokenSummaryV1;
+    token: ApiTokenSettingsToken;
     names: EmbedSummaryNames;
     nowMs: number;
     variant: 'rail' | 'page';
     selected?: boolean;
-    onPress: (token: AccountApiTokenSummaryV1) => void;
+    onPress: (token: ApiTokenSettingsToken) => void;
 }>) {
     const presentation = buildApiTokenRowPresentation({ token: props.token, nowMs: props.nowMs });
     const summary = formatEmbedSummary(listEmbedSummaryParts(props.token), props.names);

@@ -1,9 +1,9 @@
 import { MachinePoolActionInputSchemasV1, MachinePoolWireOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1, type MachinePoolActionInputV1, type MachinePoolWireOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
-import { MachinePoolErrorV1Schema, type MachinePoolErrorV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolErrorV1Schema, type MachinePoolErrorV1, type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { ServerFetch } from '@/sync/http/client';
 
 export class MachinePoolActionError extends Error {
-    constructor(public readonly status: number, public readonly detail: MachinePoolErrorV1 | null) {
+    constructor(public readonly status: number, public readonly detail: MachinePoolErrorV1 | null, public readonly currentView?: MachinePoolViewV1) {
         super(detail?.code ?? `machine_pool_request_failed_${status}`);
         this.name = 'MachinePoolActionError';
         Object.setPrototypeOf(this, MachinePoolActionError.prototype);

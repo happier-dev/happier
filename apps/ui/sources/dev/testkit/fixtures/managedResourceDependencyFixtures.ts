@@ -1,9 +1,9 @@
-import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
+import { isManagedOpaquePresetResourceDependencyV1, ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 /** Safe removal-review bytes at the Home/daemon boundary; no launch or credential material. */
-export function createManagedResourceDependencyFixture(intentRevision = 7): ManagedResourceDependencyV1 {
+export function createManagedResourceDependencyFixture(intentRevision = 7): Exclude<ManagedResourceDependencyV1, { opaquePreset: true }> {
     const provider = { pluginId: 'example.compute', localId: 'cloud' };
-    return ManagedResourceDependencyV1Schema.parse({
+    const dependency = ManagedResourceDependencyV1Schema.parse({
         managedId: 'managed-1', homeId: 'home-1', custodianAccountId: 'account-owner', intentRevision,
         controller: { machineId: 'controller-1', installationId: 'installation-1' },
         provider, allocation: 'may-exist',
@@ -13,4 +13,6 @@ export function createManagedResourceDependencyFixture(intentRevision = 7): Mana
         observation: { observedAt: 1, availability: 'unavailable', billing: { location: 'cloud', stoppedBilling: 'unknown' } },
         cleanup: { disposition: 'pending', reason: 'response_lost' },
     });
+    if (isManagedOpaquePresetResourceDependencyV1(dependency)) throw new Error('Expected a full managed-resource dependency fixture');
+    return dependency;
 }

@@ -9,6 +9,7 @@ import { buildEmbedParentGrantV1 } from '@happier-dev/protocol/embed';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 import {
+  apiTokenReadWireFixture,
   createApiTokenSettingsControllerHarness,
   disposeApiTokenSettingsControllerHarnesses,
 } from '../apiTokens/apiTokenSettingsControllerTestHarness';
@@ -62,7 +63,7 @@ function embedRow(): Record<string, unknown> {
     sites: ['https://crm.acme.dev'],
     send: true,
   };
-  return {
+  return apiTokenReadWireFixture({
     tokenId: EMBED_ID,
     label: 'Leads dashboard',
     displayPrefix: 'hap_v1_33333333',
@@ -75,7 +76,7 @@ function embedRow(): Record<string, unknown> {
     parentTokenId: null,
     activeChildCount: 0,
     embedConfig: DEFAULT_EMBED_DRAFT.config,
-  };
+  });
 }
 
 // The real store, controller and Action graph need a longer cold-transform budget on shared workers.

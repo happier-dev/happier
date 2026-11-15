@@ -1,6 +1,6 @@
 import type {
-    AccountApiTokenSummaryV1,
-    AccountApiTokensUpdateActionInputV1} from '@happier-dev/protocol/auth/accountApiTokens';
+    ApiTokenSettingsToken,
+    ApiTokenSettingsUpdateInput} from '@/components/settings/apiTokens/apiTokenSettingsController';
 import type {
     ApiTokenGrantV1} from '@happier-dev/protocol/auth/apiTokenGrant';
 import type {
@@ -54,7 +54,7 @@ export const DEFAULT_EMBED_DRAFT: EmbedDraft = Object.freeze({
     }),
 }) as EmbedDraft;
 
-export function readEmbedDraft(summary: AccountApiTokenSummaryV1): EmbedDraft {
+export function readEmbedDraft(summary: ApiTokenSettingsToken): EmbedDraft {
     return {
         label: summary.label,
         access: deriveEmbedAccessFromGrantV1(summary.grant),
@@ -121,7 +121,7 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 /** Whether saving the draft rebuilds the grant, which signs out open chats (they reconnect). */
-export function isEmbedEnforcedEdit(original: AccountApiTokenSummaryV1, draft: EmbedDraft): boolean {
+export function isEmbedEnforcedEdit(original: ApiTokenSettingsToken, draft: EmbedDraft): boolean {
     if (readEmbedDraftIssue(draft)) return false;
     return !areApiTokenGrantsEqual(original.grant, buildEmbedGrant(draft));
 }
@@ -132,9 +132,9 @@ export function isEmbedEnforcedEdit(original: AccountApiTokenSummaryV1, draft: E
  * nothing changed.
  */
 export function buildEmbedUpdateInput(
-    original: AccountApiTokenSummaryV1,
+    original: ApiTokenSettingsToken,
     draft: EmbedDraft,
-): AccountApiTokensUpdateActionInputV1 | null {
+): ApiTokenSettingsUpdateInput | null {
     if (readEmbedDraftIssue(draft)) return null;
     const label = draft.label.trim();
     const update: {
@@ -162,7 +162,7 @@ export type EmbedSummaryPart =
  * A row's facts in the fixed order of plan 04 §6.2: sites → can send / can approve → models →
  * folder. Quiet defaults (any model, no folder) are omitted.
  */
-export function listEmbedSummaryParts(embed: Pick<AccountApiTokenSummaryV1, 'grant' | 'embedConfig'>): readonly EmbedSummaryPart[] {
+export function listEmbedSummaryParts(embed: Pick<ApiTokenSettingsToken, 'grant' | 'embedConfig'>): readonly EmbedSummaryPart[] {
     const access = deriveEmbedAccessFromGrantV1(embed.grant);
     const config = embed.embedConfig ?? DEFAULT_EMBED_DRAFT.config;
     const parts: EmbedSummaryPart[] = [{ kind: 'sites', count: access.sites.length }];

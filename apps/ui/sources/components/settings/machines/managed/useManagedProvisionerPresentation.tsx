@@ -39,7 +39,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
-import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
 
 export type ManagedProvisionerRepairFailure = Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>;
@@ -68,9 +68,9 @@ export function describeManagedProvisionerFailure(code: string): string {
 }
 /** Public descriptor only; a preset projection never carries credential options or a native catalog occurrence. */
 export function projectManagedPresetProvisioner(preset: Pick<OpenedManagedMachinePresetV1, 'launch' | 'controller' | 'teamAcquireDelegated'> | null | undefined,
-    savedDescriptor?: Provisioner['descriptor']): Provisioner | undefined {
+    savedDescriptor?: Provisioner['descriptor']): (Pick<Provisioner, 'contribution' | 'descriptor'> & Readonly<{ acquireExecutionTarget?: never }>) | undefined {
     if (!hasOpenedManagedMachinePresetCreationV1(preset) || !preset.teamAcquireDelegated) return undefined;
-    return savedDescriptor ? { contribution: preset.launch.provider, occurrenceId: 'preset', descriptor: savedDescriptor, credentialPurposes: [] } : undefined;
+    return savedDescriptor ? { contribution: preset.launch.provider, descriptor: savedDescriptor } : undefined;
 }
 // Identity, translations, credential titles and repair/option Actions are the
 // presented question. Other Agent, tool and workflow inventories are unrelated.
@@ -175,7 +175,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     purpose?: 'presentation' | 'mark' | 'repair';
     /** Preset authoring consumes the catalog's declarations without demanding executable availability. */
     declarationsOnly?: boolean;
-    onApprovalPending?: (registration: ActionApprovalContinuation) => void;
+    onApprovalPending?: (registration: ActionApprovalRegistration) => void;
 }>) {
     const pluginId = input.provisioner?.contribution.pluginId ?? input.provider?.pluginId;
     const accountReader = usePluginAccountAvailabilityReader(input.accountScope ?? null, pluginId, { enabled: !input.controller });

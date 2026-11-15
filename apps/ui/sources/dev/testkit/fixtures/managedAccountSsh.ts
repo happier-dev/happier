@@ -36,7 +36,7 @@ export const PLUGIN = definePlugin({ id: 'acme.cloud-ssh', version: '1.0.0',
                 try {
                     const userData = buildMachineProvisionerCloudInit(input.bootstrapPublicKey!, {
                         publicKey: input.guestHostPublicKey!, privateKey: new TextDecoder().decode(lease.bytes) });
-                    await context.services.http.request({ url: 'https://cloud-ssh.test/create', method: 'POST',
+                    await context.services.http.request({ url: 'https://cloud-ssh.test/create', method: 'POST', redirect: 'error',
                         body: new TextEncoder().encode(JSON.stringify({ userData })) });
                     return { kind: 'bound' as const, resource: ref({ id: 'guest-1' }) };
                 } finally { await lease.dispose(); }

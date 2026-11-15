@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { buildEmbedParentGrantV1, deriveEmbedAccessFromGrantV1 } from '@happier-dev/protocol/embed';
 
 import {
@@ -28,7 +28,7 @@ function draft(overrides: Partial<EmbedDraft> = {}): EmbedDraft {
     };
 }
 
-function summaryFor(value: EmbedDraft): AccountApiTokenSummaryV1 {
+function summaryFor(value: EmbedDraft): ApiTokenSettingsToken {
     return {
         tokenId: '11111111-1111-4111-8111-111111111111',
         label: value.label,

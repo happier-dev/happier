@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useApiTokenSettingsScopeController } from '@/components/settings/apiTokens/collection/ApiTokenSettingsScope';
@@ -34,7 +34,7 @@ export const EmbedsCollectionRail = React.memo(function EmbedsCollectionRail() {
         const result = runGuardedNavigation(() => router.replace(href as never));
         if (result !== true) fireAndForget(result, { tag });
     }, [router]);
-    const open = React.useCallback((token: AccountApiTokenSummaryV1) => navigate(embedDetailPath(token.tokenId), 'EmbedsCollectionRail.open'), [navigate]);
+    const open = React.useCallback((token: ApiTokenSettingsToken) => navigate(embedDetailPath(token.tokenId), 'EmbedsCollectionRail.open'), [navigate]);
 
     return (
         <CollectionList

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { deriveEmbedAccessFromGrantV1 } from '@happier-dev/protocol/embed';
 import { HAPPIER_PAGE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { useGlobalSearchParams, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -220,7 +220,7 @@ export const EmbedEditScreen = React.memo(function EmbedEditScreen() {
     );
 });
 
-const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: AccountApiTokenSummaryV1 | null; start?: EmbedCreateStart }>) {
+const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: ApiTokenSettingsToken | null; start?: EmbedCreateStart }>) {
     const styles = stylesheet;
     const router = useRouter();
     const controller = useApiTokenSettingsScopeController();

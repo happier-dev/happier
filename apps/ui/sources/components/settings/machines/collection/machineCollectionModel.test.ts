@@ -2,9 +2,9 @@ import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/f
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { ManagedOpaquePresetMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePublicFullV1Schema, ManagedOpaquePresetMachineV1Schema, type ManagedMachinePublicFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { t } from '@/text';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -26,12 +26,12 @@ import {
     managedMachineConsentKey,
 } from './machineCollectionModel';
 
-function managed(id: string, overrides: Partial<ManagedMachineV1> = {}): ManagedMachineV1 {
-    return { id, homeId: 'home-a', custodianAccountId: 'owner',
+function managed(id: string, overrides: Partial<ManagedMachinePublicFullV1> = {}): ManagedMachinePublicFullV1 {
+    return ManagedMachinePublicFullV1Schema.parse({ id, homeId: 'home-a', custodianAccountId: 'owner',
         launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
         controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
         resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { nativeId: 'resource' } },
-        desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, ...overrides };
+        desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, ...overrides });
 }
 
 function machine(id: string, overrides: Partial<Machine> & { displayName?: string; host?: string; platform?: string } = {}): Machine {
@@ -302,8 +302,8 @@ describe('buildMachineCollection', () => {
             .toEqual([expect.objectContaining({ managedId: 'cua2-ended', title: 'Build box · cua2' })]);
     });
     it('counts enrolled Machine identities, never presets or unenrolled creation records', () => {
-        const preset: ManagedMachinePresetV1 = { id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
-            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
+            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller }).opened;
         const collection = buildMachineCollection({ groups: [group('a', [machine('mine'), machine('other')])], groupedByHome: false,
             managedByServerId: { a: [managed('pending'), managed('retired', { archivedAt: 0 })] }, presetsByServerId: { a: [preset] } });
         const liveRows = collection.sections.filter(section => !section.archived).flatMap(section => section.rows);
@@ -341,8 +341,8 @@ describe('buildMachineCollection', () => {
         expect(rows.find(row => row.managedId === 'live')).not.toHaveProperty('presenceWord');
     });
     it('names preset audiences from the exact Home and owner rather than the operation label', () => {
-        const preset: ManagedMachinePresetV1 = { id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
-            owner: { kind: 'team', teamId: 'same-id' }, launch: managed('m').launch, controller: managed('m').controller };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
+            owner: { kind: 'team', teamId: 'same-id' }, launch: managed('m').launch, controller: managed('m').controller }).opened;
         const collection = buildMachineCollection({ groups: [group('a', []), group('b', [])], groupedByHome: true,
             presetsByServerId: { a: [preset, { ...preset, id: 'personal', owner: { kind: 'account', accountId: 'owner' } }], b: [preset] },
             teamNamesByServerId: { a: { 'same-id': 'Design' }, b: { 'same-id': 'Engineering' } } });
@@ -355,8 +355,8 @@ describe('buildMachineCollection', () => {
         expect(collection.sections[0]?.title).toBe(t('machines.destinations.sharedWithoutOwner'));
     });
     it('keeps accessible presets separate from actual machines and scopes archive/search navigation to their Home', () => {
-        const preset: ManagedMachinePresetV1 = { id: 'recipe /', homeId: 'home-a', revision: 2, name: 'Build recipe',
-            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'recipe /', homeId: 'home-a', revision: 2, name: 'Build recipe',
+            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller }).opened;
         const collection = buildMachineCollection({ groups: [group('a', []), group('b', [])], groupedByHome: true,
             presetsByServerId: { a: [preset, { ...preset, id: 'archived', archivedAt: 0 }], b: [{ ...preset, homeId: 'home-b' }] }, query: 'BUILD' });
         expect(collection.sections.flatMap(section => section.rows)).toEqual([]);

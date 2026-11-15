@@ -79,7 +79,7 @@ describe('Account plugin erase native resource review at the real Action and HTT
             // The Account Action's approval is explicitly waived above. The
             // only remaining confirmation is the native-resource review.
             expect(modal.confirm).toHaveBeenCalledOnce();
-            expect(modal.confirm.mock.calls[0]?.[1]).toContain('native-1');
+            expect(modal.confirm.mock.calls[0]?.[2]?.messageParagraphs?.some(paragraph => paragraph.text.includes('native-1'))).toBe(true);
             expect(requests).toEqual([
                 { pluginId: 'example.compute' },
                 ...(choice === 'manual' ? [{ pluginId: 'example.compute', managedResourceDispositions: [{

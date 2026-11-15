@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePublicFullV1Schema, ManagedOpaquePresetMachineV1Schema, type ManagedMachineV1, type ManagedMachinePublicFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { t } from '@/text';
 import { buildManagedPresetHistory, findPresetLastSavedFacts } from './managedPresetHistory';
 
-function row(id: string, patch: Partial<ManagedMachineV1> = {}): ManagedMachineV1 {
-    return { id, homeId: 'home', custodianAccountId: 'owner', preset: { id: 'preset', revision: 1 },
+function row(id: string, patch: Partial<ManagedMachinePublicFullV1> = {}): ManagedMachinePublicFullV1 {
+    return ManagedMachinePublicFullV1Schema.parse({ id, homeId: 'home', custodianAccountId: 'owner', preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
         launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Original guest', choices: { cores: 2 } },
         controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'unsubmitted', creationState: 'active',
-        desired: 'start', desiredWhen: 'now', intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, ...patch };
+        desired: 'start', desiredWhen: 'now', intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, ...patch });
 }
 
 describe('buildManagedPresetHistory', () => {
     it('retains an unreadable sealed resource in history with its public identity and generic label', () => {
         const { launch: _launch, ...structural } = row('sealed');
-        const machine = { ...structural, preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' as const } };
+        const machine = ManagedOpaquePresetMachineV1Schema.parse({ ...structural, preset: { id: 'preset', revision: 4, contentEncryptionMode: 'e2ee' } });
         const history = buildManagedPresetHistory({ serverId: 'home', homeId: 'home', presetId: 'preset', machines: [machine] });
         expect(history).toMatchObject([{ managedId: 'sealed', presetRevision: 4, title: t('common.machine'),
             href: '/settings/machines/managed/sealed?serverId=home' }]);
@@ -24,7 +24,7 @@ describe('buildManagedPresetHistory', () => {
         const enrolled = row('joined', { enrolledMachineId: 'actual-machine', archivedAt: 0, allocation: 'confirmed-absent' });
         const history = buildManagedPresetHistory({ serverId: 'route/home', homeId: 'home', presetId: 'preset',
             machines: [admitted, enrolled, row('foreign', { homeId: 'other' }), row('one-off', { preset: undefined }),
-                row('different', { preset: { id: 'other', revision: 1 } })] });
+                row('different', { preset: { id: 'other', revision: 1, contentEncryptionMode: 'plain' } })] });
         expect(history.map(item => ({ id: item.managedId, revision: item.presetRevision, title: item.title, href: item.href }))).toEqual([
             { id: 'pending', revision: 1, title: 'Original guest', href: '/settings/machines/managed/pending?serverId=route%2Fhome' },
             { id: 'joined', revision: 1, title: 'Original guest', href: '/settings/machines/managed/joined?serverId=route%2Fhome' },

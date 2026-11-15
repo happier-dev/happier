@@ -5,6 +5,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { PrivateLabelStoredV1Schema, projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
 import type { SessionSectionFolderV1 } from '@happier-dev/protocol/actions/sessionSections';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -312,7 +314,7 @@ describe('Settings → Embeds detail (create, real token controller)', () => {
 
         const [created] = createRequests(harness.requests);
         expect(created?.body).toMatchObject({
-            label: 'Leads dashboard',
+            label: { content: { t: 'plain', v: 'Leads dashboard' }, recipients: [] },
             expiresAt: null,
             grant: expect.objectContaining({ approve: true, permissionModes: ['default'] }),
             embedConfig: expect.objectContaining({ v: 1 }),
@@ -364,10 +366,19 @@ describe('Settings → Embeds detail (create, real token controller)', () => {
         });
         const [created] = createRequests(harness.requests);
         expect(created?.body).toMatchObject({
-            label: 'Leads dashboard',
+            label: { content: { t: 'encrypted' } },
             grant: expect.objectContaining({ permissionModes: ['default'] }),
             embedConfig: expect.objectContaining({ v: 1 }),
         });
+        const label = projectPrivateLabelForRecipientV1({
+            stored: PrivateLabelStoredV1Schema.parse(created?.body.label),
+            recipientAccountId: harness.scope.accountId,
+        });
+        expect(await createPrivateLabelClient(harness.scope).open({
+            binding: { entity: 'account_api_token', field: 'label', id: harness.controller.getState().reveal!.apiToken.tokenId },
+            label,
+            readPolicy: { kind: 'account-owned', contentEncryptionMode: 'e2ee' },
+        })).toBe('Leads dashboard');
         expect(daysFromNow(created?.body.expiresAt)).toBe(30);
         // An encrypted Account mints a parent that can open session keys, revealed as a combined credential.
         expect(Object.keys(created?.body.encryption as object)).toEqual(['access']);
