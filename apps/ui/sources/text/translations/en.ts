@@ -8545,6 +8545,7 @@ const enSettingsFeatures = {
 
 const enErrors = {
   networkError: 'Network error occurred',
+  machineNotAnswering: 'That Machine isn’t answering. Choose one that’s online, or try again once it’s back.',
   serverError: 'Home error occurred',
   unknownError: 'An unknown error occurred',
   connectionTimeout: 'Connection timed out',
@@ -15187,6 +15188,8 @@ const enSettingsSession = {
   inputBehavior: {
       keepFocusTitle: "Keep composer focused after sending",
       keepFocusSubtitle: "Stay in the message field so you can write the next message right away.",
+      typeToFocusTitle: "Type anywhere to write",
+      typeToFocusSubtitle: "Start typing outside a text field to jump into the message field.",
     title: 'Input behavior',
     footer: 'Configure Enter-to-send and message history behavior.',
     enterToSendEnabledNativeSubtitle: 'Press Enter to send',
@@ -15290,6 +15293,8 @@ const enSettingsSession = {
     visibilityTitle: 'Show usage gauge',
     labelsTitle: 'Show labels',
     labelsSubtitle: 'Name the context and usage gauges beside the composer.',
+    numberTitle: "Ring centre number",
+    numberSubtitle: "Choose the limit for the number inside the rings. If unavailable, use the most constrained limit.",
     visibilityEnabledSubtitle:
       'Show remaining quota next to the composer when available.',
     visibilityHiddenSubtitle: 'Hide quota from the composer.',
@@ -22182,6 +22187,7 @@ const enProjects = {
       domainRoutedOn: ({ machines }: { machines: string }) => `on ${machines}`,
       domainExists: "This address is already on this environment",
       domainCheckAgain: "Check again",
+      domainAdoptTunnel: "Adopt tunnel",
       domainDnsCheck: "Check DNS",
       domainDnsUnchecked: ({ host, machine }: { host: string; machine: string }) => `Check whether ${host} reaches ${machine}`,
       domainDnsMissing: ({ host }: { host: string }) => `No DNS record for ${host} yet`,
@@ -22523,7 +22529,7 @@ const enProjects = {
       databaseConnectionTitle: "Connection",
       databaseConnectionDescription: "How apps reach this database.",
       databaseInternal: "Internal",
-      databaseInternalDetail: "Services in this Environment use this address.",
+      databaseInternalDetail: "Apps here use this address.",
       databasePrivate: "Private network",
       databasePrivateShared: ({ network }: { network: string }) => `Shared on ${network}`,
       databaseNotShared: "Not shared",

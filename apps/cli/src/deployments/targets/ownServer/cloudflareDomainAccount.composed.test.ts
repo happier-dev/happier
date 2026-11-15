@@ -44,6 +44,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import * as installationStore from '@/daemon/identity/store';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
@@ -74,7 +75,9 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 it.each(['connector grant authorization refused', 'create connector grant authorization refused', 'prepared', 'connector admitted Domain child proof', 'adopt omitted configuration', 'adopt omitted configuration result', 'create configuration without version', 'create malformed configuration', 'authored ui', 'authored agent', 'Home Domain admission refused', 'authored domain ingress', 'authored domain ingress null configuration', 'authored domain DNS refused', 'rejected authored', 'vendor unknown', 'content conflict', 'two members', 'partial grant', 'remove shared', 'remove final',
     'recovery Add a3318568 missing selection', 'recovery Add no recorded ingress', 'recovery Add no recorded ingress multiple members', 'remove unprepared absent tunnel', 'remove unprepared partial config', 'remove unprepared foreign route', 'remove unprepared app gone',
     'remove unprepared configuration without version', 'remove unprepared null configuration', 'remove unprepared malformed configuration',
-    'remove unprepared DNS optional pagination', 'remove unprepared tunnel optional pagination'] as const)(
+    'remove unprepared DNS optional pagination', 'remove unprepared tunnel optional pagination',
+    'route failure after tunnel creation', 'native failure after tunnel preparation', 'malformed native result after tunnel preparation',
+    'Home transition refused after tunnel preparation'] as const)(
     'runs the admitted Domain Action and its selected Account child before native work: %s', async scenario => withSocketTempDir(async directory => {
     const app = fastify().withTypeProvider<ZodTypeProvider>();
     enableExternalActionHttpBody(app);
@@ -96,9 +99,13 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const omittedConfiguration = scenario === 'adopt omitted configuration' || omittedConfigurationResult;
     const malformedRemoval = scenario === 'remove unprepared malformed configuration';
     const malformedPreparation = scenario === 'create malformed configuration';
+    const routeFailure = scenario === 'route failure after tunnel creation';
+    const nativeFailure = scenario === 'native failure after tunnel preparation';
+    const malformedNative = scenario === 'malformed native result after tunnel preparation';
+    const transitionRefused = scenario === 'Home transition refused after tunnel preparation';
     const malformedConfigurationValue = 'private-malformed-configuration-value';
     const grantAuthorizationRefused = scenario === 'connector grant authorization refused' || scenario === 'create connector grant authorization refused';
-    const creatingTunnel = createWithoutVersion || malformedPreparation || scenario === 'create connector grant authorization refused' || scenario === 'content conflict';
+    const creatingTunnel = createWithoutVersion || malformedPreparation || routeFailure || scenario === 'create connector grant authorization refused' || scenario === 'content conflict';
     const removing = scenario === 'remove shared' || scenario === 'remove final' || unprepared;
     const actionId = removing ? 'deployments.domains.remove' as const : 'deployments.domains.add' as const;
     const origin = 'https://cloudflare-domain-home.test';
@@ -277,6 +284,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                     observation.removal.routeIds), Buffer.from(observation.removal.proof.signature, 'base64url'), targetKeys.publicKey)).toBe(true);
             }
         }
+        if (transitionRefused) return { ok: false, error: 'deployment_conflict' };
         domain = removing ? { ...domain, revision: domain.revision + 1, placements: [], deletedAtMs: 2 }
             : { ...domain, revision: domain.revision + 1, state: 'active' };
         trace.push(removing ? 'domain-removed' : 'domain-active');
@@ -402,6 +410,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 const body: unknown = await request.json();
                 if (!body || typeof body !== 'object' || !('config' in body)) throw new Error('Expected exact tunnel configuration');
                 remoteConfig = body.config; trace.push('vendor-config');
+                if (routeFailure) return Response.json({ success: true, result: { config: { ingress: [{ service: 'http_status:404' }] } } });
             }
             if (method === 'GET' && omittedConfigurationResult) return Response.json({ success: true });
             // Cloudflare's GET configuration contract makes version optional.
@@ -531,12 +540,14 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 acknowledge({ ok: true, result: { ...observation, proof: signMachineInstallationProof({
                     payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: job.expectedDomainRevision, observation }),
                     privateKey: targetKeys.secretKey }) } });
-            } else if (authoredDomain || scenario === 'two members' && job.machineId === 'receiver') {
+            } else if (authoredDomain || transitionRefused || scenario === 'two members' && job.machineId === 'receiver') {
                 const observation = { capture: job.capture, state: 'active' as const };
                 acknowledge({ ok: true, result: { ...observation, proof: signMachineInstallationProof({
                     payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: job.expectedDomainRevision, observation }),
                     privateKey: targetKeys.secretKey }) } });
-            } else acknowledge({ ok: true, result: { errorCode: 'native_route_unavailable' } });
+            } else acknowledge({ ok: true, result: malformedNative ? {} : nativeFailure ? { errorCode: 'native_effect_failed',
+                failureCause: { phase: 'deployment.domain.native_execution', errorClass: 'Error',
+                    errorCode: 'native_effect_failed', httpStatus: null } } : { errorCode: 'native_route_unavailable' } });
         });
     });
     let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
@@ -585,7 +596,11 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 authorizationToken: authorization.token, privateKey: controller.secretKey }),
             actionsSettings: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined), actionId,
                 surface, approvalRequired: scenario === 'rejected authored' }), operationAcceptance: { operationId: 'domain-operation', accept() {} } };
-        const result = await executor.execute(actionId, input, context);
+        const operations = routeFailure || nativeFailure || malformedNative || transitionRefused ? createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+            resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-operation' }) : undefined;
+        const result = operations ? await operations.runActionOperation({ actionId, input, context,
+            execute: operationContext => executor.execute(actionId, input, operationContext) })
+            : await executor.execute(actionId, input, context);
         if (scenario === 'recovery Add a3318568 missing selection' || scenario === 'recovery Add no recorded ingress multiple members'
             || scenario === 'authored ui' || scenario === 'authored agent') {
             expect(result).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable',
@@ -646,6 +661,27 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 expect(nativeJobs).toMatchObject([{ capture: { listener: 'privateOrigin' },
                     cloudflareConnector: { tunnelId: 'reviewed-tunnel' } }]);
             }
+            return;
+        }
+        if (routeFailure || nativeFailure || malformedNative || transitionRefused) {
+            expect(operations?.store.get({ accountId: 'owner', machineId: 'controller' }, 'domain-operation'), JSON.stringify({ result, trace }))
+                .toMatchObject({ state: 'failed', error: { details: {
+                    recovery: { kind: 'adopt', tunnelId: 'reviewed-tunnel' } } } });
+            expect(result, JSON.stringify({ result, trace })).toMatchObject({ ok: false,
+                errorCode: transitionRefused ? 'deployment_conflict' : malformedNative ? 'invalid_action_transport_output' : routeFailure ? 'outcome_unknown' : 'native_effect_failed',
+                details: { requiredFact: 'cloudflarePreparation', tunnelId: 'reviewed-tunnel',
+                    recovery: { kind: 'adopt', tunnelId: 'reviewed-tunnel' } },
+                ...(malformedNative || transitionRefused ? {} : { failureCause: { phase: routeFailure ? 'deployment.cloudflare.tunnel.routes' : 'deployment.domain.native_execution',
+                    errorClass: 'Error', errorCode: routeFailure ? 'outcome_unknown' : 'native_effect_failed' } }) });
+            expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(2);
+            expect(preparedBody).toMatchObject({ cloudflarePreparation: { tunnelId: 'reviewed-tunnel' } });
+            expect(nativeJobs).toHaveLength(routeFailure ? 0 : 1);
+            if (routeFailure) {
+                expect(trace).toContain('vendor-tunnel-created');
+                expect(vendorRequests.filter(request => request.method === 'POST' && request.path.endsWith('/dns_records'))).toEqual([]);
+            }
+            expect(JSON.stringify(result)).not.toContain('private-minted-connector-token');
+            expect(JSON.stringify(result)).not.toContain('private-cloudflare-api-token');
             return;
         }
         if (malformedRemoval || malformedPreparation) {

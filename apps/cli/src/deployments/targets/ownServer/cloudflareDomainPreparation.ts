@@ -1,9 +1,7 @@
-import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier-dev/protocol';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentDomainArtifactV1, parseMachineSecretGrantSubjectKey,
-    type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { parseMachineSecretGrantSubjectKey, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
@@ -23,10 +21,7 @@ function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', opt
     const { child, providerOutput, failureCause, tunnelId, providerCode = code } = options;
     const failure: ActionExecuteFailure = { ok: false, errorCode: code, error: code,
         details: { requiredFact: 'cloudflarePreparation', ...(providerOutput ? { providerOutput } : {}),
-            ...(tunnelId ? { tunnelId, recovery: { kind: 'adopt' as const, tunnelId } } : {}),
-            remedy: tunnelId
-                ? `Cloudflare tunnel ${tunnelId} remains available. Resolve the reported error, then review this Domain using that tunnel (Adopt). Remove cleans its owned routes while retaining the tunnel.`
-                : 'Inspect the selected Cloudflare tunnel and its owned hostname routes, resolve the reported provider error, then review the Domain operation again.' },
+            ...(tunnelId ? { tunnelId } : {}) },
         failureCause: child?.failureCause ?? failureCause ?? projectActionFailureCauseV1(Object.assign(new Error(providerCode), { code: providerCode }), `deployment.domain.cloudflare_${phase}`),
         ...(typeof child?.effectAttempted === 'boolean' ? { effectAttempted: child.effectAttempted } : {}) };
     throw Object.assign(new Error(code, { cause: failure }), { code });
@@ -38,16 +33,15 @@ type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; provi
 
 /** One Account operation prepares a shared tunnel; each real target receives its own sealed grant. */
 export async function prepareCloudflareDomainForHost(input: Readonly<{
-    domain: DeploymentDomainHeaderV1; topology: DeploymentDomainTopologyV1; context: ActionExecutorContext;
+    domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1;
+    topology: DeploymentDomainTopologyV1; context: ActionExecutorContext;
     host: Readonly<{ serverId: string; machineId: string; credentials: StoredCredentials; installedCredentials?: StoredCredentials;
-        serverHttpBaseUrl: string; open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
+        serverHttpBaseUrl: string;
         persistPreparedContent: ReturnType<typeof createOwnServerDomainContentWriter> }>;
-}>): Promise<DeploymentDomainHeaderV1> {
-    const { host, domain, topology, context } = input;
-    const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
-    if (!opened.ok) return refuseDeploymentArtifactRead(opened);
-    const selected = readCloudflareNamedControllerSelection(opened.content.ingress);
-    if (!selected) return domain;
+}>): Promise<Readonly<{ domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1 }>> {
+    const { host, domain, content, topology, context } = input;
+    const selected = readCloudflareNamedControllerSelection(content.ingress);
+    if (!selected) return { domain, content };
     const origin = topology.tunnelOrigin;
     const identity = readInstallationIdentityIfExistsSync();
     const child = context.hostReviewedChild;
@@ -58,8 +52,8 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
     const admissions: Awaited<ReturnType<typeof readEnvironmentDomainSecretLaunchAdmissionForHost>>[] = [];
     const acknowledged: Grant[] = [];
-    const previous = opened.content.cloudflarePreparation;
-    const desired = [{ hostname: opened.content.hostname, ...(opened.content.target.path ? { path: opened.content.target.path } : {}),
+    const previous = content.cloudflarePreparation;
+    const desired = [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
         service: origin.service }];
     try {
         for (const member of origin.members) {
@@ -88,6 +82,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
         const knownSubject = acknowledged[0] && parseMachineSecretGrantSubjectKey(acknowledged[0].grantRef);
         const tunnelId = prepared?.tunnelId ?? (knownSubject?.kind === 'connectorToken' ? knownSubject.connectorId : undefined);
         let updated = domain;
+        let preparedContent = content;
         if (tunnelId) {
             const connectors = acknowledged.map(grant => {
                 const member = origin.members.find(item => item.machineId === grant.machineId && item.installationId === grant.installationId);
@@ -97,11 +92,12 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             const capture = domain.placements?.find(item => item.desired);
             if (!capture) return refuse('target_mismatch');
             try {
-                updated = await host.persistPreparedContent({ domain, capture, context, content: { ...opened.content,
+                preparedContent = { ...content,
                     cloudflarePreparation: { tunnelId, owned: desired.map(({ service, ...route }) => ({ ...route, expectedService: service })),
                         dnsOwnership: [...(prepared?.dnsOwnership ?? previous?.dnsOwnership ?? selected.controller.dnsOwnership)],
                         connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
-                            old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } } });
+                            old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } };
+                updated = await host.persistPreparedContent({ domain, capture, context, content: preparedContent });
             } catch (error) {
                 const failureCause = projectActionFailureCauseV1(error, 'deployment.domain.cloudflare_preparation');
                 return refuseCloudflare(failureCause.errorCode ?? 'outcome_unknown', 'preparation', { failureCause, tunnelId });
@@ -111,7 +107,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
         if (prepared?.kind !== 'prepared') return refuseCloudflare(prepared?.kind === 'unknown' ? 'outcome_unknown'
             : prepared?.code ?? 'provider_unavailable', 'preparation', { providerCode: prepared?.code ?? 'provider_unavailable',
             providerOutput: prepared?.providerOutput, failureCause: prepared?.failureCause, tunnelId });
-        return updated;
+        return { domain: updated, content: preparedContent };
     } finally { await Promise.all(admissions.map(item => item.release?.())); }
 }
 

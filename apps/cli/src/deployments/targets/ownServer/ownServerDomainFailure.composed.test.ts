@@ -32,10 +32,11 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
     await withConfiguredDaemonTestHome({ prefix: 'domain-service-failure-' }, async () => {
         const installation = await readOrCreateInstallationIdentity();
         const endpoint = 'https://domain-failure.test';
-        const environment = createDeploymentEnvironmentDetailV1();
-        const serverId = environment.environment.serverId;
+        const serverId = 'srv_domain_failure';
+        const base = createDeploymentEnvironmentDetailV1();
+        const environment = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId } });
         const machineId = 'receiver';
-        const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, board: { enabled: true } } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_domain_failure' } } });
+        const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, board: { enabled: true } } }, capabilities: { serverIdentity: { serverIdentityId: serverId } } });
         vi.stubGlobal('fetch', async () => Response.json(features));
         const machine = { id: machineId, kind: 'persistent', active: true, installationId: installation.installationId,
             revokedAt: null, replacedByMachineId: null,
@@ -163,7 +164,7 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
                     machineId, installationId: installation.installationId }), context));
             };
             const { executor } = createCliActionExecutorHarness({ token: credentials.token, sessionId: '', mode: 'plain', ctx: null,
-                serverHttpBaseUrl: endpoint, serverId, serverIdentityId: 'srv_domain_failure', machineId, deploymentAction: deployment,
+                serverHttpBaseUrl: endpoint, serverId, serverIdentityId: serverId, machineId, deploymentAction: deployment,
                 onApprovalRequested: (id, signal, decide) => onApprovalRequested?.(id, signal, decide) }, {
                 ...createUnavailableActionTransportDeps(), deploymentAction: deployment,
                 resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deployment),
@@ -180,8 +181,8 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
                     return { ok: true };
                 },
             });
-            const context = { authority: 'account_automation' as const, runtimeAccountId: 'owner', serverId,
-                serverIdentityId: 'srv_domain_failure', defaultSessionMachineId: machineId,
+            const context = { authority: 'present_user' as const, runtimeAccountId: 'owner', serverId,
+                serverIdentityId: serverId, defaultSessionMachineId: machineId,
                 externalActionTarget: { kind: 'machine' as const, machineId }, actionCaller: { kind: 'host' as const } };
             await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input), '--yes', '--json'], {
                 readCredentialsFn: async () => ({ ...credentials, credentialProvenance: 'stored_session' }),
@@ -194,11 +195,12 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
             });
             const errorCode = scenario === 'service' ? 'service_unavailable' : 'deployment_content_unavailable';
             const step = scenario === 'service' ? 'service_docker' : 'native_execution';
-            const phase = `deployment.domain.${step}`;
+            const phase = scenario === 'service' ? 'deployment.domain.service_docker' : 'deployment.artifact.missing';
+            const errorClass = scenario === 'service' ? 'Error' : 'TypeError';
             const printed = JSON.parse(output);
             const result = { ok: false, errorCode: printed.error?.code, ...printed.error };
             expect(result, JSON.stringify({ httpPaths, error: printed.error })).toMatchObject({ ok: false, errorCode,
-                failureCause: { phase, errorClass: 'Error' },
+                failureCause: { phase, errorClass, errorCode },
                 details: { environmentId: input.environmentId, domainId: input.domainId, step,
                     ...(scenario === 'service' ? { requiredFact: 'managedServiceDocker' } : {}),
                     ...(scenario === 'root_verify' ? {} : { operation: { serverId, machineId, operationId: expect.any(String) } }) } });

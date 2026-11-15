@@ -1205,6 +1205,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             }
             if (scenario === 'Domain Home purpose refused') expect.soft(result).toMatchObject({
                 failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } });
+            else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(result).toMatchObject({
+                failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } });
             else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(result).not.toHaveProperty('failureCause');
             const operation = await executeActionOperationActionV1({ actionId: 'action.operations.get',
                 input: { serverId: 'home', machineId: 'controller', operationId: 'domain-operation' },
@@ -1213,6 +1215,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 errorCode, details } } });
             if (scenario === 'Domain Home purpose refused') expect.soft(operation).toMatchObject({ operation: { error: {
                 failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } } } });
+            else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(operation).toMatchObject({ operation: { error: {
+                failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } } } });
             else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(operation).not.toHaveProperty('operation.error.failureCause');
             const { contentArtifactId: _artifactId, contentHeaderVersion: _headerVersion,
                 contentBodyVersion: _bodyVersion, ...authoredScope } = input;
@@ -1250,6 +1254,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 }
                 if (scenario === 'Domain Home purpose refused') expect.soft(observed).toMatchObject({ execution: {
                     failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } } });
+                else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(observed).toMatchObject({ execution: {
+                    failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } } });
                 else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(observed).not.toHaveProperty('execution.failureCause');
                 expect(JSON.stringify(observed)).not.toContain('Private network transport context');
             }

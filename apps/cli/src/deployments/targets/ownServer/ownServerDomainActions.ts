@@ -28,22 +28,26 @@ import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
 import { isActionExecuteFailure, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 type DomainAction = DeploymentDomainChildActionIdV1;
 // The Domain mode owner presents native setup decisions without reading or
 // deciding Machine administrator/network policy a second time.
-type DomainNativeFailureScope = Readonly<{ environmentId: string; domainId: string; step: 'native_execution' }>;
+type DomainNativeFailureScope = Readonly<{ environmentId: string; domainId: string; step: 'native_execution'; tunnelId?: string }>;
 const failure = (reason: string, details?: unknown, failureCause?: unknown, effectAttempted?: unknown, nativeScope?: DomainNativeFailureScope) => {
     const errorCode = reason === 'mode_none' || reason === 'not_preauthorized' ? 'machine_admin_access_required'
         : reason === 'machine_reachability_posture_unavailable' ? 'machine_network_review_required' : reason;
     const parsedCause = failureCause === undefined ? undefined : readActionFailureCauseV1(failureCause);
-    const scoped = nativeScope && (!isRecord(details) || typeof details.step !== 'string')
-        ? { ...(isRecord(details) ? details : {}), ...nativeScope } : details;
-    const recovery = isRecord(scoped) && scoped.step === 'native_execution'
-        ? projectDeploymentFailureRecoveryV1(scoped) : scoped;
+    const scoped = nativeScope
+        ? { ...nativeScope, ...(isRecord(details) ? details : {}) } : details;
+    const recoveryFacts = nativeScope && isRecord(scoped) && typeof scoped.tunnelId === 'string' ? { ...scoped,
+        ...(scoped.requiredFact === undefined || scoped.requiredFact === 'nativeExecutionResult' ? { requiredFact: 'cloudflarePreparation' } : {}),
+        recovery: { kind: 'adopt' as const, tunnelId: scoped.tunnelId },
+        remedy: `${typeof scoped.remedy === 'string' ? `${scoped.remedy} ` : ''}Cloudflare tunnel ${scoped.tunnelId} remains available. Resolve the reported error, then review this Domain using that tunnel (Adopt). Remove cleans its owned routes while retaining the tunnel.` } : scoped;
+    const recovery = isRecord(recoveryFacts) && recoveryFacts.step === 'native_execution'
+        ? projectDeploymentFailureRecoveryV1(recoveryFacts) : recoveryFacts;
     return { ok: false as const, errorCode, error: errorCode, ...(recovery === undefined ? {} : { details: recovery }),
         ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
         ...(parsedCause === undefined ? {} : { failureCause: parsedCause }) };
@@ -346,107 +350,122 @@ export function createOwnServerDomainActions(host: Readonly<{
         if (!isDeploymentDomainChildActionIdV1(actionId)) return failure('unsupported_action');
         let issued = false;
         let nativeScope: DomainNativeFailureScope | undefined;
-        try {
-            const parsed = DeploymentActionInputSchemasV1[actionId].parse(raw);
-            if ('mode' in parsed) return await previewOwnServerDomainDns(parsed, context, host);
-            let input = parsed;
-            let topology: DeploymentDomainTopologyV1 | undefined;
-            if (isDeploymentDomainAddActionIdV1(actionId)) {
-                if (!context.externalActionExecutionAuthorization || !context.originalActionEnvelope) return failure('action_forbidden');
-                const original = DeploymentActionInputSchemasV1[actionId].parse(input);
-                const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
-                const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
-                if (!link) return failure('target_mismatch');
-                const preparedInput = 'content' in original ? await (async () => {
-                    const { content, ...metadata } = original;
-                    return { ...metadata, ...await host.createContent(content, environment.environment.owner, context) };
-                })() : original;
-                const opened = 'content' in original ? { ok: true as const, content: original.content }
-                    : readDeploymentDomainArtifactV1(preparedInput, await host.open(preparedInput.contentArtifactId, context));
-                if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
-                const discovered = await discoverOwnServerDomainPlacement({ actionId, input: preparedInput,
-                    environment, content: opened.content, targetLinkId: original.targetLinkId, context }, host);
-                if (!discovered.ok) return discovered;
-                if (original.placements && !isDeepStrictEqual(original.placements, discovered.placements)) return failure('target_mismatch');
-                input = { ...preparedInput, placements: [...discovered.placements] };
-                topology = discovered.topology;
-            }
-            let domain: DeploymentDomainHeaderV1;
-            if (admitted) domain = admitted.domain;
-            else {
-                const accepted = actionId === 'deployments.domains.verify'
-                    ? await host.storage('deployments.domains.get', {
-                        serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId,
-                    }, context) : await host.storage(actionId, input, context);
-                if ('errorCode' in accepted || !('ok' in accepted) || !accepted.ok) return accepted;
-                const loaded = DeploymentActionOutputSchemasV1['deployments.domains.add'].parse(accepted);
-                if (!loaded.ok) return loaded;
-                domain = loaded.domain;
-                if (isDeploymentDomainAddActionIdV1(actionId) && domain.state === 'active'
-                    || domain.deletedAtMs !== undefined) return loaded;
-            }
-            if (actionId === 'deployments.domains.verify' && domain.revision !== input.expectedDomainRevision)
-                return failure('deployment_conflict');
-            let captures = domain.placements ?? [];
-            if (!captures.length) return failure('native_route_unavailable');
-            const actionOperationId = context.operationAcceptance?.operationId;
-            if (actionId !== 'deployments.domains.verify' && !actionOperationId) return failure('operation_unavailable');
-            nativeScope = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution' };
-            let privateContent: DeploymentDomainContentV1 | undefined = admitted?.content;
-            if (isDeploymentDomainAddActionIdV1(actionId) && topology?.tunnelOrigin) {
-                domain = await prepareCloudflareDomainForHost({ domain, topology, context, host });
-                captures = domain.placements ?? [];
-                const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
-                if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
-                privateContent = opened.content;
-            } else if (actionId === 'deployments.domains.verify' || isDeploymentDomainRemoveActionIdV1(actionId)) {
-                if (!privateContent) {
-                    const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
+        let privateContent: DeploymentDomainContentV1 | undefined = admitted?.content;
+        const run = async (): Promise<Awaited<ReturnType<Execute>>> => {
+            try {
+                const parsed = DeploymentActionInputSchemasV1[actionId].parse(raw);
+                if ('mode' in parsed) return await previewOwnServerDomainDns(parsed, context, host);
+                let input = parsed;
+                let topology: DeploymentDomainTopologyV1 | undefined;
+                if (isDeploymentDomainAddActionIdV1(actionId)) {
+                    if (!context.externalActionExecutionAuthorization || !context.originalActionEnvelope) return failure('action_forbidden');
+                    const original = DeploymentActionInputSchemasV1[actionId].parse(input);
+                    const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
+                    const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
+                    if (!link) return failure('target_mismatch');
+                    const preparedInput = 'content' in original ? await (async () => {
+                        const { content, ...metadata } = original;
+                        return { ...metadata, ...await host.createContent(content, environment.environment.owner, context) };
+                    })() : original;
+                    const opened = 'content' in original ? { ok: true as const, content: original.content }
+                        : readDeploymentDomainArtifactV1(preparedInput, await host.open(preparedInput.contentArtifactId, context));
                     if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                     privateContent = opened.content;
+                    const discovered = await discoverOwnServerDomainPlacement({ actionId, input: preparedInput,
+                        environment, content: opened.content, targetLinkId: original.targetLinkId, context }, host);
+                    if (!discovered.ok) return discovered;
+                    if (original.placements && !isDeepStrictEqual(original.placements, discovered.placements)) return failure('target_mismatch');
+                    input = { ...preparedInput, placements: [...discovered.placements] };
+                    topology = discovered.topology;
                 }
-                if (isDeploymentDomainRemoveActionIdV1(actionId)) await disableCloudflareDomainForHost(privateContent, context);
-            }
-            // Retire a changed route before replacing the same exact native id.
-            // Both effects spend the captured admission, not another Action.
-            const observations = [];
-            for (const capture of [...captures.filter(capture => !capture.desired), ...captures.filter(capture => capture.desired)]) {
+                let domain: DeploymentDomainHeaderV1;
+                if (admitted) domain = admitted.domain;
+                else {
+                    const accepted = actionId === 'deployments.domains.verify'
+                        ? await host.storage('deployments.domains.get', {
+                            serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId,
+                        }, context) : await host.storage(actionId, input, context);
+                    if ('errorCode' in accepted || !('ok' in accepted) || !accepted.ok) return accepted;
+                    const loaded = DeploymentActionOutputSchemasV1['deployments.domains.add'].parse(accepted);
+                    if (!loaded.ok) return loaded;
+                    domain = loaded.domain;
+                    if (isDeploymentDomainAddActionIdV1(actionId) && domain.state === 'active'
+                        || domain.deletedAtMs !== undefined) return loaded;
+                }
+                if (actionId === 'deployments.domains.verify' && domain.revision !== input.expectedDomainRevision)
+                    return failure('deployment_conflict');
+                let captures = domain.placements ?? [];
+                if (!captures.length) return failure('native_route_unavailable');
+                const actionOperationId = context.operationAcceptance?.operationId;
+                if (actionId !== 'deployments.domains.verify' && !actionOperationId) return failure('operation_unavailable');
+                nativeScope = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution',
+                    ...(isDeploymentDomainAddActionIdV1(actionId) && privateContent?.cloudflarePreparation
+                        ? { tunnelId: privateContent.cloudflarePreparation.tunnelId } : {}) };
+                if (isDeploymentDomainAddActionIdV1(actionId) && topology?.tunnelOrigin) {
+                    // Add's discovery already opened this private content; preparation returns its own authored update.
+                    const prepared = await prepareCloudflareDomainForHost({ domain, content: privateContent!, topology, context, host });
+                    domain = prepared.domain;
+                    captures = domain.placements ?? [];
+                    privateContent = prepared.content;
+                    if (privateContent.cloudflarePreparation) nativeScope = { ...nativeScope,
+                        tunnelId: privateContent.cloudflarePreparation.tunnelId };
+                } else if (actionId === 'deployments.domains.verify' || isDeploymentDomainRemoveActionIdV1(actionId)) {
+                    if (!privateContent) {
+                        const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
+                        if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
+                        privateContent = opened.content;
+                    }
+                    if (isDeploymentDomainRemoveActionIdV1(actionId)) await disableCloudflareDomainForHost(privateContent, context);
+                }
+                // Retire a changed route before replacing the same exact native id.
+                // Both effects spend the captured admission, not another Action.
+                const observations = [];
+                for (const capture of [...captures.filter(capture => !capture.desired), ...captures.filter(capture => capture.desired)]) {
+                    context.signal?.throwIfAborted();
+                    const cloudflareConnector = privateContent && cloudflareDomainConnectorForTarget(privateContent, capture.placement);
+                    const result = await host.dispatch({ v: 1, kind: 'domain', actionId,
+                        input: { serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId },
+                        machineId: capture.placement.machineId, installationId: capture.placement.installationId,
+                        expectedDomainRevision: domain.revision, capture,
+                        ...(topology ? { topology } : {}),
+                        ...(actionOperationId ? { actionOperationId } : {}),
+                        ...(cloudflareConnector && (capture.desired || capture.retireSharedTunnel === true) ? { cloudflareConnector } : {}),
+                    }, context);
+                    if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string')
+                        return failure(result.errorCode, 'details' in result ? result.details : nativeScope,
+                            'failureCause' in result ? result.failureCause : undefined,
+                            'effectAttempted' in result ? result.effectAttempted : undefined);
+                    const observation = DeploymentDomainObservationV1Schema.safeParse(result);
+                    if (!observation.success) return failure('invalid_action_transport_output');
+                    observations.push(observation.data);
+                }
+                const body = DeploymentDomainTransitionInputV1Schema.parse({ serverId: input.serverId,
+                    environmentId: input.environmentId, domainId: input.domainId, expectedDomainRevision: domain.revision, observations });
+                const path = `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/domains/${encodeURIComponent(input.domainId)}/transitions`;
+                const headers = await host.headers(context, actionId satisfies DomainAction, { method: 'POST', path, body });
                 context.signal?.throwIfAborted();
-                const cloudflareConnector = privateContent && cloudflareDomainConnectorForTarget(privateContent, capture.placement);
-                const result = await host.dispatch({ v: 1, kind: 'domain', actionId,
-                    input: { serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId },
-                    machineId: capture.placement.machineId, installationId: capture.placement.installationId,
-                    expectedDomainRevision: domain.revision, capture,
-                    ...(topology ? { topology } : {}),
-                    ...(actionOperationId ? { actionOperationId } : {}),
-                    ...(cloudflareConnector && (capture.desired || capture.retireSharedTunnel === true) ? { cloudflareConnector } : {}),
-                }, context);
-                if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string')
-                    return failure(result.errorCode, 'details' in result ? result.details : nativeScope,
-                        'failureCause' in result ? result.failureCause : undefined,
-                        'effectAttempted' in result ? result.effectAttempted : undefined, nativeScope);
-                const observation = DeploymentDomainObservationV1Schema.safeParse(result);
-                if (!observation.success) return failure('invalid_action_transport_output');
-                observations.push(observation.data);
+                issued = true;
+                const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
+                    headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
+                const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
+                return settled.success ? settled.data : failure('outcome_unknown', nativeScope);
+            } catch (error) {
+                const diagnostic = issued ? projectDeploymentFailure('outcome_unknown', error, 'deployment.domain.native_execution')
+                    : projectDeploymentException(error, { signal: context.signal, phase: 'deployment.domain.native_execution' });
+                return { ...failure(diagnostic.errorCode, !issued ? (error instanceof Error && 'details' in error ? error.details : undefined)
+                    ?? diagnostic.details ?? nativeScope : nativeScope,
+                    diagnostic.failureCause, diagnostic.effectAttempted), error: diagnostic.error };
             }
-            const body = DeploymentDomainTransitionInputV1Schema.parse({ serverId: input.serverId,
-                environmentId: input.environmentId, domainId: input.domainId, expectedDomainRevision: domain.revision, observations });
-            const path = `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/domains/${encodeURIComponent(input.domainId)}/transitions`;
-            const headers = await host.headers(context, actionId satisfies DomainAction, { method: 'POST', path, body });
-            context.signal?.throwIfAborted();
-            issued = true;
-            const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
-                headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
-            const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
-            return settled.success ? settled.data : failure('outcome_unknown', nativeScope);
-        } catch (error) {
-            const diagnostic = projectDeploymentFailure(issued ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
-                error, 'deployment.domain.native_execution');
-            return { ...failure(diagnostic.errorCode, !issued ? (error instanceof Error && 'details' in error ? error.details : undefined)
-                ?? diagnostic.details ?? nativeScope : nativeScope,
-                diagnostic.failureCause, diagnostic.effectAttempted, nativeScope), error: diagnostic.error };
-        }
+        };
+        const result = await run();
+        // All post-admission failures settle here, including Home refusals and malformed native results.
+        // Preparation may have created a tunnel before throwing; its details carry that same owned context.
+        if (!nativeScope) return result;
+        if (isActionExecuteFailure(result)) return { ...failure(result.errorCode, result.details,
+            result.failureCause, result.effectAttempted, nativeScope), error: result.error };
+        if ('ok' in result && !result.ok && 'error' in result && typeof result.error === 'string')
+            return failure(result.error, undefined, undefined, undefined, nativeScope);
+        return result;
     };
     async function reconcileMembership(input: DomainMembershipInput & Readonly<{ deploymentId: string }>,
         admittedContext: ActionExecutorContext, admitted?: Readonly<{

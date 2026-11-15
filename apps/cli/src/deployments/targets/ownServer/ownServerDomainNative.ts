@@ -1,4 +1,3 @@
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { homedir } from 'node:os';
 import {
     observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
@@ -48,7 +47,7 @@ import { runElevatedMachineSetupIntent,
     type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
-import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { projectDeploymentException } from '@/deployments/deploymentFailure';
 import { logger } from '@/ui/logger';
 
 /** Captured by the ApiMachine metadata owner, never a synthetic Machine RPC. */
@@ -506,9 +505,7 @@ export function createOwnServerDomainNative(host: Readonly<{
         try { return job.kind === 'domainDns' ? await preview(job, context)
             : job.kind === 'domainDiscover' ? await discover(job, context) : await execute(job, context); }
         catch (error) {
-            const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
-                : normalizeActionExecutorThrownError(error).errorCode,
-                error, 'deployment.domain.native_execution');
+            const projected = projectDeploymentException(error, { signal: context.signal, phase: 'deployment.domain.native_execution' });
             const failureCause = error instanceof Error && 'failureCause' in error && error.failureCause !== undefined
                 ? readActionFailureCauseV1(error.failureCause) : undefined;
             return { ...failure(job, projected.errorCode,

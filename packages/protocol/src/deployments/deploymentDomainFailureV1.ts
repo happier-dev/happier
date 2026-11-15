@@ -6,6 +6,14 @@ import { MachineElevationFailureV1Schema } from '../machines/adminAccessV1.js';
 import { ExternalActionAuthorizationRefusalPhaseSchema } from '../actions/externalActionAuthorizationRefusalPhase.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 
+export const DeploymentDomainCloudflareRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('adopt'), tunnelId: id,
+}));
+export type DeploymentDomainCloudflareRecoveryV1 = z.infer<typeof DeploymentDomainCloudflareRecoveryV1Schema>;
+const cloudflareRecoveryFields = {
+    tunnelId: z.optional(id), recovery: z.optional(DeploymentDomainCloudflareRecoveryV1Schema),
+};
+
 /** Content-free native service refusal facts; the host adds its actual operation receipt. */
 export const deploymentDomainFailureFactsV1 = {
     service_docker: 'managedServiceDocker',
@@ -17,6 +25,7 @@ export type DeploymentDomainFailureStepV1 = keyof typeof deploymentDomainFailure
 const domainFailureSteps = Object.keys(deploymentDomainFailureFactsV1) as [DeploymentDomainFailureStepV1, ...DeploymentDomainFailureStepV1[]];
 const deploymentDomainServiceFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
     environmentId: id, domainId: id, step: z.enum(domainFailureSteps),
+    ...cloudflareRecoveryFields,
     requiredFact: z.enum(Object.values(deploymentDomainFailureFactsV1)),
     remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
     operation: z.optional(ActionOperationAddressV1Schema),
@@ -40,6 +49,7 @@ export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.unio
             z.nonoptional(MachineElevationFailureV1Schema.shape.requiredFact)]),
         remedy: z.string().check(z.trim(), z.minLength(1)) }),
     z.strictObject({ environmentId: id, domainId: id, step: z.literal('native_execution'),
+        ...cloudflareRecoveryFields,
         /** Authored endpoint templates, issue paths and expected types; never response values. */
         providerOutput: z.optional(z.string().check(z.minLength(1))),
         requiredFact: z.optional(z.union([DeploymentDomainNativeRequiredFactV1Schema, ExternalActionAuthorizationRefusalPhaseSchema,

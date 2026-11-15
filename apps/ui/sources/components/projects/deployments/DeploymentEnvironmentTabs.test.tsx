@@ -687,6 +687,7 @@ describe('Environment → Domains', () => {
       expect(screen.getTextContent()).toContain('required_fact_unavailable');
       expect(screen.getTextContent()).toContain('publicCaddyListener');
       expect(screen.getTextContent()).toContain('Restore the public listener, then retry Add.');
+      expect(screen.findByTestId('project-deployments.environment.domains.d1.adopt')).toBeNull();
       const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
       const menu = screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel === item.content.hostname)!;
       expect(menu.props.items.map((entry: { id: string }) => entry.id)).toEqual(['verify', 'remove']);
@@ -843,6 +844,71 @@ describe('Environment → Overview before the first deploy', () => {
 });
 
 describe('Environment → manager edits', () => {
+  it.each([false, true])('reviews adoption of the known Domain tunnel through the real Add Action (prepared=%s)', async prepared => {
+    await homes.reset();
+    const homeId = `srv_${'c'.repeat(32)}`;
+    const serverId = await homes.addHome({ name: 'Tunnel recovery', serverUrl: 'https://tunnel-recovery.test',
+      serverIdentityId: homeId, accountId: scope.accountId, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId: homeId, revision: 7 } });
+    const link = detail.targetLinks[0]!.targetLink;
+    const tunnelId = 'known-tunnel';
+    const item = domain('recover-domain', 'app.example.test', 'pending');
+    const address = { serverId: homeId, machineId: detail.environment.controllerMachineId, operationId: 'failed-domain-add' };
+    const recovery = { kind: 'adopt' as const, tunnelId };
+    const content = { ...item.content, ingress: { provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+      config: { hostname: item.content.hostname, controller: { accountId: 'cloudflare-account', zoneId: 'zone',
+        tunnel: { kind: 'create', name: 'App tunnel' }, owned: [], dnsOwnership: [],
+        connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } } },
+      credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const,
+        account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' } } }] },
+      ...(prepared ? { cloudflarePreparation: { tunnelId, owned: [], dnsOwnership: [] } } : {}) };
+    const header = { ...item.domain, targetLinkId: link.id, revision: 3, contentBodyVersion: prepared ? 2 : 1,
+      operationAddress: address };
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: address.operationId,
+      revision: 2, actionId: 'deployments.domains.add', state: 'failed', scope: {
+        accountId: scope.accountId, machineId: address.machineId }, title: 'Add deployment domain',
+      createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', error: {
+        errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { environmentId: detail.environment.id,
+          domainId: header.id, step: 'native_execution', requiredFact: 'cloudflarePreparation',
+          remedy: 'Review the retained tunnel.', tunnelId, recovery } } });
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+      body: { ok: true, environment: detail.environment, targetLinks: [link] },
+    });
+    const received: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.domains.add',
+      machineId: detail.environment.controllerMachineId, installationId: 'installation-a', tokenEpoch: 0,
+      execute: input => { received.push(input); return { ok: true, environmentId: detail.environment.id,
+        revision: 8, domain: { ...header, state: 'active', revision: 4 } }; } });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('domains', detail, {
+      listDomains: async () => ({ ok: true, value: { items: [{ ...item, domain: header, content }], nextCursor: null } }),
+    }, { serverId, domainActions: actions });
+    await act(async () => actionOperationStore.mergeSnapshots({ serverId: homeId, snapshots: [snapshot] }));
+    const id = `project-deployments.environment.domains.${header.id}.adopt`;
+    try {
+      expect(await settle(`project-deployments.environment.domains.${header.id}`)).not.toBeNull();
+      expect(screen.findAllHostsByTestId('approvals.technical-details')).toHaveLength(1);
+      expect(await settle(id), screen.getTextContent()).not.toBeNull();
+      expect(received).toEqual([]);
+      await screen.pressByTestIdAsync(id);
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({ environmentId: detail.environment.id, domainId: header.id,
+        expectedRevision: 7, expectedDomainRevision: 3, targetLinkId: link.id, expectedTargetLinkRevision: link.revision });
+      if (prepared) {
+        expect(received[0]).toMatchObject({ contentArtifactId: header.contentArtifactId,
+          contentHeaderVersion: header.contentHeaderVersion, contentBodyVersion: 2 });
+        expect(received[0]).not.toHaveProperty('content');
+      } else {
+        expect(received[0]).toMatchObject({ content: { hostname: content.hostname, ingress: { config: {
+          controller: { tunnel: { kind: 'adopt', tunnelId, name: 'App tunnel' } },
+        } } } });
+        expect(received[0]).not.toHaveProperty('recovery');
+      }
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); }
+  });
+
   it.each(['neverDeployed', 'deployed', 'failed'] as const)('offers first-Machine replacement only before deployment history exists (%s)', async state => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'First Machine', serverUrl: 'https://first-machine.test',

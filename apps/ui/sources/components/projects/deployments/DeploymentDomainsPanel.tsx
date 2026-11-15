@@ -3,6 +3,8 @@ import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machin
 import type { OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployment-protocol/v1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
+import type { DeploymentDomainCloudflareRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { DeploymentDomainContentV1, DeploymentEnvironmentContentV1, DeploymentTargetLinkContentV1 } from '@happier-dev/deployment-protocol/v1';
@@ -170,6 +172,30 @@ export function DeploymentDomainsPanel(
   const remove = useEventCallback((item: DomainItem) => {
     if (editing) void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item)));
   });
+  const adopt = useEventCallback((item: DomainItem, recovery: DeploymentDomainCloudflareRecoveryV1) => {
+    if (!editing?.targetLink) return;
+    const targetLink = editing.targetLink;
+    void press(() => {
+      const input = { ...domainOperands(props.environmentId, editing, item), targetLinkId: targetLink.id,
+        expectedTargetLinkRevision: targetLink.revision };
+      // Prepared content already owns the connector facts; the host resumes that exact tunnel.
+      if (item.content.cloudflarePreparation) {
+        return editing.actions.addDomain({ ...input, contentArtifactId: item.domain.contentArtifactId,
+          contentHeaderVersion: item.domain.contentHeaderVersion, contentBodyVersion: item.domain.contentBodyVersion });
+      }
+      // Preparation may have failed before it persisted. Change the original explicit choice to Adopt,
+      // keeping the credential, zone, connector and route inputs for the same reviewed Add Action.
+      const ingress = item.content.ingress;
+      const config = ingress?.config;
+      const controller = isRecord(config) ? config.controller : null;
+      const tunnel = isRecord(controller) ? controller.tunnel : null;
+      if (!ingress || !isRecord(config) || !isRecord(controller) || !isRecord(tunnel) || typeof tunnel.name !== 'string') {
+        throw new Error(t('projects.deployments.domainIngressChoose'));
+      }
+      return editing.actions.addDomain({ ...input, content: { ...item.content, ingress: { ...ingress,
+        config: { ...config, controller: { ...controller, tunnel: { kind: 'adopt', tunnelId: recovery.tunnelId, name: tunnel.name } } } } } });
+    });
+  });
   const configureChecks = useEventCallback((item: DomainItem, anchorRef: React.RefObject<View | null>) => setCheckSetup({ item, anchorRef }));
   const choose = useEventCallback((item: DomainItem, role: DomainCredentialRole) => { void chooseCredential(item, role); });
   const canBind = setBindings !== undefined && content !== null;
@@ -178,11 +204,12 @@ export function DeploymentDomainsPanel(
   const addDnsRecords = useEventCallback((item: DomainItem) => setDnsFor(item));
   const canWriteDns = !!editing?.actions.createDomainDns && !!editing.actions.inspectPlatformTarget;
   const canEdit = !!editing;
+  const canAdopt = !!editing?.targetLink;
   const rowActions = React.useMemo<DeploymentDomainRowActions | null>(() => canEdit ? {
-    verify, remove, ...(canCheck ? { configureChecks } : {}),
+    verify, remove, ...(canAdopt ? { adopt } : {}), ...(canCheck ? { configureChecks } : {}),
     ...(canBind ? { missingCredentials: missingFor, chooseCredential: choose } : {}),
     ...(canWriteDns ? { addDnsRecords } : {}),
-  } : null, [addDnsRecords, canEdit, canBind, canCheck, canWriteDns, choose, configureChecks, missingFor, remove, verify]);
+  } : null, [addDnsRecords, adopt, canAdopt, canEdit, canBind, canCheck, canWriteDns, choose, configureChecks, missingFor, remove, verify]);
   const canAdd = editing !== null && editing !== undefined && editing.targetLink !== null;
   // An add's outcome shows inside the open form, beside the Add domain the person pressed.
   const addOutcome = adding && change.outcomeAt === ADD_AT;

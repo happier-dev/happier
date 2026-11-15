@@ -26,8 +26,8 @@ import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/dep
 import { EnvironmentSecretBindingInputV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
-import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
-import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
@@ -57,10 +57,8 @@ export type DeploymentUiBindingsInput = Omit<DeploymentBindingsPatchInputV1, 'se
 export type DeploymentUiBackupConfigureInput = DeploymentBackupConfigureInputV1 extends infer T
     ? T extends unknown ? Omit<T, 'serverId' | 'environmentId' | 'expectedRevision'> : never : never;
 
-export type DeploymentUiDomainAddInput = Readonly<{
-    environmentId: string; expectedRevision: number; targetLinkId: string; expectedTargetLinkRevision: number;
-    content: DeploymentDomainContentV1; domainId?: string; requestKey?: string;
-}>;
+export type DeploymentUiDomainAddInput = DeploymentDomainAddInputV1 extends infer T
+    ? T extends unknown ? Omit<T, 'serverId' | 'domainId' | 'requestKey'> & Readonly<{ domainId?: string; requestKey?: string }> : never : never;
 export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>;
 
 export type DeploymentUiDomainDnsPreviewInput = Omit<DeploymentDomainPreviewInputV1, 'serverId' | 'mode' | 'requestKey'>
@@ -286,11 +284,10 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
          */
         async addDomain(input: DeploymentUiDomainAddInput, operation?: UiActionOperation) {
             assertCurrent();
-            const content = DeploymentDomainContentV1Schema.parse(input.content);
+            const prepared = 'content' in input ? { ...input, content: DeploymentDomainContentV1Schema.parse(input.content) } : input;
             return DeploymentActionOutputSchemasV1['deployments.domains.add'].parse(await invoke('deployments.domains.add', {
-                serverId: lifetime.scope.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision,
-                targetLinkId: input.targetLinkId, expectedTargetLinkRevision: input.expectedTargetLinkRevision,
-                domainId: input.domainId ?? randomUUID(), requestKey: input.requestKey ?? randomUUID(), content,
+                ...prepared, serverId: lifetime.scope.serverId,
+                domainId: input.domainId ?? randomUUID(), requestKey: input.requestKey ?? randomUUID(),
             }, operation));
         },
         /** Remove one address; the Action's irreversible confirmation is the designed one. */

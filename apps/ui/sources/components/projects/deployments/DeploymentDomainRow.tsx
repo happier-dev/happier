@@ -9,6 +9,8 @@ import {
   type DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { DeploymentDomainCloudflareRecoveryV1Schema, type DeploymentDomainCloudflareRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 
 import { ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
 import { presentActionFailureTechnicalDetails } from '@/components/tools/shell/approvals/approvalFailureOutcome';
@@ -42,6 +44,8 @@ export type DeploymentDomainRowActions = Readonly<{
   chooseCredential?: (item: DomainItem, role: DomainCredentialRole) => void;
   /** Opens the provider-owned zone picker for an address whose provider records still wait (Cloudflare DNS). */
   addDnsRecords?: (item: DomainItem) => void;
+  /** Reviews resuming Add with the exact tunnel retained by its failed preparation. */
+  adopt?: (item: DomainItem, recovery: DeploymentDomainCloudflareRecoveryV1) => void;
 }>;
 
 type DomainRowContext = Readonly<{
@@ -288,7 +292,14 @@ function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRo
   const { attention, state, failure } = useDomainRowFacts(item, context);
   const id = `project-deployments.environment.domains.${item.domain.id}`;
   const verify = context.actions?.verify;
-  const checkAgain = attention && verify && state !== 'removing' ? (
+  const failureDetails: unknown = failure?.details;
+  const recovery = DeploymentDomainCloudflareRecoveryV1Schema.safeParse(isRecord(failureDetails) ? failureDetails.recovery : undefined);
+  const adopt = context.actions?.adopt;
+  const adoptTunnel = adopt && recovery.success && state !== 'removing' ? (
+    <RoundButton testID={`${id}.adopt`} size="small" display="secondary" title={t('projects.deployments.domainAdoptTunnel')}
+      disabled={context.disabled} onPress={() => adopt(item, recovery.data)} />
+  ) : null;
+  const checkAgain = !adoptTunnel && attention && verify && state !== 'removing' ? (
     <RoundButton testID={`${id}.checkAgain`} size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')}
       disabled={context.disabled} onPress={() => verify(item)} />
   ) : null;
@@ -311,8 +322,9 @@ function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRo
   const providerCause = observation?.failureCause;
   const providerDetails = providerCause ? presentActionFailureTechnicalDetails({ error: providerCause.errorCode ?? providerCause.phase,
     errorCode: providerCause.errorCode ?? providerCause.phase, failureCause: providerCause }, 'deployment') : null;
-  if (!checkAgain && !addRecords && !investigate && !failure && !providerDetails) return null;
+  if (!adoptTunnel && !checkAgain && !addRecords && !investigate && !failure && !providerDetails) return null;
   return <View style={styles.controls}>
+    {adoptTunnel}
     {addRecords}
     {checkAgain}
     {investigate}
