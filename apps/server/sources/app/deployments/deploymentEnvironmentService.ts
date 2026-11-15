@@ -650,7 +650,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     const retainedCaptures = platformVariables ? nonVariableCaptures(previousBindingCaptures) : [];
     if (platformVariables && !isDeepStrictEqual(retainedCaptures, nonVariableCaptures(input.referencedSavedSecretRevisions)))
         return deploymentFailure('deployment_conflict');
-    const retainedPlatformGrants = platformVariables ? existingGrants.filter(grant => grant.kind === 'secret'
+    const retainedPlatformGrants = platformVariables ? existingGrants.filter((grant): grant is Extract<typeof grant, { kind: 'secret' }> => grant.kind === 'secret'
         && retainedCaptures.some(capture => capture.resourceId === grant.resourceId
             && capture.revision === grant.resourceRevision)) : [];
     if (platformVariables) {
@@ -743,9 +743,10 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                     requiredSubjects.add(machineSecretGrantSubjectKey({ ...common, kind: 'secret', resourceId,
                         resourceRevision: binding.source.resourceRevision }));
                 } else if (binding.purpose === 'variable') {
-                    requiredSubjects.add(machineSecretGrantSubjectKey({ ...common, kind: 'environmentValues',
-                        binding: { purpose: 'variable', phase: binding.phase,
-                            ...(binding.grantRef ? { grantRef: binding.grantRef } : { name: binding.name }) } }));
+                    const subjectBase = { ...common, kind: 'environmentValues' as const };
+                    requiredSubjects.add(machineSecretGrantSubjectKey(binding.grantRef
+                        ? { ...subjectBase, binding: { purpose: 'variable', phase: binding.phase, grantRef: binding.grantRef } }
+                        : { ...subjectBase, binding: { purpose: 'variable', phase: binding.phase, name: binding.name } }));
                 }
             }
         }

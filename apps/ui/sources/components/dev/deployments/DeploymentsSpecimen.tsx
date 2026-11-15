@@ -545,7 +545,7 @@ function specimenPreMigrationBackup(environmentId: string) {
  * `stale` (the confirm finds the check no longer current) or `empty` (nothing to save before replacing).
  */
 function specimenRestore(restore: string) {
-  return async (input: Readonly<{ mode: 'prepare' | 'confirm'; environmentId: string }>) => {
+  return async (input: import('@/components/projects/deployments/deploymentActions').DeploymentUiRestoreInput) => {
     await pause();
     if (input.mode === 'prepare') {
       const environmentId = input.environmentId;

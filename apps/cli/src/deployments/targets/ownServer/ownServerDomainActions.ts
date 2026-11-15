@@ -365,13 +365,14 @@ export function createOwnServerDomainActions(host: Readonly<{
                     const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
                     if (!link) return failure('target_mismatch');
                     // Authored content (app, CLI and agent adds alike) gets its default outside check here, once.
-                    const authored = 'content' in original ? withDeploymentDomainHealthCheckDefaultV1(original.content) : null;
-                    const preparedInput = 'content' in original && authored ? await (async () => {
+                    const prepared = 'content' in original ? await (async () => {
+                        const authored = withDeploymentDomainHealthCheckDefaultV1(original.content);
                         const { content: _authored, ...metadata } = original;
-                        return { ...metadata, ...await host.createContent(authored, environment.environment.owner, context) };
-                    })() : original;
-                    const opened = authored ? { ok: true as const, content: authored }
-                        : readDeploymentDomainArtifactV1(preparedInput, await host.open(preparedInput.contentArtifactId, context));
+                        return { input: { ...metadata, ...await host.createContent(authored, environment.environment.owner, context) },
+                            opened: { ok: true as const, content: authored } };
+                    })() : { input: original,
+                        opened: readDeploymentDomainArtifactV1(original, await host.open(original.contentArtifactId, context)) };
+                    const { input: preparedInput, opened } = prepared;
                     if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                     privateContent = opened.content;
                     const discovered = await discoverOwnServerDomainPlacement({ actionId, input: preparedInput,

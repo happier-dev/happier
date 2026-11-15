@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInstantiateInputV1,
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
-    DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, EnvironmentVariableBindingV1, DeploymentDeployIntentInputV1,
+    DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
     DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -83,7 +83,7 @@ type TemplatePreparationResult = Exclude<DeploymentTemplateInstantiateResultV1, 
     | Omit<TemplateAppliedResult, 'targetLinkId'> & { targetLinkId?: string }
     | ActionExecuteFailure;
 function materializeTemplateBindings(current: readonly EnvironmentSecretBindingV1[],
-    bindings: readonly EnvironmentVariableBindingInputV1[]): EnvironmentVariableBindingV1[] {
+    bindings: readonly EnvironmentVariableBindingInputV1[]) {
     const resolved = new Map(applyEnvironmentSecretBindingsPatchV1(current, { set: bindings, remove: [] }, randomUUID)
         .map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
     return bindings.map(binding => {

@@ -189,7 +189,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         }),
         // [] is internal zero demand, never serialized as an omitted selector.
         // Public Actions require a nonempty exact vector; All omits it.
-        listEnvironments: (scope, query, options) => query.environmentIds?.length === 0 || query.previewPullRequestIds?.length === 0
+        listEnvironments: (scope, query, options): Promise<DeploymentReadResultV1<DeploymentEnvironmentCollectionV1>> => query.environmentIds?.length === 0 || query.previewPullRequestIds?.length === 0
             ? Promise.resolve({ ok: true, value: { items: [], nextCursor: null } })
             : scoped(scope, options, async account => {
             const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',

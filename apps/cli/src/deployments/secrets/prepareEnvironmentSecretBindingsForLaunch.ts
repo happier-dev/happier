@@ -158,9 +158,10 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             } else if (binding.purpose === 'variable') availableSecretNames.add(binding.name);
         } else {
             if (binding.purpose !== 'variable') return missing();
-            const subject = { ...base, kind: 'environmentValues' as const,
-                binding: { purpose: 'variable' as const, phase: binding.phase,
-                    ...(binding.grantRef ? { grantRef: binding.grantRef } : { name: binding.name }) } };
+            const subjectBase = { ...base, kind: 'environmentValues' as const };
+            const subject = binding.grantRef
+                ? { ...subjectBase, binding: { purpose: 'variable' as const, phase: binding.phase, grantRef: binding.grantRef } }
+                : { ...subjectBase, binding: { purpose: 'variable' as const, phase: binding.phase, name: binding.name } };
             const grant = grants.get(machineSecretGrantSubjectKey(subject));
             if (!grant) return missing();
             const opened = openMachineSecretGrant({ grant, machineId: input.machineId,

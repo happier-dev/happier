@@ -19,9 +19,9 @@ export type AdmittedHttpHealthCheckV1 = Readonly<{
             domainRevision: number; targetLinkRevision: number; hostname: string;
             healthCheck?: DeploymentDomainContentV1['healthCheck'] }>
         | Readonly<{ kind: 'machineService'; machineId: string; serviceId: string;
-            endpoint: string; expectStatus?: number }>
+            endpoint: string; expectStatus: number }>
         | Readonly<{ kind: 'environment'; environmentId: string;
-            endpoint: string; expectStatus?: number }>;
+            endpoint: string; expectStatus: number }>;
     keyword?: string;
 }>;
 
