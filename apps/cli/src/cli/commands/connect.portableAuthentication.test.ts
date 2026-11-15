@@ -327,3 +327,60 @@ it.each(['terminal', 'yes', 'decline', 'exhausted', 'remote'] as const)('settles
         await fixture.close();
     }
 });
+
+it('presents the Ask on a live-attempt cancel and answers it from the same terminal', async () => {
+    const [{ ActionsSettingsV1Schema }, { createConnectedAccountDaemonClient }] = await Promise.all([
+        import('@happier-dev/protocol'), import('./connect/connectedAccountDaemonClient'),
+    ]);
+    const origin = 'http://connect-cancel-ask.test';
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { accountId: 'portable-cancel-ask-owner' });
+    const fetch = globalThis.fetch;
+    const features = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) =>
+        String(input) === `${origin}/v1/features/authenticated` ? Response.json(fixture.features) : fetch(input, init));
+    const actionId = 'connectedServices.authentication.cancel';
+    fixture.settings.actionsSettingsV1 = ActionsSettingsV1Schema.parse({ ...fixture.settings.actionsSettingsV1,
+        actions: { ...fixture.settings.actionsSettingsV1?.actions, [actionId]: { approvalRequiredSurfaces: ['cli'] } },
+        approvalWaivedSurfaces: { ...fixture.settings.actionsSettingsV1?.approvalWaivedSurfaces, [actionId]: [] },
+    });
+    boundary.credentials = { ...fixture.credentials, credentialProvenance: 'stored_session' };
+    const [{ createApiSessionSocketStub }, { SOCKET_RPC_EVENTS }] = await Promise.all([
+        import('@/testkit/backends/apiSessionSocketHarness'), import('@happier-dev/protocol/socketRpc')]);
+    const origins = new Map<string, ReturnType<typeof createApiSessionSocketStub>>();
+    boundary.socketFactory = () => createApiSessionSocketStub({
+        emit: (event, args, socket) => {
+            if (event !== SOCKET_RPC_EVENTS.REGISTER) return;
+            const packet = args[0];
+            if (!packet || typeof packet !== 'object' || !('method' in packet) || typeof packet.method !== 'string') throw new Error('invalid registration');
+            origins.set(packet.method, socket);
+            queueMicrotask(() => socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, packet));
+        },
+        emitWithAck: async (event, payload) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
+                || !('method' in payload) || typeof payload.method !== 'string') throw new Error('unexpected socket call');
+            const receiver = origins.get(payload.method);
+            if (!receiver) throw new Error('origin not registered');
+            const result = await new Promise<unknown>(resolve => receiver.trigger(SOCKET_RPC_EVENTS.REQUEST,
+                { ...payload, callerAuthority: 'present_user' }, resolve));
+            return { ok: true, result };
+        },
+    });
+    const presented = vi.fn<(artifactId: string) => void>();
+    const client = runWithServerHttpBaseUrl(origin, () => createConnectedAccountDaemonClient({ credentials: boundary.credentials!,
+        onApprovalRequested: (artifactId, _signal, decide) => { presented(artifactId); return decide('approve'); } }));
+    try {
+        const begun = await runWithServerHttpBaseUrl(origin, () => client.authenticate({ operation: 'beginConnect',
+            service: fixture.service, modeId: 'manual' }));
+        if (!('attemptId' in begun) || !begun.attemptId) throw new Error(`no attempt: ${JSON.stringify(begun)}`);
+        // An interrupted or timed-out journey cancels its live attempt. That Ask
+        // has no live-only input, yet the terminal still presents and answers it.
+        const cancelled = await runWithServerHttpBaseUrl(origin, () => client.authenticate({ operation: 'cancel', attemptId: begun.attemptId! }));
+        expect(presented).toHaveBeenCalledTimes(1);
+        expect(cancelled).toMatchObject({ status: 'cancelled' });
+    } finally {
+        await client.dispose();
+        features.mockRestore();
+        boundary.socketFactory = null;
+        boundary.credentials = null;
+        await fixture.close();
+    }
+}, 30_000);
