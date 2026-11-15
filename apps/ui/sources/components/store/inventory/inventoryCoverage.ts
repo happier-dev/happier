@@ -7,6 +7,10 @@ export function inventoryFamilyDiagnosticCode(coverage: Families[keyof Families]
     if (typeof coverage !== 'object') return undefined;
     const reason = 'partial' in coverage ? coverage.partial : coverage.unavailable;
     if (typeof reason === 'string') return reason;
+    // Per-Machine failures (Browser extensions): each Machine's typed reason, e.g. managed_browser_required.
+    if (Array.isArray(reason)) {
+        return [...new Set((reason as readonly unknown[]).flatMap(readMachineFailureCode))].join(',') || undefined;
+    }
     const codes: string[] = [];
     if ('code' in reason && typeof reason.code === 'string') codes.push(reason.code);
     if ('diagnostics' in reason) codes.push(...reason.diagnostics.map(item => item.reason));
@@ -15,6 +19,15 @@ export function inventoryFamilyDiagnosticCode(coverage: Families[keyof Families]
     if ('reason' in reason && typeof reason.reason === 'string') codes.push(reason.reason);
     if ('kind' in reason && reason.kind !== 'resolved') codes.push(reason.kind);
     return [...new Set(codes)].join(',') || undefined;
+}
+
+/** One Machine's failure entry (`{ machineId, reason }`): the browser's code, the Action's code, else its kind. */
+function readMachineFailureCode(entry: unknown): string[] {
+    const reason = entry && typeof entry === 'object' && 'reason' in entry ? entry.reason : null;
+    if (!reason || typeof reason !== 'object') return [];
+    const value = 'value' in reason && reason.value && typeof reason.value === 'object' ? reason.value : null;
+    const code = value && 'code' in value ? value.code : 'code' in reason ? reason.code : 'kind' in reason ? reason.kind : null;
+    return typeof code === 'string' ? [code] : [];
 }
 
 /**
