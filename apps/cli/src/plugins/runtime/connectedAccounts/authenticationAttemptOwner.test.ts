@@ -475,7 +475,7 @@ describe('addressed manual attempts', () => {
         } finally { first.owner.dispose(); next.owner.dispose(); }
     });
 
-    it('carries a replaced manual configuration into a fresh host before submit', async () => {
+    it('restores a manual configuration target in a fresh host before replacement and submit', async () => {
         const original = manualMode();
         const admittedMode = { ...original, descriptor: PluginConnectedAccountAuthenticationModeV2Schema.parse({
             ...original.descriptor, configuration: accountScopedConfiguration(),
@@ -505,14 +505,13 @@ describe('addressed manual attempts', () => {
         const next = makeHost();
         try {
             expect(await first.owner.beginConnect({ service, modeId: 'manual' })).toMatchObject({ status: 'configurationRequired' });
-            const control = await first.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' });
-            expect(await first.configuration.replaceForControl({ ...control!, expectedRevision: null,
-                values: { tenant: 'fixture' }, secretValues: {} })).toMatchObject({ status: 'committed' });
-            expect(await first.owner.continueConnect({ attemptId: 'attempt-1', expectedConfigurationRevision: 'configuration-2' }))
-                .toMatchObject({ status: 'awaitingManual' });
-            expect(api.records.size).toBe(1);
             first.owner.dispose();
-            expect(await next.owner.ensureRestored({ attemptId: 'attempt-1' })).toBeNull();
+            const control = await next.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' });
+            expect(control).toMatchObject({ target: { kind: 'attempt', attemptId: 'attempt-1' } });
+            expect(await next.configuration.replaceForControl({ ...control!, expectedRevision: null,
+                values: { tenant: 'fixture' }, secretValues: {} })).toMatchObject({ status: 'committed' });
+            expect(await next.owner.continueConnect({ attemptId: 'attempt-1', expectedConfigurationRevision: 'configuration-2' }))
+                .toMatchObject({ status: 'awaitingManual' });
             expect(api.records.size).toBe(1);
             expect(await next.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'synthetic-token' } }))
                 .toMatchObject({ status: 'connected' });

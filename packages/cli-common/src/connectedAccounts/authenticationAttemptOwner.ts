@@ -3223,6 +3223,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             });
         },
         async resolveConfigurationControlTarget(input) {
+            if (await owner.ensureRestored(input) !== null) return null;
             const attempt = readAttempt(input.attemptId);
             if (attempt && await expireAttemptIfNeeded(attempt)) return null;
             if (
