@@ -9,6 +9,7 @@ import {
   WorkflowBlockSchema,
   WorkflowInputDefinitionSchema,
   WorkflowStepSelectionV1Schema,
+  WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS,
   type WorkflowBlock,
   type WorkflowInputDefinition,
   type WorkflowDefinitionV1,
@@ -759,7 +760,7 @@ function validateNonAgentLeaf(
   allowAggregateCondition = false,
 ): void {
   validateStepExecution(state, leaf, path);
-  for (const field of ['launchEnvironment', 'providerSessionResume'] as const) {
+  for (const field of WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS) {
     if (leaf.execution?.[field] !== undefined) state.issues.push(issue('invalid_input',
       joinPath(path, 'execution', field), 'Agent launch configuration belongs to an Agent step.', leaf.id));
   }

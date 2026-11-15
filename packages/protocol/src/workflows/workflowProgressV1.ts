@@ -38,6 +38,7 @@ import {
 import { WorkflowStepComposerDocumentSchema } from './workflowComposerDocumentV1.js';
 import {
   WorkflowSessionAuthoringSelectionSchema,
+  WorkflowStepExecutionSelectionSchema,
   WorkflowValidationIssueV1Schema,
   type WorkflowSessionAuthoringSelection,
   type WorkflowStepExecutionSelection,
@@ -296,8 +297,12 @@ const WorkflowExecutionCorrespondenceBaseV1Schema = lazyZodSchema(() => z.object
  * config, MCP and Connected Service intent. The workflow execution adapter
  * supplies the effective selection that it actually admitted.
  */
-export const WorkflowRetainedRuntimeSelectionV1Schema = lazyZodSchema(() => WorkflowSessionAuthoringSelectionSchema);
-export type WorkflowRetainedRuntimeSelectionV1 = WorkflowSessionAuthoringSelection;
+/** A background run's runtime choices, including the saved-secret bindings its launch materializes. */
+export const WorkflowRetainedRuntimeSelectionV1Schema = lazyZodSchema(() => z.extend(WorkflowSessionAuthoringSelectionSchema, {
+  secretReferenceOverlay: WorkflowStepExecutionSelectionSchema.shape.secretReferenceOverlay,
+}));
+export type WorkflowRetainedRuntimeSelectionV1 = WorkflowSessionAuthoringSelection
+  & Pick<WorkflowStepExecutionSelection, 'secretReferenceOverlay'>;
 
 export function projectWorkflowRetainedRuntimeSelectionV1(
   selection: WorkflowStepExecutionSelection,

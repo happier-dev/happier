@@ -335,9 +335,34 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority',
       cause: { code: 'policy_denied_field', field: 'environmentVariables' } } });
   });
+  const SESSION_LAUNCH_CHOICES = {
+    title: 'Nightly review', organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] }, primaryTeamId: 'team-1',
+    memoryEnabled: false, secretReferenceOverlay: { v: 1, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } } },
+    teamCredentialBindings: [{ v: 1, slot: { kind: 'connected_service_purpose', purpose: {
+      consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'repository_api' } },
+      resourceId: 'resource-2', expectedResourceRevision: 3, deliveryMode: 'direct' }],
+  } as const;
+  it('freezes every New Session choice from defaults and step into a Session leaf', async () => {
+    const { title, ...defaultChoices } = SESSION_LAUNCH_CHOICES;
+    const result = await materialize({ definition: { ...definition, defaults: { ...definition.defaults, ...defaultChoices },
+      blocks: [{ ...definition.blocks[0], execution: { title } }] } });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ selection: SESSION_LAUNCH_CHOICES }] } });
+    if (!result.ok) return;
+    expect(WorkflowAcceptedSnapshotV1Schema.parse(result.snapshot).materializedLeaves[0]?.selection).toMatchObject(SESSION_LAUNCH_CHOICES);
+  });
+  it('keeps saved-secret bindings on a background leaf, which its run launch honours', async () => {
+    const { secretReferenceOverlay } = SESSION_LAUNCH_CHOICES;
+    const result = await materialize({ definition: { ...definition, defaults: { ...definition.defaults, secretReferenceOverlay } },
+      context: { ...context, executionTarget: { kind: 'detached_run' } } });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ executionTarget: { kind: 'detached_run' },
+      selection: { secretReferenceOverlay } }] } });
+  });
   it.each([
     { launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
     { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+    { transcriptStorage: 'direct' },
+    ...(['title', 'organizationPlacement', 'primaryTeamId', 'memoryEnabled', 'teamCredentialBindings'] as const)
+      .map(field => ({ [field]: SESSION_LAUNCH_CHOICES[field] })),
   ])('refuses Session-only launch configuration on a detached leaf: %j', async (spawn) => {
     expect(await materialize({ definition: { ...definition, defaults: { ...definition.defaults, conversation: { kind: 'fresh' }, ...spawn } },
       context: { ...context, executionTarget: { kind: 'detached_run' } },

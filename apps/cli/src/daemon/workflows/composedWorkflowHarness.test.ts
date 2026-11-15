@@ -2362,6 +2362,38 @@ describe('composed Workflow front door and claimed execution', () => {
     expect(titles.get(freshThird ? 'fresh-2' : 'fresh-1')).toBe(freshThird ? '3 · Name' : '1 · One');
   });
 
+  it('launches a Session step with the workflow\'s connected account, saved secret and New Session choices', async () => {
+    const runId = '15151515-1515-4515-8515-151515151517';
+    const directory = await projectDirectory();
+    const connectedServices = { v: 2 as const, bindingsByServiceId: {
+      'happier.agent.claude/anthropic': { source: 'connected' as const, selection: 'profile' as const, profileId: 'work-account' },
+    } };
+    const secretReferenceOverlay = { v: 1 as const, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } } };
+    const definition: WorkflowDefinitionV1 = {
+      version: 1, inputs: [], defaults: { agentTarget, connectedServices, secretReferenceOverlay, memoryEnabled: false },
+      blocks: [step('one', { execution: { conversation: { kind: 'fresh' }, title: 'Nightly review' } })],
+    };
+    const spawns: unknown[] = [];
+    freshSessionBoundary = async raw => {
+      spawns.push(raw);
+      return { type: 'success', sessionId: 'fresh-choices', sessionCreationOutcome: {
+        disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
+    };
+    const sessionInput = sessionInputBoundary();
+    sessionInput.observe.mockImplementation(async request => {
+      await request.onInputMaterialized?.(Date.now());
+      return { ok: true, sessionId: request.sessionId, localId: request.localId, result: { kind: 'final_text', text: 'done' } };
+    });
+    const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory });
+    const kit = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    await workflowDaemonProcess({ storage: kit, sessionInput, directory })({
+      runId, attempt: 0, expectedRevision: 0, accountCurrentness: currentness, acceptedEnvelope,
+    });
+    expect(spawns.map(raw => SpawnDaemonSessionRequestSchema.parse(raw))).toEqual([expect.objectContaining({
+      connectedServices, secretReferenceOverlay, memoryEnabled: false, initialTitle: 'Nightly review',
+    })]);
+  });
+
   it.each(['native', 'legacy', 'selected_profile'] as const)(
     'continues two explicit no-profile Session leaves against %s persisted metadata', async shape => {
       const runId = '15151515-1515-4515-8515-151515151516';

@@ -28,6 +28,23 @@ function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Inp
 }
 
 describe('accepted Workflow selection bindings', () => {
+  it('admits a launch Profile on a background step, which its Run start carries, without a Session transcript choice', async () => {
+    const agentKey = 'agent:happier.agent.codex/codex';
+    const profile = LaunchProfileV2Schema.parse({ ...emptyProfile('run-profile'), codingPromptBehaviorOverrides: {},
+      defaultPersistenceModeByTargetKey: { [agentKey]: 'direct' } });
+    const detached = { ...context, executionTarget: { kind: 'detached_run' as const } };
+    const withProfile = { ...definition, defaults: { ...definition.defaults, profileId: 'run-profile' } };
+    const result = await materialize({ definition: withProfile, context: detached,
+      effects: { resolveTargetAvailability: available, readLaunchProfile: async () => profile } });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ executionTarget: { kind: 'detached_run' },
+      selection: { profileId: 'run-profile' } }] } });
+    if (result.ok) expect(result.snapshot.materializedLeaves[0]?.selection).not.toHaveProperty('transcriptStorage');
+    const withEnvironment = LaunchProfileV2Schema.parse({ ...profile, extraEnvironmentVariables: [{ name: 'TOKEN', value: 'x' }] });
+    expect(await materialize({ definition: withProfile, context: detached,
+      effects: { resolveTargetAvailability: available, readLaunchProfile: async () => withEnvironment } }))
+      .toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'work' } });
+  });
+
   it.each(['project_checkout', 'new_worktree'] as const)('admits a fresh model participant with an explicit %s workspace', async kind => {
     const launch = projectDiscussionModelParticipantLaunchV1({ executionTarget: { serverId: 'home', machineId: 'machine' },
       directory: { kind: 'path', path: '/project' }, agentTarget });

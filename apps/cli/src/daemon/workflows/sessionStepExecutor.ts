@@ -35,7 +35,9 @@ import type {
   WorkflowSessionAuthoringSelection,
   WorkflowStepExecutionSelection,
   WorkflowWorkspaceDescriptorV1,
+  WorkflowSessionLaunchFieldId,
 } from '@happier-dev/protocol/workflows';
+import { WORKFLOW_SESSION_LAUNCH_FIELD_IDS } from '@happier-dev/protocol/workflows';
 import type { ResolvedRoleV1, SessionAwarenessOriginV1, SessionInitialAccessDraftV1, SessionOwnerModeCatalogV2, SessionRolesV1 } from '@happier-dev/protocol';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions';
@@ -204,7 +206,11 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     if (launch?.roleId && frozenRole?.roleId !== launch.roleId) {
       throw new WorkflowSessionCompositionError('role_target_unavailable');
     }
-    if (launch?.primaryTeamId !== undefined && deps.visibleTeamId && launch.primaryTeamId !== deps.visibleTeamId) {
+    // A participant's frozen launch wins; the authored step (or its defaults) fills each New Session
+    // choice it leaves open. Both carry the Session spawn selection's own field names.
+    const sessionChoices = Object.fromEntries(WORKFLOW_SESSION_LAUNCH_FIELD_IDS.map(field => [field,
+      launch?.[field] !== undefined ? launch[field] : authoredSelection[field]])) as Pick<SessionSpawnNewSelectionV2, WorkflowSessionLaunchFieldId>;
+    if (sessionChoices.primaryTeamId !== undefined && deps.visibleTeamId && sessionChoices.primaryTeamId !== deps.visibleTeamId) {
       throw new WorkflowSessionCompositionError('target_unavailable');
     }
     const launchConfiguration = launch?.configuration;
@@ -478,14 +484,14 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         // Required Teams use the existing server policy writer and edit floor.
         ...(team.policy.sessionCreationPolicy === 'team_required' ? { primaryTeamId: team.id } : {}),
       } : {}),
-      ...(launch?.primaryTeamId !== undefined ? { primaryTeamId: launch.primaryTeamId } : {}),
-      ...(launch?.organizationPlacement ? { organizationPlacement: launch.organizationPlacement } : {}),
+      ...(sessionChoices.primaryTeamId !== undefined ? { primaryTeamId: sessionChoices.primaryTeamId } : {}),
+      ...(sessionChoices.organizationPlacement ? { organizationPlacement: sessionChoices.organizationPlacement } : {}),
       ...(launch?.placementOrigin ? { placementOrigin: launch.placementOrigin } : {}),
-      ...(launch?.secretReferenceOverlay ? { secretReferenceOverlay: launch.secretReferenceOverlay } : {}),
-      ...(launch?.memoryEnabled !== undefined ? { memoryEnabled: launch.memoryEnabled } : {}),
+      ...(sessionChoices.secretReferenceOverlay ? { secretReferenceOverlay: sessionChoices.secretReferenceOverlay } : {}),
+      ...(sessionChoices.memoryEnabled !== undefined ? { memoryEnabled: sessionChoices.memoryEnabled } : {}),
       workDepth: deps.workDepth + 1,
       ...(initialSessionRolesV1 ? { initialSessionRolesV1 } : {}),
-      ...(launch?.title ? { initialTitle: launch.title } : initialTitle ? { initialTitle } : {}),
+      ...(sessionChoices.title ? { initialTitle: sessionChoices.title } : initialTitle ? { initialTitle } : {}),
       backendTarget: resolvedAgent.backendTarget,
       agentTarget: selection.agentTarget ?? undefined,
       ...(selection.modelSelection ? { modelSelection: selection.modelSelection } : {}),
@@ -516,9 +522,9 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
                 : {}),
             }
           : {}),
-      ...(launch?.teamCredentialBindings !== undefined
+      ...(sessionChoices.teamCredentialBindings !== undefined
         ? { teamCredentialBindings: mergeSessionTeamCredentialBindingIntents({
-          explicit: launch.teamCredentialBindings, admitted: connectedServicesDefault?.teamCredentialBindings ?? null,
+          explicit: sessionChoices.teamCredentialBindings, admitted: connectedServicesDefault?.teamCredentialBindings ?? null,
         }) } : {}),
       ...(selection.capabilitySelection ? { capabilitySelection: selection.capabilitySelection } : {}),
       ...(selection.transcriptStorage ? { transcriptStorage: selection.transcriptStorage } : {}),

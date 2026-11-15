@@ -34,6 +34,7 @@ import { isWorkflowActionLiteralFieldV1 } from './stepActionsV1.js';
 import { AgentLaunchEnvironmentV1Schema, AgentSessionProviderResumeV1Schema } from '../runtime/agentSessionV1.js';
 import { readCapabilitySelectionCarrierV1 } from '../reach/sessionCapabilitySelectionV1.js';
 import { findInvalidWorkflowResultFieldName } from './workflowResultFieldsV1.js';
+import { SessionSpawnNewSelectionV2BaseSchema, type SessionSpawnNewSelectionV2 } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
 import { isWorkflowRunSummaryActionIdV1 } from '../actions/actionIds.js';
 
 export {
@@ -198,8 +199,47 @@ export const WorkflowStepExecutionSelectionSchema = lazyZodSchema(() => (<T exte
   providerSessionResume: zMini.optional(AgentSessionProviderResumeV1Schema),
   conversation: zMini.optional(WorkflowConversationSelectionSchema),
   workspace: zMini.optional(WorkflowWorkspaceSelectionSchema),
+  // New Session choices reuse the Session spawn selection's own fields and schemas,
+  // so the New Session chips write exactly these keys (WORKFLOW_SESSION_LAUNCH_FIELD_IDS).
+  ...z.pick(SessionSpawnNewSelectionV2BaseSchema, { title: true, organizationPlacement: true, primaryTeamId: true,
+    memoryEnabled: true, secretReferenceOverlay: true, teamCredentialBindings: true,
+  } as const satisfies Record<WorkflowSessionLaunchFieldId, true>).shape,
 })));
 export type WorkflowStepExecutionSelection = z.infer<typeof WorkflowStepExecutionSelectionSchema>;
+
+/**
+ * New Session choices a workflow default or step carries in the Session spawn vocabulary.
+ * `secretReferenceOverlay` is a launch choice every new Agent process honours; the rest shape
+ * the Session record itself. Machine placement stays with the Run target (steps run on the
+ * Run's Machine), so `placementOrigin` and managed-target placement are not step choices.
+ */
+export const WORKFLOW_SESSION_LAUNCH_FIELD_IDS = Object.freeze([
+  'title', 'organizationPlacement', 'primaryTeamId', 'memoryEnabled', 'secretReferenceOverlay', 'teamCredentialBindings',
+] as const satisfies readonly (keyof SessionSpawnNewSelectionV2)[]);
+export type WorkflowSessionLaunchFieldId = (typeof WORKFLOW_SESSION_LAUNCH_FIELD_IDS)[number];
+
+/** Selection fields only an Agent step consumes; other leaves never launch an Agent. */
+export const WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS = Object.freeze([
+  'launchEnvironment', 'providerSessionResume', ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS,
+] as const satisfies readonly (keyof WorkflowStepExecutionSelection)[]);
+
+/**
+ * Choices a background (detached) run cannot honour because it has no Session, terminal or
+ * native Session continuation. The one owner for admission refusal and the editor's reason.
+ */
+export const WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS = Object.freeze([
+  'launchEnvironment', 'providerSessionResume', 'transcriptStorage', 'terminal',
+  'windowsRemoteSessionLaunchMode', 'windowsRemoteSessionConsole', 'windowsTerminalWindowName',
+  ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS.filter(field => field !== 'secretReferenceOverlay'),
+] as const satisfies readonly (keyof WorkflowStepExecutionSelection)[]);
+
+/** Whether a resolved leaf selection carries a choice its execution target cannot honour. */
+export function findWorkflowUnsupportedSelectionFieldV1(selection: Readonly<Record<string, unknown>>,
+  executionTarget: WorkflowLeafExecutionTargetV1): keyof WorkflowStepExecutionSelection | null {
+  if (executionTarget.kind !== 'detached_run') return null;
+  return WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS.find(field => selection[field] !== undefined) ?? null;
+}
+
 
 function projectStoredCapabilitySelection(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;

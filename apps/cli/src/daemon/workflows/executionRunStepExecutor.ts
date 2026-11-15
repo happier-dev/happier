@@ -1,5 +1,6 @@
 import { areWorkflowRetainedRuntimeSelectionsEqualV1, projectWorkflowRetainedRuntimeSelectionV1, WorkflowRetainedRuntimeSelectionV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
+import { WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunResumeHandleProviderSessionV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
@@ -408,6 +409,9 @@ function buildNativeAgentRunStartInput(params: Readonly<{
     localInputId,
     resultContract: executionParams.step.result,
     ...(selection.approvalProfileId === undefined ? {} : { approvalProfileId: selection.approvalProfileId }),
+    // The Session vocabulary's launch Profile; the Run's own profileId names its plugin execution Profile.
+    ...(selection.profileId ? { launchProfileId: selection.profileId } : {}),
+    ...(selection.secretReferenceOverlay ? { secretReferenceOverlay: selection.secretReferenceOverlay } : {}),
     permissionMode: params.permissionMode,
     ...(selection.allowedTools !== undefined ? { allowedTools: selection.allowedTools } : {}),
     ...(selection.unlistedTools !== undefined ? { unlistedTools: selection.unlistedTools } : {}),
@@ -513,18 +517,10 @@ async function resolveRetainedConversation(
   return conversation;
 }
 
-const DETACHED_RUN_INAPPLICABLE_SELECTION_FIELDS = [
-  'transcriptStorage',
-  'terminal',
-  'windowsRemoteSessionLaunchMode',
-  'windowsRemoteSessionConsole',
-  'windowsTerminalWindowName',
-] as const;
-
 function assertDetachedRunAuthoringSupported(
   params: DetachedRunPreparationParams,
 ): void {
-  if (DETACHED_RUN_INAPPLICABLE_SELECTION_FIELDS.some((field) => Object.hasOwn(params.execution, field))) {
+  if (WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS.some((field) => Object.hasOwn(params.execution, field))) {
     throw new WorkflowExecutionRunCompositionError('target_unavailable');
   }
 }

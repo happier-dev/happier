@@ -1355,6 +1355,8 @@ describe('workflow authoring selection round trip', () => {
     for (const execution of [
       { launchEnvironment: { values: { TOKEN: 'value' }, unset: [] } },
       { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+      { title: 'Nightly review' },
+      { secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } } } },
     ]) {
       const result = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
         blocks: [{ ...leaf, id: 'non-agent', execution }],

@@ -35,6 +35,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLifecycleActions';
 import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
@@ -2726,6 +2727,29 @@ describe('workflow Session step executor', () => {
       connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false,
       initialTitle: 'Chosen participant', transcriptStorage: 'direct',
     })]);
+  });
+
+  it('launches an authored Workflow step with every New Session choice the step or its defaults set', async () => {
+    const launches = installSessionCreationTransport();
+    const create = createProductionFreshWorkflowSessionConversation({
+      credentials: { token: 'token', encryption: null }, serverId: 'server-1', machineId: 'machine-1',
+      workDepth: 0, originRunId: 'run-choices', machineAdmissionTransport: vi.fn(),
+    });
+    const choices = {
+      title: 'Nightly review', organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] }, memoryEnabled: false,
+      secretReferenceOverlay: { v: 1 as const, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } } },
+      teamCredentialBindings: SessionTeamCredentialBindingIntentsV1Schema.parse([{ v: 1, slot: { kind: 'connected_service_purpose',
+        purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'repository_api' } },
+        resourceId: 'resource-2', expectedResourceRevision: 3, deliveryMode: 'direct' }]),
+    };
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+    await expect(create({ selection: { agentTarget, connectedServices: { v: 2, bindingsByServiceId: {} }, ...choices },
+      workspace: { machineId: 'machine-1', directory: '/review', checkoutRootPath: '/review' },
+      creationKey: 'workflow:run-choices:inv-1', initialTitle: 'Derived step title' })).resolves.toMatchObject({ sessionId: 'new-session' });
+    const { title, organizationPlacement, ...spawned } = choices;
+    // Folder and tags are recorded in the Session's creation recipe, exactly as for an ordinary New Session.
+    expect(launches).toEqual([expect.objectContaining({ ...spawned, initialTitle: title,
+      sessionCreationCorrespondence: expect.objectContaining({ recipe: expect.objectContaining({ organization: organizationPlacement }) }) })]);
   });
 
   it.each([

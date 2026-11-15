@@ -18,7 +18,7 @@ import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, Wor
   type WorkflowRunExecutionTargetV1 } from './workflowDefinitionV1.js';
 import { listWorkflowAcceptedLeafSelectionsV1, parseWorkflowLiteralEngineSelectionV1, resolveWorkflowAcceptedStepSelectionV1, resolveWorkflowEngineSelectionV1, resolveWorkflowStepSelectionV1, WorkflowStepSelectionErrorV1, type ResolveWorkflowStepSelectionV1Input, type WorkflowResolvedStepSelectionV1, type WorkflowStepSelectionRefusalV1, type WorkflowRoleSelectionContextV1 } from './workflowStepSelectionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
-import { WorkflowStepExecutionSelectionSchema, type WorkflowBlock, type WorkflowDefinitionV1,
+import { WorkflowStepExecutionSelectionSchema, WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS, findWorkflowUnsupportedSelectionFieldV1, type WorkflowBlock, type WorkflowDefinitionV1,
   type WorkflowIngressContextV1, type WorkflowLeafV1, type WorkflowStepSelectionV1,
   type WorkflowActionValueReferenceV1, type WorkflowActionFieldBindingV1,
   type WorkflowValidationIssue } from './workflowV1.js';
@@ -151,10 +151,9 @@ function profileSelection(profile: AiLaunchProfile, selection: WorkflowResolvedS
   target: WorkflowRunExecutionTargetV1): WorkflowResolvedStepSelectionV1 | null {
   if (target.kind === 'detached_run' && (isLaunchProfileV2(profile)
     ? profile.extraEnvironmentVariables.length > 0 || (profile.envVarRequirements?.length ?? 0) > 0
-      || profile.placement !== undefined || profile.checkout !== undefined || profile.codingPromptBehaviorOverrides !== undefined
+      || profile.placement !== undefined || profile.checkout !== undefined
     : profile.environmentVariables.length > 0 || profile.envVarRequirements.length > 0 || profile.authMode !== undefined
-      || profile.requiresMachineLogin !== undefined || profile.requiresMachineLoginTargetKey !== undefined
-      || profile.codingPromptBehaviorOverrides !== undefined)) return null;
+      || profile.requiresMachineLogin !== undefined || profile.requiresMachineLoginTargetKey !== undefined)) return null;
   let agentTarget = selection.agentTarget;
   if (agentTarget === undefined && isLaunchProfileV2(profile) && profile.preferredAgentTargetKey) {
     const preferred = parseBackendTargetKeyV2(profile.preferredAgentTargetKey);
@@ -168,7 +167,8 @@ function profileSelection(profile: AiLaunchProfile, selection: WorkflowResolvedS
   const defaults: WorkflowStepSelectionV1 = {
     ...(agentTarget === undefined ? {} : { agentTarget }),
     ...(permissionMode === undefined ? {} : { permissionMode }),
-    ...(persistenceMode === undefined ? {} : { transcriptStorage: persistenceMode }),
+    // A background run keeps no transcript of its own to store.
+    ...(persistenceMode === undefined || target.kind === 'detached_run' ? {} : { transcriptStorage: persistenceMode }),
     ...(isLaunchProfileV2(profile) && profile.preferredModelSelection
       && profile.preferredModelSelection.ref.agentTargetKey === key ? { modelSelection: profile.preferredModelSelection } : {}),
     ...(!isLaunchProfileV2(profile) && permissionMode === undefined && profile.defaultPermissionMode
@@ -888,11 +888,10 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       const executionTarget = resolved.executionTarget ?? input.context.executionTarget;
       let selection = resolved.selection;
       if (leaf.kind !== 'step') {
-        const { launchEnvironment: _launchEnvironment, providerSessionResume: _providerSessionResume, ...nonAgentSelection } = selection;
-        selection = nonAgentSelection;
+        selection = { ...selection };
+        for (const field of WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS) delete selection[field];
       }
-      if (leaf.kind === 'step' && executionTarget.kind === 'detached_run'
-        && (selection.launchEnvironment !== undefined || selection.providerSessionResume !== undefined)) return unavailable(leaf.id);
+      if (leaf.kind === 'step' && findWorkflowUnsupportedSelectionFieldV1(selection, executionTarget) !== null) return unavailable(leaf.id);
       // Choosing a role's engine does not also choose that role's profile.
       if (frozen && agentOverride && frozen.selection.profileId === undefined) delete selection.profileId;
       if (purpose === 'run' && selection.conversation?.kind === 'origin_session' && !input.context.origin?.originSessionId) return invalidInput(leaf.id);
@@ -941,8 +940,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
           const parsed = WorkflowStepExecutionSelectionSchema.safeParse(bound.selection);
           if (!parsed.success) return invalidInput(leaf.id);
           bound.selection = parsed.data;
-          if (bound.executionTarget.kind === 'detached_run'
-            && (bound.selection.launchEnvironment !== undefined || bound.selection.providerSessionResume !== undefined)) return unavailable(leaf.id);
+          if (findWorkflowUnsupportedSelectionFieldV1(bound.selection, bound.executionTarget) !== null) return unavailable(leaf.id);
         }
         sidecar.engineBindings = boundEngines;
       }

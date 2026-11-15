@@ -977,6 +977,21 @@ describe('workflow detached Execution Run step executor', () => {
     expect(starts[2]).toHaveProperty('permissionMode', 'default');
   });
 
+  it('starts a background Run with the step\'s saved-secret bindings and launch Profile', async () => {
+    const starts: Record<string, unknown>[] = [];
+    const actionExecutor = { execute: vi.fn(async (actionId: string, value: unknown) => {
+      if (actionId !== 'execution.run.start') throw new Error(`unexpected action ${actionId}`);
+      starts.push(requireActionInput(value));
+      return { ok: false as const, errorCode: 'execution_run_failed', error: 'execution_run_failed',
+        details: { runCreation: 'noRunCreated' } };
+    }) };
+    const execute = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0, buildActionContext,
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null });
+    const secretReferenceOverlay = { v: 1 as const, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } } };
+    await execute(baseParams({ execution: { ...baseParams().execution, profileId: 'chosen-profile', secretReferenceOverlay } }) as never);
+    expect(starts).toEqual([expect.objectContaining({ launchProfileId: 'chosen-profile', secretReferenceOverlay })]);
+  });
+
   it('rejects Session-only launch fields that a detached Run cannot consume', async () => {
     const actionExecutor = { execute: vi.fn() };
     const execute = createWorkflowDetachedExecutionRunStepExecutor({
@@ -992,6 +1007,8 @@ describe('workflow detached Execution Run step executor', () => {
       { execution: { ...baseParams().execution, windowsRemoteSessionLaunchMode: null } },
       { execution: { ...baseParams().execution, windowsRemoteSessionConsole: null } },
       { execution: { ...baseParams().execution, windowsTerminalWindowName: null } },
+      { execution: { ...baseParams().execution, title: 'Nightly review' } },
+      { execution: { ...baseParams().execution, memoryEnabled: false } },
     ];
     for (const entry of cases) {
       await expect(execute(baseParams(entry) as never)).resolves.toEqual({
