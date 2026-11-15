@@ -99,7 +99,12 @@ export function useSessionAttentionReminderRefresh(params: Readonly<{
         const subscription = AppState.addEventListener('change', (nextState) => {
             if (nextState !== 'active') return;
             completedTokensRef.current.clear();
-            refreshedInventoryServerIdsRef.current.clear();
+            // A connected Home pushed its organization changes while the app was away, and a
+            // connection lost meanwhile re-reads on reconnect; only Homes with no live
+            // connection have nothing but foreground to refresh them.
+            for (const [serverId, connected] of Object.entries(previousConnectivityRef.current)) {
+                if (!connected) refreshedInventoryServerIdsRef.current.delete(serverId);
+            }
             setWakeRevision((value) => value + 1);
         });
         return () => subscription.remove();

@@ -220,7 +220,7 @@ describe('SessionAttentionReminderRuntime', () => {
         }
     });
 
-    it('loads reminder inventories for all known Homes on mount and retries on reconnect and foreground', async () => {
+    it('loads reminder inventories for all known Homes on mount, retries on reconnect, and on foreground re-reads only Homes without a live connection', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(2_000);
         const appState = createReactNativeAppStateEmitter('active');
@@ -251,14 +251,26 @@ describe('SessionAttentionReminderRuntime', () => {
             expect(refreshReminderInventory).toHaveBeenCalledTimes(3);
             expect(refreshReminderInventory).toHaveBeenLastCalledWith('home-b');
 
+            // Both Homes stayed connected while away: their organization changes arrived on the socket.
+            await act(async () => {
+                appState.emit('background');
+                appState.emit('active');
+                await Promise.resolve();
+            });
+            expect(refreshReminderInventory).toHaveBeenCalledTimes(3);
+
+            // A Home with no live connection has no push path, so foreground is its refresh point.
+            connectedByServerId = { 'home-a': true, 'home-b': false };
+            await hook.rerender();
+            await act(async () => Promise.resolve());
+            expect(refreshReminderInventory).toHaveBeenCalledTimes(4);
             await act(async () => {
                 appState.emit('background');
                 appState.emit('active');
                 await Promise.resolve();
             });
             expect(refreshReminderInventory).toHaveBeenCalledTimes(5);
-            expect(refreshReminderInventory.mock.calls.slice(-2).map(([serverId]) => serverId).sort())
-                .toEqual(['home-a', 'home-b']);
+            expect(refreshReminderInventory).toHaveBeenLastCalledWith('home-b');
         } finally {
             restoreAppState();
         }
