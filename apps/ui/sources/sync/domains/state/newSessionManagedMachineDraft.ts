@@ -77,9 +77,9 @@ export const ManagedMachineSelectionDraftReadSchema = createStoredReadSchema(Man
 export type ManagedMachineSelectionDraft = z.infer<typeof ManagedMachineSelectionDraftSchema>;
 export type ManagedMachineDeferredAuthorPresetDraft = z.infer<typeof ManagedMachineDeferredAuthorPresetDraftSchema>;
 
-export function isDeferredManagedMachineAuthorPresetDraft(
-    draft: ManagedMachineSelectionDraft | ManagedMachineCreationIntent,
-): draft is ManagedMachineDeferredAuthorPresetDraft {
+export function isDeferredManagedMachineAuthorPresetDraft<T extends ManagedMachineSelectionDraft | ManagedMachineCreationIntent>(
+    draft: T,
+): draft is Extract<T, { deferredAuthorPreset: true }> {
     return 'deferredAuthorPreset' in draft && draft.deferredAuthorPreset === true;
 }
 

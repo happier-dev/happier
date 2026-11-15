@@ -1,4 +1,4 @@
-import { projectRetainedManagedCredentialSelectionsV1, type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectRetainedManagedCredentialSelectionsV1, type ManagedMachineFullV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
@@ -30,7 +30,7 @@ export type ManagedMachinePolicyParent = Readonly<{
 }>;
 
 type ManagedMachineNativeReadInput = Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     controller?: ManagedControllerV1;
     binding: ServerCredentialAccountScopeBinding;
     signal: AbortSignal;

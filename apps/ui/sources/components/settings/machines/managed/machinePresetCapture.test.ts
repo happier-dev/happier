@@ -3,7 +3,7 @@ import { standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
-import type { ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 
 const harness = createHomeGovernanceHarness();
@@ -24,6 +24,7 @@ it('captures two admitted Preset copies through the existing create Action and c
             lists: harness.requestsFor('/v1/machines/presets/list').length, failureCode }));
     const serverId = await harness.addHome({ name: 'Capture', serverUrl: 'https://capture.example',
         serverIdentityId: 'srv_capture_home', accountId: 'owner', currentAccount: true });
+    harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: { kind: 'ready', contentEncryptionMode: 'plain', recipients: [] } });
     phase = 'other-home';
     await harness.addHome({ name: 'Other', serverUrl: 'https://other.example',
         serverIdentityId: 'srv_other_home', accountId: 'other', currentAccount: true });
@@ -46,14 +47,14 @@ it('captures two admitted Preset copies through the existing create Action and c
     harness.answer(serverId, '/v1/machines/presets/list', { select: () => ({ body: { kind: 'listed', presets: saved ? [saved] : [] } }) });
     const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_capture_home');
     expect(client).toHaveProperty('capture', expect.any(Function));
-    let approved: PresetMutationResultV1 | undefined;
+    let approved: import('./machinePresetCollectionClient').OpenedMachinePresetActionOutputV1<'machines.presets.create'> | undefined;
     phase = 'capture';
     const result = await client.capture({ homeId: 'srv_capture_home', id: 'captured', name: 'Captured setup',
         owner: { kind: 'account', accountId: 'owner' },
         launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1,
             name: 'Future guest', choices: {} },
         controller: { machineId: 'controller', installationId: 'installation' } }, sources,
-    { onApprovalSucceeded: (value: PresetMutationResultV1) => { approved = value; } });
+    { onApprovalSucceeded: (value) => { approved = value; } });
     if (result.kind === 'failed') failureCode = result.code;
     if (result.kind === 'approval_pending') {
         expect(harness.requestsFor('/v1/machines/presets/create')).toEqual([]);
@@ -62,12 +63,14 @@ it('captures two admitted Preset copies through the existing create Action and c
         phase = 'approval-delivery';
         await waitForHomeGovernance(() => expect(approved?.kind).toBe('saved'));
     } else expect(result).toMatchObject({ kind: 'succeeded', value: { kind: 'saved' } });
-    expect(saved?.setup).toEqual({ scripts: [first, second] });
+    expect(saved?.content).toEqual({ t: 'plain', v: { v: 1, name: 'Captured setup',
+        launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Future guest', choices: {} },
+        setup: { scripts: [first, second] } } });
     phase = 'collection-list';
     expect(await client.list()).toMatchObject({ kind: 'succeeded', value: [{ id: 'captured', setup: { scripts: [first, second] } }] });
     phase = 'complete';
     expect(harness.requests.filter(request => request.path.includes('/machines/')).map(request => request.path))
-        .toEqual(['/v1/machines/presets/create', '/v1/machines/presets/list']);
+        .toEqual(['/v1/machines/presets/recipient-census', '/v1/machines/presets/create', '/v1/machines/presets/list']);
 });
 
 it('refuses conflicting retained setup before creating any Preset', async () => {

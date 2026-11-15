@@ -5,6 +5,7 @@ import { isManagedOpaquePresetReadV1, ManagedAcquireInputV1Schema, ManagedContro
     ManagedControllerIntentReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { RetentionCapabilitiesV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import signedRelease from './managedMachineOrigination.signedRelease.fixture.json';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { allowRealServerSocketBoundary, configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -202,8 +203,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             account: selected }] };
     const retention = { kind: 'until-delete' as const };
     const enrollmentIdentity = { kind: 'guestProcess' as const, role: 'sandbox' as const };
-    const reviewedFacts = { launch, provisioner, retention, retentionCapabilities: provisioner.retention,
-        billing: provisioner.billing, optionStatus: 'current' as const, prerequisites: [], wakeOnAcceptedMessage: false };
+    const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({ launch, provisioner, retention, retentionCapabilities: provisioner.retention,
+        billing: provisioner.billing, optionStatus: 'current', prerequisites: [], wakeOnAcceptedMessage: false });
     const privatePresetName = 'Private opaque preset';
     const privateLaunchName = 'Private opaque base launch';
     const privateOverrideName = 'Private opaque machine name';
@@ -564,7 +565,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             input = await createOpaquePresetInput();
             const requestId = 'delegated-native-policy';
             const target = { kind: 'machine' as const, machineId: 'delegated-controller' };
-            const originalActionEnvelope = { v: 1 as const, requestId, target, input };
+            const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input });
             const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-delegation', binding: {
                 serverIdentityId: homeId, accountId: 'delegated-member', custodianAccountId: accountId,
@@ -952,7 +953,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             expect(admittedPresetPolicy, JSON.stringify(interrupted)).toEqual({
                 retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage });
         }
-        expect(releaseMetadataPaths).toEqual(['/repos/happier-dev/happier/releases/tags/cli-dev']);
+        expect(releaseMetadataPaths, JSON.stringify(interrupted)).toEqual(['/repos/happier-dev/happier/releases/tags/cli-dev']);
         expect(stages, JSON.stringify(interrupted)).toEqual(new Set(['installing', 'joining']));
         readCreationStage = undefined;
         if (missingPolicy && !plainPreset) {

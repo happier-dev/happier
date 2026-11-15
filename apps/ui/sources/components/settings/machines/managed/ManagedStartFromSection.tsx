@@ -10,8 +10,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 /** A Preset can start this provider's Machine when its creation part names that provider and it is still usable. */
-export function managedStartFromPresets(presets: readonly ManagedMachinePresetListEntryV1[], provisioner: string): readonly ManagedMachinePresetListEntryV1[] {
-    return presets.filter(preset => hasOpenedManagedMachinePresetCreationV1(preset) && preset.archivedAt === undefined
+export function managedStartFromPresets(presets: readonly ManagedMachinePresetListEntryV1[], provisioner: string): readonly OpenedManagedMachinePresetV1[] {
+    return presets.filter((preset): preset is OpenedManagedMachinePresetV1 => hasOpenedManagedMachinePresetCreationV1(preset) && preset.archivedAt === undefined
         && buildQualifiedPluginContributionKey(preset.launch.provider) === provisioner);
 }
 
@@ -19,7 +19,7 @@ const HAND = 'hand';
 
 /** "Start from" at the head of the configurator (lab `add/create`): exactly one Preset, or the choices by hand. */
 export function ManagedStartFromSection(props: Readonly<{
-    presets: readonly ManagedMachinePresetListEntryV1[];
+    presets: readonly OpenedManagedMachinePresetV1[];
     selectedId: string | null;
     disabled: boolean;
     onChange: (presetId: string | null) => void;

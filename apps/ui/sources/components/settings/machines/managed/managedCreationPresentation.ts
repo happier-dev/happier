@@ -1,4 +1,4 @@
-import { classifyManagedMachineAllocationV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { classifyManagedMachineAllocationV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { t } from '@/text';
@@ -36,7 +36,7 @@ export function describeManagedInstallationFailure(
 }
 
 /** Setup is observed on the admitted row; Join alone cannot complete this stage. */
-export function managedCreationSetup(machine: ManagedMachineV1) {
+export function managedCreationSetup(machine: ManagedMachineReadSnapshotV1) {
     const setup = machine.machineSetup;
     if (!setup || !machine.enrolledMachineId) return null;
     const canRecover = setup.state === 'failed' && machine.creationState === 'active'
@@ -65,18 +65,18 @@ export function isManagedGuestPayloadStale(input: Readonly<{ installedVersion?: 
 }
 
 /** A request canceled before any resource was bound never made anything: it did not end, it never began. */
-export function isManagedCreationCanceledBeforeMade(machine: Pick<ManagedMachineV1, 'allocation' | 'creationState' | 'resource'>): boolean {
+export function isManagedCreationCanceledBeforeMade(machine: Pick<ManagedMachineReadSnapshotV1, 'allocation' | 'creationState' | 'resource'>): boolean {
     return machine.allocation === 'confirmed-absent' && managedConfirmedAbsenceState(machine).kind === 'creationCanceled';
 }
 
 /** Confirmed absence keeps the distinction between a retained native identity and a never-bound creation. */
-export function managedConfirmedAbsenceState(machine: Pick<ManagedMachineV1, 'resource'> & Partial<Pick<ManagedMachineV1, 'creationState'>>): ManagedLifecycleState {
+export function managedConfirmedAbsenceState(machine: Pick<ManagedMachineReadSnapshotV1, 'resource'> & Partial<Pick<ManagedMachineReadSnapshotV1, 'creationState'>>): ManagedLifecycleState {
     return machine.resource ? { kind: 'absent' } : machine.creationState === 'canceled'
         ? { kind: 'creationCanceled' } : { kind: 'notCreated' };
 }
 
 /** Allocation/enrollment facts are independent from the install task's observed stages. */
-export function managedCreationState(machine: ManagedMachineV1, context: ManagedCreationContext = {}): ManagedLifecycleState {
+export function managedCreationState(machine: ManagedMachineReadSnapshotV1, context: ManagedCreationContext = {}): ManagedLifecycleState {
     const name = machine.launch?.name ?? t('common.machine');
     if (machine.allocation === 'confirmed-absent') return managedConfirmedAbsenceState(machine);
     if (machine.cleanup) return machine.creationState === 'canceled' && machine.cleanup.disposition === 'pending'
@@ -96,7 +96,8 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
         // A newer native read failure still owns the unavailable state.
         if (isManagedMachineBootstrapIncomplete(machine)) {
             if (context.providerAvailable === false) return { kind: 'providerRemoved', provider: context.provider ?? t('common.machine') };
-            if (credentialRefused || !observedOperation && machine.observation.reason === 'bootstrap.credential_unavailable') {
+            if (credentialRefused || !observedOperation && 'reason' in machine.observation
+                && machine.observation.reason === 'bootstrap.credential_unavailable') {
                 return { kind: 'credentialRefused' };
             }
         }
@@ -129,7 +130,7 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
         : { kind: 'creationWaiting', name };
 }
 
-export function describeManagedCreation(machine: ManagedMachineV1, context?: ManagedCreationContext) {
+export function describeManagedCreation(machine: ManagedMachineReadSnapshotV1, context?: ManagedCreationContext) {
     return describeManagedLifecycleState(managedCreationState(machine, context));
 }
 
@@ -138,14 +139,14 @@ export function describeManagedCreation(machine: ManagedMachineV1, context?: Man
  * lifecycle owner's words (gone, never made, canceled before anything was made); plan 52: ended rows leave the
  * active list. A list disposition only; it writes nothing, and a row whose cleanup is still open stays live.
  */
-export function isManagedMachineListArchived(machine: ManagedMachineV1): boolean {
+export function isManagedMachineListArchived(machine: ManagedMachineReadSnapshotV1): boolean {
     if (machine.archivedAt !== undefined) return true;
     const kind = managedCreationState(machine).kind;
     return kind === 'absent' || kind === 'notCreated' || kind === 'creationCanceled';
 }
 
 /** Enrollment is historical; the ordinary detail exists only after the canonical Machine projection arrives. */
-export function managedMachineEnrolledDetailId(machine: ManagedMachineV1, enrolledMachinePresent: boolean): string | undefined {
+export function managedMachineEnrolledDetailId(machine: ManagedMachineReadSnapshotV1, enrolledMachinePresent: boolean): string | undefined {
     return enrolledMachinePresent && machine.archivedAt === undefined && !isManagedMachineResourceAbsent(machine) ? machine.enrolledMachineId : undefined;
 }
 
@@ -153,7 +154,7 @@ export function managedMachineEnrolledDetailId(machine: ManagedMachineV1, enroll
  * Enrolled healthy or stopped resources use the observation row instead of repeating their state: the page header's
  * presence line already says Stopped or Asleep in the Machines rail's word (`managedMachineHeaderPresence`).
  */
-export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1, 'enrolledMachineId'>, state: ManagedLifecycleState,
+export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineReadSnapshotV1, 'enrolledMachineId'>, state: ManagedLifecycleState,
     options?: Readonly<{ offersStart?: boolean }>): boolean {
     // The header says "Asleep" for a joined machine; the row earns its place only by carrying Start.
     if (state.kind === 'stoppedStorage' && options?.offersStart === true) return true;
@@ -167,7 +168,7 @@ export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1,
  * settlement stays the power owner's (POWER-UNKNOWN). A submitted wake that has not reached native power yet
  * is withdrawn by Stop alone. Running offers its parking verbs (Stop, or Suspend where declared).
  */
-export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'observation' | 'desired' | 'enrolledMachineId' | 'submittedNativeEffect'>,
+export function managedReceiptPowerIntents(machine: Pick<ManagedMachineReadSnapshotV1, 'observation' | 'desired' | 'enrolledMachineId' | 'submittedNativeEffect'>,
     supportedIntents: RetentionCapabilitiesV1['supportedIntents'],
     enrolledMachine?: Readonly<{ machineId: string; online: boolean }>): ('start' | 'stop' | 'suspend' | 'resume')[] {
     // Presence can outlive a native Stop. Use it only while native power is unanswered.
@@ -186,7 +187,7 @@ export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'obse
 }
 
 /** Retained resources whose installation is incomplete remain recoverable when controller history is lost. */
-export function canRetryManagedInstallation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null,
+export function canRetryManagedInstallation(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,
     context: Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine' | 'guestPayloadStale'> = {}): boolean {
     const lifecycle = managedCreationState(machine, { ...context, operation });
     if (context.providerAvailable === false || machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.desired === 'delete'
@@ -217,7 +218,7 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
  * history is gone): leaving the app is never read as a pause, and an observed failure stays "install failed".
  * Continue setup acts on this same resource, which `canRetryManagedInstallation` already admits.
  */
-export function isManagedCreationInterrupted(machine: ManagedMachineV1): boolean {
+export function isManagedCreationInterrupted(machine: ManagedMachineReadSnapshotV1): boolean {
     return !machine.enrolledMachineId && canRetryManagedInstallation(machine);
 }
 
@@ -234,7 +235,7 @@ export type ManagedCreationStage = Readonly<{
  * only while this device runs the recipe; otherwise a missing fact stays unknown, never guessed.
  */
 export function managedCreationStages(
-    machine: Pick<ManagedMachineV1, 'allocation' | 'resource' | 'bootstrapInstalled' | 'enrolledMachineId'> | undefined,
+    machine: Pick<ManagedMachineReadSnapshotV1, 'allocation' | 'resource' | 'bootstrapInstalled' | 'enrolledMachineId'> | undefined,
     running: boolean,
 ): readonly ManagedCreationStage[] {
     const created = machine?.allocation === 'bound' && Boolean(machine.resource);
@@ -250,7 +251,7 @@ export function managedCreationStages(
 }
 
 /** A replaced resource or installation cannot borrow a previous operation's observations. */
-export function currentManagedCreationOperation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null,
+export function currentManagedCreationOperation(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,
     context: Pick<ManagedCreationContext, 'enrolledMachine'> = {}): ActionOperationProjection | null {
     if (!operation) return null;
     const snapshot = operation.snapshot;

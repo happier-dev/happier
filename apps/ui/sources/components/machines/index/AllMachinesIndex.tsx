@@ -720,10 +720,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     attention: {
         ...Typography.variant('meta'),
-        color: theme.colors.state.warning,
+        color: theme.colors.state.warning.foreground,
     },
     failing: {
-        color: theme.colors.state.danger,
+        color: theme.colors.state.danger.foreground,
     },
     cardQuiet: {
         ...Typography.variant('meta'),

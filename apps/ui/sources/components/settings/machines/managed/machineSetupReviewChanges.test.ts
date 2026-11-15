@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupEffectPlanV1, MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupTargetSourcePresentations } from './machineSetupReview';
 import { countMachineSetupTargetChanges, groupMachineSetupChanges } from './machineSetupReviewChanges';
 
 const target = (overrides: Partial<MachineSetupApplyTargetV1> = {}): MachineSetupApplyTargetV1 => ({
@@ -69,7 +70,7 @@ describe('Machine setup review changes', () => {
         ]) }], removalPlans: [{ itemKey: 'old', plan: effects([
             { id: 'remove', kind: 'package', manager: 'winget', state: 'absent', packages: [{ name: 'Mozilla.Firefox', source: 'winget', scope: 'user' }] },
         ]) }] });
-        const presentations = [{ homeId: 'home', machineId: 'machine', sources: [
+        const presentations: MachineSetupTargetSourcePresentations[] = [{ homeId: 'home', machineId: 'machine', sources: [
             { kind: 'opened', source: direct },
             { kind: 'opened', presetName: 'Historical preset', source: privateSource },
         ] }];

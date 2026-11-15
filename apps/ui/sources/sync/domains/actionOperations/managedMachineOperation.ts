@@ -1,10 +1,10 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** Enrollment can precede bootstrap completion; its producer retains bootstrap.<failure code> after failure. */
-export function isManagedMachineBootstrapIncomplete(machine: ManagedMachineV1): boolean {
-    return machine.observation?.reason?.startsWith('bootstrap.') === true;
+export function isManagedMachineBootstrapIncomplete(machine: ManagedMachineReadSnapshotV1): boolean {
+    return !isManagedOpaquePresetMachineV1(machine) && machine.observation?.reason?.startsWith('bootstrap.') === true;
 }
 
 /** Waiting for idle has not submitted the retention effect. Activity keeps this operation's receipt. */
@@ -14,7 +14,7 @@ export function isManagedMachineRetentionWaitOperation(snapshot: ActionOperation
 }
 
 /** A moved controller or replaced resource cannot borrow an earlier creation's task. */
-export function managedMachineOperationMatchesResource(machine: ManagedMachineV1, snapshot: ActionOperationSnapshotV1): boolean {
+export function managedMachineOperationMatchesResource(machine: ManagedMachineReadSnapshotV1, snapshot: ActionOperationSnapshotV1): boolean {
     // Foreground Account acquisition has no Machine operation. A retained
     // controller operation must not become its installation progress.
     if (!machine.controller || snapshot.scope.machineId !== machine.controller.machineId

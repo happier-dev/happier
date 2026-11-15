@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -29,7 +29,7 @@ describe('managed bootstrap response admission', () => {
         const token = createAccountTokenForTests('account', { currentAccount: true });
         const serverId = await homes.addHome({ name: 'Requester Home', serverUrl, serverIdentityId: homeId,
             accountId: 'account', currentAccount: true, credentials: { token } });
-        const machine = ManagedMachineV1Schema.parse({ id: 'paid', homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'paid', homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
             preset: { id: 'legacy-plain-preset', revision: 4, contentEncryptionMode: 'plain' },
             launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound',
@@ -68,7 +68,7 @@ describe('managed bootstrap response admission', () => {
         const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1,
             name: 'Private guest', choices: {} } as const;
         const controller = { machineId: 'controller', installationId: 'installation' };
-        const setup = { scripts: [], items: [] } as const;
+        const setup = { scripts: [], items: [] };
         const resource = { contributionRef: launch.provider, schemaVersion: 1,
             value: { namespace: 'private-native-namespace', nativeId: 'private-native-id' } };
         const { replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1,
@@ -76,7 +76,7 @@ describe('managed bootstrap response admission', () => {
             '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
         const sealed = sealManagedMachinePresetContentV1({ presetId: 'private-preset', mode: 'e2ee',
             content: { v: 1, name: launch.name, launch, setup },
-            recipientCensus: [{ account: { kind: 'account', accountId: 'account', firstName: 'Requester',
+            recipientCensus: [{ account: { kind: 'account', accountId: 'account', name: 'Requester', firstName: 'Requester',
                 lastName: null, username: 'requester', avatarUrl: null }, readiness: { status: 'available',
                 contentPublicKey: encodeBase64(encryption.contentDataKey, 'base64'),
                 contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) }, envelopeStatus: 'missing' }],

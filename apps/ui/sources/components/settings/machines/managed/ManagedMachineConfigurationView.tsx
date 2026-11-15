@@ -885,7 +885,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             // names its kind under the provider rather than repeating the provider twice.
             : creationPreset && presentation.descriptor ? buildManagedConfigurationReceipt({
                 caption: receiptCaption, launch: creationPreset.launch, providerTitle: title, declaredBilling: presentation.billing,
-                savedLaunchPresentation: { schema: presentation.descriptor.launchSchema },
+                savedLaunchPresentation: presentation.savedLaunchPresentation,
                 controllerName, homeName, mark: receiptMark, localized, preset: { id: creationPreset.id, revision: creationPreset.revision, name: creationPreset.name },
             })
             : { caption: receiptCaption ?? t('managedMachines.receipt.yourNewMachine'), mark: receiptMark, name: draft?.name ?? title,
@@ -957,12 +957,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             : error.during === 'save' ? t('managedMachines.options.saveFailed') : t('managedMachines.options.error'))}
             diagnosticCode={error.code === 'conflict' || error.code === 'machine_setup_conflict' ? undefined : error.code} diagnosticDetail={error.diagnosticDetail} testID="managed-config.error"
             {...(error.code === 'conflict' || error.during === 'read' ? { action: { label: t(error.code === 'conflict' ? 'managedMachines.actions.review'
-                : 'managedMachines.actions.tryAgain'), onPress: retry } } : {})} />
+                : 'managedMachines.actions.tryAgain'), onPress: error.code === 'conflict' ? presetQuery.refresh : retry } } : {})} />
     </ItemGroup> : null;
     if (delegatedPreset && creationPreset && presetQuery.sameScope) {
         const name = delegatedName ?? creationPreset.launch.name;
+        const maySubmit = !busy && !!activeBinding?.isCurrent() && creationPreset.archivedAt === undefined && !presetQuery.state.error;
         const submit = async () => {
-            if (!activeBinding?.isCurrent() || !presetClient || !catalog.homeId || busy) return;
+            if (!maySubmit || !activeBinding || !presetClient || !catalog.homeId) return;
             setBusy(true); setError(null);
             const abort = new AbortController(); mutationAbort.current = abort;
             try {
@@ -997,7 +998,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             ...buildManagedConfigurationReceipt({ launch: { ...creationPreset.launch, name }, providerTitle: title,
                 controllerName: creationPreset.controllerDisplayName ?? controllerName, homeName, mark: receiptMark, localized,
                 declaredBilling: presentation.billing,
-                ...(presentation.descriptor ? { savedLaunchPresentation: { schema: presentation.descriptor.launchSchema } } : {}),
+                savedLaunchPresentation: presentation.savedLaunchPresentation,
                 ...(pooledDraft ? { pooledController: { sentenceName: controllerSentence } } : {}),
                 preset: { id: creationPreset.id, revision: creationPreset.revision, name: creationPreset.name } }),
             ...(creationPreset.setup ? { setup: creationPreset.setup } : {}),
@@ -1012,7 +1013,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                             server: { title, spec: creationPreset.name, mark: receiptMark },
                             confirmLabel: t('managedMachines.creationReview.confirm'), onConfirm: () => { void submit(); } });
                     } else void submit();
-                }, disabled: busy || !activeBinding?.isCurrent() || creationPreset.archivedAt !== undefined,
+                }, disabled: !maySubmit,
                 loading: busy, testID: props.onUse && !props.createOnUse ? 'managed-config.use' : 'managed-config.create' },
         };
         return <ManagedMachineConfigurator title={title} mark={receiptMark} compact={compact} testID="managed-config"

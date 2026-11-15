@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineSetupSourceEntryV1, MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -35,7 +35,7 @@ export type MachineSavePresetProps = Readonly<{
   scope: ServerAccountScope;
   machineName: string;
   sources: MachineSetupSourceV1;
-  presets: readonly ManagedMachinePresetV1[];
+  presets: readonly ManagedMachinePresetListEntryV1[];
   /** The preset exists: the Machine has not changed. Opens its editor. */
   onSaved: (presetId: string) => void;
 }>;

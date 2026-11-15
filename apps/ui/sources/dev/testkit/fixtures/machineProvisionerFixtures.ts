@@ -1,11 +1,69 @@
 import type { MachineProvisionerOptionsResultV1, MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { ManagedMachinePresetV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetV1Schema, type ManagedMachinePresetV1, type ManagedMachinePresetUpdateInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedMachinePresetContentV1Schema, sealManagedMachinePresetContentV1,
     type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { ManagedControllerAccessV1Schema, type ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createMachineFixture } from './machineFixtures';
+import { PluginPortableReleaseManifestV1Schema, PluginAccountAvailabilityIntentReadResponseV1Schema,
+    readDeclaredPackageAssetsV1, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import type { PluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
+    MachineProvisionerOptionsResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema,
+    MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+
+/** Account preset editors consume portable declarations, not a controller's live catalog. */
+export function createMachineProvisionerEditorManifestFixture(input: Readonly<{
+    pluginId: string; descriptor: MachineProvisionerContributionV1; optionsInputHints?: PluginActionInputHintsV2;
+}>) {
+    const { descriptor } = input;
+    const launch = rehydrateCanonicalProtocolComposableSchema(descriptor.launchSchema);
+    const resource = rehydrateCanonicalProtocolComposableSchema(descriptor.resourceSchema);
+    if (!launch || !resource) throw new Error('The editor fixture requires canonical launch and resource declarations');
+    const roles = defineMachineProvisionerSchemas({ launch, resource });
+    const contracts: (readonly [string, object, object])[] = [
+        [descriptor.actions.check, roles.checkInput.jsonSchema, MachineProvisionerCheckResultProtocolV1Schema.jsonSchema],
+        [descriptor.actions.acquire, roles.acquireInput.jsonSchema, roles.acquireResult.jsonSchema],
+        [descriptor.actions.bootstrap, roles.bootstrapInput.jsonSchema, MachineProvisionerBootstrapCarrierV1Schema.jsonSchema],
+        [descriptor.actions.inspect, roles.resourceInput.jsonSchema, MachineProvisionerObservationV1Schema.jsonSchema],
+        [descriptor.actions.destroy, roles.resourceInput.jsonSchema, MachineProvisionerPowerResultV1Schema.jsonSchema],
+    ];
+    if (descriptor.actions.options) contracts.push([descriptor.actions.options, descriptor.launchSchema,
+        MachineProvisionerOptionsResultProtocolV1Schema.jsonSchema]);
+    if (descriptor.actions.power) contracts.push([descriptor.actions.power, roles.powerInput.jsonSchema,
+        MachineProvisionerPowerResultV1Schema.jsonSchema]);
+    return PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: input.pluginId,
+        version: '1.0.0', displayName: descriptor.title, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js' },
+        hostAccess: { required: [], optional: [] }, contributes: { machineProvisioners: [descriptor],
+            actions: contracts.map(([id, inputSchema, resultSchema]) => ({ id, title: id,
+                scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema, resultSchema,
+                ...(id === descriptor.actions.options && input.optionsInputHints ? { inputHints: input.optionsInputHints } : {}) })) } });
+}
+
+/** The admitted portable release supplies editor declarations without contacting a controller. */
+export function createEnabledMachinePluginIntentReadFixture(manifest: PluginPortableReleaseManifestV1) {
+    return PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+        availabilityCursor: 1,
+        hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+        intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'fixture-1' },
+        release: { ref: { pluginId: manifest.id, version: manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+            collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
+                resources: (readDeclaredPackageAssetsV1(manifest) ?? []).map(resource => ({ ...resource, byteSize: 1, digestSha256: `sha256:${'c'.repeat(64)}` })) } },
+        packageAssets: [], uiArtifacts: [],
+    });
+}
+
+/** HTTP fixture response: update nulls clear stored fields; they are never persisted values. */
+export function applyManagedMachinePresetUpdateFixture(preset: ManagedMachinePresetV1, input: ManagedMachinePresetUpdateInputV1) {
+    const next = { ...preset, revision: input.expectedRevision + 1 };
+    for (const [key, value] of Object.entries(input.patch)) {
+        if (value === null || key === 'teamAcquireDelegated' && value === false) Reflect.deleteProperty(next, key);
+        else Reflect.set(next, key, value);
+    }
+    return ManagedMachinePresetV1Schema.parse(next);
+}
 
 /** Current controllers publish the protocol required by every provisioner Action. */
 export function createManagedControllerMachineFixture(overrides: Parameters<typeof createMachineFixture>[0] = {}) {
@@ -37,10 +95,13 @@ export function createPlainManagedMachinePresetFixture(input: Readonly<{
     launch?: ManagedMachinePresetContentV1['launch']; setup?: ManagedMachinePresetContentV1['setup'];
     controller?: ManagedMachinePresetV1['controller']; controllerPoolId?: ManagedMachinePresetV1['controllerPoolId'];
     retention?: ManagedMachinePresetV1['retention']; wakeOnAcceptedMessage?: boolean; archivedAt?: number;
+    controllerDisplayName?: ManagedMachinePresetContentV1['controllerDisplayName'];
+    teamAcquireDelegated?: ManagedMachinePresetV1['teamAcquireDelegated']; simultaneousLimit?: ManagedMachinePresetV1['simultaneousLimit'];
 }>) {
-    const { name, launch, setup, ...structural } = input;
+    const { name, launch, setup, controllerDisplayName, ...structural } = input;
     const content = ManagedMachinePresetContentV1Schema.parse({ v: 1, name,
-        ...(launch ? { launch } : {}), ...(setup ? { setup } : {}) });
+        ...(launch ? { launch } : {}), ...(setup ? { setup } : {}),
+        ...(controllerDisplayName === undefined ? {} : { controllerDisplayName }) });
     const sealed = sealManagedMachinePresetContentV1({ presetId: input.id, mode: 'plain', content });
     const wire = ManagedMachinePresetV1Schema.parse({ ...structural,
         contentEncryptionMode: 'plain', content: sealed.content, recipients: sealed.recipients });

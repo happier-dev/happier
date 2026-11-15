@@ -1,4 +1,4 @@
-import { projectRetainedManagedCredentialSelectionsV1, type ManagedMachineV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectRetainedManagedCredentialSelectionsV1, type ManagedMachineFullV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -18,7 +18,7 @@ export function currentManagedMoveController(machine: Machine | undefined, custo
 
 /** Reachability comes from the current installation's qualified credential check, never presence alone. */
 export async function readManagedMachineMoveCandidates(input: Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     machines: readonly Machine[];
     binding: ServerCredentialAccountScopeBinding;
     signal: AbortSignal;

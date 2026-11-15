@@ -16,6 +16,7 @@ const canceledHetzner = ManagedResourceDependencyV1Schema.parse({
   recovery: { reference: 'cmw0pjiad007vmc0nsrva3cr7', reason: 'native_acquisition_unconfirmed' },
   cleanup: { disposition: 'pending', reason: 'creation_canceled' },
 });
+if (!('provider' in canceledHetzner)) throw new Error('Expected the provider resource dependency fixture');
 
 function recordingModal(answer: boolean) {
   const calls: Array<{

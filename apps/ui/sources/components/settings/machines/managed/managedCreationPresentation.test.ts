@@ -718,7 +718,7 @@ describe('managed creation presentation', () => {
     const enrolled = {
       ...machine,
       enrolledMachineId: 'guest',
-      preset: { id: 'preset', revision: 1 },
+      preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' as const },
     };
     const operation: ActionOperationProjection = {
       serverId: machine.homeId,
@@ -941,7 +941,7 @@ describe('managed creation presentation', () => {
   it('recovers a retained unenrolled resource after controller operation history is lost', () => {
     const retained: ManagedMachineV1 = {
       ...machine,
-      preset: { id: 'admitted-preset', revision: 1 },
+      preset: { id: 'admitted-preset', revision: 1, contentEncryptionMode: 'plain' },
       observation: { availability: 'present', power: 'running', observedAt: 1 },
       machineSetup: {
         setup: { scripts: [{ body: 'echo setup' }] },

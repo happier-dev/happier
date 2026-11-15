@@ -5,7 +5,7 @@ import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
 import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
@@ -36,10 +36,10 @@ export function readUiManagedAccountAdmission(context: ActionExecutorContext, ma
     if (parent?.actionId !== 'machines.managed.acquire') throw new ManagedMachineControllerError('admission_unavailable');
     // This is the issuer's normalized admitted input, not a caller-supplied review snapshot.
     const input = parent.input as ManagedAcquireInputV1;
-    if (input.selection.kind !== 'one-off') throw new ManagedMachineControllerError('admission_unavailable');
-    const provisioner = input.reviewedFacts?.provisioner;
-    if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
-    return { input, provisioner, providerPluginId: input.reviewedFacts!.launch.provider.pluginId };
+    if (isManagedPresetAcquireInputV1(input)) throw new ManagedMachineControllerError('admission_unavailable');
+    const reviewedFacts = input.reviewedFacts;
+    if (!reviewedFacts?.provisioner) throw new ManagedMachineControllerError('provider_unavailable');
+    return { input, provisioner: reviewedFacts.provisioner, providerPluginId: reviewedFacts.launch.provider.pluginId };
 }
 
 /** Account roles retain the authenticated parent and the exact local launch selection. */

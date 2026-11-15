@@ -215,7 +215,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     }} />;
     const lastSaved = findPresetLastSavedFacts({ launch: visibleCreation.launch, history: detail.history });
     const receipt = buildManagedConfigurationReceipt({ launch: visibleCreation.launch, reviewedFacts: configuration.facts ?? undefined,
-        ...(presentation.descriptor ? { savedLaunchPresentation: { schema: presentation.descriptor.launchSchema } } : {}),
+        savedLaunchPresentation: presentation.savedLaunchPresentation,
         credentialPresentations: credentialAccounts.presentationsByKey, ...(lastSaved ? { lastSaved } : {}),
         providerTitle: presentation.title, localized: presentation.localized,
         controllerName, homeName,

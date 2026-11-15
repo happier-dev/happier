@@ -4,7 +4,7 @@ import { View, type GestureResponderEvent } from 'react-native';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { useUnistyles } from 'react-native-unistyles';
-import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -100,7 +100,7 @@ import { prepareManagedMachineResizeInputForSnapshot } from '@/sync/ops/machines
 type Execute = FrontDoorActionExecute;
 type ManagedSectionActionId = ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond';
 type SectionProps = Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineReadSnapshotV1;
     serverId: string;
     binding?: ServerCredentialAccountScopeBinding;
     current: boolean;
@@ -135,6 +135,17 @@ export function ManagedMachineSections(props: SectionProps) {
         testID="managed-machine.private-content-state" kind="unavailable" title={t('managedMachines.detail.loadFailed')}
         diagnosticCode="content_unavailable" action={{ label: t('common.retry'), onPress: props.onChanged }} />;
     return <ManagedMachineFullSections {...props} machine={props.machine} />;
+}
+
+export function ManagedMachineResizeResult({ output }: Readonly<{ output: ManagedMachineActionOutputV1<'machines.managed.resize'> }>) {
+    const diagnosticCode = 'code' in output.result ? output.result.code : undefined;
+    return <SurfaceStateCard size="line" testID="managed-machine.resize-result"
+        kind={output.result.kind === 'confirmed' ? 'success' : 'warning'}
+        title={output.result.kind === 'confirmed' ? t('managedMachines.resize.confirmed')
+            : output.result.kind === 'unsupported' ? t('managedMachines.resize.unsupported')
+                : output.result.kind === 'unknown' ? t('managedMachines.resize.unknown')
+                    : diagnosticCode === undefined ? t('common.unavailable') : describeManagedActionFailureDiagnostic(diagnosticCode)}
+        diagnosticCode={diagnosticCode} />;
 }
 
 function ManagedMachineFullSections(props: FullSectionProps) {
@@ -172,7 +183,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const pendingRef = React.useRef(false);
     const submittedDeleteApprovalIdRef = React.useRef<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
-    const [resizeReview, setResizeReview] = React.useState<ManagedMachineFullV1 | null>(null);
+    const [resizeReview, setResizeReview] = React.useState<Readonly<{
+        snapshot: ManagedMachineFullV1;
+        observation: ManagedMachineFullV1['observation'];
+    }> | null>(null);
     const [resizeResult, setResizeResult] = React.useState<ManagedMachineActionOutputV1<'machines.managed.resize'> | null>(null);
     const [guestDiagnostics, setGuestDiagnostics] = React.useState<ManagedGuestDiagnosticsV1 | null>(null);
     const [proposedPolicy, setProposedPolicy] = React.useState<MachineRetentionPolicyV1 | null>(null);
@@ -536,7 +550,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             controller, reviewedPendingEffects: true }), { tag: 'ManagedMachineSections.move' });
     };
     // One Action serves Check now and Read log; the purpose says which button shows the work.
-    const inspect = (onInspected?: (machine: ManagedMachineV1) => void) => {
+    const inspect = (onInspected?: (machine: ManagedMachineReadSnapshotV1) => void) => {
         setInspectPurpose('check');
         fireAndForget(run('machines.managed.inspect', target, onInspected ? result => {
             onInspected(ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result).machine);
@@ -546,7 +560,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         if (!canMutate) return;
         setResizeResult(null);
         // Check now refreshes pre-resize observations too; an old launch is never labelled as current size.
-        setResizeReview({ ...machine, observation: undefined });
+        setResizeReview({ snapshot: machine, observation: undefined });
         inspect(inspected => {
             if (isManagedOpaquePresetMachineV1(inspected)) return;
             setResizeReview(review => review ? { ...review, observation: inspected.observation } : null);
@@ -806,14 +820,14 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                     fireAndForget(runConfirmed('machines.managed.delete', input, undefined, undefined, currentDeleteReview),
                         { tag: 'ManagedMachineSections.delete' });
                 } }} /></View> : null;
-    const resizeReviewView = resizeReview ? <ManagedMachineResize key={`${resizeReview.id}:${resizeReview.observation?.observedAt ?? 0}`}
-        machine={resizeReview} descriptor={provisionerPresentation.descriptor} disabled={!canMutate}
+    const resizeReviewView = resizeReview ? <ManagedMachineResize key={`${resizeReview.snapshot.id}:${resizeReview.observation?.observedAt ?? 0}`}
+        machine={{ ...resizeReview.snapshot, observation: resizeReview.observation }} descriptor={provisionerPresentation.descriptor} disabled={!canMutate}
         pending={pending === MANAGED_RESIZE_ACTION_ID_V1} onCancel={() => setResizeReview(null)}
         onConfirm={size => fireAndForget((async () => {
             const binding = props.binding;
             const interest = interestRef.current;
             if (!binding?.isCurrent() || !interest || interest.signal.aborted) return;
-            const prepared = await prepareManagedMachineResizeInputForSnapshot(binding.scope, machine, size, interest.signal);
+            const prepared = await prepareManagedMachineResizeInputForSnapshot(binding.scope, resizeReview.snapshot, size, interest.signal);
             if (!binding.isCurrent() || interest.signal.aborted) return;
             if (prepared.kind === 'failed') {
                 setError(describeManagedActionFailureDiagnostic(prepared.code));
@@ -829,13 +843,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 if (output.result.kind === 'confirmed') setResizeReview(null);
             });
         })(), { tag: 'ManagedMachineSections.resize' })} /> : null;
-    const resizeResultView = resizeResult ? <SurfaceStateCard size="line" testID="managed-machine.resize-result"
-        kind={resizeResult.result.kind === 'confirmed' ? 'success' : 'warning'}
-        title={resizeResult.result.kind === 'confirmed' ? t('managedMachines.resize.confirmed')
-            : resizeResult.result.kind === 'unsupported' ? t('managedMachines.resize.unsupported')
-                : resizeResult.result.kind === 'unknown' ? t('managedMachines.resize.unknown')
-                    : describeManagedActionFailureDiagnostic(resizeResult.result.code)}
-        diagnosticCode={resizeResult.result.kind === 'confirmed' ? undefined : resizeResult.result.code} /> : null;
+    const resizeResultView = resizeResult ? <ManagedMachineResizeResult output={resizeResult} /> : null;
     return <ManagedReceiptColumns receipt={pageReceipt} compact={compact} testID="managed-machine.detail"
         receiptFollowUp={<>{resizeReviewView}{resizeResultView}{deleteReviewView}</>}>
         {pendingDeleteApprovalId
@@ -1022,7 +1030,7 @@ export type ManagedEnrolledMachine = {
     serverId: string;
     inventory: ReturnType<typeof useManagedMachineInventory>;
     entry: ManagedMachineInventoryEntry | undefined;
-    machine: ManagedMachineV1 | undefined;
+    machine: ManagedMachineReadSnapshotV1 | undefined;
     executeAction: Execute;
     deny: () => void;
 };
@@ -1072,7 +1080,7 @@ function formatUptime(ms: number): string {
  */
 /** Native power and known guest uptime remain dated facts in Details, separate from current reachability. */
 export function ManagedMachineNativeObservation(props: Readonly<{
-    machine: ManagedMachineV1; runningSince?: number;
+    machine: ManagedMachineReadSnapshotV1; runningSince?: number;
 }>) {
     const observation = props.machine.observation;
     if (observation?.availability !== 'present' || !observation.power) return null;
@@ -1090,7 +1098,7 @@ export function ManagedMachineNativeObservation(props: Readonly<{
  * The created machine's lifecycle for its header presence line, in the one word the Machines rail uses (Asleep,
  * Stopped, Starting…), so the header never says "Offline · last seen" beside a rail that says Asleep.
  */
-export function managedMachineHeaderPresence(machine: ManagedMachineV1,
+export function managedMachineHeaderPresence(machine: ManagedMachineReadSnapshotV1,
     enrolledMachine?: Parameters<typeof projectMachineManagedPresence>[0] | null,
 ): MachineManagedPresence | null {
     return machine.enrolledMachineId ? projectMachineManagedPresence(enrolledMachine ?? { id: machine.enrolledMachineId }, machine) : null;
@@ -1101,7 +1109,7 @@ export function managedMachineHeaderPresence(machine: ManagedMachineV1,
  * from ("Made from the Build box preset."), and its kind beside the ordinary facts. Identity comes from the installed provisioner declaration, so the header asks no
  * machine anything.
  */
-export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | undefined, serverId: string): ManagedMachineHeaderIdentity | null {
+export function useManagedMachineHeaderIdentity(machine: ManagedMachineReadSnapshotV1 | undefined, serverId: string): ManagedMachineHeaderIdentity | null {
     const enrolledMachine = useServerScopedMachine(serverId, machine?.enrolledMachineId ?? '');
     const fullMachine = machine && !isManagedOpaquePresetMachineV1(machine) ? machine : undefined;
     const presentation = useManagedProvisionerPresentation({ serverId, controller: machine?.controller,

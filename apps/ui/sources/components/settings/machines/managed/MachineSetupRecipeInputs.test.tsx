@@ -1,3 +1,4 @@
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -57,10 +58,10 @@ it('collects required selected recipe inputs before the first effects Plan and c
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     let prepared: Awaited<ReturnType<typeof prepareMachineSetupPresetApplyInput>> | undefined;
     let pending: Promise<void>;
-    await act(async () => { pending = prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui' },
-        homeId: 'home', machineId: 'machine', preset: { id: 'preset', revision: 1, setup: { items: [
+    await act(async () => { pending = prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui', serverId: 'fixture-home', expectedAccountId: 'owner' },
+        homeId: 'home', machineId: 'machine', preset: createPlainManagedMachinePresetFixture({ id: 'preset', homeId: 'home', revision: 1, name: 'Saved setup', owner: { kind: 'account', accountId: 'owner' }, setup: { items: [
             { kind: 'setupRecipe', selection: { ref, inputs: {} } },
-        ] } }, isCurrent: () => true }).then(value => { prepared = value; }); });
+        ] } }).opened, isCurrent: () => true }).then(value => { prepared = value; }); });
     expect(requests).toHaveLength(0);
     const field = screen.tree.findAll(node => node.props?.testID === 'machine-setup-inputs.0.maximumUse'
         && typeof node.props.onChangeText === 'function')[0];
@@ -69,7 +70,7 @@ it('collects required selected recipe inputs before the first effects Plan and c
     await screen.pressByTestIdAsync('machine-setup-inputs.confirm');
     await act(async () => { await pending!; });
     expect(prepared).toMatchObject({ ok: true, input: { targets: [{ sources: [
-        { kind: 'accountPreset', presetId: 'preset', setup: { items: [{ selection: { inputs: { maximumUse: '2G' } } }] } },
+        { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain', presetContentOverride: { content: { t: 'plain', v: { setup: { items: [{ selection: { inputs: { maximumUse: '2G' } } }] } } } } },
         { kind: 'direct' },
     ] }] } });
     await screen.unmount();
@@ -83,15 +84,17 @@ it('cancels input review without planning or changing the preset', async () => {
         requests.push(input);
         return MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], support: [], exclusions: [] });
     } }));
-    const preset = { id: 'preset', revision: 1, setup: { items: [{ kind: 'setupRecipe' as const, selection: { ref, inputs: {} } }] } };
+    const preset = createPlainManagedMachinePresetFixture({ id: 'preset', homeId: 'home', revision: 1, name: 'Saved setup', owner: { kind: 'account', accountId: 'owner' }, setup: { items: [{ kind: 'setupRecipe' as const, selection: { ref, inputs: {} } }] } }).opened;
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     let pending: ReturnType<typeof prepareMachineSetupPresetApplyInput>;
     await act(async () => { pending = prepareMachineSetupPresetApplyInput({ executeAction: executor.execute,
-        context: { surface: 'ui' }, homeId: 'home', machineId: 'machine', preset, isCurrent: () => true }); });
+        context: { surface: 'ui', serverId: 'fixture-home', expectedAccountId: 'owner' }, homeId: 'home', machineId: 'machine', preset, isCurrent: () => true }); });
     await screen.pressByTestIdAsync('machine-setup-inputs.cancel');
     expect(await pending!).toBeNull();
     expect(requests).toHaveLength(0);
-    expect(preset.setup.items[0]?.selection.inputs).toEqual({});
+    const item = preset.setup?.items?.[0];
+    if (item?.kind !== 'setupRecipe') throw new Error('Expected retained setup recipe');
+    expect(item.selection.inputs).toEqual({});
     await screen.unmount();
     dispose();
 });

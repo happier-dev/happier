@@ -43,13 +43,13 @@ const renderScreen: typeof renderTestScreen = (element, options = {}) => renderT
 describe('managed lifecycle presentation', () => {
   it.each(['newer-unknown', 'no-observation', 'older-observation', 'same-time-observation', 'confirmed-absent', 'absent-without-operation', 'newer-clear'] as const)(
     'shows current acquisition Details for %s', async scenario => {
-      const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+      const { ManagedMachineFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
       const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
       const { t } = await import('@/text');
       const absent = scenario === 'confirmed-absent' || scenario === 'absent-without-operation';
       const currentObservation = scenario === 'newer-unknown' || absent;
       const reason = absent ? 'native_acquisition_absent' : 'native_acquisition_unconfirmed';
-      const machine = ManagedMachineV1Schema.parse({ id: 'acquisition-details', homeId: 'home', custodianAccountId: 'owner',
+      const machine = ManagedMachineFullV1Schema.parse({ id: 'acquisition-details', homeId: 'home', custodianAccountId: 'owner',
         launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
         controller: { machineId: 'controller', installationId: 'installation' },
         allocation: absent ? 'confirmed-absent' : 'may-exist', creationState: 'active',
@@ -99,8 +99,8 @@ describe('managed lifecycle presentation', () => {
 
   it('keeps confirmed-absent recovery enabled inside a noninteractive historical resource row', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
-    const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
-    const machine = ManagedMachineV1Schema.parse({ id: 'ended-resource', homeId: 'home', custodianAccountId: 'owner',
+    const { ManagedMachineFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    const machine = ManagedMachineFullV1Schema.parse({ id: 'ended-resource', homeId: 'home', custodianAccountId: 'owner',
       launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Ended resource', choices: {} },
       controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'confirmed-absent', creationState: 'active',
       desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
@@ -126,9 +126,9 @@ describe('managed lifecycle presentation', () => {
   });
   it('reads a native resource identity as one fact per line, never a JSON dump', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
-    const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    const { ManagedMachineFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
     const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-    const machine = ManagedMachineV1Schema.parse({ id: 'bound-resource', homeId: 'home', custodianAccountId: 'owner',
+    const machine = ManagedMachineFullV1Schema.parse({ id: 'bound-resource', homeId: 'home', custodianAccountId: 'owner',
       launch: { provider, schemaVersion: 1, name: 'Bound resource', choices: {} },
       controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
       resource: { contributionRef: provider, schemaVersion: 1, value: { instance: 'happier-qb-design', cpus: 2, mounts: [] } },
@@ -246,8 +246,8 @@ describe('managed lifecycle presentation', () => {
 describe('created machine resource rows (UIR5)', () => {
   const provider = { pluginId: 'custom.provisioner', localId: 'native' };
   async function boundMachine(overrides: Record<string, unknown> = {}) {
-    const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
-    return ManagedMachineV1Schema.parse({ id: 'studio', homeId: 'home', custodianAccountId: 'owner',
+    const { ManagedMachineFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    return ManagedMachineFullV1Schema.parse({ id: 'studio', homeId: 'home', custodianAccountId: 'owner',
       launch: { provider, schemaVersion: 1, name: 'Lima', choices: {} },
       controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest', allocation: 'bound', creationState: 'active',
       resource: { contributionRef: provider, schemaVersion: 1, value: { instance: 'happier-studio', cpus: 2 } },

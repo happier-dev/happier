@@ -4,12 +4,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { presentManagedPresetCost } from './managedConfigurationPresentation';
+import { presentManagedPresetCost, type ManagedConfigurationReceiptInput } from './managedConfigurationPresentation';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HappierBrandMark, type HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
@@ -218,6 +219,24 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         projection: uiProjection,
         locale,
     });
+    // Daemon Actions are absent from the Account UI projection. Their public field
+    // labels still belong to the admitted manifest, even when a preset hides its controller.
+    const savedLaunchPresentation = React.useMemo<ManagedConfigurationReceiptInput['savedLaunchPresentation']>(() => {
+        if (!provisioner || input.purpose === 'mark') return undefined;
+        const optionsId = provisioner.descriptor.actions.options;
+        const manifest = accountSelection?.kind === 'available' ? accountSelection.manifest
+            : input.declarationsOnly ? accountReader?.readCurrentAccountExecutionDeclarations()
+                .find(selected => selected.manifest.id === provisioner.contribution.pluginId)?.manifest : undefined;
+        const projectedAction = optionsId ? createPluginUiProjectedActionResolver(uiProjection.actionsById)({
+            pluginId: provisioner.contribution.pluginId, localId: optionsId,
+        }) : undefined;
+        const action = input.controller
+            ? projectedAction && (!input.provisioner || projectedAction.occurrenceId === input.provisioner.occurrenceId) ? projectedAction : undefined
+            : manifest?.contributes.actions.find(action => action.id === optionsId);
+        const inputHints = action ? resolvePluginProjectedActionPresentation({ pluginId: provisioner.contribution.pluginId,
+            presentation: action, projection: uiProjection, localize: localized }).inputHints : null;
+        return { schema: provisioner.descriptor.launchSchema, ...(inputHints ? { inputHints } : {}) };
+    }, [provisioner, input.purpose, input.declarationsOnly, input.controller, input.provisioner, accountSelection, accountReader, uiProjection, localized]);
     const currentController = React.useRef(input.controller);
     currentController.current = input.controller;
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>, binding: ServerCredentialAccountScopeBinding,
@@ -256,6 +275,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     );
     return { localized, title: provisioner ? localized(provisioner.contribution.pluginId, provisioner.descriptor.title) : null,
         descriptor: provisioner?.descriptor,
+        savedLaunchPresentation,
         billing: provisioner?.descriptor.billing,
         kindTitle: provisioner?.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : null,
         description: provisioner?.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : null,

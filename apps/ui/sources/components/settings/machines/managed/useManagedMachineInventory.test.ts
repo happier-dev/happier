@@ -5,7 +5,7 @@ import { installApprovalCommonModuleMocks } from '@/components/approvals/approva
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createDeferred, createMachineFixture, createRenderCommitCounter, flushHookEffects, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { useMachineCollection } from '../collection/useMachineCollection';
 import { machineCollectionRowKey, type MachineCollectionRow } from '../collection/machineCollectionModel';
 import { upsertAndActivateServer, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
@@ -16,11 +16,8 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { retainManagedMachineInventory, useAdmittedManagedMachineAbsentEnrolledIds, useManagedMachineInventory, type ManagedMachineInventoryEntry } from './useManagedMachineInventory';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -28,12 +25,23 @@ import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { storage } from '@/sync/domains/state/storageStore';
 
 installApprovalCommonModuleMocks();
 const { t } = await import('@/text');
+const { Modal } = await import('@/modal');
 afterEach(async () => { await standardCleanup(); retireActiveServerAccountScopeLifetime(); resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
+
+function managedUiApprovalSettings(actionIds: readonly ('machines.managed.list' | 'machines.managed.get')[]) {
+    let actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {} });
+    for (const actionId of actionIds) {
+        actionsSettingsV1 = setActionApprovalOverride({
+            settings: actionsSettingsV1, actionId, surface: 'ui', approvalRequired: true,
+        });
+    }
+    return { actionsSettingsV1 };
+}
 
 describe('managed Machine inventory', () => {
     it('publishes changed admitted inventory without a third output admission and rejects malformed HTTP rows', async () => {
@@ -147,57 +155,54 @@ describe('managed Machine inventory', () => {
         }
     });
     it('publishes a real approval transition from a settled failure and clears it on recovery', async () => {
-        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        const settings = managedUiApprovalSettings(['machines.managed.list']);
         const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://inventory-failure-approval.test',
             serverIdentityId: 'srv_failure_approval', accountId: 'owner', currentAccount: true,
-            settings: { actionsSettingsV1: { v: 1, actions: { 'machines.managed.list': { approvalRequiredSurfaces: ['ui'] } } } },
-        }], route: request => artifacts.handle(request.path, { method: request.method, body: JSON.stringify(request.body) })
-            ?? (request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+            settings,
+        }], route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
                 ? Response.json(createRootLayoutFeaturesResponse())
-                : request.path === '/v1/machines/managed/actions/list' ? Response.json({ machines: [] }) : undefined) });
+                : request.path === '/v1/machines/managed/actions/list' ? Response.json({ machines: [] }) : undefined });
         const serverId = homes.homes.a!.id;
+        homes.replaceAccountSettings('a', { settings, version: 2 });
         const account = await captureLazyActionAccountContext(serverId);
         try {
-            // Match the governance harness's deliberate Ask preference at the live settings owner;
-            // restoring a Home does not await its asynchronous settings publication.
-            await act(async () => storage.getState().applySettingsLocal({ actionsSettingsV1: setActionApprovalOverride({
-                settings: storage.getState().settings.actionsSettingsV1, actionId: 'machines.managed.list', surface: 'ui', approvalRequired: true,
-            }) }));
+            // Mirror the persisted Home policy at the restored live settings scope.
+            await act(async () => storage.getState().applySettingsLocal(settings));
             await waitForHomeGovernance(async () => expect((await account.readSettings()).actionsSettingsV1?.actions?.['machines.managed.list']
                 ?.approvalRequiredSurfaces).toEqual(['ui']));
         } catch (error) { account.dispose(); await homes.dispose(); throw error; }
         const publications: ManagedMachineInventoryEntry[] = [];
+        // The real presenter uses native confirmation for reads without discovered preview facts.
+        const decline = createDeferred<boolean>();
+        const accept = createDeferred<boolean>();
+        const confirmation = vi.spyOn(Modal, 'confirm')
+            .mockImplementationOnce(() => decline.promise).mockImplementationOnce(() => accept.promise);
         const inventory = retainManagedMachineInventory(account.accountLifetime, entry => publications.push(entry));
-        const pending = () => {
-            const entry = inventory.getSnapshot();
-            expect(entry.status).toBe('loading');
-            expect(entry.errorCode).toBeUndefined();
-            if (!entry.approval || typeof entry.approval === 'string') throw new Error('Expected a read approval');
-            return entry.approval;
-        };
-        const settle = async (approval: ActionApprovalContinuation, decision: 'approve' | 'reject') => {
-            await expect(decideApprovalAsInbox(serverId, approval.artifactId, decision)).resolves.toMatchObject({ ok: true });
-            const artifact = await account.fetchArtifact(approval.artifactId);
-            if (!artifact) throw new Error('Expected the persisted approval');
-            await act(async () => {
-                if (decision === 'approve') await approval.onExecuted(artifact);
-                else approval.onTerminal?.('rejected', artifact);
-            });
-            await flushHookEffects({ cycles: 30 });
-        };
         try {
-            await waitForHomeGovernance(() => expect(inventory.getSnapshot().approval).toBeDefined());
-            await settle(pending(), 'reject');
-            expect(inventory.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'approval_rejected' });
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(1));
+            expect(inventory.getSnapshot()).toMatchObject({ status: 'loading' });
+            expect(inventory.getSnapshot().approval).toBeUndefined();
+            expect(homes.requests.filter(request => request.path === '/v1/machines/managed/actions/list')).toEqual([]);
+            await act(async () => decline.resolve(false));
+            await waitForHomeGovernance(() => expect(inventory.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'approval_canceled' }));
+            const settled = inventory.getSnapshot();
             publications.length = 0;
             await act(async () => publishHomeAccountChange(serverId));
-            await waitForHomeGovernance(() => expect(inventory.getSnapshot().approval).toBeDefined());
-            expect(publications.map(entry => entry.status)).toEqual(['loading']);
-            await settle(pending(), 'approve');
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+            // Native Ask belongs to its presenter; revalidation retains the settled inventory until its answer changes.
+            expect(inventory.getSnapshot()).toBe(settled);
+            expect(inventory.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'approval_canceled' });
+            expect(publications).toEqual([]);
+            await act(async () => accept.resolve(true));
+            await waitForHomeGovernance(() => expect(inventory.getSnapshot().status).toBe('ready'));
             expect(inventory.getSnapshot()).toMatchObject({ status: 'ready', machines: [] });
             expect(inventory.getSnapshot().approval).toBeUndefined();
             expect(inventory.getSnapshot().errorCode).toBeUndefined();
-        } finally { inventory.dispose(); account.dispose(); await homes.dispose(); }
+        } finally {
+            inventory.dispose();
+            account.dispose();
+            await homes.dispose();
+        }
     });
     it('never publishes an unpartitioned collection frame on cold or warm route mounts', async () => {
         const homeId = 'srv_route_collection';
@@ -219,8 +224,16 @@ describe('managed Machine inventory', () => {
         const ids = [serverId];
         const groups = [{ serverId, serverName: 'Home', accountScope: { serverId, accountId: 'owner' }, status: 'idle' as const,
             machines: [createMachineFixture({ id: 'guest' })] }];
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, groups[0]!.machines);
+        publishMachineActivityForTest(groups[0]!.machines);
         type Frame = ReturnType<typeof useMachineCollection>;
         const frames: Frame[] = [];
+        const publicSections = (collection: Frame) => collection.sections.map(section => ({
+            serverId: section.serverId, title: section.title, archived: section.archived,
+            rows: section.rows.map(row => ({ key: machineCollectionRowKey(row), title: row.title, host: row.host,
+                platform: row.platform, online: row.online, status: row.status, presence: row.presence,
+                presenceWord: row.presenceWord, reason: row.reason, ownership: row.ownership, ownerName: row.ownerName })),
+        }));
         function useRouteCollection() {
             const inventory = useManagedMachineInventory(ids, undefined, undefined, true);
             const collection = useMachineCollection({ groups, groupedByHome: false,
@@ -253,7 +266,8 @@ describe('managed Machine inventory', () => {
                 expect(frames.every(frame => frame.machineCount === 1 && frame.sections.some(section =>
                     section.title === t('machines.destinations.created') && section.rows.length === 1))).toBe(true);
                 expect(warm.getCurrent().machineCount).toBe(1);
-                expect(warm.getCurrent().sections).toEqual(settled.sections);
+                // Presence sources are deliberately compact linked projections, not a stable public row shape.
+                expect(publicSections(warm.getCurrent())).toEqual(publicSections(settled));
                 await waitForHomeGovernance(() => expect(homes.requests.length).toBeGreaterThan(requestCount));
                 answer.resolve(Response.json({ machines: [] }));
                 await waitForHomeGovernance(() => expect(warm.getCurrent().sections.some(section =>
@@ -299,7 +313,8 @@ describe('managed Machine inventory', () => {
         const machines = Array.from({ length: 62 }, (_, index) => createMachineFixture({
             id: `guest-${index}`, active: true, activeAt: Date.now(),
         }));
-        observeMachinePresenceForTest(scope, machines.map(machine => machine.id));
+        await publishMachineInventoryForTest(scope, machines);
+        publishMachineActivityForTest(machines);
         const groups = [{ serverId, serverName: 'Home', accountScope: scope, status: 'idle' as const, machines }];
         const counters = new Map<string, ReturnType<typeof createRenderCommitCounter>>();
         const Row = React.memo(function Row({ row }: Readonly<{ row: MachineCollectionRow }>) {
@@ -396,7 +411,7 @@ describe('managed Machine inventory', () => {
             expect(selections).toHaveLength(2);
         } finally { inventory.dispose(); account.dispose(); await homes.dispose(); }
     });
-    it('keeps admitted absence visible while a narrower overlapping inventory is still unread', async () => {
+    it('keeps admitted absence visible across a narrower overlapping inventory admitted from the held census', async () => {
         const absent = ManagedMachineV1Schema.parse({ id: 'removed', homeId: 'srv_absence', custodianAccountId: 'owner', enrolledMachineId: 'ghost',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'confirmed-absent', creationState: 'active',
@@ -411,6 +426,7 @@ describe('managed Machine inventory', () => {
         // Secure storage and HTTP are boundaries; both inventory readers and admission stay real.
         setRuntimeFetch(async (input, init) => {
             const path = new URL(String(input)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path !== '/v1/machines/managed/actions/list') return Response.json({ error: 'not_found' }, { status: 404 });
@@ -429,9 +445,10 @@ describe('managed Machine inventory', () => {
             held.getCurrent().bindings.get(serverId), execute));
         try {
             expect(held.getCurrent().entries[serverId]?.status).toBe('ready');
-            expect(narrow.getCurrent().entries[serverId]?.status).toBe('loading');
+            // The narrower current-only reader is admitted from the held settled census, not read again.
+            expect(narrow.getCurrent().entries[serverId]?.status).toBe('ready');
             expect([...observer.getCurrent()]).toEqual(['ghost']);
-            expect(activeReads + archiveReads).toBe(3);
+            expect(activeReads + archiveReads).toBe(2);
             coldRead.resolve(Response.json({ machines: [absent] }));
             await flushHookEffects({ cycles: 30 });
             expect([...observer.getCurrent()]).toEqual(['ghost']);
@@ -533,6 +550,7 @@ describe('managed Machine inventory', () => {
         let reads = 0;
         setRuntimeFetch(async input => {
             const path = new URL(String(input)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/machines/managed/actions/list') return reads++ === 0
@@ -619,6 +637,7 @@ describe('managed Machine inventory', () => {
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         setRuntimeFetch(async (raw, init) => {
             const path = new URL(String(raw)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             const input = JSON.parse(String(init?.body));
@@ -637,7 +656,7 @@ describe('managed Machine inventory', () => {
         await act(async () => publishHomeAccountChange(target.id));
         await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_archived?.status).toBe('error'));
         expect(hook.getCurrent().entries.srv_archived?.status).toBe('error');
-        expect(hook.getCurrent().machinesByServerId[target.id]?.[0]?.launch.name).toBe('Current guest');
+        expect(hook.getCurrent().machinesByServerId[target.id]?.[0]?.launch?.name).toBe('Current guest');
         expect(hook.getCurrent().machinesByServerId[target.id]?.map(row => row.id)).toEqual(['active', 'retired']);
         archiveReply = 'denied';
         await act(async () => publishHomeAccountChange(target.id));
@@ -645,34 +664,61 @@ describe('managed Machine inventory', () => {
         expect(hook.getCurrent().machinesByServerId[target.id]).toEqual([]);
         await hook.unmount();
     });
-    it('keeps Ask-first list and saved-resource reads pending until the real approval settles, and retains rows after rejection', async () => {
+    it('admits a later current-only reader from a settled archive-including inventory without a second list read', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://derived-inventory.test', scope: 'tab' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_derived');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        const inputs: unknown[] = [];
+        const machine = { id: 'active', homeId: 'srv_derived', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'may-exist', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        setRuntimeFetch(async (raw, init) => {
+            const path = new URL(String(raw)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            const input = JSON.parse(String(init?.body));
+            inputs.push(input);
+            return Response.json({ machines: [input.archived ? { ...machine, id: 'retired', archivedAt: 1 } : machine] });
+        });
+        const execute = createDefaultActionExecutor().execute;
+        const collection = await renderHook(() => useManagedMachineInventory([target.id], undefined, execute, true), { flushOptions: { cycles: 20 } });
+        await waitForHomeGovernance(() => expect(collection.getCurrent().entries.srv_derived?.status).toBe('ready'));
+        const picker = await renderHook(() => useManagedMachineInventory([target.id], undefined, execute), { flushOptions: { cycles: 20 } });
+        await waitForHomeGovernance(() => expect(picker.getCurrent().entries.srv_derived?.status).toBe('ready'));
+        expect({ reads: inputs.length, rows: picker.getCurrent().machinesByServerId[target.id]?.map(row => row.id) })
+            .toEqual({ reads: 2, rows: ['active'] });
+        // Both readers still follow a real change.
+        machine.launch.name = 'Renamed';
+        await act(async () => publishHomeAccountChange(target.id));
+        await waitForHomeGovernance(() => expect(picker.getCurrent().machinesByServerId[target.id]?.[0]?.launch?.name).toBe('Renamed'));
+        await picker.unmount();
+        await collection.unmount();
+    });
+    it('keeps Ask-first list and saved-resource reads on the mounted public review while retaining rows after cancellation', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-inventory-approval.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_inventory_approval');
         const other = await upsertServerProfileOnly({ serverUrl: 'https://other-inventory-approval.test' });
         await setServerProfileIdentityForUrl(other.serverUrl, 'srv_other_inventory');
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const machine = { id: 'pending', homeId: 'srv_inventory_approval', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'may-exist', creationState: 'active',
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
-        const settings = { actionsSettingsV1: { v: 1, actions: {
-            'machines.managed.list': { approvalRequiredSurfaces: ['ui'] },
-            'machines.managed.get': { approvalRequiredSurfaces: ['ui'] },
-        } } };
+        const settings = managedUiApprovalSettings(['machines.managed.list', 'machines.managed.get']);
         const reads: string[] = [];
         let otherListReads = 0;
         setRuntimeFetch(async (raw, init) => {
             const url = new URL(String(raw));
             const path = url.pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
             if (url.host === 'other-inventory-approval.test') {
                 if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/machines/managed/actions/list') { otherListReads++; return Response.json({ machines: [{ ...machine, homeId: 'srv_other_inventory' }] }); }
                 if (path === '/v1/machines/managed/actions/get') return Response.json({ ...machine, homeId: 'srv_other_inventory' });
             }
-            const artifact = artifacts.handle(path, init);
-            if (artifact) return artifact;
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: settings }, version: 1 });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
@@ -680,76 +726,58 @@ describe('managed Machine inventory', () => {
             if (path === '/v1/machines/managed/actions/get') { reads.push('get'); return Response.json(machine); }
             return Response.json({ error: 'unexpected_route' }, { status: 404 });
         });
+        await act(async () => storage.getState().applySettingsLocal(settings));
         const execute = createDefaultActionExecutor().execute;
+        const decisions = Array.from({ length: 4 }, () => createDeferred<boolean>());
+        const confirmation = vi.spyOn(Modal, 'confirm');
+        for (const decision of decisions) confirmation.mockImplementationOnce(() => decision.promise);
         const hook = await renderHook(({ id }: { id?: string }) => {
             const inventory = useManagedMachineInventory([target.id, other.id], id, execute);
             const joined = useManagedMachineInventory([target.id], id, execute);
             return { ...inventory, joined };
         },
             { initialProps: {}, flushOptions: { cycles: 20 } });
-        const pending = () => {
-            const entry = hook.getCurrent().entries.srv_inventory_approval;
-            expect(entry).toMatchObject({ status: 'loading', approval: { artifactId: expect.any(String) } });
-            expect(entry?.errorCode).toBeUndefined();
-            expect(hook.getCurrent().joined.entries.srv_inventory_approval?.approval).toBe(entry?.approval);
-            if (!entry?.approval || typeof entry.approval === 'string') throw new Error('Expected a result-bearing read continuation');
-            return entry.approval;
-        };
-        const settle = async (registration: ActionApprovalContinuation, decision: 'approve' | 'reject') => {
-            await expect(decideApprovalAsInbox(target.id, registration.artifactId, decision)).resolves.toMatchObject({ ok: true });
-            const account = await captureLazyActionAccountContext(target.id);
-            try {
-                const artifact = await account.fetchArtifact(registration.artifactId);
-                if (!artifact) throw new Error('Expected the persisted approval');
-                await act(async () => { if (decision === 'approve') await registration.onExecuted(artifact);
-                    else registration.onTerminal?.('rejected', artifact); });
-            } finally { account.dispose(); }
+        try {
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(1));
+            expect(hook.getCurrent().entries.srv_inventory_approval).toMatchObject({ status: 'loading' });
+            expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeUndefined();
+            expect(reads).toEqual([]);
+            expect(hook.getCurrent().machinesByServerId[target.id]).toEqual([]);
+            await act(async () => decisions[0]!.resolve(true));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval)
+                .toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] }));
+            expect(reads).toEqual(['list']);
+            const otherReadsBefore = otherListReads;
+            await act(async () => publishHomeAccountChange(other.id));
+            await waitForHomeGovernance(() => expect(otherListReads).toBe(otherReadsBefore + 1));
+            await act(async () => publishHomeAccountChange(target.id, ['unrelated-artifact'], { changeKinds: ['artifact'] }));
             await flushHookEffects({ cycles: 20 });
-        };
-        await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeDefined());
-        const listApproval = pending();
-        expect(reads).toEqual([]);
-        expect(hook.getCurrent().machinesByServerId[target.id]).toEqual([]);
-        // Another device settling this approval also wakes a secondary Home's socket.
-        // That transport is content-free and cannot identify the Artifact domain.
-        await act(async () => publishHomeAccountChange(target.id));
-        await flushHookEffects({ cycles: 20 });
-        expect(pending()).toBe(listApproval);
-        const otherReadsBefore = otherListReads;
-        await act(async () => publishHomeAccountChange(other.id));
-        await waitForHomeGovernance(() => expect(otherListReads).toBe(otherReadsBefore + 1));
-        expect(otherListReads).toBe(otherReadsBefore + 1);
-        expect(pending()).toBe(listApproval);
-        await settle(listApproval, 'approve');
-        expect(hook.getCurrent().entries.srv_inventory_approval).toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] });
-        expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeUndefined();
-        expect(reads).toEqual(['list']);
-        await act(async () => publishHomeAccountChange(target.id, ['unrelated-artifact'], { changeKinds: ['artifact'] }));
-        await flushHookEffects({ cycles: 20 });
-        expect(hook.getCurrent().entries.srv_inventory_approval).toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] });
-        expect(reads).toEqual(['list']);
-        await hook.rerender({ id: machine.id });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeDefined());
-        const getApproval = pending();
-        expect(hook.getCurrent().machinesByServerId[target.id]).toEqual([]);
-        await settle(getApproval, 'approve');
-        expect(hook.getCurrent().entries.srv_inventory_approval).toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] });
-        expect(reads).toEqual(['list', 'get']);
-        await act(async () => publishHomeAccountChange(target.id));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeDefined());
-        const rejected = pending();
-        expect(hook.getCurrent().machinesByServerId[target.id]).toMatchObject([{ id: 'pending' }]);
-        await settle(rejected, 'reject');
-        expect(hook.getCurrent().entries.srv_inventory_approval).toMatchObject({ status: 'error', errorCode: 'approval_rejected', machines: [{ id: 'pending' }] });
-        expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeUndefined();
-        expect(reads).toEqual(['list', 'get']);
-        await act(async () => publishHomeAccountChange(target.id));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval?.approval).toBeDefined());
-        await settle(pending(), 'approve');
-        expect(hook.getCurrent().entries.srv_inventory_approval).toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] });
-        expect(hook.getCurrent().entries.srv_inventory_approval?.errorCode).toBeUndefined();
-        expect(reads).toEqual(['list', 'get', 'get']);
-        await hook.unmount();
+            expect(reads).toEqual(['list']);
+            await hook.rerender({ id: machine.id });
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+            expect(hook.getCurrent().machinesByServerId[target.id]).toEqual([]);
+            await act(async () => decisions[1]!.resolve(true));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval)
+                .toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] }));
+            // Naming the exact saved resource for native Ask is separate from its accepted inventory read.
+            expect(reads).toEqual(['list', 'get', 'get']);
+            await act(async () => publishHomeAccountChange(target.id));
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(3));
+            expect(hook.getCurrent().machinesByServerId[target.id]).toMatchObject([{ id: 'pending' }]);
+            await act(async () => decisions[2]!.resolve(false));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval)
+                .toMatchObject({ status: 'error', errorCode: 'approval_canceled', machines: [{ id: 'pending' }] }));
+            expect(reads).toEqual(['list', 'get', 'get', 'get']);
+            await act(async () => publishHomeAccountChange(target.id));
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(4));
+            await act(async () => decisions[3]!.resolve(true));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().entries.srv_inventory_approval)
+                .toMatchObject({ status: 'ready', machines: [{ id: 'pending' }] }));
+            expect(hook.getCurrent().entries.srv_inventory_approval?.errorCode).toBeUndefined();
+            expect(reads).toEqual(['list', 'get', 'get', 'get', 'get', 'get']);
+        } finally {
+            await hook.unmount();
+        }
     });
 
     it('retains rows through network failure, then removes protected content after current access refusal', async () => {
@@ -821,6 +849,7 @@ describe('managed Machine inventory', () => {
         const second = createDeferred<Response>();
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
+            if (url.pathname === '/v1/auth/ping') return Response.json({ ok: true });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             return JSON.parse(String(init?.body)).managedId === 'second' ? second.promise : Response.json(machine);

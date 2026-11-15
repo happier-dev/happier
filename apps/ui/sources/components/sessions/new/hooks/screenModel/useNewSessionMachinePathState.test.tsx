@@ -10,6 +10,10 @@ import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePres
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
@@ -724,6 +728,32 @@ describe('useNewSessionMachinePathState', () => {
         await act(async () => explicit.getCurrent().adoptManagedMachineTarget('guest'));
         expect(explicit.getCurrent().getRequestedPath()).toBe('/chosen');
         await explicit.unmount();
+    });
+
+    it('retains a deferred preset and its Keep choice before private receipt admission', async () => {
+        const publicKey = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(71)).publicKey;
+        const sealed = sealManagedMachinePresetContentV1({ presetId: 'guest', mode: 'e2ee',
+            content: { v: 1, name: 'Guest', launch: { provider: { pluginId: 'custom.compute', localId: 'vm' },
+                schemaVersion: 1, name: 'Guest', choices: {} } }, randomBytes: length => new Uint8Array(length).fill(72),
+            recipientCensus: [{ account: { kind: 'account', accountId: 'account-a', name: 'Alice',
+                firstName: 'Alice', lastName: null, username: 'alice', avatarUrl: null },
+                readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey, 'base64'),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing' }],
+        });
+        const draft = createManagedMachineSelectionDraft({ deferredAuthorPreset: true,
+            selection: { kind: 'preset', homeId: 'server-a', id: 'guest', revision: 1 },
+            presetOrigin: { id: 'guest', homeId: 'server-a', revision: 1, name: 'Guest',
+                controller: { machineId: 'host', installationId: 'installation' } },
+            presetContentOverride: { content: sealed.content },
+        });
+        const hook = await renderMachinePathState({ machines: [], recentMachinePaths: [], machineIdParam: null,
+            pathParam: null, requestedManagedMachineSelection: draft });
+        try {
+            expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+            expect(hook.getCurrent().managedMachineArchiveChoiceAvailability?.supportedEffects).toEqual(['keep']);
+            await act(async () => hook.getCurrent().setManagedMachineArchiveEffect('stop'));
+            expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+        } finally { await hook.unmount(); }
     });
 
     it('retains reviewed archive choices for an admitted shared controller and an offline owned controller', async () => {

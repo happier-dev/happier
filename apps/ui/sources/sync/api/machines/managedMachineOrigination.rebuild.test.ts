@@ -10,6 +10,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnve
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -270,7 +271,7 @@ it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
         const execute = (childContext: ActionExecutorContext) => executeManagedMachineNativeAction({
             account, actionId: 'machines.setup.apply', input, context: childContext });
         const result = mode === 'authored' ? await execute(context) : await invokeHostReviewedChildV1({
-            parent, context, child: { action: 'machines.setup.apply', role: 'template_setup_apply', input },
+            parent, context, child: { action: 'machines.setup.apply', role: 'template_setup_apply', input: normalizeStrictJsonValue(input) },
             ...(mode === 'admitted' || mode === 'voice-admitted'
                 ? { admittedReview: { action: 'machines.setup.apply', role: 'template_setup_apply', surface: context.surface! } } : {}),
             execute: async (_input, childContext) => await execute(childContext),

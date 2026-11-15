@@ -169,7 +169,7 @@ function CountCell(
   const needsYou = props.attention === true && props.value > 0;
   return (
     <View style={styles.cell}>
-      {needsYou ? <StatusDot color={theme.colors.state.warning} /> : null}
+      {needsYou ? <StatusDot color={theme.colors.state.warning.foreground} /> : null}
       <Text
         numberOfLines={1}
         style={needsYou ? styles.attention : styles.count}
@@ -206,7 +206,7 @@ function RestartCell(props: Readonly<{ row: FleetUpdatesRow }>) {
     );
   return (
     <View style={styles.cell}>
-      <StatusDot color={theme.colors.state.warning} />
+      <StatusDot color={theme.colors.state.warning.foreground} />
       <Text numberOfLines={1} style={styles.attention}>
         {t(`${s}.restartNeeded`)}
       </Text>
@@ -229,7 +229,7 @@ const styles = StyleSheet.create((theme) => ({
   attention: {
     ...Typography.variant('meta'),
     ...Typography.tabular(),
-    color: theme.colors.state.warning,
+    color: theme.colors.state.warning.foreground,
   },
   quiet: {
     ...Typography.variant('meta'),

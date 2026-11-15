@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { machineSetupPresetApplySource, machineSetupPresetSource, readMachineSetupPresetChoices } from './machineSetupPresetChoices';
 
@@ -10,8 +11,8 @@ it('lists bundled setup declarations with saved presets and preserves their orde
         'example.setup/secure': { id: 'example.setup/secure', pluginId: 'example.setup', pluginVersion: '1',
             occurrenceId: 'occurrence', definition: { id: 'secure', revision: '2', title: 'Secure', description: 'Two recipes', setup } },
     } };
-    const saved = { id: 'saved', revision: 1, name: 'Saved', homeId: 'home', owner: { kind: 'account' as const, accountId: 'owner' },
-        contentEncryptionMode: 'plain' as const, setup: {} };
+    const saved = createPlainManagedMachinePresetFixture({ id: 'saved', revision: 1, name: 'Saved', homeId: 'home', owner: { kind: 'account' as const, accountId: 'owner' },
+        setup: {} }).opened;
     const choices = readMachineSetupPresetChoices([saved, { ...saved, id: 'archived', archivedAt: 1 }], projection,
         (_pluginId, value) => typeof value === 'string' ? value : '');
     expect(choices.map(choice => choice.name)).toEqual(['Saved', 'Secure']);

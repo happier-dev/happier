@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -30,7 +30,7 @@ import { useManagedCreationScopeBirth } from './useManagedCreationScopeBirth';
 
 /** The machine's Home retention owner supplies the choice; birth supplies its source. */
 export function ManagedCreationScopeRuleSection(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string; binding?: ServerCredentialAccountScopeBinding; onChange?: (effect: 'keep' | 'stop' | 'delete') => void; disabled?: boolean; supportedEffects: readonly ('stop' | 'delete')[] }>,
+  props: Readonly<{ machine: ManagedMachineReadSnapshotV1; serverId: string; binding?: ServerCredentialAccountScopeBinding; onChange?: (effect: 'keep' | 'stop' | 'delete') => void; disabled?: boolean; supportedEffects: readonly ('stop' | 'delete')[] }>,
 ) {
   const binding = props.binding;
   if (!binding?.isCurrent() || !areServerProfileIdentifiersEquivalent(binding.serverId, props.serverId)) return null;
@@ -38,7 +38,7 @@ export function ManagedCreationScopeRuleSection(
 }
 
 function ScopeRuleReader(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string; accountId: string; binding: ServerCredentialAccountScopeBinding; onChange?: (effect: 'keep' | 'stop' | 'delete') => void; disabled?: boolean; supportedEffects: readonly ('stop' | 'delete')[] }>,
+  props: Readonly<{ machine: ManagedMachineReadSnapshotV1; serverId: string; accountId: string; binding: ServerCredentialAccountScopeBinding; onChange?: (effect: 'keep' | 'stop' | 'delete') => void; disabled?: boolean; supportedEffects: readonly ('stop' | 'delete')[] }>,
 ) {
   const birthRead = useManagedCreationScopeBirth(props.machine, props.binding);
   const rule = readManagedCreationScopeRule(props.machine, birthRead.source);
@@ -52,7 +52,7 @@ function ScopeRuleReader(
           testID="managed-machine.scope-birth-failed"
           size="line"
           kind="warning"
-          title={t('managedRetention.scopeBirthFailed', { name: props.machine.launch.name })}
+          title={t('managedRetention.scopeBirthFailed', { name: props.machine.launch?.name ?? t('common.machine') })}
           diagnosticCode="managed_birth_lookup_failed"
           action={{ label: t('common.retry'), testID: 'managed-machine.scope-birth-failed:retry', onPress: birthRead.retry }}
         />
@@ -67,7 +67,7 @@ function ScopeRuleReader(
       readStatus={birthRead.status === 'pending' ? 'loading' : birthRead.status}
       onChange={props.onChange}
       disabled={props.disabled}
-      machineName={props.machine.launch.name}
+      machineName={props.machine.launch?.name ?? t('common.machine')}
       supportedEffects={props.supportedEffects}
       serverId={props.serverId}
     />

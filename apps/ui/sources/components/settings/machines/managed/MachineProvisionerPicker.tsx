@@ -153,7 +153,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             && localized(other.contribution.pluginId, other.descriptor.title) === title);
         return sharesTitle && kind ? `${title} ${kind}` : title;
     };
-    const cards: ManagedProvisionerCard[] = catalog.provisioners.flatMap(provisioner => {
+    const cards: ManagedProvisionerCard[] = catalog.provisioners.flatMap<ManagedProvisionerCard>(provisioner => {
         if (props.presetOnly) return [{ id: buildQualifiedPluginContributionKey(provisioner.contribution), title: titleOf(provisioner),
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: provisioner.descriptor.billing.location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,

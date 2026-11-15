@@ -47,7 +47,7 @@ function createCapturedPoolLabelClient(contentEncryptionMode: 'plain' | 'e2ee') 
 
 describe('Machine Pool private-label projection', () => {
     it('opens recipient-projected labels with their exact Pool field bindings', async () => {
-        const open = vi.fn(async ({ label }: Readonly<{ label: { content: { t: 'plain'; v: string } } }>) => label.content.v);
+        const open = vi.fn(async ({ label }: PrivateLabelOpenInputV1) => label?.content.t === 'plain' ? label.content.v : null);
         const readPolicyForPool = vi.fn(async () => plainAccountReadPolicy);
 
         await expect(openMachinePoolPrivateViewV1({ view: projected, labels: { open, readPolicyForPool } })).resolves.toEqual({
@@ -94,7 +94,7 @@ describe('Machine Pool private-label projection', () => {
         } satisfies MachinePoolPrivateViewV1;
         const open = vi.fn(async ({ binding, label }: PrivateLabelOpenInputV1) => {
             if (binding.id === poolId && binding.field === 'name') throw new Error('private_label_key_unavailable');
-            return label.content.t === 'plain' ? label.content.v : null;
+            return label?.content.t === 'plain' ? label.content.v : null;
         });
         const readPolicyForPool = vi.fn(async () => plainAccountReadPolicy);
 

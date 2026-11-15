@@ -1,4 +1,4 @@
-import type { ManagedMachinePresetLaunchNameOverrideV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetLaunchNameOverrideV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { z } from 'zod/mini';
 import type { MachineProvisionerOptionsResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ValidatedLaunchSnapshotV1Schema, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ValidatedLaunchSnapshotV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -22,8 +22,13 @@ import { resolveDeclaredInputLeaves } from '@happier-dev/protocol/plugins/action
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { managedSizeMemoryRecommendation } from './managedSizeMemoryRecommendation';
 
+type CatalogProvisioner = MachineProvisionersListResultV1['provisioners'][number];
+/** Saved descriptors author choices without claiming an installed executable occurrence. */
+export type ManagedConfiguratorProvisioner = Pick<CatalogProvisioner, 'contribution' | 'descriptor'>
+    & Partial<Omit<CatalogProvisioner, 'contribution' | 'descriptor'>>;
+
 export type ManagedConfiguratorDraft = Readonly<{
-    provisioner: MachineProvisionersListResultV1['provisioners'][number];
+    provisioner: ManagedConfiguratorProvisioner;
     controller?: ManagedControllerV1; name: string;
     /** A pool stays unbound until acquire; the editor never selects one of its Machines. */
     controllerPoolId?: string;

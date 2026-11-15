@@ -1,10 +1,15 @@
 import {
+  applyManagedMachinePresetUpdateFixture,
   createManagedCpuOptionsFixture,
+  createMachineProvisionerEditorManifestFixture,
+  createEnabledMachinePluginIntentReadFixture,
+  createPlainManagedMachinePresetFixture,
   createMachineProvisionerOptionsFixture,
   createDelegatedManagedPresetFixture,
   createManagedControllerMachineFixture as createMachineFixture,
 } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import * as React from 'react';
+import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -12,11 +17,12 @@ import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
   waitForHomeGovernance,
+  type HomeDomainAnswer,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
-import {
-  createMachineReadBatchResponseFixture,
-  createPlainMachineRowFixture,
-} from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import {
   renderHook,
   renderScreen,
@@ -26,11 +32,11 @@ import {
   reportPopoverContentLayout,
   withPopoverWebGlobals,
 } from '@/dev/testkit';
-import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
+import { findAllHostTestInstances, findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import tweetnacl from 'tweetnacl';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -39,7 +45,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProvisionerOptionsInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { Dimensions } from 'react-native';
+import { Dimensions, Text } from 'react-native';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { MachineProvisionerOptionsResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -50,7 +56,9 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { MachinePresetItemV1Schema, MachineSetupV1Schema, type MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachinePresetEditContinuation, MachinePresetEditDraft } from './machinePresetEditDraft';
-import { PluginAccountAvailabilityIntentReadResponseV1Schema, readDeclaredPackageAssetsV1, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { defineProtocolObject, defineProtocolNumber, defineProtocolString, defineProtocolUnion, defineProtocolLiteral } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 const route = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -108,6 +116,48 @@ installApprovalCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+
+function readProvisionerRequest(value: unknown) {
+    const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(value);
+    return ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : value);
+}
+
+/** Scenario responses sit behind the real Home custody, authorization and requester-box boundary. */
+async function answerProvisionerAction(serverId: string, path: string, answer: HomeDomainAnswer, raw = false) {
+    const actionId = ActionIdSchema.parse(path.slice('/v1/actions/'.length));
+    if (actionId !== 'machines.provisioners.check' && actionId !== 'machines.provisioners.options') {
+        harness.answer(serverId, path, answer);
+        return;
+    }
+    await answerExternalActionAccountForHome(harness, serverId, {
+        actionId, machineId: 'host', installationId: 'installation', tokenEpoch: 0,
+        execute: async (_input, context) => {
+            const selected = await answer.select?.(context.envelope, {
+                signal: context.signal, url: path,
+                init: { method: 'POST', headers: context.requestHeaders, signal: context.signal },
+            }) ?? answer;
+            await selected.respondAfter;
+            await selected.bodyAfter;
+            const execution = ExternalActionResponseEnvelopeV1Schema.parse(selected.body).execution;
+            return execution.ok ? execution.result : execution;
+        },
+        failure: value => {
+            const failure = ActionExecuteFailureSchema.safeParse(value);
+            return failure.success ? failure.data : null;
+        },
+    });
+    // Negative transport/envelope fixtures must still reach the real HTTP reader unchanged.
+    if (raw) harness.answer(serverId, `POST ${path}`, answer);
+}
+
+async function addPresetHome(input: Parameters<typeof harness.addHome>[0]) {
+    const serverId = await harness.addHome(input);
+    if (input.accountEncryptionMode !== 'e2ee') harness.answer(serverId, '/v1/machines/presets/recipient-census', {
+        body: { kind: 'ready', contentEncryptionMode: 'plain', recipients: [] },
+    });
+    return serverId;
+}
+
 const { resetScopedHomeActionExecutorsForTests } =
   await import('@/sync/ops/actions/scopedHomeActionExecutor');
 await import('@/sync/ops/actions/defaultActionExecutor');
@@ -212,17 +262,8 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
     icon: 'server',
     resourceKind: 'VM',
     schemaVersion: 1,
-    launchSchema: {
-      type: 'object',
-      properties: { cpu: { type: 'integer', minimum: 1 } },
-      required: ['cpu'],
-      additionalProperties: false,
-    },
-    resourceSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
+    launchSchema: defineProtocolObject({ cpu: defineProtocolNumber({ integer: true, minimum: 1 }) }, { policy: 'closed' }).jsonSchema,
+    resourceSchema: defineProtocolObject({}, { policy: 'closed' }).jsonSchema,
     platforms: ['linux'],
     prerequisites: [],
     billing: { location: 'cloud', stoppedBilling: 'billed' },
@@ -239,16 +280,19 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
   },
 };
 
-function createEnabledMachinePluginIntentRead(manifest: PluginPortableReleaseManifestV1) {
-  return PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
-    availabilityCursor: 1,
-    hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
-    intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'fixture-1' },
-    release: { ref: { pluginId: manifest.id, version: manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
-      collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
-        resources: (readDeclaredPackageAssetsV1(manifest) ?? []).map(resource => ({ ...resource, byteSize: 1, digestSha256: `sha256:${'c'.repeat(64)}` })) } },
-    packageAssets: [], uiArtifacts: [],
-  });
+/** Preset editors read the Account declaration rather than a controller's native catalog. */
+async function publishPresetEditorDeclaration(serverId: string, manifest: PluginPortableReleaseManifestV1) {
+  const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+  onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+    packageName: '@test/preset-editor', displayName: manifest.displayName, hasMachineProvisioners: true,
+    entriesById: {}, normalizedManifest: manifest }]));
+  const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+    await import('@/sync/domains/plugins/availability/projection');
+  onTestFinished(clearPluginAccountAvailabilityProjection);
+  replacePluginAccountAvailabilityProjection({ scope: {
+    serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner',
+  }, snapshot: { availabilityCursor: 1,
+    intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
 }
 
 describe('mounted managed configurator', () => {
@@ -270,7 +314,7 @@ describe('mounted managed configurator', () => {
       packageName: '@happier-dev/plugins-devcontainer', displayName: 'Docker container Machines', hasMachineProvisioners: true,
       entriesById: {}, normalizedManifest: manifest }]));
     const homeId = `srv_devcontainer_author_${ownerKind}`;
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://devcontainer-author-${ownerKind}.example.test`,
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://devcontainer-author-${ownerKind}.example.test`,
       serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
       teamsEnabled: ownerKind === 'team', machinePoolsEnabled: ownerKind === 'team' });
     const poolId = '1a1bf092-44af-49c1-9af3-90d8c6b0f102';
@@ -283,7 +327,7 @@ describe('mounted managed configurator', () => {
       const { machinePoolActionEndpointPathV1 } = await import('@happier-dev/protocol/machines/pools/actionsV1');
       const { MachinePoolListOutputV1Schema } = await import('@happier-dev/protocol/machines/pools/v1');
       harness.answer(serverId, machinePoolActionEndpointPathV1('machines.pools.list'), { body: MachinePoolListOutputV1Schema.parse({ pools: [{
-        pool: { id: poolId, name: 'Build computers', description: null, revision: 1, createdAt: 1, updatedAt: 1,
+        pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Build computers' }, recipientEnvelope: null } }, description: null, revision: 1, createdAt: 1, updatedAt: 1,
           audience: { kind: 'team', teamId: team.id }, members: [] }, availability: { state: 'unknown' },
         access: { canManage: true, canResolve: true, canViewMembers: true },
       }] }) });
@@ -294,20 +338,20 @@ describe('mounted managed configurator', () => {
     onTestFinished(clearPluginAccountAvailabilityProjection);
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
     replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
-      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
     const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
     if (declarations.kind !== 'available') throw new Error('Expected the bundled provisioner declaration');
     const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
     const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === manifest.id);
     if (!selected) throw new Error('Expected the real Devcontainer descriptor');
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: true, result: { provisioners: [selected] } } } };
     } });
     const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema,
       PresetMutationResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
-    let retained: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | undefined;
+    let retained: ReturnType<typeof createPlainManagedMachinePresetFixture> | undefined;
     if (ownerKind === 'saved-account') {
       const { readDevcontainerEffectReview } = await import('../../../../../../../packages/plugins/devcontainer/src/machine/effectReview');
       // The earlier save path stored the native review's launch, including its real derived digest.
@@ -318,7 +362,7 @@ describe('mounted managed configurator', () => {
           stdout: new TextEncoder().encode(JSON.stringify([{ Id: 'sha256:captured-image', Config: {} }])),
           stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
         }) } }, { runtime: 'docker', configuration: { kind: 'image', image: 'ubuntu:22.04' } });
-      retained = ManagedMachinePresetV1Schema.parse({ id: 'existing-container', homeId, revision: 3,
+      retained = createPlainManagedMachinePresetFixture({ id: 'existing-container', homeId, revision: 3,
         name: 'Development container', owner: { kind: 'account', accountId: 'owner' },
         launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, name: 'Development container',
           choices: { ...reviewed.launch, reviewedEffectDigest: reviewed.effectReview.reviewedEffectDigest } } });
@@ -354,7 +398,7 @@ describe('mounted managed configurator', () => {
       const savePath = retained ? '/v1/machines/presets/update' : '/v1/machines/presets/create';
       harness.answer(serverId, savePath, { select: value => ({
         body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: {
-          ...(retained ? { ...retained, launch: { ...retained.launch, choices }, setup }
+          ...(retained ? applyManagedMachinePresetUpdateFixture(retained, ManagedMachinePresetUpdateInputV1Schema.parse(value))
             : ManagedMachinePresetCreateInputV1Schema.parse(value)), revision: retained ? retained.revision + 1 : 1,
         } }),
       }) });
@@ -367,14 +411,16 @@ describe('mounted managed configurator', () => {
       const request = harness.requestsFor(savePath)[0]?.input;
       const saved = retained ? ManagedMachinePresetUpdateInputV1Schema.parse(request).patch : ManagedMachinePresetCreateInputV1Schema.parse(request);
       if (!retained) expect(saved).toHaveProperty('owner', ownerKind === 'team' ? { kind: 'team', teamId: 'team-1' } : { kind: 'account', accountId: 'owner' });
-      expect(saved).toMatchObject({ setup,
+      if (saved.content?.t !== 'plain') throw new Error('Plain saved preset content expected');
+      const content = ManagedMachinePresetContentV1Schema.parse(saved.content.v);
+      expect(content).toMatchObject({ setup,
         launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, choices } });
       if (retained) expect(saved).toHaveProperty('controller', null);
       else expect(saved).not.toHaveProperty('controller');
-      expect(saved.launch?.choices).toEqual(choices);
+      expect(content.launch?.choices).toEqual(choices);
       if (ownerKind === 'team') expect(saved).toHaveProperty('controllerPoolId', poolId);
       else if (!retained) expect(saved).not.toHaveProperty('controllerPoolId');
-      expect(saved).not.toHaveProperty('launch.choices.reviewedEffectDigest');
+      expect(content).not.toHaveProperty('launch.choices.reviewedEffectDigest');
       expect(saved).not.toHaveProperty('effectReview');
       expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
       expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
@@ -393,14 +439,14 @@ describe('mounted managed configurator', () => {
     onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
       packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima Machines', hasMachineProvisioners: true,
       entriesById: {}, normalizedManifest: manifest }]));
-    const serverId = await harness.addHome({ name: 'Lima preset', serverUrl: 'https://lima-replay131.example.test',
+    const serverId = await addPresetHome({ name: 'Lima preset', serverUrl: 'https://lima-replay131.example.test',
       serverIdentityId: 'srv_lima_replay131', accountId: 'owner', currentAccount: true, accountEncryptionMode: 'plain' });
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
       await import('@/sync/domains/plugins/availability/projection');
     onTestFinished(clearPluginAccountAvailabilityProjection);
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
     replacePluginAccountAvailabilityProjection({ scope,
-      snapshot: { availabilityCursor: 1, intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
+      snapshot: { availabilityCursor: 1, intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
       id: defaultController.machineId, installationId: defaultController.installationId,
     })]);
@@ -411,8 +457,8 @@ describe('mounted managed configurator', () => {
     const selected = projectAccountManagedProvisioners(declarations.declarations)
       .find(row => row.contribution.pluginId === manifest.id);
     if (!selected) throw new Error('Expected real Lima provisioner');
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: true, result: { provisioners: [selected] } } } };
     } });
@@ -474,21 +520,21 @@ describe('mounted managed configurator', () => {
   });
 
   it.each(['cold', 'ready-to-unavailable'] as const)('settles an unavailable delegated review without showing choices loading (%s)', async entry => {
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://delegated-refusal.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://delegated-refusal.example.test',
       serverIdentityId: 'srv_delegated_refusal', accountId: 'owner', currentAccount: true, teamsEnabled: true });
     const { teamSummaryFixture, teamCapabilitiesFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
     const { TeamSummaryV1Schema } = await import('@happier-dev/protocol/teams');
     harness.answer(serverId, '/v1/teams/get', { body: TeamSummaryV1Schema.parse(teamSummaryFixture({ id: 'team-1', viewerRole: 'member', capabilities: teamCapabilitiesFixture({}) })) });
-    const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
-    const saved = ManagedMachinePresetV1Schema.parse({ id: 'delegated-refusal', homeId: 'srv_delegated_refusal', revision: 0,
+    const { ManagedMachinePresetGetResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const saved = createPlainManagedMachinePresetFixture({ id: 'delegated-refusal', homeId: 'srv_delegated_refusal', revision: 0,
       name: 'Shared machine', owner: { kind: 'team', teamId: 'team-1' }, controller: defaultController,
       launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } },
       teamAcquireDelegated: true });
-    let current = createDelegatedManagedPresetFixture({ preset: saved, descriptor: provisioner.descriptor,
-      installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url'), custodianAccountId: 'custodian' });
-    const unavailable = ManagedMachinePresetV1Schema.parse({ ...saved, delegatedAcquire: { kind: 'unavailable', code: 'provider_unavailable' } });
+    let current = ManagedMachinePresetGetResultV1Schema.parse({ kind: 'found', preset: createDelegatedManagedPresetFixture({ preset: { ...saved.opened, launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } } }, descriptor: provisioner.descriptor,
+      installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url'), custodianAccountId: 'custodian' }) });
+    const unavailable = ManagedMachinePresetGetResultV1Schema.parse({ kind: 'refused', code: 'provider_unavailable' });
     if (entry === 'cold') current = unavailable;
-    harness.answer(serverId, '/v1/machines/presets/get', { select: () => ({ body: { kind: 'found', preset: current } }) });
+    harness.answer(serverId, '/v1/machines/presets/get', { select: () => ({ body: current }) });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
     const { t } = await import('@/text');
@@ -521,7 +567,7 @@ describe('mounted managed configurator', () => {
     } finally { await screen.unmount(); }
   });
   it.each([false, true])('requires saved recipe inputs before creation or composer use (composer: %s)', async composer => {
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://recipe-inputs-${composer}.example.test`,
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://recipe-inputs-${composer}.example.test`,
       serverIdentityId: 'srv_recipe_inputs', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
       installationId: defaultController.installationId })]);
@@ -539,14 +585,14 @@ describe('mounted managed configurator', () => {
     const saved = { id: 'needs-inputs', homeId: 'srv_recipe_inputs', revision: 1, name: 'Saved machine',
       owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
       launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 } },
-      setup: { items: [{ kind: 'setupRecipe', selection: { ref, inputs: {} } }] } };
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+      setup: { items: [{ kind: 'setupRecipe', selection: { ref, inputs: {} } }] } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(saved) } });
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }])],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -564,7 +610,7 @@ describe('mounted managed configurator', () => {
   it.each(['credential_unavailable', 'unavailable'])('presents the options failure %s in the shared form summary', async (code) => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-summary.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://options-summary.example.test',
       serverIdentityId: 'srv_options_summary', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
       id: defaultController.machineId, installationId: defaultController.installationId,
@@ -572,12 +618,12 @@ describe('mounted managed configurator', () => {
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
         execution: { ok: false, errorCode: code, error: code } } };
     } });
@@ -592,7 +638,7 @@ describe('mounted managed configurator', () => {
         ? resolveActionExecutionFailureMessage({ ok: false, errorCode: code }, t('managedMachines.options.unavailable'))
         : t('managedMachines.options.unavailable');
       expect(screen.findByTestId('managed-config.summary')?.props).toBeDefined();
-      expect(screen.findByTestId('managed-config.summary')?.props.accessibilityLabel).toContain(expected);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.summary')?.props.accessibilityLabel).toContain(expected));
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
     } finally { await screen.unmount(); }
   });
@@ -605,7 +651,7 @@ describe('mounted managed configurator', () => {
     const { executeManagedProvisionerDiscovery } = await import('@happier-dev/cli-common/machines/managed/provisioners');
     const { normalizeActionExecutorThrownError } = await import('@happier-dev/protocol/actions/executor/resultProjection');
     const { ManagedMachineActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://authored-options.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://authored-options.example.test',
       serverIdentityId: 'srv_authored_options', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
       id: defaultController.machineId, installationId: defaultController.installationId,
@@ -613,13 +659,13 @@ describe('mounted managed configurator', () => {
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     // The HTTP boundary runs the shared CLI discovery/error owners; the provider handler is a real thrown SDK error.
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
+      const request = readProvisionerRequest(value);
       try {
         await executeManagedProvisionerDiscovery({ actionId: 'machines.provisioners.options',
           value: ManagedMachineActionInputSchemasV1['machines.provisioners.options'].parse(request.input), entries: [provisioner],
@@ -655,7 +701,7 @@ describe('mounted managed configurator', () => {
     } finally { await screen.unmount(); }
   });
   it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
       serverIdentityId: 'srv_options_retry', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
       id: defaultController.machineId, installationId: defaultController.installationId,
@@ -663,14 +709,14 @@ describe('mounted managed configurator', () => {
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     let reply = createDeferred<void>();
     let succeeds = false;
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
+      const request = readProvisionerRequest(value);
       await reply.promise;
       return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
         execution: succeeds ? { ok: true, result: createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }]) }
@@ -705,7 +751,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('does not render a named controller page for another Machine publication and updates its controller name', () => withPopoverWebGlobals(async () => {
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://controller-selection.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://controller-selection.example.test',
       serverIdentityId: 'srv_controller_selection', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     const controllerMachine = createMachineFixture({ id: defaultController.machineId, installationId: defaultController.installationId,
@@ -722,8 +768,8 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }])],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -746,8 +792,8 @@ describe('mounted managed configurator', () => {
     await screen.pressByTestIdAsync('managed-config.controller.chip');
     await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
     await waitForHomeGovernance(() => {
-      const otherOption = screen.findHostByTestId('managed-config.controller.picker-option:other');
-      expect(otherOption?.props.accessibilityLabel ?? otherOption?.props['aria-label']).toContain('Renamed other computer');
+      const otherOption = screen.findByTestId('managed-config.controller.picker-option:other');
+      expect(otherOption && findTestInstanceByTypeContainingText(otherOption, Text, 'Renamed other computer')).toBeDefined();
     });
     await screen.unmount();
     } finally {
@@ -789,15 +835,15 @@ describe('mounted managed configurator', () => {
             body: new TextEncoder().encode(JSON.stringify({ plan: 'growth', machines: 0, awakeMachines: 0 })) }) }),
         } }));
       }
-      const serverId = await harness.addHome({ name: 'Compute billing', serverUrl: `https://${vendor}-billing.example.test`,
+      const serverId = await addPresetHome({ name: 'Compute billing', serverUrl: `https://${vendor}-billing.example.test`,
         serverIdentityId: `srv_billing_${vendor}`, accountId: 'owner', currentAccount: true });
       await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
         installationId: defaultController.installationId })]);
       for (const [actionId, result] of [
         ['machines.provisioners.list', { controller: defaultController, provisioners: [native] }],
         ['machines.provisioners.check', { available: true }], ['machines.provisioners.options', options],
-      ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+        const request = readProvisionerRequest(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
       } });
       const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -831,7 +877,7 @@ describe('mounted managed configurator', () => {
   it('retains the selected controller for browser-blocked Account options after the runtime host settles', async () => {
     const host = createDeferred<'browser' | 'native'>();
     runtimeHost.current = host.promise;
-    const serverId = await harness.addHome({ name: 'Browser compute', serverUrl: 'https://browser-controller.example.test',
+    const serverId = await addPresetHome({ name: 'Browser compute', serverUrl: 'https://browser-controller.example.test',
       serverIdentityId: 'srv_browser_controller', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
       installationId: defaultController.installationId })]);
@@ -841,8 +887,8 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.list', { controller: defaultController, provisioners: [selected] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'cloud', title: 'Cloud compute', cpu: 2 }])],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -863,7 +909,7 @@ describe('mounted managed configurator', () => {
       for (const role of ['check', 'options']) {
         const requests = harness.requestsFor(`/v1/actions/machines.provisioners.${role}`);
         expect(requests.length).toBeGreaterThan(0);
-        for (const request of requests) expect(ExternalActionRequestEnvelopeV1Schema.parse(request.input).input)
+        for (const request of requests) expect(readProvisionerRequest(request.input).input)
           .toMatchObject({ controller: defaultController });
       }
     } finally { await screen.unmount(); }
@@ -878,7 +924,7 @@ describe('mounted managed configurator', () => {
       packageName: '@happier-dev/plugins-machine-vercel', displayName: 'Vercel Machines', hasMachineProvisioners: true, entriesById: {},
       normalizedManifest: manifest }]);
     onTestFinished(restoreBundles);
-    const serverId = await harness.addHome({ name: 'Fresh Account', serverUrl: 'https://account-options.example.test',
+    const serverId = await addPresetHome({ name: 'Fresh Account', serverUrl: 'https://account-options.example.test',
       serverIdentityId: 'srv_account_options', accountId: 'owner', currentAccount: true });
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
       await import('@/sync/domains/plugins/availability/projection');
@@ -889,7 +935,7 @@ describe('mounted managed configurator', () => {
     const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
     replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
-      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
     const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
     if (declarations.kind !== 'available') throw new Error('Expected the Account declaration producer');
     const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === 'happier.machine.vercel');
@@ -933,8 +979,8 @@ describe('mounted managed configurator', () => {
         ['machines.provisioners.list', { provisioners: [{ ...selected, credentialPurposes: [] }] }],
         ['machines.provisioners.check', { available: true }],
         ['machines.provisioners.options', createMachineProvisionerOptionsFixture({ base: { launch, guestPlatform: 'linux' } })],
-      ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+        const request = readProvisionerRequest(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
       } });
       await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
@@ -963,7 +1009,7 @@ describe('mounted managed configurator', () => {
     const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN.manifest);
     onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
       packageName: '@happier-dev/plugins-machine-vercel', displayName: 'Vercel Machines', hasMachineProvisioners: true, entriesById: {}, normalizedManifest: manifest }]));
-    const serverId = await harness.addHome({ name: 'Account acquire', serverUrl: 'https://account-acquire.example.test',
+    const serverId = await addPresetHome({ name: 'Account acquire', serverUrl: 'https://account-acquire.example.test',
       serverIdentityId: 'srv_account_acquire', accountId: 'owner', currentAccount: true });
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
       await import('@/sync/domains/plugins/availability/projection');
@@ -971,7 +1017,7 @@ describe('mounted managed configurator', () => {
     const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
     replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
-      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
     const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
     if (declarations.kind !== 'available') throw new Error('Expected the Account declaration producer');
     const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === 'happier.machine.vercel');
@@ -993,8 +1039,8 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.list', { provisioners: [{ ...selected, occurrenceId: 'daemon-vercel-j58', credentialPurposes: [] }] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createMachineProvisionerOptionsFixture({ base: { launch, guestPlatform: 'linux' } })],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       const input = request.input as { controller?: unknown } | undefined;
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true,
         result: actionId === 'machines.provisioners.list' && input?.controller ? { ...result, controller: input.controller } : result } } };
@@ -1064,7 +1110,7 @@ describe('mounted managed configurator', () => {
       request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projection
         : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: declaration.inputSchema }
           : { ok: false, code: 'unsupported' });
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://lume-image-editor.example',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://lume-image-editor.example',
       serverIdentityId: 'srv_lume_image_editor', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     const catalogReference = 'ghcr.io/trycua/macos:26';
@@ -1086,8 +1132,8 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.list', { controller: defaultController, provisioners: [{ contribution, occurrenceId: 'lume-image-editor', acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes: [] }] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', null],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: async value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: actionId === 'machines.provisioners.options'
         ? await provider.options(ProvisionerOptionsInputV1Schema.parse(request.input).selectors) : result } } };
     } });
@@ -1138,7 +1184,7 @@ describe('mounted managed configurator', () => {
       await screen.pressByTestIdAsync('managed-config.locations:home');
       await waitForHomeGovernance(() => {
         const request = harness.requestsFor('/v1/actions/machines.provisioners.options').at(-1);
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request?.input);
+        const envelope = readProvisionerRequest(request?.input);
         const input = ProvisionerOptionsInputV1Schema.parse(envelope.input);
         expect(LumeOptionsInputV1Schema.parse(input.selectors)).toMatchObject({ storage: 'home',
           image: { kind: 'native-image', reference: nativeReference } });
@@ -1155,7 +1201,7 @@ describe('mounted managed configurator', () => {
       if (imageKind !== 'private-after-catalog') await act(async () => screen.changeTextByTestId('managed-config.field:diskBytes', '150'));
       await waitForHomeGovernance(() => {
         const request = harness.requestsFor('/v1/actions/machines.provisioners.options').at(-1);
-        const input = ProvisionerOptionsInputV1Schema.parse(ExternalActionRequestEnvelopeV1Schema.parse(request?.input).input);
+        const input = ProvisionerOptionsInputV1Schema.parse(readProvisionerRequest(request?.input).input);
         expect(LumeOptionsInputV1Schema.parse(input.selectors).image).toMatchObject({ kind: 'native-image', reference: nativeReference });
         expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false);
       });
@@ -1212,19 +1258,19 @@ describe('mounted managed configurator', () => {
       await hydration.promise;
       return deferred.read(payload.sectionRead.digest, payload.sectionRead.offset, payload.sectionRead.includeDigests);
     });
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://lima-partial.example',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://lima-partial.example',
       serverIdentityId: 'srv_lima_partial', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [{ contribution, occurrenceId: 'lima-partial', acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes: [] }] }],
       ['machines.provisioners.check', { available: true }],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     let optionsAnswer: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse> | undefined;
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
+      const request = readProvisionerRequest(value);
       const input = ProvisionerOptionsInputV1Schema.parse(request.input);
       const result = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', input.selectors, { surface: 'plugin' }));
       optionsAnswer = result;
@@ -1303,7 +1349,7 @@ describe('mounted managed configurator', () => {
   });
 
   it('shares the picker availability while showing native launch defaults and preserving edits', async () => {
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://native-defaults.example',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://native-defaults.example',
       serverIdentityId: 'srv_native_defaults', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation', activeAt: Date.now() })]);
     const projectionRead = nativeBoundary.rpc.getMockImplementation()!;
@@ -1321,13 +1367,13 @@ describe('mounted managed configurator', () => {
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       const answer = actionId === 'machines.provisioners.check' && ++checks > 1 ? { available: false, code: 'lima_2_required' } : result;
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: answer } } };
     } });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+      const request = readProvisionerRequest(value);
       const input = request.input as { selectors?: { cpu?: number } };
       return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true,
         result: createMachineProvisionerOptionsFixture({ base: { launch: { cpu: input.selectors?.cpu ?? 6 } } }) } } };
@@ -1358,12 +1404,13 @@ describe('mounted managed configurator', () => {
     const creation = { launch: { provider: provisioner.contribution, schemaVersion: 1,
       name: 'Unsaved name stays', choices: { cpu: 2 } }, controller: defaultController };
     const retained = { id: 'retained', homeId: 'srv_add_server', revision: 8, name: 'Stored preset name',
-      owner: { kind: 'account', accountId: 'owner' }, ...creation, launch: { ...creation.launch, name: 'Stored preset name' } };
+      owner: { kind: 'account', accountId: 'owner' }, ...creation, launch: { ...creation.launch, name: 'Stored preset name' } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
     const draft: MachinePresetEditDraft = { name: 'Unsaved name stays', creation,
       setup: { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' }] } };
     const onReturn = vi.fn();
     const continuation = { item, draft, preset: { id: retained.id, revision: retained.revision }, onReturn };
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: retained } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(retained) } });
+    await publishPresetEditorDeclaration(serverId, createMachineProvisionerEditorManifestFixture({ pluginId: provisioner.contribution.pluginId, descriptor: provisioner.descriptor }));
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
       provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={retained.id} presetOnly
@@ -1398,7 +1445,7 @@ describe('mounted managed configurator', () => {
     'keeps an exact %s Add-to-Preset continuation inert until the existing Save, then returns', async (_kind, item) => {
     const { screen, draft, creation, retained, expectedSetup, onReturn, serverId } = await mountContinuation(`continuation-${_kind}`, item);
     harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved',
-      preset: { ...retained, ...creation, name: draft.name, setup: expectedSetup, revision: 9 } } });
+      preset: createPlainManagedMachinePresetFixture({ ...retained, ...creation, name: draft.name, setup: expectedSetup, revision: 9 }) } });
     // Entering merges the item into the editor's own draft; the caller's draft is not mutated and nothing is written.
     expect(draft.setup).not.toHaveProperty('items');
     expect(presetWrites()).toEqual([]);
@@ -1408,7 +1455,7 @@ describe('mounted managed configurator', () => {
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
       homeId: retained.homeId, id: retained.id, expectedRevision: 8,
-      patch: { name: draft.name, setup: expectedSetup, launch: creation.launch, controller: creation.controller },
+      patch: { content: { t: 'plain', v: { name: draft.name, setup: expectedSetup, launch: creation.launch } }, controller: creation.controller },
     });
     expect(harness.requestsFor('/v1/machines/presets/create')).toEqual([]);
     await waitForHomeGovernance(() => expect(onReturn).toHaveBeenCalledTimes(1));
@@ -1417,7 +1464,7 @@ describe('mounted managed configurator', () => {
   });
 
   it.each(['ready', 'unavailable', 'retired'] as const)('saves a name edit on an existing Account creation preset exactly once with credential discovery=%s', async discovery => {
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://account-preset-rename.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://account-preset-rename.example.test',
       serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
       installationId: defaultController.installationId })]);
@@ -1426,21 +1473,23 @@ describe('mounted managed configurator', () => {
         ? { ...provisioner, credentialPurposes: undefined } : provisioner] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small server', cpu: 2 }])],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     const { ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
     const credentials = discovery === 'retired' ? [{ purpose: { consumer: provisioner.contribution, purpose: 'native-account' },
       account: { service: { pluginId: provisioner.contribution.pluginId, localId: 'native-account' }, accountId: 'retired' } }] : undefined;
-    const preset = ManagedMachinePresetV1Schema.parse({ id: 'account-rename', homeId: 'srv_add_server', revision: 0,
+    const preset = createPlainManagedMachinePresetFixture({ id: 'account-rename', homeId: 'srv_add_server', revision: 0,
       name: 'Original preset', owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
       launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Original preset', choices: { cpu: 2 }, credentials } });
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
     harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: {
-      ...preset, name: 'Renamed preset', revision: 1, launch: { ...preset.launch, name: 'Renamed preset' },
+      ...createPlainManagedMachinePresetFixture({ id: preset.id, homeId: preset.homeId, owner: preset.owner, controller: preset.controller,
+        name: 'Renamed preset', revision: 1, launch: { ...preset.opened.launch!, name: 'Renamed preset' } }),
     } } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    await publishPresetEditorDeclaration(serverId, createMachineProvisionerEditorManifestFixture({ pluginId: provisioner.contribution.pluginId, descriptor: provisioner.descriptor }));
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
       provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={preset.id} presetOnly
       initialController={defaultController} />);
@@ -1456,9 +1505,11 @@ describe('mounted managed configurator', () => {
     await act(async () => screen.pressByTestId('managed-config.create'));
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
-      id: preset.id, expectedRevision: 0, patch: { name: 'Renamed preset', launch: { name: 'Renamed preset' } },
+      id: preset.id, expectedRevision: 0, patch: { content: { t: 'plain', v: { name: 'Renamed preset', launch: { name: 'Renamed preset' } } } },
     });
-    expect(ManagedMachinePresetUpdateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/update')[0]?.input).patch.launch?.credentials).toEqual(credentials);
+    const renamedContent = ManagedMachinePresetUpdateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/update')[0]?.input).patch.content;
+    if (renamedContent?.t !== 'plain') throw new Error('Plain renamed content expected');
+    expect(ManagedMachinePresetContentV1Schema.parse(renamedContent.v).launch?.credentials).toEqual(credentials);
     expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
     await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
     await screen.unmount();
@@ -1469,8 +1520,8 @@ describe('mounted managed configurator', () => {
     const serverId = route.params.serverId!;
     await initial.unmount();
     const setupOnly = { id: 'browser-bot', homeId: 'srv_add_server', revision: 4, name: 'Browser bot',
-      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } };
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
+      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(setupOnly) } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     // A setup-only preset has no provisioner: the editor opens on its setup, never on a provider catalog.
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner=""
@@ -1479,15 +1530,15 @@ describe('mounted managed configurator', () => {
       && typeof node.props.onChange === 'function')[0]?.props as { setup?: unknown; onChange: (next: unknown) => void } | undefined;
     await waitForHomeGovernance(() => expect(section()?.setup).toEqual(setupOnly.setup));
     expect(screen.findByTestId('managed-config.catalog')).toBeFalsy();
-    const edited = { scripts: [{ body: 'echo two', affects: 'none' }] };
+    const edited = { scripts: [{ body: 'echo two', affects: 'none' }] } satisfies NonNullable<Parameters<typeof createPlainManagedMachinePresetFixture>[0]['setup']>;
     await act(async () => { section()!.onChange(edited); });
-    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...setupOnly, setup: edited, revision: 5 } } });
+    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture({ ...setupOnly, setup: edited, revision: 5 }) } });
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
     await act(async () => screen.pressByTestId('managed-config.create'));
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
     // The update keeps it setup-only: no launch or controller is written.
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
-      id: setupOnly.id, expectedRevision: 4, patch: { name: 'Browser bot', setup: edited, launch: null, controller: null },
+      id: setupOnly.id, expectedRevision: 4, patch: { content: { t: 'plain', v: { name: 'Browser bot', setup: edited } }, controller: null },
     });
     expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
     await screen.unmount();
@@ -1498,8 +1549,8 @@ describe('mounted managed configurator', () => {
     const serverId = route.params.serverId!;
     await initial.unmount();
     const setupOnly = { id: 'research', homeId: 'srv_add_server', revision: 2, name: 'Research bot',
-      owner: { kind: 'account', accountId: 'owner' }, setup: MachineSetupV1Schema.parse({ scripts: [{ body: 'echo one', affects: 'none' }] }) };
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
+      owner: { kind: 'account', accountId: 'owner' }, setup: MachineSetupV1Schema.parse({ scripts: [{ body: 'echo one', affects: 'none' }] }) } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(setupOnly) } });
     const onReturn = vi.fn();
     const continuation = { item: softwareItem, draft: { name: setupOnly.name, setup: setupOnly.setup },
       preset: { id: setupOnly.id, revision: setupOnly.revision }, onReturn };
@@ -1511,12 +1562,12 @@ describe('mounted managed configurator', () => {
     await waitForHomeGovernance(() => expect(setup()).toEqual({ ...setupOnly.setup, items: [softwareItem] }));
     expect(presetWrites()).toEqual([]);
     const saved = MachineSetupV1Schema.parse(setup());
-    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...setupOnly, setup: saved, revision: 3 } } });
+    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture({ ...setupOnly, setup: saved, revision: 3 }) } });
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
     await act(async () => screen.pressByTestId('managed-config.create'));
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
-      id: setupOnly.id, expectedRevision: 2, patch: { setup: saved, launch: null, controller: null } });
+      id: setupOnly.id, expectedRevision: 2, patch: { content: { t: 'plain', v: { setup: saved } }, controller: null } });
     await waitForHomeGovernance(() => expect(onReturn).toHaveBeenCalledTimes(1));
     expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
     await screen.unmount();
@@ -1527,8 +1578,8 @@ describe('mounted managed configurator', () => {
     const serverId = route.params.serverId!;
     await initial.unmount();
     const setupOnly = { id: 'research', homeId: 'srv_add_server', revision: 2, name: 'Research bot',
-      owner: { kind: 'account', accountId: 'owner' }, setup: MachineSetupV1Schema.parse({ scripts: [{ body: 'echo one', affects: 'none' }] }) };
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
+      owner: { kind: 'account', accountId: 'owner' }, setup: MachineSetupV1Schema.parse({ scripts: [{ body: 'echo one', affects: 'none' }] }) } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(setupOnly) } });
     const onReturn = vi.fn();
     const continuation = { item: softwareItem, draft: { name: setupOnly.name, setup: setupOnly.setup },
       preset: { id: setupOnly.id, revision: setupOnly.revision }, onReturn };
@@ -1557,7 +1608,7 @@ describe('mounted managed configurator', () => {
     await act(async () => screen.pressByTestId('managed-config.create'));
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
-      id: 'retained', expectedRevision: 8, patch: { name: draft.name, setup: expectedSetup },
+      id: 'retained', expectedRevision: 8, patch: { content: { t: 'plain', v: { name: draft.name, setup: expectedSetup } } },
     });
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
     expect(setup()).toEqual(expectedSetup);
@@ -1567,43 +1618,9 @@ describe('mounted managed configurator', () => {
   });
 
   async function answerAcquireController(serverId: string) {
-    const sodium = (await import('libsodium-wrappers')).default;
-    await sodium.ready;
-    const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
-    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-    const { readOriginalAccountActionAuthentication } = await import('@/sync/api/externalActionAccountTransport');
-    const { ExternalActionExecutionAuthorizationV1Schema,
-      bindExternalActionExecutionAuthorizationHttpPathV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
-    const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-    const account = await captureLazyActionAccountContext(serverId);
-    const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
-    const homeId = account.serverIdentityId;
-    account.dispose();
-    if (!authentication || !homeId) throw new Error('Expected the fixture Account identity');
-    const publishedController = {
-      ...createPlainMachineRowFixture({ id: 'host', accountId: 'owner',
-        machine: createMachineFixture({ id: 'host', installationId: 'installation', activeAt: Date.now() }),
-      }),
-      installationId: 'installation',
-      installationPublicKey: encodeBase64(sodium.crypto_sign_keypair().publicKey, 'base64'),
-    };
-    harness.answer(serverId, '/v1/machines', { body: [publishedController] });
-    harness.answer(serverId, '/v1/machines/read-batch', {
-      select: async input => ({ body: await createMachineReadBatchResponseFixture(input,
-        id => id === publishedController.id ? publishedController : null).json() }),
-    });
-    // Home authorization is an HTTP boundary. Preserve the real request digest,
-    // installation custody and confirmed invocation instead of bypassing admission.
-    harness.answer(serverId, bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'), {
-      select: input => {
-        const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
-        return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-acquire-authorization', binding: {
-          accountId: 'owner', authentication, serverIdentityId: homeId, machineId: 'host',
-          custodianAccountId: 'owner', installationId: publishedController.installationId, accountEncryptionMode: 'plain',
-          actionId: 'machines.managed.acquire', requestId: envelope.requestId, target: envelope.target,
-          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-        } }) };
-      },
+    return await answerExternalActionAccountForHome(harness, serverId, {
+      actionId: 'machines.managed.acquire', machineId: 'host', installationId: 'installation', tokenEpoch: 0,
+      execute: () => { throw new Error('The scenario must supply its acquire HTTP response'); },
     });
   }
 
@@ -1615,9 +1632,9 @@ describe('mounted managed configurator', () => {
     optionEnrollmentRole?: 'server' | 'personal' | 'sandbox',
     choose = true,
     imageChoice = false,
-    presets?: readonly Readonly<Record<string, unknown>>[],
+    presets?: readonly Parameters<typeof createPlainManagedMachinePresetFixture>[0][],
   ) {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: `https://${host}.example`,
       serverIdentityId: 'srv_add_server',
@@ -1672,9 +1689,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -1685,15 +1702,24 @@ describe('mounted managed configurator', () => {
           };
         },
       });
-    await answerAcquireController(serverId);
-    harness.answer(serverId, '/v1/actions/machines.managed.acquire', {
+    const acquireController = await answerAcquireController(serverId);
+    harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', {
       status: 403,
       body: { code: 'permission_denied' },
     });
     if (presets) {
-      harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets } });
+      const { ManagedMachinePresetAcquireRoutingInputV1Schema, ManagedMachinePresetAcquireRoutingResultV1Schema } =
+        await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+      harness.answer(serverId, '/v1/machines/presets/resolve-acquire', { select: input => {
+        const selected = ManagedMachinePresetAcquireRoutingInputV1Schema.parse(input);
+        expect(presets.some(preset => preset.id === selected.id && preset.revision === selected.revision)).toBe(true);
+        return { body: ManagedMachinePresetAcquireRoutingResultV1Schema.parse({ kind: 'resolved', controller: defaultController,
+          controllerAccess: { installationPublicKey: encodeBase64(decodeBase64(acquireController.machine.installationPublicKey, 'base64'), 'base64url'),
+            custodian: { accountId: 'owner' } } }) };
+      } });
+      harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: presets.map(preset => createPlainManagedMachinePresetFixture(preset)) } });
       harness.answer(serverId, '/v1/machines/presets/get', { select: (input: unknown) => ({
-        body: { kind: 'found', preset: presets.find(preset => preset.id === (input as { id?: string }).id) } }) });
+        body: { kind: 'found', preset: (() => { const selected = presets.find(preset => preset.id === (input as { id?: string }).id); return selected ? createPlainManagedMachinePresetFixture(selected) : undefined; })() } }) });
     }
     const { WorkspaceRouteBody } =
       await import('@/app/(app)/settings/machines/add/[provisioner]');
@@ -1714,7 +1740,7 @@ describe('mounted managed configurator', () => {
   const createDisabled = (screen: Awaited<ReturnType<typeof mountAddRoute>>) =>
     screen.findByTestId('managed-config.create')?.props.disabled;
   const acquiredIdentity = () =>
-    ExternalActionRequestEnvelopeV1Schema.parse(
+    readProvisionerRequest(
       ExternalActionExecutionAuthorizationRequestV1Schema.parse(
         harness.requestsFor('/v1/actions/machines.managed.acquire')[0]?.input,
       ).envelope,
@@ -1723,7 +1749,7 @@ describe('mounted managed configurator', () => {
     const screen = await mountAddRoute('typed-acquire-failure');
     const serverId = route.params.serverId!;
     const { t } = await import('@/text');
-    harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
+    harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', { select: value => {
       const { envelope: request } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
       return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: request.requestId,
         execution: { ok: false, errorCode: 'action_failed', error: 'Private native diagnostic',
@@ -1748,12 +1774,14 @@ describe('mounted managed configurator', () => {
     const initial = await mountAddRoute('retained-create');
     const serverId = route.params.serverId!;
     await initial.unmount();
-    harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
+    harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', { select: value => {
       const authorization = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(authorization.envelope);
+      const request = readProvisionerRequest(authorization.envelope);
       return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: request.requestId,
         execution: { ok: true, result: { managedId: 'retained-resource' } } } };
     } });
+    // Admission already owns the resource even if its subsequent continuation cannot read it.
+    harness.answer(serverId, '/v1/actions/machines.managed.get', { status: 403, body: { code: 'permission_denied' } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const onCreated = vi.fn();
     const onCancel = vi.fn();
@@ -1777,7 +1805,7 @@ describe('mounted managed configurator', () => {
   it.each(['mounted', 'unmounted'] as const)('answers admitted requester pairing from configurator Create without mounting the detail page (%s)', async visibility => {
     const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
     const token = createAccountTokenForTests('owner', { currentAccount: true });
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://configurator-pairing.example.test',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://configurator-pairing.example.test',
       serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true, teamsEnabled: true, credentials: { token } });
     const { teamSummaryFixture, teamCapabilitiesFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
     harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ id: 'team-1', viewerRole: 'member', capabilities: teamCapabilitiesFixture({}) }) });
@@ -1785,16 +1813,16 @@ describe('mounted managed configurator', () => {
     const saved = createDelegatedManagedPresetFixture({ descriptor: provisioner.descriptor, installationPublicKey: key,
       custodianAccountId: 'company', preset: { id: 'pairing-preset', homeId: 'srv_add_server', revision: 0,
         name: 'Shared machine', owner: { kind: 'team', teamId: 'team-1' }, controller: defaultController,
-        launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } }, teamAcquireDelegated: true } });
+        launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } } } });
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
     harness.answer(serverId, '/v1/machines/presets/resolve-acquire', { body: { kind: 'resolved', controller: defaultController,
       controllerAccess: saved.opened.controllerAccess } });
     let answered = false;
     const promptArrival = createDeferred<void>();
     if (visibility === 'mounted') promptArrival.resolve();
-    const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    const { ManagedMachinePublicFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
     const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
-    const machine = ManagedMachineV1Schema.parse({ id: 'pairing-resource', homeId: 'srv_add_server',
+    const machine = ManagedMachinePublicFullV1Schema.parse({ id: 'pairing-resource', homeId: 'srv_add_server',
       custodianAccountId: 'company', enrollmentAccountId: 'owner', controller: defaultController,
       controllerAccess: { installationPublicKey: key, custodian: { accountId: 'company' } },
       launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Pairing', choices: {} },
@@ -1812,9 +1840,9 @@ describe('mounted managed configurator', () => {
         bootstrapTask: { id: 'pairing-task', taskKind: 'remote.ssh.bootstrapMachine.v1',
           prompt: { kind: 'auth.approveRemoteProvisioning', message: 'Sign into requester Account' } } } });
     for (const actionId of ['machines.managed.acquire', 'machines.managed.get', 'action.operations.get', 'machines.managed.bootstrap.respond']) {
-      harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: async value => {
         if (actionId === 'action.operations.get' && !answered) await promptArrival.promise;
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value && typeof value === 'object' && 'envelope' in value ? value.envelope : value);
+        const envelope = readProvisionerRequest(value && typeof value === 'object' && 'envelope' in value ? value.envelope : value);
         if (actionId === 'machines.managed.bootstrap.respond') answered = true;
         const result = actionId === 'machines.managed.acquire' ? { managedId: machine.id, operation: { operationId: operation.operationId } }
           : actionId === 'machines.managed.get' ? machine
@@ -2040,7 +2068,7 @@ describe('mounted managed configurator', () => {
   });
   it('starts from a saved preset inline, reviews what it sets up and creates only after the confirm', async () => {
     const launch = { provider: provisioner.contribution, schemaVersion: 1, name: 'web-2', choices: { cpu: 2 } };
-    const owner = { kind: 'account', accountId: 'owner' };
+    const owner = { kind: 'account' as const, accountId: 'owner' };
     const setup = { items: [MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: {
       ref: { pluginId: 'tools.example', recipeId: 'editor', revision: 'pinned' }, inputs: {} } })],
       scripts: [{ body: 'corepack enable\npnpm install', affects: 'none' as const }] };
@@ -2076,7 +2104,8 @@ describe('mounted managed configurator', () => {
     await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1));
     expect(acquiredIdentity()).toMatchObject({ selection: { kind: 'preset', homeId: 'srv_add_server', id: 'hardened', revision: 3 } });
     // The Machine gets the provider's default name, as a one-off Create does, never the preset's.
-    expect(acquiredIdentity()).toMatchObject({ selection: { name: 'Virtual machine' } });
+    expect(acquiredIdentity()).toMatchObject({ presetContentOverride: { content: { t: 'plain', v: { launch: { name: 'Virtual machine' } } } } });
+    expect(acquiredIdentity()).not.toHaveProperty('selection.name');
     expect(review.getTextContent()).not.toContain('web-2');
     // The script the person approves is shown by its lines.
     expect(review.getTextContent()).toContain('corepack enable');
@@ -2125,7 +2154,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://free-form.example',
       serverIdentityId: 'srv_free_form',
@@ -2228,9 +2257,9 @@ describe('mounted managed configurator', () => {
       ],
       ['machines.provisioners.check', { available: true }],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -2244,10 +2273,10 @@ describe('mounted managed configurator', () => {
     // Like Cua: the answer echoes the asked size as the one size row, assigning exactly what the form sent.
     let answerGate: Promise<void> | null = null;
     const answeredCpus: number[] = [];
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', {
       select: async (value) => {
         if (answerGate) await answerGate;
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        const request = readProvisionerRequest(value);
         const cpu =
           (request.input as { selectors?: { size?: { cpu?: number } } })
             .selectors?.size?.cpu ?? 1;
@@ -2381,7 +2410,7 @@ describe('mounted managed configurator', () => {
   it('folds the provider-filled launch details into one Advanced disclosure once the size has its own section (lab m-config L)', async () => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://advanced.example', serverIdentityId: 'srv_advanced',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://advanced.example', serverIdentityId: 'srv_advanced',
       accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     // Like Lima: a store and a driver the controller fills itself, and the size fields its one size row assigns.
@@ -2406,12 +2435,12 @@ describe('mounted managed configurator', () => {
       request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projection
         : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: optionsSchema }
           : { ok: false, code: 'unsupported' });
-    const answer = (actionId: string, result: (input: unknown) => unknown) => harness.answer(serverId, `/v1/actions/${actionId}`, {
-      select: (value) => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    const answer = (actionId: string, result: (input: unknown) => unknown) => answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => { const request = readProvisionerRequest(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: result(request.input) } } }; } });
-    answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
-    answer('machines.provisioners.check', () => ({ available: true }));
-    answer('machines.provisioners.options', (input) => {
+    await answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
+    await answer('machines.provisioners.check', () => ({ available: true }));
+    await answer('machines.provisioners.options', (input) => {
       const cpus = (input as { selectors?: { cpus?: number } }).selectors?.cpus ?? 4;
       return createMachineProvisionerOptionsFixture({ base: { launch: { store: '/home/me/.lima', vmType: 'qemu', cpus } },
         dimensions: { image: [], location: [], network: [], duration: [], size: [{ id: `${cpus}`, title: `${cpus} CPU`,
@@ -2436,11 +2465,12 @@ describe('mounted managed configurator', () => {
   const arrangeImageForm = async (name: string) => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://${name}.example`, serverIdentityId: `srv_${name}`,
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://${name}.example`, serverIdentityId: `srv_${name}`,
       accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
-    const optionsSchema = { type: 'object', properties: { image: { type: 'string', minLength: 1 }, runtime: { type: 'string', enum: ['docker', 'podman'] },
-      folder: { type: 'string' } }, required: ['image'], additionalProperties: false };
+    const optionsSchema = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }),
+      runtime: defineProtocolUnion([defineProtocolLiteral('docker'), defineProtocolLiteral('podman')]).optional(),
+      folder: defineProtocolString().optional() }, { policy: 'closed' }).jsonSchema;
     const native = { ...provisioner, descriptor: { ...provisioner.descriptor, billing: { location: 'local', stoppedBilling: 'not-billed' },
       launchSchema: optionsSchema } };
     const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: provisioner.contribution.pluginId,
@@ -2460,16 +2490,16 @@ describe('mounted managed configurator', () => {
       request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projection
         : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: optionsSchema }
           : { ok: false, code: 'unsupported' });
-    const answer = (actionId: string, result: (input: unknown) => unknown) => harness.answer(serverId, `/v1/actions/${actionId}`, {
-      select: (value) => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    const answer = (actionId: string, result: (input: unknown) => unknown) => answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => { const request = readProvisionerRequest(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: result(request.input) } } }; } });
-    answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
-    answer('machines.provisioners.check', () => ({ available: true }));
-    answer('machines.provisioners.options', () => createMachineProvisionerOptionsFixture({ base: { launch: {} } }));
+    await answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
+    await answer('machines.provisioners.check', () => ({ available: true }));
+    await answer('machines.provisioners.options', () => createMachineProvisionerOptionsFixture({ base: { launch: {} } }));
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { t } = await import('@/text');
     const props = { serverId, provisioner: buildQualifiedPluginContributionKey(provisioner.contribution), initialController: defaultController };
-    return { serverId, ManagedMachineConfigurationView, t, props };
+    return { serverId, ManagedMachineConfigurationView, t, props, native, optionsInputHints: action.inputHints };
   };
   it('leads with the blank required field and neither warns about nor shows the rest of an untouched form', async () => {
     const { ManagedMachineConfigurationView, t, props } = await arrangeImageForm('image-first');
@@ -2482,7 +2512,8 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('says why a preset can\u2019t be saved, and names the empty audience as Yours', async () => {
-    const { ManagedMachineConfigurationView, t, props } = await arrangeImageForm('preset-reason');
+    const { serverId, ManagedMachineConfigurationView, t, props, native, optionsInputHints } = await arrangeImageForm('preset-reason');
+    await publishPresetEditorDeclaration(serverId, createMachineProvisionerEditorManifestFixture({ pluginId: native.contribution.pluginId, descriptor: native.descriptor, optionsInputHints }));
     const screen = await renderScreen(<ManagedMachineConfigurationView {...props} presetOnly />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image')).not.toBeNull());
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true));
@@ -2507,7 +2538,7 @@ describe('mounted managed configurator', () => {
   it('says when the provider form can\'t be read and reads it again on Retry, never leaving an uneditable size (R93)', async () => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://form-hints.example', serverIdentityId: 'srv_form_hints',
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://form-hints.example', serverIdentityId: 'srv_form_hints',
       accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     const optionsSchema = { type: 'object', properties: { cpus: { type: 'integer', minimum: 1 } }, additionalProperties: false };
@@ -2529,12 +2560,12 @@ describe('mounted managed configurator', () => {
       request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projectionFor()
         : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: optionsSchema }
           : { ok: false, code: 'unsupported' });
-    const answer = (actionId: string, result: (input: unknown) => unknown) => harness.answer(serverId, `/v1/actions/${actionId}`, {
-      select: (value) => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    const answer = (actionId: string, result: (input: unknown) => unknown) => answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => { const request = readProvisionerRequest(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: result(request.input) } } }; } });
-    answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
-    answer('machines.provisioners.check', () => ({ available: true }));
-    answer('machines.provisioners.options', () => createMachineProvisionerOptionsFixture({ base: { launch: { cpus: 4 } },
+    await answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
+    await answer('machines.provisioners.check', () => ({ available: true }));
+    await answer('machines.provisioners.options', () => createMachineProvisionerOptionsFixture({ base: { launch: { cpus: 4 } },
       dimensions: { image: [], location: [], network: [], duration: [], size: [{ id: '4', title: 'Custom size',
         assignments: [{ path: 'cpus', value: 4 }], nativeFacts: { size: { id: '4', title: 'Custom size', cpuCores: 4 } } }] } }));
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -2621,7 +2652,7 @@ describe('mounted managed configurator', () => {
   it.each(['legacy', 'dimensions'] as const)(
     'renders a %s controller catalog through the real Action boundary and preserves exact reviewed choices',
     async (format) => {
-      const serverId = await harness.addHome({
+      const serverId = await addPresetHome({
         name: 'Compute',
         serverUrl: `https://catalog-${format}.example`,
         serverIdentityId: `srv_catalog_${format}`,
@@ -2699,9 +2730,9 @@ describe('mounted managed configurator', () => {
         ['machines.provisioners.check', { available: true }],
         ['machines.provisioners.options', options],
       ] as const)
-        harness.answer(serverId, `/v1/actions/${actionId}`, {
+        await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
           select: (value) => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            const request = readProvisionerRequest(value);
             return {
               body: {
                 v: 1,
@@ -2917,7 +2948,7 @@ describe('mounted managed configurator', () => {
               }
             : { ok: false, code: 'unsupported' },
     );
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://native-digitalocean.example',
       serverIdentityId: 'srv_native_digitalocean',
@@ -2938,9 +2969,9 @@ describe('mounted managed configurator', () => {
         await provider.invokeAction('options', {}, { services: context.services, signal: context.signal }),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -3010,7 +3041,7 @@ describe('mounted managed configurator', () => {
       },
     });
     expect(
-      reviewed?.receipt.prices?.map((price) => [price.amount, price.unit]),
+      (reviewed && 'receipt' in reviewed ? reviewed.receipt : undefined)?.prices?.map((price) => [price.amount, price.unit]),
     ).toEqual([
       ['0.02', 'hour'],
       ['12', 'month'],
@@ -3162,7 +3193,7 @@ describe('mounted managed configurator', () => {
               ? { ok: true, inputSchema: optionsAction.inputSchema }
               : { ok: false, code: 'unsupported' },
       );
-      const serverId = await harness.addHome({
+      const serverId = await addPresetHome({
         name: 'Compute',
         serverUrl: `https://boat-sources-${width}.example`,
         serverIdentityId: `srv_boat_sources_${width}`,
@@ -3189,9 +3220,9 @@ describe('mounted managed configurator', () => {
           await provider.invokeAction('options', {}, { services: context.services, signal: context.signal }),
         ],
       ] as const)
-        harness.answer(serverId, `/v1/actions/${actionId}`, {
+        await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
           select: (value) => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            const request = readProvisionerRequest(value);
             return {
               body: {
                 v: 1,
@@ -3288,7 +3319,7 @@ describe('mounted managed configurator', () => {
   it.each(['check', 'options', 'options-action'] as const)(
     'preserves the native %s diagnostic without claiming an empty catalog or retrying itself',
     async (role) => {
-      const serverId = await harness.addHome({
+      const serverId = await addPresetHome({
         name: 'Compute',
         serverUrl: `https://native-${role}.example`,
         serverIdentityId: `srv_native_${role}`,
@@ -3341,9 +3372,9 @@ describe('mounted managed configurator', () => {
               },
         ],
       ] as const)
-        harness.answer(serverId, `/v1/actions/${actionId}`, {
+        await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
           select: (value) => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            const request = readProvisionerRequest(value);
             return {
               body: {
                 v: 1,
@@ -3433,7 +3464,7 @@ describe('mounted managed configurator', () => {
     });
     const schemaRequests = () => nativeBoundary.rpc.mock.calls.filter(([request]) =>
       request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ);
-    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://${provider.toLowerCase()}-ready.example`,
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://${provider.toLowerCase()}-ready.example`,
       serverIdentityId: `srv_${provider.toLowerCase()}_ready`, accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
@@ -3453,8 +3484,8 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.list', { controller: defaultController, provisioners: [{ contribution, occurrenceId: provider, acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes }] }],
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', createMachineProvisionerOptionsFixture({ base: { launch: {} } })],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -3501,7 +3532,7 @@ describe('mounted managed configurator', () => {
       expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
       await act(async () => schema.resolve({ ok: true, inputSchema: declaration.inputSchema }));
       await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1));
-      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')[0]?.input).toMatchObject({ input: {
+      expect(readProvisionerRequest(harness.requestsFor('/v1/actions/machines.provisioners.options')[0]?.input)).toMatchObject({ input: {
         contribution, controller: defaultController,
         ...(account ? { credentials: [{ purpose: { consumer: contribution, purpose: 'cloud-api' }, account }] } : {}),
       } });
@@ -3754,7 +3785,7 @@ describe('mounted managed configurator', () => {
     await hook.unmount();
   });
   it('says why an unavailable provisioner cannot create here in the check\u2019s own words, with its next step', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://unavailable-check.example',
       serverIdentityId: 'srv_unavailable_check',
@@ -3797,9 +3828,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -3827,7 +3858,7 @@ describe('mounted managed configurator', () => {
   });
   it.each(['available', 'absent', 'failed'] as const)(
     'keeps the saved-preset Create review pending until its reads settle (%s, J58 READY68)', async outcome => {
-      const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://pending-review-${outcome}.example`,
+      const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://pending-review-${outcome}.example`,
         serverIdentityId: 'srv_pending_review', accountId: 'owner', currentAccount: true });
       await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
         installationId: defaultController.installationId })]);
@@ -3835,19 +3866,19 @@ describe('mounted managed configurator', () => {
       const catalogRead = createDeferred<void>();
       const saved = { id: 'pending-review', homeId: 'srv_pending_review', revision: 1, name: 'Saved machine',
         owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
-        launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 } } };
+        launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 } } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
       harness.answer(serverId, '/v1/machines/presets/get', { select: async () => {
         await presetRead.promise;
         return outcome === 'failed' ? { status: 503, body: { code: 'unavailable' } }
-          : { body: { kind: 'found', preset: saved } };
+          : { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(saved) } };
       } });
       for (const [actionId, result] of [
         ['machines.provisioners.list', { controller: defaultController, provisioners: outcome === 'absent' ? [] : [provisioner] }],
         ['machines.provisioners.check', { available: true }],
         ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }])],
-      ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
+      ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: async value => {
         if (actionId === 'machines.provisioners.list') await catalogRead.promise;
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        const request = readProvisionerRequest(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
       } });
       const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -3881,7 +3912,7 @@ describe('mounted managed configurator', () => {
     },
   );
   it('reads as loading, not as a verdict, while a named controller waits for the machine list to sync', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://unsynced-list.example',
       serverIdentityId: 'srv_unsynced_list',
@@ -3926,7 +3957,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('names the controller it could not read and offers Retry when the catalog read fails, instead of a bare refusal', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://unreadable-controller.example',
       serverIdentityId: 'srv_unreadable_controller',
@@ -3936,10 +3967,10 @@ describe('mounted managed configurator', () => {
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: defaultController.machineId, installationId: defaultController.installationId }),
         ]);
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', {
       status: 503,
       body: { code: 'service_unavailable' },
-    });
+    }, true);
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
     const screen = await renderScreen(
@@ -3967,7 +3998,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('refuses a schema-less options Action without probing native options or losing the configurator', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://missing-options-schema.example',
       serverIdentityId: 'srv_missing_options_schema',
@@ -3991,9 +4022,9 @@ describe('mounted managed configurator', () => {
       ],
       ['machines.provisioners.check', { available: true }],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4047,7 +4078,7 @@ describe('mounted managed configurator', () => {
     const viewport = vi.spyOn(Dimensions, 'get')
       .mockReturnValue({ width, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://silent-options-schema.example',
       serverIdentityId: 'srv_silent_options_schema',
@@ -4091,9 +4122,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: async (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4191,7 +4222,7 @@ describe('mounted managed configurator', () => {
     }
   });
   it('keeps pending check and schema reads alive until the form unmounts', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://silent-everything.example',
       serverIdentityId: 'srv_silent_everything',
@@ -4208,9 +4239,9 @@ describe('mounted managed configurator', () => {
           ? new Promise(() => {})
           : read?.(request),
     );
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', {
       select: (value) => {
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        const request = readProvisionerRequest(value);
         return {
           body: {
             v: 1,
@@ -4228,9 +4259,9 @@ describe('mounted managed configurator', () => {
       },
     });
     // A loaded host answers neither the check nor the schema read.
-    harness.answer(serverId, '/v1/actions/machines.provisioners.check', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.check', {
       respondAfter: new Promise<void>(() => {}),
-    });
+    }, true);
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
     const { t } = await import('@/text');
@@ -4263,7 +4294,7 @@ describe('mounted managed configurator', () => {
     }
   });
   it('settles native options independently when the controller\u2019s presentation projection has failed', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://failed-projection.example',
       serverIdentityId: 'srv_failed_projection',
@@ -4303,9 +4334,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4336,7 +4367,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('puts a failed read where the choices would be instead of a column of empty fields', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://failed-read-blank-fields.example',
       serverIdentityId: 'srv_failed_read_blank_fields',
@@ -4405,9 +4436,9 @@ describe('mounted managed configurator', () => {
               }
             : { ok: false, code: 'unsupported' },
     );
-    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', {
       select: (value) => {
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        const request = readProvisionerRequest(value);
         return {
           body: {
             v: 1,
@@ -4424,10 +4455,10 @@ describe('mounted managed configurator', () => {
         };
       },
     });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.check', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.check', {
       status: 500,
       body: { code: 'unavailable' },
-    });
+    }, true);
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
     const screen = await renderScreen(
@@ -4452,7 +4483,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://unpriced-summary.example',
       serverIdentityId: 'srv_unpriced_summary',
@@ -4482,9 +4513,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4521,7 +4552,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://resume-wake.example',
       serverIdentityId: 'srv_resume_wake',
@@ -4551,9 +4582,9 @@ describe('mounted managed configurator', () => {
         ]),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4613,7 +4644,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('keeps a local VM receipt free of a bill before any choice exists (UIR5c)', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://local-empty-receipt.example',
       serverIdentityId: 'srv_local_empty_receipt',
@@ -4649,9 +4680,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4683,7 +4714,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('does not call an untouched launch "no choices": the required fields are what it awaits, and once filled a truly empty answer says so', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://untouched-launch.example',
       serverIdentityId: 'srv_untouched_launch',
@@ -4778,9 +4809,9 @@ describe('mounted managed configurator', () => {
         },
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4829,7 +4860,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('discloses conditional cloud quotes and lets coupled native dimensions be staged without acquiring', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://conditional-quotes.example',
       serverIdentityId: 'srv_conditional_quotes',
@@ -4900,9 +4931,9 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', options],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -4972,7 +5003,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('offers the provider’s networking variants as one more choice, so the person can pick the one without the extra address charge', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://network-variants.example',
       serverIdentityId: 'srv_network_variants',
@@ -5029,9 +5060,9 @@ describe('mounted managed configurator', () => {
       ['machines.provisioners.check', { available: true }],
       ['machines.provisioners.options', options],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -5091,7 +5122,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Modal compute',
       serverUrl: 'https://modal-duration.example',
       serverIdentityId: 'srv_modal_duration',
@@ -5099,6 +5130,7 @@ describe('mounted managed configurator', () => {
       currentAccount: true,
     });
     const controller = { machineId: 'host', installationId: 'installation' };
+    await publishPresetEditorDeclaration(serverId, PluginPortableReleaseManifestV1Schema.parse(modalManifest));
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({
             id: controller.machineId,
@@ -5185,17 +5217,17 @@ describe('mounted managed configurator', () => {
         name: 'Saved Modal',
         choices: launch,
       },
-    };
+    } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
     harness.answer(serverId, '/v1/machines/presets/get', {
-      body: { kind: 'found', preset: saved },
+      body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(saved) },
     });
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller, provisioners: [modal] }],
       ['machines.provisioners.check', { available: true }],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -5207,9 +5239,9 @@ describe('mounted managed configurator', () => {
         },
       });
     const capturedSelectors: unknown[] = [];
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', {
       select: (value) => {
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        const request = readProvisionerRequest(value);
         if (
           !request.input ||
           typeof request.input !== 'object' ||
@@ -5361,11 +5393,11 @@ describe('mounted managed configurator', () => {
     harness.answer(serverId, '/v1/machines/presets/update', {
       body: {
         kind: 'saved',
-        preset: {
+        preset: createPlainManagedMachinePresetFixture({
           ...saved,
           revision: 2,
           launch: { ...saved.launch, choices: updated },
-        },
+        }),
       },
     });
     await act(async () => screen.pressByTestId('managed-config.create'));
@@ -5375,7 +5407,7 @@ describe('mounted managed configurator', () => {
       ),
     );
     const update = harness.requestsFor('/v1/machines/presets/update')[0]?.input;
-    expect(update).toMatchObject({ patch: { launch: { choices: updated } } });
+    expect(update).toMatchObject({ patch: { content: { t: 'plain', v: { launch: { choices: updated } } } } });
     expect(
       harness.requests.some((request) =>
         request.path.endsWith('machines.managed.acquire'),
@@ -5388,7 +5420,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Cua compute',
       serverUrl: 'https://cua-preset.example',
       serverIdentityId: 'srv_cua_preset',
@@ -5479,9 +5511,9 @@ describe('mounted managed configurator', () => {
         choices: { on: 'local', imageId, runtimeId: 'runc', size },
       },
       ...(archived ? { archivedAt: 1 } : {}),
-    };
+    } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
     harness.answer(serverId, '/v1/machines/presets/get', {
-      body: { kind: 'found', preset: saved },
+      body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(saved) },
     });
     for (const [actionId, result] of [
       [
@@ -5501,9 +5533,9 @@ describe('mounted managed configurator', () => {
       ],
       ['machines.provisioners.check', { available: true }],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -5571,9 +5603,9 @@ describe('mounted managed configurator', () => {
         },
       },
     });
-    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', {
       select: async (value) => {
-        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        const request = readProvisionerRequest(value);
         const selectors = CuaLocalOptionsQueryV1Schema.parse(
           (request.input as { selectors?: unknown }).selectors ?? {},
         );
@@ -5672,7 +5704,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://compact-prices.example',
       serverIdentityId: 'srv_compact_prices',
@@ -5762,9 +5794,9 @@ describe('mounted managed configurator', () => {
         ]),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -5813,7 +5845,7 @@ describe('mounted managed configurator', () => {
         .spyOn(Dimensions, 'get')
         .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
       restoreViewport = () => viewport.mockRestore();
-      const serverId = await harness.addHome({
+      const serverId = await addPresetHome({
         name: 'Compute',
         serverUrl: 'https://native-input.example',
         serverIdentityId: 'srv_native_input',
@@ -5920,9 +5952,9 @@ describe('mounted managed configurator', () => {
         ],
         ['machines.provisioners.check', { available: true }],
       ] as const)
-        harness.answer(serverId, `/v1/actions/${actionId}`, {
+        await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
           select: (value) => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            const request = readProvisionerRequest(value);
             return {
               body: {
                 v: 1,
@@ -5957,9 +5989,9 @@ describe('mounted managed configurator', () => {
           label: 'IPv4',
         },
       ];
-      harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+      await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           const input = request.input as { selectors?: unknown };
           capturedSelectors.push(input.selectors);
           const complete = pluginJsonValuesEqual(input.selectors, {
@@ -6096,7 +6128,9 @@ describe('mounted managed configurator', () => {
     },
   );
   it('uses the one finite Ends control to choose the exact declared native duration before committing composer intent', async () => {
-    const serverId = await harness.addHome({
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://duration.example',
       serverIdentityId: 'srv_duration',
@@ -6158,9 +6192,9 @@ describe('mounted managed configurator', () => {
         }),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -6241,23 +6275,16 @@ describe('mounted managed configurator', () => {
     await act(async () =>
       publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [replacement]),
     );
-    const { t } = await import('@/text');
-    const receipts = screen.tree.findAll((node) =>
-      node.props.model?.facts?.some(
-        (fact: { id: string }) => fact.id === 'controller',
-      ),
-    );
+    const { MachineConfigurationReceipt } = await import('./MachineConfigurationReceipt');
+    const receipts = screen.findAllByType(MachineConfigurationReceipt);
     expect(receipts.length).toBeGreaterThan(0);
+    for (const receipt of receipts) expect(receipt.props.model.facts).not.toContainEqual(expect.objectContaining({ id: 'controller' }));
     for (const receipt of receipts)
-      expect(
-        receipt.props.model.facts.find(
-          (fact: { id: string }) => fact.id === 'controller',
-        )?.value,
-      ).toBe(t('common.unknown'));
+      expect(findTestInstanceByTypeContainingText(receipt, Text, 'Replacement controller')).toBeUndefined();
     await screen.unmount();
   });
   it('mounts the contributed size, image and location controls over complete native choices and keeps reviewed facts together', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://dimensions.example',
       serverIdentityId: 'srv_dimensions',
@@ -6319,9 +6346,9 @@ describe('mounted managed configurator', () => {
         }),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -6417,7 +6444,7 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('describes a local machine\u2019s location as where it runs, not as a distance to the person', async () => {
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://local-location.example',
       serverIdentityId: 'srv_local_location',
@@ -6472,9 +6499,9 @@ describe('mounted managed configurator', () => {
         }),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -6505,7 +6532,7 @@ describe('mounted managed configurator', () => {
   });
   it.each(['use', 'create', 'route-create'] as const)('uses a reviewed one-off as composer intent without admitting a resource in the configurator (%s)', async (intent) => {
     const createOnUse = intent !== 'use';
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://compute.example',
       serverIdentityId: 'srv_compute',
@@ -6528,9 +6555,9 @@ describe('mounted managed configurator', () => {
         ]),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -6611,13 +6638,13 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
   it('shows the captured Account creation-disabled lifecycle banner even when provisioners are unavailable', async () => {
-    const target = await harness.addHome({
+    const target = await addPresetHome({
       name: 'No creation',
       serverUrl: 'https://no-creation.example',
       serverIdentityId: 'srv_no_creation',
       accountId: 'owner',
     });
-    await harness.addHome({
+    await addPresetHome({
       name: 'Other',
       serverUrl: 'https://other.example',
       serverIdentityId: 'srv_other',
@@ -6663,7 +6690,7 @@ describe('mounted managed configurator', () => {
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const serverId = await harness.addHome({
+    const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://compute.example',
       serverIdentityId: 'srv_compute',
@@ -6694,9 +6721,9 @@ describe('mounted managed configurator', () => {
         ]),
       ],
     ] as const)
-      harness.answer(serverId, `/v1/actions/${actionId}`, {
+      await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, {
         select: (value) => {
-          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const request = readProvisionerRequest(value);
           return {
             body: {
               v: 1,
@@ -6769,9 +6796,9 @@ describe('mounted managed configurator', () => {
         choices: { cpu: 2 },
       },
       controller: { machineId: 'host', installationId: 'installation' },
-    };
+    } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
     harness.answer(serverId, '/v1/machines/presets/create', {
-      body: { kind: 'saved', preset: saved },
+      body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture(saved) },
     });
     await act(async () => screen.pressByTestId('managed-config.save-preset'));
     await waitForHomeGovernance(() =>
@@ -6782,7 +6809,7 @@ describe('mounted managed configurator', () => {
     expect(
       harness.requestsFor('/v1/machines/presets/create')[0]?.input,
     ).toMatchObject({
-      launch: saved.launch,
+      content: { t: 'plain', v: { launch: saved.launch } },
       controller: saved.controller,
       wakeOnAcceptedMessage: true,
     });
@@ -6792,7 +6819,7 @@ describe('mounted managed configurator', () => {
     expect(
       harness.requestsFor('/v1/actions/machines.managed.acquire'),
     ).toHaveLength(0);
-    harness.answer(serverId, '/v1/actions/machines.managed.acquire', {
+    harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', {
       status: 403,
       body: { code: 'permission_denied' },
     });
@@ -6821,7 +6848,7 @@ describe('mounted managed configurator', () => {
           node.props.selected === true,
       ).length,
     ).toBeGreaterThan(0);
-    harness.answer(serverId, '/v1/actions/machines.managed.acquire', {
+    harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', {
       select: (value) => {
         const { envelope: request } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
         return {

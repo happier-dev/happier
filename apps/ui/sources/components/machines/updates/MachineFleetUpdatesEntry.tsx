@@ -24,7 +24,7 @@ export const MachineFleetUpdatesEntry = React.memo(
         {...(waiting > 0
           ? {
               detail: String(waiting),
-              detailStyle: { color: theme.colors.state.warning },
+              detailStyle: { color: theme.colors.state.warning.foreground },
             }
           : {})}
       />

@@ -201,11 +201,12 @@ describe('useManagedMachineSelectionOffers', () => {
   it('keeps the offers identity across a machine list change that leaves the controller name alone', async () => {
     const { useManagedMachineSelectionOffers } = await import('./ManagedMachineSelectionOffers');
     const accountBinding = binding();
-    const preset = {
+    const preset = createPlainManagedMachinePresetFixture({
       id: 'preset-a', homeId: 'home-a', revision: 1, name: 'Build box',
-      launch: { provider: { pluginId: 'acme', localId: 'acme' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      owner: { kind: 'account', accountId: 'account-a' },
+      launch: { provider: { pluginId: 'acme.compute', localId: 'acme' }, schemaVersion: 1, name: 'Guest', choices: {} },
       controller: { machineId: 'machine-a', installationId: 'installation-a' },
-    } as unknown as import('@happier-dev/protocol/machines/managed/managedMachinePresetV1').ManagedMachinePresetV1;
+    }).opened;
     const presets = [preset];
     const configure = vi.fn();
     const beforeState = storage.getState();

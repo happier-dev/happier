@@ -21,7 +21,7 @@ export type UiManagedAccountMachineNormalizer = Readonly<{
 
 /** One captured-Account transport for creation and retained control admission/reporting. */
 export function createUiManagedAccountHomeRequest(params: Readonly<{
-    account: LazyActionAccountContext;
+    account: Pick<LazyActionAccountContext, 'request'>;
     signal?: AbortSignal;
 }>) {
     return async function post<T>(path: string, body: unknown, schema: Readonly<{ parse(value: unknown): T }>,
@@ -43,7 +43,7 @@ export function createUiManagedAccountHomeRequest(params: Readonly<{
 
 /** Retain the complete server-selected admission carrier until the Account keyholder opens it locally. */
 export async function admitUiManagedAccountHome(params: Readonly<{
-    account: LazyActionAccountContext;
+    account: Pick<LazyActionAccountContext, 'request'>;
     requestId: string;
     signal?: AbortSignal;
 }>, input: ManagedAcquireInputV1, requestEnvelopeDigest: string,
@@ -103,7 +103,7 @@ export function createUiManagedAccountHome(params: Readonly<{
 }>) {
     let submittedIdentity: CapturedManagedNativeIdentity | undefined;
     const post = createUiManagedAccountHomeRequest(params);
-    const correlation: ManagedReconciliationHome['correlation'] = machine => ManagedControllerCurrentnessV1Schema.parse({
+    const correlation = (machine: Pick<ManagedMachineFullV1, 'homeId' | 'id' | 'intentRevision' | 'controller'>) => ManagedControllerCurrentnessV1Schema.parse({
         homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
         requestId: params.requestId, ...(machine.controller ? { controller: machine.controller } : {}),
     });

@@ -9,7 +9,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { getMachineSentenceName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -148,7 +148,7 @@ it('keeps the page target quiet for other Machines and redraws once for its own 
 it('joins the admitted managed name for page titles and sentences, including same-name peers and pushed renames', async () => {
     const store = getStorage();
     const previous = store.getState();
-    let managed = ManagedMachineV1Schema.parse({ id: 'created', homeId: 'srv_page_names', custodianAccountId: 'owner', enrolledMachineId: 'page-machine',
+    let managed = ManagedMachineFullV1Schema.parse({ id: 'created', homeId: 'srv_page_names', custodianAccountId: 'owner', enrolledMachineId: 'page-machine',
         launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
         resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native' } },
         allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,

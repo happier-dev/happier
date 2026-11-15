@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { ManagedCreationSelectionV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
-import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { readManagedMachineSelectionReceipt, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import type { resolveMachineDestinationPurposeEligibility } from './buildMachineDestinationModel';
@@ -65,15 +65,17 @@ export function resolveManagedMachineArchiveChoiceAvailability(input: Readonly<{
     controllerOwnership?: 'owned' | 'shared';
     custodianAccountId?: string;
 }>): ManagedMachineArchiveChoiceAvailability {
-    const pair = input.draft.receipt.controller;
+    const receipt = readManagedMachineSelectionReceipt(input.draft);
+    const pair = receipt?.controller;
     const controllerMachineId = pair?.machineId;
-    const controller = pair && input.controller?.id === pair.machineId
-        && input.controller.installationId === pair.installationId ? input.controller : undefined;
+    const candidate = input.controller;
+    const controller = pair && candidate?.id === pair.machineId
+        && candidate.installationId === pair.installationId ? candidate : undefined;
     const custodianAccountId = controller?.access?.custodian.accountId ?? input.custodianAccountId;
     const eligibility = pair && (controller || input.controllerOwnership)
         ? { eligible: true as const }
         : { eligible: false as const, reason: 'access_unavailable' as const };
-    const nativeEffects = supportedMachineRetentionEffectsV1(input.draft.receipt.retentionCapabilities.supportedIntents);
+    const nativeEffects = receipt ? supportedMachineRetentionEffectsV1(receipt.retentionCapabilities.supportedIntents) : [];
     return {
         controllerMachineId,
         ...(controller ? { controllerName: getMachineDisplayName(controller) } : {}),

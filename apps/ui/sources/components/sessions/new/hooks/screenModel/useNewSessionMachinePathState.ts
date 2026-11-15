@@ -1,4 +1,4 @@
-import { readManagedMachineSelectionReceipt } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { isDeferredManagedMachineAuthorPresetDraft, readManagedMachineSelectionReceipt } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import * as React from 'react';
 import { readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type {
@@ -367,7 +367,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const controllerSnapshot = useServerScopedLaunchMachine(params.serverId,
         liveInventory ? readManagedMachineSelectionReceipt(managedMachineSelectionState)?.controller?.machineId ?? '' : '');
     const resolveArchiveChoiceAvailability = React.useCallback((draft: ManagedMachineSelectionDraft) => {
-        const pair = draft.receipt.controller;
+        const pair = readManagedMachineSelectionReceipt(draft)?.controller;
         return resolveManagedMachineArchiveChoiceAvailability({ draft,
             controller: pair ? readMachines().find(machine => machine.id === pair.machineId
                 && machine.installationId === pair.installationId) : undefined });
@@ -596,7 +596,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     }, [applyCommittedSelectedPath, getBestPathForMachine, machineTarget, params.isBot, params.pathParam]);
     const setManagedMachineArchiveEffect = React.useCallback((archiveEffect: ManagedMachineSelectionDraft['archiveEffect']) => {
         setManagedMachineSelection(current => {
-            if (!current || current.archiveEffect === archiveEffect) return current;
+            if (!current || isDeferredManagedMachineAuthorPresetDraft(current) || current.archiveEffect === archiveEffect) return current;
             if (!resolveArchiveChoiceAvailability(current).supportedEffects.includes(archiveEffect)) return current;
             return { ...current, archiveEffect };
         });

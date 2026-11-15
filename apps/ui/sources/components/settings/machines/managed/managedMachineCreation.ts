@@ -8,7 +8,7 @@ import {
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ManagedMachineV1, ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -40,14 +40,14 @@ export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'acquiring'; managedId?: string; operation?: ActionOperationSnapshotV1; operationObservation?: ActionOperationObservation }>
     | Readonly<{ kind: 'enrollment_pending'; managedId: string }>
     | Readonly<{ kind: 'setup_pending'; managedId: string; machineId: string; state: 'pending' | 'running';
-        machineSetup: NonNullable<ManagedMachineV1['machineSetup']>; operation?: ActionOperationSnapshotV1 }>
+        machineSetup: NonNullable<ManagedMachineReadSnapshotV1['machineSetup']>; operation?: ActionOperationSnapshotV1 }>
     | Readonly<{ kind: 'ready'; managedId: string; machineId: string }>
     | Readonly<{ kind: 'failed'; code: string; diagnosticDetail?: string; managedId?: string; operation?: ActionOperationSnapshotV1;
         operationObservation?: ActionOperationObservation; retryInstallationAvailable?: boolean;
-        machineSetup?: NonNullable<ManagedMachineV1['machineSetup']>; retrySetupAvailable?: boolean }>;
+        machineSetup?: NonNullable<ManagedMachineReadSnapshotV1['machineSetup']>; retrySetupAvailable?: boolean }>;
 
 export type ManagedMachineCreationResult =
-    | Readonly<{ kind: 'enrolled'; machine: ManagedMachineV1 & { enrolledMachineId: string }; agentUpdate?: SessionAgentUpdateNoticeV1 }>
+    | Readonly<{ kind: 'enrolled'; machine: ManagedMachineReadSnapshotV1 & { enrolledMachineId: string }; agentUpdate?: SessionAgentUpdateNoticeV1 }>
     | Readonly<{ kind: 'pending'; managedId: string }>
     | Readonly<{ kind: 'delete_requested'; managedId: string }>
     | Readonly<{ kind: 'failed'; code: string; agentStartFailure?: Extract<
@@ -120,7 +120,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     let acquisition = input.acquisition;
     let observedOperation: ActionOperationSnapshotV1 | undefined;
     let agentUpdate: SessionAgentUpdateNoticeV1 | undefined;
-    let setupMachine: ManagedMachineV1 | undefined;
+    let setupMachine: ManagedMachineReadSnapshotV1 | undefined;
     const fail = (code: string, retryInstallationAvailable?: boolean, diagnosticDetail?: string, failure?: ActionExecuteFailure): ManagedMachineCreationResult => {
         diagnosticDetail ??= failure ? describeManagedActionFailureDiagnostic(code, failure.details, failure.requestId, failure.failureCause) : undefined;
         const setup = setupMachine ? managedCreationSetup(setupMachine) : null;
@@ -179,7 +179,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     const executeConfirmed = withActionDispatch(execute.confirmed);
     let readFailureCode = 'managed_read_failed';
     let readFailure: ActionExecuteFailure | undefined;
-    const read = async (): Promise<ManagedMachineV1 | null> => {
+    const read = async (): Promise<ManagedMachineReadSnapshotV1 | null> => {
         if (!acquisition.managedId || !current()) return null;
         const result = await execute('machines.managed.get', { homeId: acquisition.selection.homeId, managedId: acquisition.managedId }, context);
         if (!current()) return null;
@@ -259,7 +259,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (!current()) return fail('continuation_retired');
     if (acquisition.operation && acquisition.selection.kind === 'preset' && !scopedMachine) return fail(readFailureCode, undefined, undefined, readFailure);
     controller ??= scopedMachine?.controller;
-    let machine: ManagedMachineV1 | null = null;
+    let machine: ManagedMachineReadSnapshotV1 | null = null;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
         let requesterMachine = scopedMachine && isManagedMachineEnrollmentRequester(scopedMachine, input.scope.accountId) ? scopedMachine : null;
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
@@ -371,7 +371,7 @@ export async function runManagedMachineCreation(input: Readonly<{
             if (!machine.preset || !machine.machineSetup) return fail('setup_recovery_unavailable');
             const prepared = await prepareMachineSetupPresetApplyInput({ executeAction: execute, context,
                 homeId: machine.homeId, machineId: enrolledMachineId,
-                preset: { ...machine.preset, setup: machine.machineSetup.setup }, isCurrent: current });
+                preset: { ...machine.preset, setup: 'setup' in machine.machineSetup ? machine.machineSetup.setup : undefined }, isCurrent: current });
             if (!current()) return fail('continuation_retired');
             if (!prepared) {
                 input.onProgress({ kind: 'idle' });

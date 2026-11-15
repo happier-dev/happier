@@ -27,6 +27,9 @@ const presetInput = ManagedAcquireInputV1Schema.parse({
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     presetContentOverride: { content: { t: 'plain', v: { v: 1, name: 'private override', launch, enrollmentIdentity } } },
 });
+if (presetInput.selection.kind !== 'preset' || !('presetContentOverride' in presetInput)
+    || presetInput.presetContentOverride === undefined) throw new Error('Expected a preset acquire input with its override');
+const presetContentOverride = presetInput.presetContentOverride;
 
 function accountResponding(body: unknown): Pick<LazyActionAccountContext, 'request'> {
     return { request: async () => Response.json(body) };
@@ -62,7 +65,7 @@ describe('Account managed admission boundary', () => {
                 desired: 'start' as const, desiredWhen: 'now' as const, intentRevision: 0,
                 retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
             },
-            presetContent: { content: presetInput.presetContentOverride.content, recipients: [] },
+            presetContent: { content: presetContentOverride.content, recipients: [] },
             replayed: false,
         };
         expect(ManagedAdmissionOutputV1Schema.parse(wrongRevision)).toEqual(wrongRevision);

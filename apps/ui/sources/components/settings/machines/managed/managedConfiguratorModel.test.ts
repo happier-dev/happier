@@ -114,7 +114,7 @@ describe('managed configurator draft owner', () => {
     });
     it('retains the selected provisioner descriptor in the exact reviewed acquire facts', () => {
         const input = managedConfiguratorAcquireInput(small(), 'home');
-        expect(input?.reviewedFacts?.provisioner).toEqual(descriptor);
+        expect((input && 'reviewedFacts' in input ? input.reviewedFacts : undefined)?.provisioner).toEqual(descriptor);
     });
     it('validates the retained launch once at the canonical fact boundary and keeps the exact receipt', () => {
         let validations = 0;
@@ -630,9 +630,9 @@ describe('managed configurator draft owner', () => {
             { base: { launch: { cpu: 2 }, prices }, dimensions: emptyDimensions() });
         expect(managedConfiguratorFacts(draft)).toMatchObject({ prices, setup });
         const acquired = managedConfiguratorAcquireInput(draft, 'home');
-        expect(acquired?.reviewedFacts?.prices).toEqual(prices);
+        expect((acquired && 'reviewedFacts' in acquired ? acquired.reviewedFacts : undefined)?.prices).toEqual(prices);
         expect(acquired?.selection).not.toHaveProperty('setup');
-        expect(acquired?.reviewedFacts?.setup).toBeUndefined();
+        expect((acquired && 'reviewedFacts' in acquired ? acquired.reviewedFacts : undefined)?.setup).toBeUndefined();
         expect(acquired?.selection).not.toHaveProperty('prices');
     });
 
@@ -649,14 +649,14 @@ describe('managed configurator draft owner', () => {
             managedConfiguratorFacts(changed)!.launch);
         const acquired = managedConfiguratorAcquireInput(edited, 'home');
         expect(acquired?.selection).toMatchObject({ kind: 'one-off', homeId: 'home', launch: { choices: { cpu: 4 }, credentials: [credential] } });
-        expect(acquired?.reviewedFacts?.launch).toMatchObject({ choices: { cpu: 4 }, credentials: [credential] });
-        expect(acquired?.selection).toMatchObject({ retention: saved.preset.retention, wakeOnAcceptedMessage: false });
+        expect((acquired && 'reviewedFacts' in acquired ? acquired.reviewedFacts : undefined)?.launch).toMatchObject({ choices: { cpu: 4 }, credentials: [credential] });
+        expect(acquired?.selection).toMatchObject({ retention: saved.preset?.retention, wakeOnAcceptedMessage: false });
         const changedCredentials = { ...refreshed, credentials: undefined };
         const credentialEdit = resolveManagedConfiguratorAcquireDraft(changedCredentials, managedConfiguratorFacts(refreshed)!.launch,
             managedConfiguratorFacts(changedCredentials)!.launch);
         const direct = managedConfiguratorAcquireInput(credentialEdit, 'home');
         expect(direct?.selection.kind).toBe('one-off');
-        expect(direct?.reviewedFacts?.launch).not.toHaveProperty('credentials');
+        expect((direct && 'reviewedFacts' in direct ? direct.reviewedFacts : undefined)?.launch).not.toHaveProperty('credentials');
     });
 
     it.each(['direct', 'brokered'] as const)('retains only the exact Team %s selection through native review and acquisition', deliveryMode => {

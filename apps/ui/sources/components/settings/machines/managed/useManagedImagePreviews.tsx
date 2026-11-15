@@ -25,7 +25,7 @@ export function useManagedImagePreviews(
     serverId: string;
     controllerMachineId: string | null;
     pluginId: string;
-    occurrenceId: string;
+    occurrenceId?: string;
     requests: readonly ManagedImagePreviewRequest[];
   }>,
 ): ReadonlyMap<string, HappierRenderableImageSource> {

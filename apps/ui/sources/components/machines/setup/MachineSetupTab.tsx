@@ -174,7 +174,8 @@ function MachineSetupRoot(
     if (!source.opened) return t('machinePresets.setup.tab.presetUnreadable');
     return source.opened.source.kind === 'accountPreset'
       ? source.opened.presetName ?? t('machinePresets.setup.tab.presetUnreadable')
-      : machineSetupSourceName(source.opened.source, presetList);
+      : source.opened.source.kind === 'bundledPreset' ? machineSetupSourceName(source.opened.source, presetList)
+        : t('machinePresets.setup.tab.presetUnreadable');
   };
   const nothingSetUp =
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
@@ -300,15 +301,16 @@ function MachineSetupRoot(
                 attached.map((source) => {
                   const sourceKey = source.sourceKey;
                   const opened = source.opened;
+                  const openedSource = opened?.source;
                   const latest =
-                    opened?.source.kind === 'accountPreset'
-                      ? (presetList.find((entry): entry is OpenedManagedMachinePresetV1 => !('kind' in entry) && entry.id === opened.source.presetId) ?? null)
+                    openedSource?.kind === 'accountPreset'
+                      ? (presetList.find((entry): entry is OpenedManagedMachinePresetV1 => !('kind' in entry) && entry.id === openedSource.presetId) ?? null)
                       : null;
                   return (
                     <AttachedPresetRow
                       key={sourceKey}
                       sourceKey={sourceKey}
-                      source={opened?.source ?? null}
+                      source={openedSource && openedSource.kind !== 'direct' ? openedSource : null}
                       name={nameOf(source)}
                       newer={
                         latest && opened?.source.kind === 'accountPreset' && latest.revision > opened.source.presetRevision

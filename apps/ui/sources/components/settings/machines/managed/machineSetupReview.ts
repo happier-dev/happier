@@ -2,7 +2,7 @@ import { MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema,
     type MachineSetupAppChildV1, type MachineSetupApplyInputV1, type MachineSetupCombinedPlanResultV1,
     type MachineSetupPlanResultV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
     type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { reviewMachineSetupSourceChangeV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { type MachineSetupSourceV1, reviewMachineSetupSourceChangeV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -62,7 +62,7 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
     const targets = params.targets.map(target => ({ homeId: target.homeId, machineId: target.machineId, sources: target.sources,
         mode: 'effects' as const, ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }),
         ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }) }));
-    const expectedSources: MachineSetupSourceApplyV1[] = [];
+    const expectedSources: Array<MachineSetupSourceApplyV1 | MachineSetupSourceV1> = [];
     for (const target of params.targets) {
         const currentSources = target.current?.sources;
         const proposedSources = target.sources;

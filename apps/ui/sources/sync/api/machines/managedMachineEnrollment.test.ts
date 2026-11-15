@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema, ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedAcquireInputV1Schema, ManagedEnrollmentFullCorrelationV1Schema,
     projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
@@ -45,7 +45,7 @@ describe('app managed enrollment', () => {
         const target = { ...resolveHomeTargetFromDescriptor({ descriptor, authority: 'trusted_enrollment' }),
             profileId: profile.id, authority: 'saved_profile' as const };
         const launch = { provider: { pluginId: 'test.compute', localId: 'sandbox' }, schemaVersion: 1, name: 'Guest', choices: {} };
-        const machine = ManagedMachineV1Schema.parse({ id: 'paid-resource', homeId, custodianAccountId: 'creator', launch,
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'paid-resource', homeId, custodianAccountId: 'creator', launch,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
             enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { resolveProviderDeletionReminderV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 import { readManagedMachineDeletionAttention } from '@/activity/attention/managedMachineDeletionAttention';
@@ -21,6 +22,7 @@ export function useManagedMachineDeletionSource(serverIds: readonly string[]): r
     const previous = React.useRef<readonly ManagedMachineDeletionEntry[]>([]);
     return React.useMemo(() => {
         const rows = Object.entries(inventory.entries).flatMap(([serverId, entry]) => entry.machines.flatMap(machine => {
+            if (isManagedOpaquePresetMachineV1(machine)) return [];
             const observation = machine.observation?.deletionNotices;
             const retentionCapabilities = machine.reviewedFacts?.retentionCapabilities?.deletionNotices;
             if (!observation && !retentionCapabilities) return [];

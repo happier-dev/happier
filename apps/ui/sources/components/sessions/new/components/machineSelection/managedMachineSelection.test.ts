@@ -11,6 +11,7 @@ import {
 import { buildMachineDestinationModel } from './buildMachineDestinationModel';
 import { createMachineFixture } from '@/dev/testkit';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 
 const selection = { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 3 } as const;
 const receipt = {
@@ -24,6 +25,13 @@ const receipt = {
 };
 
 describe('managed machine selection draft', () => {
+    it('keeps deferred author preset archive choices at Keep until reviewed facts are available', () => {
+        const draft = createManagedMachineSelectionDraft({ deferredAuthorPreset: true, selection,
+            presetContentOverride: { content: { t: 'plain', v: { v: 1, name: 'Guest' } } },
+            presetOrigin: { id: selection.id, homeId: selection.homeId, revision: selection.revision, controller: receipt.controller } });
+        expect(resolveManagedMachineArchiveChoiceAvailability({ draft, controllerOwnership: 'shared', custodianAccountId: 'alice' }))
+            .toMatchObject({ supportedEffects: ['keep'], nativeUnsupportedEffects: ['stop', 'delete'] });
+    });
     it('offers retained archive Delete for an admitted shared controller', () => {
         const draft = createManagedMachineSelectionDraft({ selection, receipt, archiveEffect: 'delete' });
         expect(resolveManagedMachineArchiveChoiceAvailability({ draft, controllerOwnership: 'shared', custodianAccountId: 'alice' }))
@@ -32,8 +40,8 @@ describe('managed machine selection draft', () => {
 
     it('retains Account creation offers without a controller and does not invent a native archive executor', () => {
         const cloudReceipt = { ...receipt, controller: undefined, billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const } };
-        const preset = { id: 'account-cloud', homeId: 'home-a', revision: 1, name: 'Cloud',
-            owner: { kind: 'account' as const, accountId: 'owner' }, launch: cloudReceipt.launch };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'account-cloud', homeId: 'home-a', revision: 1, name: 'Cloud',
+            owner: { kind: 'account', accountId: 'owner' }, launch: cloudReceipt.launch }).opened;
         expect(buildManagedMachineSelectionOffers({ homeId: 'home-a', presets: [preset], oneOffTitle: 'One-off', onConfigure() {} })
             .map(offer => offer.id)).toEqual(['managed-machine:home-a:preset:account-cloud:1', 'managed-machine:home-a:one-off']);
         const draft = createManagedMachineSelectionDraft({ selection, receipt: cloudReceipt });
@@ -46,11 +54,11 @@ describe('managed machine selection draft', () => {
         const onConfigure = vi.fn();
         const describeOffer = vi.fn((_preset: { id: string }) => 'Controller');
         const markFor = vi.fn((_preset: { id: string }) => null);
-        const preset = { id: 'preset-a', homeId: 'home-a', revision: 3, name: 'Guest',
-            owner: { kind: 'account' as const, accountId: 'owner' }, launch: receipt.launch, controller: receipt.controller };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'preset-a', homeId: 'home-a', revision: 3, name: 'Guest',
+            owner: { kind: 'account', accountId: 'owner' }, launch: receipt.launch, controller: receipt.controller }).opened;
         const combined = { ...preset, id: 'combined', setup: { scripts: [{ body: 'prepare-tools' }] } };
-        const setupOnly = { id: 'setup-only', homeId: preset.homeId, revision: 2, name: 'Tools',
-            owner: preset.owner, setup: { scripts: [{ body: 'prepare-tools' }] } };
+        const setupOnly = createPlainManagedMachinePresetFixture({ id: 'setup-only', homeId: preset.homeId, revision: 2, name: 'Tools',
+            owner: preset.owner, setup: { scripts: [{ body: 'prepare-tools' }] } }).opened;
         const offers = buildManagedMachineSelectionOffers({ homeId: 'home-a', oneOffTitle: 'One-off',
             presets: [preset, setupOnly, combined, { ...preset, id: 'archived', archivedAt: 1 }, { ...preset, id: 'foreign', homeId: 'home-b' }],
             describeOffer, markFor, onConfigure });

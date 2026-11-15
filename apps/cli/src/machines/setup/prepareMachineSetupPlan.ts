@@ -26,7 +26,7 @@ function extendLocalSources<T extends z.ZodMiniObject, U extends z.core.$ZodLoos
   // retaining every non-source refinement from the canonical Action schema.
   return z.core.util.safeExtend(schema, shape) as z.ZodMiniObject<z.core.util.Extend<T['shape'], U>, T['_zod']['config']>;
 }
-const MachineSetupLocalPlanInputV1Schema = extendLocalSources(MachineSetupPlanInputV1Schema,
+export const MachineSetupLocalPlanInputV1Schema = extendLocalSources(MachineSetupPlanInputV1Schema,
   { sources: z.optional(MachineSetupSourceV1Schema) });
 const MachineSetupLocalPlanResultV1Schema = extendLocalSources(MachineSetupPlanResultV1Schema,
   { sources: MachineSetupSourceV1Schema });

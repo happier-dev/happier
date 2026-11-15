@@ -4,7 +4,7 @@ import { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, readMachineProvisionerResizeCap
     type MachineProvisionerContributionV1, type MachineProvisionerSizeV1,
     type MachineProvisionerSizeDimensionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachineProvisionerSizeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { Item } from '@/components/ui/lists/Item';
@@ -28,7 +28,7 @@ const physicalValue = (dimension: MachineProvisionerSizeDimensionV1, value: unkn
 
 /** The configurator's free-form size picker, shown beneath the existing receipt for one reviewed resize. */
 export function ManagedMachineResize(props: Readonly<{
-    machine: ManagedMachineV1;
+    machine: ManagedMachineFullV1;
     descriptor?: Pick<MachineProvisionerContributionV1, 'resize'>;
     disabled: boolean;
     pending: boolean;

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
 import { View, type ViewStyle } from 'react-native';
-import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -29,7 +29,7 @@ import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
-export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
+export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineFullV1; handlers?: ManagedLifecycleHandlers;
     provider?: string;
     providerAvailable?: boolean;
     /** The provider's mark, so the resource row reads as what it is. */

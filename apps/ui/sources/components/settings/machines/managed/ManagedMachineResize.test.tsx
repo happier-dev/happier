@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -11,7 +11,7 @@ const [{ ManagedMachineResize }, { t }] = await Promise.all([import('./ManagedMa
 afterEach(() => standardCleanup());
 
 const GIB = 1024 ** 3;
-const machine = () => ManagedMachineV1Schema.parse({ id: 'build-guest', homeId: 'home', custodianAccountId: 'owner',
+const machine = () => ManagedMachineFullV1Schema.parse({ id: 'build-guest', homeId: 'home', custodianAccountId: 'owner',
     launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build guest', choices: {} },
     allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
     resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'same-native' } },
@@ -27,7 +27,7 @@ describe('managed machine resize review', () => {
     it('keeps the creation size out of desired sizes and grow-only validation when current size is unknown', async () => {
         const confirm = vi.fn();
         const original = machine();
-        const retained = ManagedMachineV1Schema.parse({ ...original, observation: undefined, reviewedFacts: {
+        const retained = ManagedMachineFullV1Schema.parse({ ...original, observation: undefined, reviewedFacts: {
             launch: original.launch, optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },
             prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
             retention: original.retention, wakeOnAcceptedMessage: false,

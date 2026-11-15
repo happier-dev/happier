@@ -4,7 +4,8 @@ import { PluginProjectedMachineRecipeEntryV1Schema } from '@happier-dev/protocol
 import { getMachineSetupDesiredV1, machineSetupItemKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createCombinedMachineSetupActionDeps } from '../../../../../../cli/src/machines/setup/composeMachineSetup';
-import { prepareMachineSetupPlanV1 } from '../../../../../../cli/src/machines/setup/prepareMachineSetupPlan';
+import { prepareMachineSetupPlanV1, MachineSetupLocalPlanInputV1Schema } from '../../../../../../cli/src/machines/setup/prepareMachineSetupPlan';
+import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { prepareMachineSetupSoftwareApplyInput } from './machineSetupSoftware';
 
 it('reads opaque current sources and effects-plans each deliberate Software input', async () => {
@@ -25,7 +26,7 @@ it('reads opaque current sources and effects-plans each deliberate Software inpu
     const deps = createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
         if ('targets' in input) throw new Error('The native leaf receives one target');
         modes.push(input.mode);
-        return prepareMachineSetupPlanV1({ input, current, readRecipes: async () => [recipe], runNative: async command => {
+        return prepareMachineSetupPlanV1({ input: MachineSetupLocalPlanInputV1Schema.parse(input), current, readRecipes: async () => [recipe], runNative: async command => {
             if (command.executable !== 'test') throw new Error('Review attempted a native effect');
             return { code: 1, stdout: '', stderr: '' };
         } });
@@ -39,7 +40,8 @@ it('reads opaque current sources and effects-plans each deliberate Software inpu
     const executor = createActionExecutor({ ...deps, machineSetupPlan: combined.machineSetupPlan });
     const context = { surface: 'ui' as const, authority: 'present_user' as const };
     const target = { homeId: 'home', machineId: 'guest' };
-    for (const config of [{}, { reviewed: true }]) {
+    const configs: PluginJsonValueV2[] = [{}, { reviewed: true }];
+    for (const config of configs) {
         const prepared = await prepareMachineSetupSoftwareApplyInput({ executeAction: executor.execute, context,
             ...target, targets: [target],
             setup: { items: [{ kind: 'softwareRecipe' as const, selection: { ref, inputs: { config } } }] }, isCurrent: () => true });
@@ -88,7 +90,7 @@ it('removes direct desired Software while preserving shared items and requiring 
     }));
     const deps = createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
         if ('targets' in input) throw new Error('The native leaf receives one exact target');
-        return await prepareMachineSetupPlanV1({ input, current, readRecipes: async () => recipes,
+        return await prepareMachineSetupPlanV1({ input: MachineSetupLocalPlanInputV1Schema.parse(input), current, readRecipes: async () => recipes,
             // Only process observation is substituted. Source ownership, native
             // declaration expansion and removal eligibility remain real.
             runNative: async command => {

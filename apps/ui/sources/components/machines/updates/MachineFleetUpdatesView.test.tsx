@@ -35,7 +35,7 @@ const machine = (id: string, online: boolean, updates: object) =>
     },
   });
 
-function textOf(node: ReactTestInstance | undefined): string {
+function textOf(node: ReactTestInstance | null | undefined): string {
   if (!node) return '';
   return node.children
     .map((child) => (typeof child === 'string' ? child : textOf(child)))

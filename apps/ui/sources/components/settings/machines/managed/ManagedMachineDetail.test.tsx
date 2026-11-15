@@ -46,12 +46,12 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
-import { ManagedMachineSections, ManagedEnrolledMachineSections, useManagedMachineHeaderIdentity, type ManagedMachineHeaderIdentity } from './ManagedMachineSections';
+import { ManagedMachineSections, ManagedMachineResizeResult, ManagedEnrolledMachineSections, useManagedMachineHeaderIdentity, type ManagedMachineHeaderIdentity } from './ManagedMachineSections';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
 import { ManagedMachinePolicySection, ManagedMachineControllerSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
 import { MachineConfigurationReceipt } from './MachineConfigurationReceipt';
-import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineFullV1Schema, ManagedMachineV1Schema, type ManagedMachineFullV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedResizeOutputV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -194,8 +194,8 @@ afterEach(() => {
 afterAll(() => browser.restore());
 
 /** Exact Home read boundary: the declared native controllers exist independently of the UI's loaded list. */
-function managedControllerReadBatch(machine: ManagedMachineV1, url: URL, init?: RequestInit,
-    controllers: readonly NonNullable<ManagedMachineV1['controller']>[] = machine.controller ? [machine.controller] : []): Response | null {
+function managedControllerReadBatch(machine: ManagedMachineReadSnapshotV1, url: URL, init?: RequestInit,
+    controllers: readonly NonNullable<ManagedMachineReadSnapshotV1['controller']>[] = machine.controller ? [machine.controller] : []): Response | null {
     if (url.pathname !== '/v1/machines/read-batch') return null;
     return createMachineReadBatchResponseFixture(init?.body, id => {
         const controller = controllers.find(candidate => candidate.machineId === id);
@@ -205,8 +205,8 @@ function managedControllerReadBatch(machine: ManagedMachineV1, url: URL, init?: 
 }
 
 /** Home's signed-root HTTP issuer; confirmation and policy stay in the real executors. */
-function managedControllerAuthorization(machine: ManagedMachineV1, url: URL, init?: RequestInit,
-    controllers: readonly NonNullable<ManagedMachineV1['controller']>[] = machine.controller ? [machine.controller] : []): Response | null {
+function managedControllerAuthorization(machine: ManagedMachineReadSnapshotV1, url: URL, init?: RequestInit,
+    controllers: readonly NonNullable<ManagedMachineReadSnapshotV1['controller']>[] = machine.controller ? [machine.controller] : []): Response | null {
     if (!url.pathname.startsWith('/v1/actions/') || !url.pathname.endsWith('/execution-authorization')) return null;
     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
     const controller = controllers.find(value => value.machineId === request.machineId);
@@ -227,8 +227,8 @@ function readNativeControllerRequest(init?: RequestInit) {
 }
 
 /** Native HTTP boundary for tests whose current provisioner declares static capabilities. */
-function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?: RequestInit,
-    supportedIntents: NonNullable<ManagedMachineV1['reviewedFacts']>['retentionCapabilities']['supportedIntents'] = ['start', 'stop', 'delete']): Response | null {
+function staticRetentionQualification(machine: ManagedMachineFullV1, url: URL, init?: RequestInit,
+    supportedIntents: NonNullable<ManagedMachineReadSnapshotV1['reviewedFacts']>['retentionCapabilities']['supportedIntents'] = ['start', 'stop', 'delete']): Response | null {
     const machines = managedControllerReadBatch(machine, url, init);
     if (machines) return machines;
     const authorization = managedControllerAuthorization(machine, url, init);
@@ -253,6 +253,19 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
 }
 
 describe('managed Machine detail', () => {
+    it.each(['opaque', 'native'] as const)('presents a %s resize refusal without inventing a private reason', async form => {
+        const output = ManagedResizeOutputV1Schema.parse(form === 'opaque'
+            ? { result: { kind: 'refused' }, presetContent: { t: 'plain', v: { privateReason: 'not disclosed' } } }
+            : { result: { kind: 'refused', code: 'provider_resize_refused' } });
+        const screen = await renderScreen(<ManagedMachineResizeResult output={output} />);
+        try {
+            const card = screen.tree.findByType(SurfaceStateCard);
+            expect(card.props.title).toBe(form === 'opaque' ? t('common.unavailable') : 'provider_resize_refused');
+            expect(card.props.diagnosticCode).toBe(form === 'opaque' ? undefined : 'provider_resize_refused');
+            expect(screen.getTextContent()).not.toContain('not disclosed');
+        } finally { await screen.unmount(); }
+    });
+
     it.each([
         { enrolled: true, availability: 'present', checkAvailable: false },
         { enrolled: false, availability: 'present', checkAvailable: true },
@@ -265,7 +278,7 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'shared-controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Shared sandbox', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'shared-created', homeId, custodianAccountId: 'owner', launch, controller,
+        const machine: ManagedMachineFullV1 = { id: 'shared-created', homeId, custodianAccountId: 'owner', launch, controller,
             allocation: 'bound', creationState: 'active', ...(enrolled ? { enrolledMachineId: 'shared-guest' } : {}),
             observation: availability === 'present' ? { observedAt: 1, availability, power: 'running' } : { observedAt: 1, availability },
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
@@ -314,7 +327,7 @@ describe('managed Machine detail', () => {
         const homeId = 'srv_managed_account_detail';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
-        const machine = ManagedMachineV1Schema.parse({ id: 'account-owned', homeId, custodianAccountId: 'owner',
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'account-owned', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Account guest', choices: {} },
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'account-native' } },
@@ -371,7 +384,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
             { token: createAccountTokenForTests('owner') });
-        const machine = ManagedMachineV1Schema.parse({ id: 'resize-reviewed', homeId, custodianAccountId: 'owner',
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'resize-reviewed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native' } },
@@ -443,6 +456,11 @@ describe('managed Machine detail', () => {
             launch, reviewedFacts: opaque.presetContent.content.v.reviewedFacts,
             resource: opaque.presetContent.content.v.nativeResult.resource,
             observation: opaque.presetContent.content.v.observation };
+        const refreshedRead = { ...opaque, machine: { ...opaque.machine,
+            preset: { ...opaque.machine.preset, revision: 8 } },
+            presetContent: { ...opaque.presetContent, content: { ...opaque.presetContent.content,
+                v: { ...opaque.presetContent.content.v, name: 'Newer unreviewed preset body' } } } };
+        let refreshed = false;
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         storage.setState({ machineListByServerId: { [serverId]: [] } });
         const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection,
@@ -472,8 +490,8 @@ describe('managed Machine detail', () => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (path === '/v1/machines/managed/actions/get') return Response.json(read);
-            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [read] });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(refreshed ? refreshedRead : read);
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [refreshed ? refreshedRead : read] });
             if (path === '/v1/machines/managed/actions/birth.get') return Response.json({ source: null });
             if (path === '/v1/machines/managed/controller/admit-control') {
                 admissions.push(JSON.parse(String(init?.body)));
@@ -496,6 +514,12 @@ describe('managed Machine detail', () => {
             if (form === 'opaque') expect(await prepareManagedMachinePresetResizeOverrideForSnapshot({ serverId, accountId: 'owner' }, renderedMachine, { cpuCores: 4 }))
                 .toMatchObject({ kind: 'ready', override: { content: expect.any(Object) } });
             await screen.pressByTestIdAsync('managed-machine.resize');
+            if (form === 'opaque') {
+                refreshed = true;
+                await act(async () => publishHomeAccountChange(target.id));
+                await waitForHomeGovernance(() => expect(screen.tree.findByType(ManagedMachineSections).props.machine.preset.revision).toBe(8));
+                expect(screen.findByTestId('managed-machine.resize-review')).not.toBeNull();
+            }
             await act(async () => screen.changeTextByTestId('managed-machine.resize-field:cpuCores', '4'));
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
@@ -517,6 +541,9 @@ describe('managed Machine detail', () => {
                     ? { presetContentOverride: { content: expect.any(Object) } } : { size: { cpuCores: 4 } }),
             } });
             if (form === 'opaque') expect((admissions[0] as { input: Record<string, unknown> }).input).not.toHaveProperty('size');
+            if (form === 'opaque') expect(admissions[0]).toMatchObject({ input: {
+                presetContentOverride: { content: { t: 'plain', v: { name: 'Private preset name' } } },
+            } });
         } finally {
             await screen.unmount();
         }
@@ -526,7 +553,7 @@ describe('managed Machine detail', () => {
         const homeId = `srv_managed_removed_${door}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
-        let machine = ManagedMachineV1Schema.parse({ id: 'removed-enrolled', homeId, custodianAccountId: 'owner',
+        let machine = ManagedMachineFullV1Schema.parse({ id: 'removed-enrolled', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Removed guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'deleted-guest',
             allocation: 'bound', creationState: 'active', desired: 'delete', desiredWhen: 'now', intentRevision: 2,
@@ -594,7 +621,7 @@ describe('managed Machine detail', () => {
                 expect(window.location.pathname).toBe(`${door === 'rail' ? '' : '/settings'}/machines/deleted-guest`);
             });
             const retainedTabId = screen.tree.findByType('DeleteWorkspaceProbe').props.navigation.state.groups['group:1'].activeTabId;
-            machine = ManagedMachineV1Schema.parse({ ...machine, allocation: 'confirmed-absent', intentRevision: 3,
+            machine = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'confirmed-absent', intentRevision: 3,
                 observation: { observedAt: Date.now(), availability: 'absent' } });
             await act(async () => {
                 storage.setState({ machineListByServerId: { [serverId]: [] } });
@@ -617,7 +644,7 @@ describe('managed Machine detail', () => {
         const homeId = `srv_enrolled_removed_${door}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
-        const machine = ManagedMachineV1Schema.parse({ id: 'retained-removed', homeId, custodianAccountId: 'owner',
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'retained-removed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Removed guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'deleted-guest',
             allocation: 'confirmed-absent', creationState: 'active', desired: 'delete', desiredWhen: 'now', intentRevision: 3,
@@ -661,7 +688,7 @@ describe('managed Machine detail', () => {
         const homeId = 'srv_managed_cold_destination';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const machine = ManagedMachineV1Schema.parse({ id: 'cold-managed', homeId, custodianAccountId: 'owner',
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'cold-managed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Cold managed receipt', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'unsubmitted', creationState: 'active',
             desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
@@ -706,7 +733,7 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, {
             token: createAccountTokenForTests('owner', { currentAccount: true }),
         });
-        const machine = ManagedMachineV1Schema.parse({
+        const machine = ManagedMachineFullV1Schema.parse({
             id: 'managed-retry', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Retry managed receipt', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'unsubmitted', creationState: 'active',
@@ -747,7 +774,7 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, {
             token: createAccountTokenForTests('owner', { currentAccount: true }),
         });
-        const machine: ManagedMachineV1 = { id: 'unsubmitted-managed', homeId, custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'unsubmitted-managed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
             controller: { machineId: 'unlisted-controller', installationId: 'installation' },
             allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
@@ -778,7 +805,7 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Local sandbox', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'controller-pending', homeId: 'srv_managed_controller_pending', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'controller-pending', homeId: 'srv_managed_controller_pending', custodianAccountId: 'owner',
             launch, controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -822,7 +849,7 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Local sandbox', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'ended-record', homeId: 'srv_managed_ended_record', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'ended-record', homeId: 'srv_managed_ended_record', custodianAccountId: 'owner',
             launch, controller, allocation: 'confirmed-absent', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -861,7 +888,7 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Finite sandbox', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'ended-another', homeId: 'srv_managed_ended_another', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'ended-another', homeId: 'srv_managed_ended_another', custodianAccountId: 'owner',
             preset: { id: 'preset-sandbox', revision: 2, contentEncryptionMode: 'plain' }, launch, controller, allocation: 'confirmed-absent', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -902,7 +929,7 @@ describe('managed Machine detail', () => {
             launch: { provider, credentials, schemaVersion: 1, name: 'Retained resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineReadSnapshotV1;
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: machine.controller.machineId,
             installationId: machine.controller.installationId, updatedAt: Date.now() })]);
@@ -973,7 +1000,7 @@ describe('managed Machine detail', () => {
                 source: task ? { kind: 'run' as const, source: { kind: 'workflow_run' as const, runId: '11111111-1111-4111-8111-111111111111' } }
                     : { kind: 'session' as const, sessionId: 'original-source' },
             } } : {}),
-        } satisfies ManagedMachineV1;
+        } satisfies ManagedMachineReadSnapshotV1;
         const source = createSessionFixture({ id: 'original-source', serverId: target.id, metadata: {
             name: 'Original source Session', path: '/repo', host: 'guest', machineId: 'guest', sessionCreationCorrespondenceV1: { v: 1,
                 sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'birth' }),
@@ -1158,6 +1185,40 @@ describe('managed Machine detail', () => {
             await connection.dispose();
         }
     });
+    it('keeps opaque Machine scope recovery visible without opened private labels', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-opaque-birth.test', scope: 'tab' });
+        const homeId = 'srv_managed_opaque_birth';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        const { ManagedOpaquePresetMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'opaque-birth', homeId, custodianAccountId: 'owner',
+            preset: { id: 'sealed', revision: 1, contentEncryptionMode: 'e2ee' },
+            allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        let available = false;
+        const connection = await restoreServerAccountForTest({ serverUrl: target.serverUrl, serverIdentityId: homeId,
+            accountId: 'owner', credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
+            request: async input => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/machines/managed/actions/birth.get') return available
+                    ? Response.json({ source: { kind: 'run', source: { kind: 'workflow_run', runId: '11111111-1111-4111-8111-111111111111' } } })
+                    : Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+                return Response.json({ error: 'not_found' }, { status: 404 });
+            } });
+        function Scope() {
+            const { binding } = useServerCredentialAccountScopeBinding(target.id);
+            return <ManagedCreationScopeRuleSection machine={machine} serverId={target.id} binding={binding ?? undefined} supportedEffects={['stop', 'delete']} />;
+        }
+        const screen = await renderScreen(<Scope />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('managed-machine.scope-birth-failed')).not.toBeNull());
+            expect(screen.tree.findByType(SurfaceStateCard).props.title)
+                .toBe(t('managedRetention.scopeBirthFailed', { name: t('common.machine') }));
+            available = true;
+            await screen.pressByTestIdAsync('managed-machine.scope-birth-failed:retry');
+            await waitForHomeGovernance(() => expect(screen.tree.findAllByType(ManagedScopeRuleRow)).toHaveLength(1));
+            expect(screen.tree.findByType(ManagedScopeRuleRow).props.rule.summary).toBe(t('common.keep'));
+        } finally { await screen.unmount(); await connection.dispose(); }
+    });
     it('keeps birth pending, empty and failed distinct and exposes a demanded retry without unrelated reads', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-birth-state.test', scope: 'tab' });
         const homeId = 'srv_managed_birth_state';
@@ -1203,7 +1264,7 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
             { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_managed_canceled_cleanup',
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'srv_managed_canceled_cleanup',
             custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Studio', choices: {} },
             allocation: 'bound', creationState: 'canceled',
@@ -1238,7 +1299,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_remove_gate');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        let machine: ManagedMachineV1 = { id: 'healthy-bound', homeId: 'srv_managed_remove_gate', custodianAccountId: 'owner',
+        let machine: ManagedMachineFullV1 = { id: 'healthy-bound', homeId: 'srv_managed_remove_gate', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Studio', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
@@ -1309,7 +1370,7 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
             installationId: controller.installationId, active: true, activeAt: Date.now(), updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })]);
-        const machine = ManagedMachineV1Schema.parse({ id: 'host-key-managed', homeId, custodianAccountId: 'owner', controller,
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'host-key-managed', homeId, custodianAccountId: 'owner', controller,
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1,
                 name: 'Design sandbox', choices: {} }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1,
@@ -1384,7 +1445,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_archived_detail');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        let machine: ManagedMachineV1 = { id: 'archived-enrolled', homeId: 'srv_managed_archived_detail', custodianAccountId: 'owner',
+        let machine: ManagedMachineFullV1 = { id: 'archived-enrolled', homeId: 'srv_managed_archived_detail', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Archived resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             enrolledMachineId: 'retained-guest', archivedAt: 10,
@@ -1422,7 +1483,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_policy_conflict');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        let machine: ManagedMachineV1 = { id: 'conflicted-policy', homeId: 'srv_managed_policy_conflict', custodianAccountId: 'owner',
+        let machine: ManagedMachineFullV1 = { id: 'conflicted-policy', homeId: 'srv_managed_policy_conflict', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Retained resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
@@ -1538,7 +1599,7 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const controller = { machineId: 'controller', installationId: 'installation' };
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        let machine: ManagedMachineV1 = { id: 'ask-policy', homeId: `srv_managed_policy_ask_${status}`, custodianAccountId: 'owner',
+        let machine: ManagedMachineFullV1 = { id: 'ask-policy', homeId: `srv_managed_policy_ask_${status}`, custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Retained resource', choices: {} }, controller,
             allocation: 'bound', creationState: 'active', resource: { contributionRef: provider, schemaVersion: 1, value: {} },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
@@ -1667,7 +1728,7 @@ describe('managed Machine detail', () => {
             storage.getState().activateProfileScope(focusedScope);
             storage.getState().applyProfile({ ...profileDefaults, id: focusedScope.accountId, connectedAccountsV4: [{ ...account, displayName: 'Ambient B account' }] });
             const provider = { pluginId: 'custom.receipt-provisioner', localId: 'vm' };
-            const machine: ManagedMachineV1 = { id: 'receipt-resource', homeId: 'srv_credential_receipt_a', custodianAccountId: 'receipt-owner-a',
+            const machine: ManagedMachineFullV1 = { id: 'receipt-resource', homeId: 'srv_credential_receipt_a', custodianAccountId: 'receipt-owner-a',
                 launch: { provider, credentials: [{ purpose: { consumer: provider, purpose: 'native-compute' }, account: account.ref }],
                     schemaVersion: 1, name: 'Retained guest', choices: {} }, controller: { machineId: 'controller', installationId: 'installation' },
                 allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
@@ -1742,7 +1803,7 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.shared-move', localId: 'vm' };
         const credentials = ['compute', 'desktop'].map(purpose => ({ purpose: { consumer: provider, purpose },
             account: { service: { pluginId: 'custom.accounts', localId: purpose }, accountId: `${purpose}-account` } }));
-        const machine: ManagedMachineV1 = { id: 'shared-managed', homeId: 'srv_managed_shared_move', custodianAccountId: 'resource-owner',
+        const machine: ManagedMachineFullV1 = { id: 'shared-managed', homeId: 'srv_managed_shared_move', custodianAccountId: 'resource-owner',
             launch: { provider, credentials: credentials.map(credential => ({ ...credential, configurationRevision: 'reviewed-config' })),
                 schemaVersion: 1, name: 'Shared guest', choices: {} }, controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { nativeId: 'retained-shared-resource' } },
@@ -1846,7 +1907,7 @@ describe('managed Machine detail', () => {
         const desktopCredential = { purpose: { consumer: provider, purpose: 'desktop-control' },
             account: { service: { pluginId: 'custom.credentials', localId: 'desktop' }, accountId: 'partial-desktop-account' } };
         const publicCredentials = [credential, desktopCredential];
-        const machine: ManagedMachineV1 = { id: 'partial-resource', homeId: 'srv_managed_move_partial', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'partial-resource', homeId: 'srv_managed_move_partial', custodianAccountId: 'owner',
             launch: { provider, credentials: [
                 { ...credential, configurationRevision: 'cloud-config-3' },
                 { ...desktopCredential, configurationRevision: 'desktop-config-7' },
@@ -1946,7 +2007,7 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
             id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now() })]);
         const provider = { pluginId: 'custom.parent', localId: 'vm' };
-        const machine: ManagedMachineV1 = { id: 'parent-resource', homeId: 'srv_managed_parent_approval', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'parent-resource', homeId: 'srv_managed_parent_approval', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} }, controller,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
@@ -2084,8 +2145,8 @@ describe('managed Machine detail', () => {
             nativeLifetime: cloud === 'modal' ? { kind: 'finite' as const, durationSeconds: 7200 } : { kind: 'no-native-ttl' as const },
         });
         if (!choices || typeof choices !== 'object' || Array.isArray(choices)) throw new Error('Expected native BYOC launch choices');
-        const launch: ManagedMachineV1['launch'] = { provider, schemaVersion: 1, name: 'Retained BYOC', choices };
-        const machine: ManagedMachineV1 = { id: 'variant-resource', homeId, custodianAccountId: 'owner', launch, controller,
+        const launch: ManagedMachineFullV1['launch'] = { provider, schemaVersion: 1, name: 'Retained BYOC', choices };
+        const machine: ManagedMachineFullV1 = { id: 'variant-resource', homeId, custodianAccountId: 'owner', launch, controller,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} },
             retention: finite ? { kind: 'unused', afterMs: 3_600_000, effect: 'delete' } : { kind: 'until-delete' },
@@ -2249,7 +2310,7 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
             id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now() })]);
         const provider = { pluginId: 'custom.finite', localId: 'guest' };
-        let machine: ManagedMachineV1 = { id: 'finite-resource', homeId: 'srv_managed_finite', custodianAccountId: 'owner',
+        let machine: ManagedMachineFullV1 = { id: 'finite-resource', homeId: 'srv_managed_finite', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Finite guest', choices: { duration: 'original-duration' } }, controller,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} },
@@ -2331,7 +2392,7 @@ describe('managed Machine detail', () => {
             installationId: controller.installationId, updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })]);
         const provider = { pluginId: 'custom.compute', localId: 'guest' };
-        const machine: ManagedMachineV1 = { id: 'ended-resource', homeId: 'srv_managed_retire', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'ended-resource', homeId: 'srv_managed_retire', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Ended guest', choices: {} }, controller,
             allocation, creationState: 'canceled', desired: 'delete', desiredWhen: 'now', intentRevision: 7,
             ...(allocation === 'may-exist' ? {
@@ -2350,7 +2411,7 @@ describe('managed Machine detail', () => {
             domainRef: { kind: 'managedMachine', id: machine.id, ...(machine.resource ? { controller, resource: machine.resource } : {}) },
             error: { errorCode: 'action_failed', error: 'saved_secret_account_lifetime_changed' } };
         operationRpcBoundary.answer = { items: [failedAcquire], nextCursor: null };
-        const archived = ManagedMachineV1Schema.parse({ ...machine, archivedAt: 10, intentRevision: 8,
+        const archived = ManagedMachineFullV1Schema.parse({ ...machine, archivedAt: 10, intentRevision: 8,
             cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } });
         const retired: unknown[] = [];
         const nativeActions: string[] = [];
@@ -2464,8 +2525,8 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.compute', localId: 'vm' };
         const credential = { purpose: { consumer: provider, purpose: 'native-compute' },
             account: { service: { pluginId: 'custom.credentials', localId: 'cloud' }, accountId: 'same-cloud-account' } };
-        const launch: ManagedMachineV1['launch'] = { provider, credentials: [credential], schemaVersion: 1, name: 'Managed cloud', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'move-managed', homeId: 'srv_managed_move', custodianAccountId: 'owner', launch,
+        const launch: ManagedMachineFullV1['launch'] = { provider, credentials: [credential], schemaVersion: 1, name: 'Managed cloud', choices: {} };
+        const machine: ManagedMachineFullV1 = { id: 'move-managed', homeId: 'srv_managed_move', custodianAccountId: 'owner', launch,
             controller, allocation: 'bound', creationState: 'active', resource: { contributionRef: provider, schemaVersion: 1, value: {} },
             desired: 'start', desiredWhen: 'now', intentRevision: 9, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location, stoppedBilling: 'billed' },
@@ -2563,7 +2624,7 @@ describe('managed Machine detail', () => {
         const authentication = readOriginalAccountActionAuthentication(token);
         expect(authentication).toEqual({ kind: 'account', tokenEpoch: 0 });
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Paid guest', choices: {} };
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Paid guest', choices: {} };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const canceled = authority.startsWith('canceled-') || authority === 'creator-canceled';
         const creatorOnly = authority === 'creator-canceled';
@@ -2575,7 +2636,7 @@ describe('managed Machine detail', () => {
         }), ...(authority === 'guest' ? [createMachineFixture({ id: 'guest', installationId: 'guest-installation', updatedAt: Date.now(),
             access: { custodian: { accountId: 'foreign-owner', displayName: 'Foreign owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         })] : [])]);
-        const machine: ManagedMachineV1 = { id: 'delete-reviewed', homeId: 'srv_managed_delete', custodianAccountId: 'foreign-owner', launch,
+        const machine: ManagedMachineFullV1 = { id: 'delete-reviewed', homeId: 'srv_managed_delete', custodianAccountId: 'foreign-owner', launch,
             controller, allocation: 'bound', creationState: 'active', enrolledMachineId: 'guest',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'original-resource' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 8, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -2789,8 +2850,8 @@ describe('managed Machine detail', () => {
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
             id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now() })]);
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Old receipt', choices: {} };
-        let machine: ManagedMachineV1 = { id: 'reset-managed', homeId: 'srv_managed_reset', custodianAccountId: 'owner', launch,
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Old receipt', choices: {} };
+        let machine: ManagedMachineFullV1 = { id: 'reset-managed', homeId: 'srv_managed_reset', custodianAccountId: 'owner', launch,
             controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, desired: 'start', desiredWhen: 'now',
             intentRevision: 6, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -2912,7 +2973,7 @@ describe('managed Machine detail', () => {
         const enrolledGuest = storage.getState().machineListByServerId[serverId]?.find(candidate => candidate.id === 'enrolled-guest');
         if (enrolledGuest) publishMachineActivityForTest([enrolledGuest], { active: incomplete, activeAt: Date.now() });
         const provider = { pluginId: 'custom.native', localId: 'guest' };
-        const machine: ManagedMachineV1 = { id: 'boot-managed', homeId, custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'boot-managed', homeId, custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Enrolled guest', choices: {} }, controller,
             ...(incomplete ? { bootstrapInstalled: true } : {}),
             observation: incomplete ? { availability: 'unavailable', reason: basis === 'enrolled-review-required-no-history'
@@ -3070,9 +3131,9 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-stale-${surface}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Stopped resource', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'stale-existing', homeId, custodianAccountId: 'owner', launch,
+        const machine: ManagedMachineFullV1 = { id: 'stale-existing', homeId, custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             ...(surface === 'enrolled' ? { enrolledMachineId: 'stale-guest' } : {}),
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'same-native' } },
@@ -3160,7 +3221,7 @@ describe('managed Machine detail', () => {
         const controller = { machineId: 'company-controller', installationId: 'company-installation' };
         await sodium.ready;
         const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(7));
-        const machine: ManagedMachineV1 = { id: 'requester-rejected-resource', homeId, custodianAccountId: 'company', enrollmentAccountId: 'requester',
+        const machine: ManagedMachineFullV1 = { id: 'requester-rejected-resource', homeId, custodianAccountId: 'company', enrollmentAccountId: 'requester',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Team sandbox', choices: {} },
             controller, controllerAccess: { installationPublicKey: encodeBase64(installation.publicKey, 'base64url'), custodian: { accountId: 'company' } },
             allocation: 'confirmed-absent', creationState, desired: creationState === 'canceled' ? 'delete' : 'start',
@@ -3241,7 +3302,7 @@ describe('managed Machine detail', () => {
         const controller = { machineId: 'company-controller', installationId: 'company-installation' };
         await sodium.ready;
         const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(7));
-        const machine: ManagedMachineV1 = { id: 'requester-resource', homeId, custodianAccountId: 'company', enrollmentAccountId: 'requester',
+        const machine: ManagedMachineFullV1 = { id: 'requester-resource', homeId, custodianAccountId: 'company', enrollmentAccountId: 'requester',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Team sandbox', choices: {} },
             controller, controllerAccess: { installationPublicKey: encodeBase64(installation.publicKey, 'base64url'), custodian: { accountId: 'company' } },
             allocation: 'bound', creationState: 'active', resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
@@ -3375,7 +3436,7 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
             installationId: controller.installationId, active: true, activeAt: Date.now(), updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })]);
-        const machine: ManagedMachineV1 = { id: 'trust-managed', homeId, custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'trust-managed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Design sandbox', choices: {} },
             controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
@@ -3465,7 +3526,7 @@ describe('managed Machine detail', () => {
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
             installationId: controller.installationId, active: true, activeAt: Date.now(), updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })]);
-        const machine: ManagedMachineV1 = { id: 'establish-managed', homeId, custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'establish-managed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Design sandbox', choices: {} },
             controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
@@ -3566,7 +3627,7 @@ describe('managed Machine detail', () => {
         } finally { await screen.unmount(); }
     });
     it('asks the installer task\'s pending service replacement on the waiting row and answers only through the user', async () => {
-        const machine: ManagedMachineV1 = { id: 'consent-managed', homeId: 'consent-home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'consent-managed', homeId: 'consent-home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Design sandbox', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
@@ -3609,7 +3670,7 @@ describe('managed Machine detail', () => {
         await screen.unmount();
     });
     it('shows Home recovery for a retained bootstrap failure without operation history', async () => {
-        const machine: ManagedMachineV1 = { id: 'home-unreachable-managed', homeId: 'home-unreachable', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'home-unreachable-managed', homeId: 'home-unreachable', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Local guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
@@ -3621,7 +3682,7 @@ describe('managed Machine detail', () => {
         await screen.unmount();
     });
     it('shows only the observed installer stage and offers retry only for an explicit failed installation task', async () => {
-        const machine: ManagedMachineV1 = { id: 'installer-managed', homeId: 'installer-home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'installer-managed', homeId: 'installer-home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Installing guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
@@ -3657,7 +3718,7 @@ describe('managed Machine detail', () => {
             error: { errorCode: 'bootstrap_failed', error: 'Installer exited without completing' } } };
         const enrolled = { ...machine, enrolledMachineId: 'installed-guest' };
         // A rejected native purchase has no resource to bind and is confirmed absent, as in CLOUD1.
-        const rejectedMachine: ManagedMachineV1 = { ...machine, allocation: 'confirmed-absent', resource: undefined };
+        const rejectedMachine: ManagedMachineFullV1 = { ...machine, allocation: 'confirmed-absent', resource: undefined };
         for (const [nativeCause, diagnostic] of [
             [{ httpStatusClass: '4xx', code: 'resource_limit_exceeded' }, 'HTTP 4xx · resource_limit_exceeded'],
             [{ httpStatusClass: '4xx', code: 'invalid_input', fields: ['image', 'public_net'] }, 'HTTP 4xx · invalid_input · image, public_net'],
@@ -3769,7 +3830,7 @@ describe('managed Machine detail', () => {
             { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Asleep guest', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'asleep-managed', homeId, custodianAccountId: 'owner', launch, controller,
+        const machine: ManagedMachineFullV1 = { id: 'asleep-managed', homeId, custodianAccountId: 'owner', launch, controller,
             allocation: 'bound', creationState: 'active', resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } },
             desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             observation: { availability: 'present', observedAt: 1, power, storage: 'retained' },
@@ -3829,10 +3890,10 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_start');
         await upsertAndActivateServer({ serverUrl: 'https://other-managed-start.test', scope: 'tab' });
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Stopped resource', choices: {} };
         const controller = { machineId: 'controller', installationId: 'installation' };
-        const machine: ManagedMachineV1 = { id: 'start-existing', homeId: 'srv_managed_start', custodianAccountId: 'owner', launch,
+        const machine: ManagedMachineFullV1 = { id: 'start-existing', homeId: 'srv_managed_start', custodianAccountId: 'owner', launch,
             controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'same-native' } },
             desired, desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -3900,9 +3961,9 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.container', localId: 'native' };
         const selectors = { workspaceFolder: '/source', configPath: '/source/.devcontainer/devcontainer.json' };
-        const launch: ManagedMachineV1['launch'] = { provider, schemaVersion: 1, name: 'Existing child',
+        const launch: ManagedMachineFullV1['launch'] = { provider, schemaVersion: 1, name: 'Existing child',
             choices: { ...selectors, reviewedEffectDigest: 'a'.repeat(64) } };
-        const machine: ManagedMachineV1 = { id: 'rebuild-existing', homeId: 'srv_managed_rebuild', custodianAccountId: 'owner', launch,
+        const machine: ManagedMachineFullV1 = { id: 'rebuild-existing', homeId: 'srv_managed_rebuild', custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'same-native-child' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -4020,7 +4081,7 @@ describe('managed Machine detail', () => {
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Ask resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native-id' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineReadSnapshotV1;
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const nativeRequests: unknown[] = [];
         await publishMachineInventoryForTest({ serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'owner' }, [
@@ -4074,12 +4135,12 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-keep-timeout.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_keep_timeout');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Timeout resource', choices: {} };
         const machine = { id: 'managed-keep-timeout', homeId: 'srv_managed_keep_timeout', custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-enrolled',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineReadSnapshotV1;
         await publishMachineInventoryForTest({ serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'owner' }, [
             createMachineFixture({ id: machine.controller.machineId, installationId: machine.controller.installationId, activeAt: Date.now() }),
         ]);
@@ -4109,12 +4170,12 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-keep-revalidate.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_keep_revalidate');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Revalidated resource', choices: {} };
         const machine = { id: 'managed-keep-revalidate', homeId: 'srv_managed_keep_revalidate', custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-enrolled',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineReadSnapshotV1;
         await publishMachineInventoryForTest({ serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'owner' }, [
             createMachineFixture({ id: machine.controller.machineId, installationId: machine.controller.installationId, activeAt: Date.now() }),
         ]);
@@ -4172,7 +4233,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://enrolled-managed-detail.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_enrolled_detail');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Original recipe', choices: { cpu: 4, image: 'captured-image' } };
         const machine = { id: 'managed-enrolled', homeId: 'srv_enrolled_detail', custodianAccountId: 'owner', launch,
             controller: { machineId: 'new-controller', installationId: 'new-installation' }, enrolledMachineId: 'ordinary-enrolled',
@@ -4186,7 +4247,7 @@ describe('managed Machine detail', () => {
                 nativeFacts: { size: { id: 'captured-size', title: 'Four-core guest', cpuCores: 4 },
                     image: { id: 'captured-image', title: 'Original Linux image', description: 'Long-term support' },
                     location: { id: 'captured-location', title: 'Original region', countryCode: 'DE' } },
-                prices: [{ amount: '0.125', currency: 'USD', unit: 'hour', source: 'captured-price', observedAt: 5 }] } } satisfies ManagedMachineV1;
+                prices: [{ amount: '0.125', currency: 'USD', unit: 'hour', source: 'captured-price', observedAt: 5 }] } } satisfies ManagedMachineReadSnapshotV1;
         const receiptController = createMachineFixture({ id: 'original-controller', installationId: 'original-installation',
             metadata: { ...createMachineFixture().metadata!, displayName: 'Original controller computer' } });
         const machineScope = { serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'owner' };
@@ -4264,9 +4325,9 @@ describe('managed Machine detail', () => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-header-identity.test', scope: 'tab' });
         setRuntimeFetch(async () => Response.json({ error: 'not_found' }, { status: 404 }));
-        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+        const launch: ManagedMachineFullV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'hz-build-2', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'managed-identity', homeId: 'srv_identity', custodianAccountId: 'owner', launch,
+        const machine: ManagedMachineFullV1 = { id: 'managed-identity', homeId: 'srv_identity', custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'enrolled',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -4278,7 +4339,7 @@ describe('managed Machine detail', () => {
         const { MachinePageHeader } = await import('@/components/machines/page/MachinePageHeader');
         const { PageHeader } = await import('@/components/ui/layout/PageHeader');
         const enrolled = createMachineFixture({ id: 'enrolled', metadata: { ...createMachineFixture().metadata!, host: 'lima-native-generated-id', platform: 'linux' } });
-        function Probe(props: Readonly<{ machine?: ManagedMachineV1 }>) {
+        function Probe(props: Readonly<{ machine?: ManagedMachineReadSnapshotV1 }>) {
             const identity = useManagedMachineHeaderIdentity(props.machine, target.id);
             seen.push(identity);
             return <MachinePageHeader target={{ machineId: enrolled.id, requestedServerId: target.id, serverId: target.id,
@@ -4306,7 +4367,7 @@ describe('managed Machine detail', () => {
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'after-idle', intentRevision: 1,
             retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true,
-            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineV1;
+            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineReadSnapshotV1;
         const rail = resolveManagedMachineWorkStatus({ online: false, managedMachine: asleep, machineId: 'guest' })?.word;
         expect(rail).toBeTruthy();
         const offlineGuest = createMachineFixture({ id: 'guest', active: false, activeAt: 1 });
@@ -4331,7 +4392,7 @@ describe('managed Machine detail', () => {
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineV1;
+            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineReadSnapshotV1;
         const check = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.tree.findAll(node =>
             node.props?.testID === 'managed-machine.observation-check' && typeof node.props?.onPress === 'function')[0];
         const idle = await renderScreen(<ManagedCreationProgress machine={stopped} handlers={{ checkNow: () => {} }} />);
@@ -4352,7 +4413,7 @@ describe('managed Machine detail', () => {
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }),
         createMachineFixture({ id: 'joined-machine', installationId: 'joined-installation', updatedAt: Date.now(),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })]);
-        const machine = ManagedMachineV1Schema.parse({ id: 'setup-retry', homeId, custodianAccountId: 'owner', controller,
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'setup-retry', homeId, custodianAccountId: 'owner', controller,
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
             enrolledMachineId: 'joined-machine', allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
@@ -4481,7 +4542,7 @@ describe('managed Machine detail', () => {
         }
     });
     it('offers Retry setup and Continue without setup on a failed Set up of this same joined machine (D53)', async () => {
-        const machine: ManagedMachineV1 = { id: 'setup-failed', homeId: 'home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'setup-failed', homeId: 'home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-machine',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native' } },
@@ -4502,7 +4563,7 @@ describe('managed Machine detail', () => {
     });
     it.each([false, true])('distinguishes an allocation recovery reference from native identity (resource known: %s)', async resourceKnown => {
         const provider = { pluginId: 'happier.machine.boat', localId: 'boat' };
-        const machine: ManagedMachineV1 = { id: 'managed-correlation', homeId: 'home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'managed-correlation', homeId: 'home', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Boat', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' },
             ...(resourceKnown ? { resource: { contributionRef: provider, schemaVersion: 1, value: { sandboxId: 'boat-native-sandbox' } } } : {}),
@@ -4518,7 +4579,7 @@ describe('managed Machine detail', () => {
         if (resourceKnown) expect(screen.getTextContent()).toContain('boat-native-sandbox');
     });
     it('labels a provider recovery reference without calling it a Happier tag or native identity', async () => {
-        const machine: ManagedMachineV1 = { id: 'managed-correlation', homeId: 'home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'managed-correlation', homeId: 'home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'happier.machine.modal', localId: 'modal' }, schemaVersion: 1, name: 'Modal', choices: {} },
             allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
             recovery: { reference: 'workspace/sandbox-app', reason: 'provider_unavailable' },
@@ -4532,7 +4593,7 @@ describe('managed Machine detail', () => {
     });
     it.each([false, true])('presents a rejected acquisition as nothing created with its actual diagnostic (absence observed: %s)', async absenceObserved => {
         const code = 'native_trial_auto_stop_required';
-        const machine: ManagedMachineV1 = { id: 'rejected-allocation', homeId: 'home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'rejected-allocation', homeId: 'home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'happier.machine.boat', localId: 'boat' }, schemaVersion: 1, name: 'Boat', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' },
             allocation: 'confirmed-absent', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
@@ -4555,7 +4616,7 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findAllByType(RoundButton).filter(node => node.props.title === t('managedMachines.inspect.checkNow'))).toHaveLength(0);
     });
     it('does not present an enrolled healthy Machine as still awaiting its Happier connection', async () => {
-        const machine: ManagedMachineV1 = { id: 'enrolled-healthy', homeId: 'home', custodianAccountId: 'owner',
+        const machine: ManagedMachineFullV1 = { id: 'enrolled-healthy', homeId: 'home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Enrolled resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-machine',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native' } },
@@ -4635,7 +4696,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-detail-identity.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_detail_identity');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
-        let machine = ManagedMachineV1Schema.parse({ id: 'pending-identity', homeId: 'srv_detail_identity', custodianAccountId: 'owner',
+        let machine = ManagedMachineFullV1Schema.parse({ id: 'pending-identity', homeId: 'srv_detail_identity', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Known Cua resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native-id' } },
