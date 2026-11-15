@@ -59,6 +59,7 @@ import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_
     computeDeploymentTransitionRequestDigestV1, ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentReceiptResultV1Schema, DeploymentReceiptListInputV1Schema,
     DeploymentChildRpcV1Schema, DeploymentTeardownReviewChildRpcV1Schema, DeploymentTransitionInputV1Schema, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
 import { DeploymentDomainMutationResultV1Schema, DeploymentDomainCapturedPlacementsV1Schema, deploymentDomainObservationProofPayloadV1 } from '@happier-dev/protocol';
+import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0,
     openSessionDataKeyBundleV0, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -5704,6 +5705,52 @@ describe('deployment children retain their controller Action authority', () => {
             if (!removeBody.ok) throw new Error(removeBody.error);
             expect(removeBody.artifact.body).toEqual(bytes);
             expect(await acquire(removing.domain)).toEqual(preparedContent);
+        }, { authentication: 'real' });
+    });
+
+    it('authorizes a provider Domain transition through its admitted provider custody and refuses other custody', async () => {
+        const { f, input, target, authorization } = await domainRootFixture('plain', false, true);
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { sourceKind: 'plugin', hostTargetId: null,
+            pluginId: 'happier.deploy.vercel', contributionLocalId: 'vercel', targetKind: 'platform' } });
+        const actionOperationId = crypto.randomUUID();
+        const providerInput = { ...input, provider: true as const, placements: [], actionOperationId,
+            requestId: authorization.binding.requestId };
+        const created = await inTx(tx => createDeploymentDomainInTx(tx, f.account.id, providerInput, {}, authorization.binding));
+        if (!created.ok || !created.domain.providerPlacement) throw new Error('Expected admitted provider Domain custody');
+        const placement = created.domain.providerPlacement;
+        // A second admitted request for the same Domain holds no custody of this provider job.
+        const otherEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const other = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.domains.add', machineId: f.controller.id, target, requestId: otherEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(otherEnvelope) }, { input,
+            deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({
+                actionId: 'deployments.domains.add', envelope: otherEnvelope }) });
+        const path = `/v1/deployments/environments/${input.environmentId}/domains/${input.domainId}/transitions`;
+        const transition = (observed: typeof placement) => {
+            const observation = { placement: observed, state: 'active' as const };
+            return { serverId, environmentId: input.environmentId, domainId: input.domainId,
+                expectedDomainRevision: created.domain.revision, observations: [], providerObservation: { ...observation,
+                    proof: signMachineInstallationProof({ privateKey: f.controller.keys.secretKey,
+                        payload: deploymentDomainProviderObservationProofPayloadV1({
+                            expectedDomainRevision: created.domain.revision, observation }) }) } };
+        };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const send = (body: Record<string, unknown>, token = authorization) => app.inject({ method: 'POST', url: path,
+                payload: body, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: token.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.domains.add',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: token.token,
+                        effectActionId: 'deployments.domains.add', target, installationId: f.controller.installationId,
+                        requestId: token.binding.requestId, method: 'POST', path, body, privateKey: f.controller.keys.secretKey }),
+                } });
+            expect((await send(transition(placement), other)).statusCode).toBe(401);
+            expect((await send(transition({ ...placement, actionOperationId: crypto.randomUUID() }))).statusCode).toBe(401);
+            const settled = await send(transition(placement));
+            expect(settled.statusCode, settled.body).toBe(200);
+            expect(DeploymentDomainMutationResultV1Schema.parse(settled.json())).toMatchObject({ ok: true,
+                domain: { id: input.domainId, state: 'active', revision: created.domain.revision + 1 } });
         }, { authentication: 'real' });
     });
 

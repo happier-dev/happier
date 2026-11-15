@@ -208,7 +208,7 @@ import { isExternalActionManagedResourceAction, readExternalActionManagedAcquire
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from './externalActionHandoffAdmission';
 import { readExternalActionDeploymentDomainPurpose, type DomainHttpPurpose } from './externalActionDeploymentDomainPurpose';
-import { readAcceptedDeploymentDomainInTx, readAcceptedDeploymentTeardownDomainContentInTx } from '@/app/deployments/deploymentDomainService';
+import { isAcceptedDeploymentDomainTransitionInTx, readAcceptedDeploymentDomainInTx, readAcceptedDeploymentTeardownDomainContentInTx } from '@/app/deployments/deploymentDomainService';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1,
     McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 
@@ -1690,18 +1690,11 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
     }
     if (domainContinuation) {
-        const input = domainContinuation.input;
-        const capture = domainContinuation.kind === 'prepared-content' ? domainContinuation.input.capture
-            : domainContinuation.input.observations[0]?.capture;
-        if (!capture || !verifySignature(machine.installationPublicKey)) return null;
+        if (!verifySignature(machine.installationPublicKey)) return null;
         // Prepared content spends the accepted binding once, under the Domain CAS lock.
-        // Transition admission keeps its existing accepted-job decision here.
-        if (domainContinuation.kind !== 'prepared-content'
-            && !await readAcceptedDeploymentDomainInTx(db, binding, {
-                environmentId: input.environmentId, domainId: input.domainId,
-                expectedDomainRevision: input.expectedDomainRevision,
-                actionOperationId: capture.placement.actionOperationId, capture,
-            })) return null;
+        // A transition continues the Domain owner's accepted native capture or provider custody.
+        if (domainContinuation.kind === 'transition'
+            && !await isAcceptedDeploymentDomainTransitionInTx(db, binding, domainContinuation.input)) return null;
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority, ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),

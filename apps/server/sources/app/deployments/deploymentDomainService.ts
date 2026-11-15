@@ -143,10 +143,43 @@ export async function readAcceptedDeploymentDomainInTx(tx: Tx, binding: External
     input: Readonly<{ environmentId: string; domainId: string; expectedDomainRevision: number;
         actionOperationId: string; capture: DeploymentDomainPlacementV1 }>,
 ): Promise<DeploymentDomainJobAdmission | null> {
-    if (binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId || !binding.requestEnvelopeDigest) return null;
+    if (!isDomainContinuationBinding(binding)) return null;
     const job = await readActiveJobCaptureInTx(tx, input);
     if (!job) return null;
     return matchesAcceptedDeploymentDomainCapture(binding, job.capture) ? job : null;
+}
+
+/** A transition continues its admitted job: the native capture it observes, or the provider custody it settles. */
+export async function isAcceptedDeploymentDomainTransitionInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    input: DeploymentDomainTransitionInputV1,
+): Promise<boolean> {
+    const observed = input.providerObservation;
+    if (!observed) {
+        const capture = input.observations[0]?.capture;
+        return capture !== undefined && await readAcceptedDeploymentDomainInTx(tx, binding, { environmentId: input.environmentId,
+            domainId: input.domainId, expectedDomainRevision: input.expectedDomainRevision,
+            actionOperationId: capture.placement.actionOperationId, capture }) !== null;
+    }
+    if (!isDomainContinuationBinding(binding)) return false;
+    const row = await tx.deploymentDomain.findFirst({ where: { id: input.domainId, environmentId: input.environmentId,
+        revision: input.expectedDomainRevision, deletedAt: null } });
+    const provider = row && (row.state === 'pending' || row.state === 'removing') ? readProviderCapture(row) : null;
+    return provider !== null && isDeepStrictEqual(provider.placement, observed.placement)
+        && matchesAcceptedDeploymentProviderDomainCapture(binding, provider);
+}
+
+function isDomainContinuationBinding(binding: ExternalActionExecutionAuthorizationBindingV1) {
+    return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId && Boolean(binding.requestEnvelopeDigest);
+}
+
+/** Every provider custody writer stamps the admitting request, its envelope and its controller installation. */
+function matchesAcceptedDeploymentProviderDomainCapture(binding: ExternalActionExecutionAuthorizationBindingV1,
+    provider: NonNullable<ReturnType<typeof readProviderCapture>>,
+) {
+    return provider.placement.serverId === binding.serverIdentityId && provider.placement.accountId === binding.accountId
+        && provider.placement.requestId === binding.requestId && provider.requestEnvelopeDigest === binding.requestEnvelopeDigest
+        && provider.placement.controller.machineId === binding.machineId
+        && provider.placement.controller.installationId === binding.installationId;
 }
 
 function matchesAcceptedDeploymentDomainCapture(binding: ExternalActionExecutionAuthorizationBindingV1, capture: Captures[number]) {
@@ -173,10 +206,7 @@ export async function readAcceptedDeploymentTeardownDomainContentInTx(tx: Tx,
         if (domain.state !== 'removing') continue;
         const provider = readProviderCapture(domain);
         if (provider && provider.placement.environmentId === binding.environmentId
-            && provider.placement.serverId === binding.serverIdentityId && provider.placement.accountId === binding.accountId
-            && provider.placement.requestId === binding.requestId && provider.requestEnvelopeDigest === binding.requestEnvelopeDigest
-            && provider.placement.controller.machineId === binding.machineId
-            && provider.placement.controller.installationId === binding.installationId) {
+            && matchesAcceptedDeploymentProviderDomainCapture(binding, provider)) {
             const content = domainContentReferenceFields.map(field => provider[field])
                 .find(reference => reference.contentArtifactId === artifactId);
             if (content) return content;
