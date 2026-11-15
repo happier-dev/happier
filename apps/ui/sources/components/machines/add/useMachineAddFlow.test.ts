@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -51,6 +52,7 @@ async function admitSsh(serverId: string, accountId: string) {
     harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1: sshPolicy } }, version: 1 } });
     storage.setState({ settingsScope: { serverId, accountId }, profileScope: { serverId, accountId },
         settings: { ...storage.getState().settings, actionsSettingsV1: sshPolicy }, machineListByServerId: { [serverId]: [] } });
+    await publishMachineInventoryForTest({ serverId, accountId }, []);
 }
 
 beforeEach(async () => { await harness.reset(); await selectActiveTestHomeForTests(); });
@@ -366,7 +368,7 @@ describe('machine add flow lifetime', () => {
             await act(async () => manual.emitResult(taskId!, { protocolVersion: 1, taskId: taskId!, ok: true, data: { machineId: 'ssh-joined' } }));
             expect(resumed.getCurrent().arrived).toBeNull();
             expect(resumed.getCurrent().watch.status).toBe('watching');
-            await act(async () => storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'ssh-joined', activeAt: Date.now() })] } }));
+            await act(async () => publishMachineInventoryForTest({ serverId: home.id, accountId: 'fixture-account' }, [createMachineFixture({ id: 'ssh-joined', activeAt: Date.now() })]));
             expect(resumed.getCurrent().arrived?.machineId).toBe('ssh-joined');
             expect(manual.bridge.start.mock.calls.filter(([spec]) => spec.kind === 'remote.ssh.bootstrapMachine.v1')).toHaveLength(1);
             await resumed.unmount();
@@ -440,7 +442,7 @@ describe('machine add flow lifetime', () => {
             await vi.waitFor(() => expect(manual.bridge.start.mock.calls.some(([spec]) => spec.kind === (path === 'ssh' ? 'remote.ssh.bootstrapMachine.v1' : 'setup.thisComputer.v1'))).toBe(true));
             if (operation === 'addAnother') {
                 // Arrival can precede the native setup result; the visible Add another still retires that task.
-                await act(async () => storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'joined-while-starting', activeAt: Date.now() })] } }));
+                await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'alice' }, [createMachineFixture({ id: 'joined-while-starting', activeAt: Date.now() })]));
                 expect(hook.getCurrent().arrived?.machineId).toBe('joined-while-starting');
             }
             const promise = readMachineAddFlowDraft()[key]?.startPromise;
@@ -507,9 +509,8 @@ describe('machine add flow lifetime', () => {
             storage.setState(previous); vi.unstubAllGlobals();
         }
     });
-    it('publishes the initial Create choice atomically without a temporary connection draft', async () => {
+    it('does not publish a machine draft while choosing what to create or after abandoning Create', async () => {
         const serverId = await harness.addHome({ serverUrl: 'https://initial-create.example.test', name: 'Create', accountId: 'alice' });
-        const { t } = await import('@/text');
         const manual = createManualSystemTaskRunner('native');
         const frames: (ReturnType<typeof useMachineAddDraftRow>)[] = [];
         const rail = await renderHook(() => { const row = useMachineAddDraftRow(); frames.push(row); return row; });
@@ -523,11 +524,11 @@ describe('machine add flow lifetime', () => {
             expect(rail.getCurrent()).toBeNull();
             initialCreating = true;
             await flow.rerender();
-            expect(rail.getCurrent()).toMatchObject({ status: t('managedMachines.add.choosingCreate'), tone: 'draft' });
-            expect(frames.filter(row => row !== null).every(row => row.status === t('managedMachines.add.choosingCreate'))).toBe(true);
+            expect(rail.getCurrent()).toBeNull();
+            expect(frames.every(row => row === null)).toBe(true);
             await flow.unmount();
             await rail.rerender();
-            expect(rail.getCurrent()).toMatchObject({ status: t('managedMachines.add.choosingCreate'), tone: 'draft' });
+            expect(rail.getCurrent()).toBeNull();
         } finally { await flow.unmount(); await rail.unmount(); }
     });
 
@@ -543,7 +544,7 @@ describe('machine add flow lifetime', () => {
             await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, startedAtMs: Date.now() })));
             expect(resumed.getCurrent()).toMatchObject({ status: t('machineAdd.waiting'), tone: 'waiting' });
             await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, startedAtMs: null, creating: true })));
-            expect(resumed.getCurrent()).toMatchObject({ status: t('managedMachines.add.choosingCreate'), tone: 'draft' });
+            expect(resumed.getCurrent()).toBeNull();
         } finally { await resumed.unmount(); }
     });
     it('projects the retained SSH run in the rail without mounting the flow or reacting to password edits', async () => {
@@ -567,20 +568,20 @@ describe('machine add flow lifetime', () => {
     });
     it('keeps its Home and arrival baseline when the presenter leaves and remounts', async () => {
         const previous = storage.getState();
-        const home = await upsertServerProfile({ serverUrl: 'https://flow-home.example.test', name: 'Flow Home' });
+        const home = { id: await harness.addHome({ serverUrl: 'https://flow-home.example.test', name: 'Flow Home', accountId: 'fixture-account' }) };
         let discard: (() => void) | undefined;
         try {
-            storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'existing', activeAt: Date.now() })] } });
+            await publishMachineInventoryForTest({ serverId: home.id, accountId: 'fixture-account' }, [createMachineFixture({ id: 'existing', activeAt: Date.now() })]);
             const first = await renderHook(() => useMachineAddFlow({ serverId: home.id }));
             discard = first.getCurrent().discard;
             await act(async () => { first.getCurrent().choosePath('anotherComputer'); first.getCurrent().startWatching(); });
             const startedAtMs = first.getCurrent().watch.startedAtMs;
             expect(first.getCurrent().watch.status).toBe('watching');
             await first.unmount();
-            storage.setState({ machineListByServerId: { [home.id]: [
+            await publishMachineInventoryForTest({ serverId: home.id, accountId: 'fixture-account' }, [
                 createMachineFixture({ id: 'existing', activeAt: Date.now() }),
                 createMachineFixture({ id: 'new-computer', activeAt: Date.now() }),
-            ] } });
+            ]);
             const resumed = await renderHook(() => useMachineAddFlow({ serverId: home.id }));
             expect(resumed.getCurrent().path).toBe('anotherComputer');
             expect(resumed.getCurrent().watch).toMatchObject({ status: 'arrived', startedAtMs });

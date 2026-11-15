@@ -119,7 +119,7 @@ export const en = {
         profile: {
             title: "Approval profile",
             description: "What it may do without asking you.",
-            isolationNotice: "Profiles don’t isolate agents: without agent isolation they can read your credentials, and isolated agents can still borrow another Session’s token.",
+            isolationNotice: "Profiles don’t isolate agents: without a separate user configured in Agents run as they can read your credentials, and isolated agents can still borrow another Session’s token.",
             inheritSessionProfile: "Inherit the Session profile",
             noExplicitSessionProfile: "No explicit Session profile",
             readProposeName: "Read & propose only",

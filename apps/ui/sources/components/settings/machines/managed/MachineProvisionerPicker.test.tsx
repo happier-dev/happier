@@ -16,6 +16,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { readMachineProvisionerSessionPlacementV1, MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 // The JS host the app runs in is a platform boundary. The shared runtime-fetch owner is loaded by the global
 // test setup against the node stub, so a test that is a browser says so here; every other test keeps the real answer.
@@ -137,6 +138,55 @@ async function publishNoAccountProvisioners(serverId: string) {
 }
 
 describe('provisioner picker demand', () => {
+  it('offers contributed controller-local types regardless of billing and leaves remote types unchecked in Isolation', async () => {
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const serverId = await harness.addHome({ name: 'Isolation', serverUrl: 'https://isolation-picker.example.test',
+      serverIdentityId: 'srv_isolation_picker', accountId: 'owner', currentAccount: true });
+    await publishNoAccountProvisioners(serverId);
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+      createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now(), kind: 'persistent' }),
+    ]);
+    const descriptor = { id: 'local-template', title: 'Third-party local template', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
+      launchSchema: { type: 'object', properties: { local: { type: 'boolean' } }, additionalProperties: false },
+      resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['darwin'], prerequisites: [],
+      billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+      sessionPlacement: { kind: 'controller-local', when: { op: 'eq', path: 'local', value: true } },
+      actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } };
+    const entries = [
+      { contribution: { pluginId: 'third.party.compute', localId: 'local-template' }, descriptor },
+      { contribution: { pluginId: 'third.party.compute', localId: 'unconditional' }, descriptor: { ...descriptor, id: 'unconditional', sessionPlacement: { kind: 'controller-local' } } },
+      { contribution: { pluginId: 'third.party.compute', localId: 'remote' }, descriptor: { ...descriptor, id: 'remote', sessionPlacement: { kind: 'remote' } } },
+      { contribution: { pluginId: 'third.party.compute', localId: 'undeclared' }, descriptor: { ...descriptor, id: 'undeclared', sessionPlacement: undefined,
+        billing: { location: 'local', stoppedBilling: 'not-billed' } } },
+    ].map(entry => ({ ...entry, occurrenceId: `occurrence-${entry.contribution.localId}`, credentialPurposes: [], acquireExecutionTarget: 'daemon' }));
+    const list = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: entries });
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true, result: list } } };
+    } });
+    const checked: string[] = [];
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      const input = request.input as { contribution: { localId: string } };
+      checked.push(input.contribution.localId);
+      return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: { available: false, code: 'setup_required' } } } };
+    } });
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId}
+      {...{ controller, sessionPlacement: 'controller-local' as const }} onSelectProvisioner={() => {}} />);
+    try {
+      await waitForHomeGovernance(() => {
+        const cards = [...new Map(screen.tree.findAll(node => Array.isArray(node.props.cards))
+          .flatMap(node => node.props.cards as { id: string; location: string }[]).map(card => [card.id, card])).values()];
+        expect(cards.map(card => card.id), JSON.stringify({ text: screen.getTextContent(),
+          states: screen.tree.findAll(node => node.props.diagnosticCode).map(node => ({ code: node.props.diagnosticCode, title: node.props.title })),
+          requests: harness.requests.map(request => request.path) })).toEqual(['third.party.compute/local-template', 'third.party.compute/unconditional']);
+        expect(cards.find(card => card.id === 'third.party.compute/unconditional')?.location).toBe('local');
+        expect(checked).toEqual(['local-template', 'unconditional']);
+      });
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
   it('lets a preset choose local descriptors without a controller or acquisition prerequisites', async () => {
     // The native SDK is the platform boundary. Keep the real runner/bridge construction path beneath this observer.
     const nativeSsh = await import('@happier-dev/ssh-native');
@@ -146,12 +196,12 @@ describe('provisioner picker demand', () => {
     onTestFinished(() => { vi.unstubAllEnvs(); });
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     // Before an authenticated catalog can create the shared Action executor, the real
-    // authoring scope must leave this computer's native runner cold. Add still observes it.
+    // authoring scope and signed-out Add leave this computer's native runner cold.
     const coldPreset = await renderPicker(<MachineProvisionerPicker serverId="signed-out-native-home" presetOnly />);
     try { expect(sshAvailability).not.toHaveBeenCalled(); }
     finally { await coldPreset.unmount(); }
     const coldAcquisition = await renderPicker(<MachineProvisionerPicker serverId="signed-out-native-home" />);
-    try { expect(sshAvailability).toHaveBeenCalledTimes(1); }
+    try { expect(sshAvailability).not.toHaveBeenCalled(); }
     finally { await coldAcquisition.unmount(); }
     const { lima, e2b } = await installBundledMachinePlugins();
     const serverId = await harness.addHome({ name: 'Preset authoring', serverUrl: 'https://preset-authoring.example.test',
@@ -178,7 +228,7 @@ describe('provisioner picker demand', () => {
             action: { kind: 'choose' }, status: { tone: 'none', label: '' },
           });
         });
-        const group = descriptor.billing.location === 'local' ? 'local' : 'cloud-sandboxes';
+        const group = readMachineProvisionerSessionPlacementV1(descriptor, {})?.kind === 'controller-local' ? 'local' : 'cloud-sandboxes';
         const row = `managed-picker.provisioners.${group}.${key}`;
         await act(async () => screen.pressByTestId(screen.findByTestId(`${row}.action`) ? `${row}.action` : row));
         expect(selected).toHaveBeenLastCalledWith({ serverId, provisioner: key });
@@ -191,7 +241,7 @@ describe('provisioner picker demand', () => {
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const editor = await renderPicker(<ManagedMachineConfigurationView serverId={serverId}
       provisioner={buildQualifiedPluginContributionKey({ pluginId: lima.id, localId: lima.contributes.machineProvisioners[0]!.id })} presetOnly />);
-    try { expect(sshAvailability).toHaveBeenCalledTimes(1); }
+    try { expect(sshAvailability).not.toHaveBeenCalled(); }
     finally { await editor.unmount(); }
   });
 
@@ -944,6 +994,7 @@ describe('provisioner picker demand', () => {
           },
           platforms: ['linux'],
           prerequisites: [],
+          sessionPlacement: { kind: location === 'local' ? 'controller-local' : 'remote' },
           billing: { location, stoppedBilling: 'billed' },
           retention: { supportedIntents: ['delete'] },
           actions: {
@@ -1129,6 +1180,7 @@ describe('provisioner picker demand', () => {
         // These Account-created fixture guests support calls from the browser itself.
         ...(acquire === 'account' ? { browserReachable: true } : {}),
         platforms: ['linux'], prerequisites: [], billing: { location, stoppedBilling: 'not-billed' },
+        sessionPlacement: { kind: location === 'local' ? 'controller-local' : 'remote' },
         retention: { supportedIntents: ['delete'] },
         actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
       },

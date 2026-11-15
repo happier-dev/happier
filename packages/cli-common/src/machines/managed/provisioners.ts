@@ -50,7 +50,7 @@ export function readMachineProvisionerHostAvailability(input: Readonly<{
     acquireExecutionTarget?: ManagedProvisionerDiscoveryEntry['acquireExecutionTarget'];
     controller?: ManagedMachineV1['controller'];
 }>): Pick<MachineProvisionerCheckResultV1, 'available' | 'code'> & Readonly<{
-    executionTarget: 'account' | 'daemon'; controller?: ManagedMachineV1['controller'];
+    executionTarget: 'account' | 'daemon'; controller?: ManagedMachineV1['controller']; requiresController: boolean;
 }> {
     // Machine placement runs the same Account role with native host services; it does not change its declaration.
     const executionTarget = input.acquireExecutionTarget === 'daemon'
@@ -58,7 +58,7 @@ export function readMachineProvisionerHostAvailability(input: Readonly<{
         ? 'daemon' : 'account';
     const controller = executionTarget === 'daemon' ? input.controller : undefined;
     const unavailable = !controller && input.host === 'browser' && input.provisioner.browserReachable !== true;
-    return { executionTarget, ...(controller ? { controller } : {}),
+    return { executionTarget, requiresController: executionTarget === 'daemon' && !controller, ...(controller ? { controller } : {}),
         ...(unavailable ? { available: false, code: 'provider_unavailable' as const } : { available: true }) };
 }
 

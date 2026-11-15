@@ -81,8 +81,9 @@ function makeDraftRow(path: MachineAddPathId | null, creating: boolean, host: st
     if (arrived) return { title, entityTitle, status: t('machineAdd.connected'), tone: 'arrived' };
     if (handle?.startError || (snapshot?.result && !snapshot.result.ok)) return { title, entityTitle, status: snapshot?.status === 'canceled' ? t('machineAdd.cancelled') : t('machineAdd.failed'), tone: 'failed' };
     if (handle?.starting || (snapshot && !snapshot.result)) return { title, entityTitle, status: snapshot?.currentStepId ? resolveSystemTaskStepLabel(snapshot.currentStepId) : t('machineAdd.waiting'), tone: 'running' };
-    // Choosing what to create: nothing is waiting to connect yet.
-    if (creating) return { title, entityTitle, status: t('managedMachines.add.choosingCreate'), tone: 'draft' };
+    // The chooser has no machine draft. Running enrollment remains visible above,
+    // but browsing Create must not leave a phantom machine after its presenter closes.
+    if (creating) return null;
     return watching ? { title, entityTitle, status: t('machineAdd.waiting'), tone: 'waiting' }
         : { title, entityTitle, status: t('common.draft'), tone: 'draft' };
 }

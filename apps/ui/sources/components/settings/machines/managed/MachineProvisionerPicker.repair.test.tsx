@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { MachineProvisionerContributionV1Schema, type MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerContributionV1Schema, readMachineProvisionerSessionPlacementV1, type MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -100,6 +100,7 @@ describe('mounted provisioner repair', () => {
         const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', credentialPurposes: [], acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: contribution.localId, title: 'Native compute', icon: 'magic-wand', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
+            sessionPlacement: { kind: 'controller-local' },
             platforms: ['darwin'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
             actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
         } };
@@ -176,31 +177,32 @@ describe('mounted provisioner repair', () => {
                 };
                 return { kind: 'approval_request_created', actionId: 'action.invoke', artifactId };
         } });
-        // Keep the declared controller capabilities and the carrier's actual installation key together.
-        const installedMachineRow = { ...machineRow, installationPublicKey: repairBoundary.machine.installationPublicKey };
-        harness.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === installedMachineRow.id ? installedMachineRow : null).json(),
-        }) });
         harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true, result: {
                 controller: { machineId: 'controller', installationId: 'installation' }, provisioners: [provisioner],
             } } } };
         } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: (repaired && scenario !== 'guide') || optionsPrerequisite ? { available: true } : isCrabbox ? crabboxCheck : {
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: machine.id, installationId: 'installation', actionId: 'machines.provisioners.check', tokenEpoch: 0,
+            requesterInvocation: 'optional',
+            execute: async () => (repaired && scenario !== 'guide') || optionsPrerequisite ? { available: true } : isCrabbox ? crabboxCheck : {
                 available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable',
                   ...(scenario === 'missingWithoutRepair' ? {} : { repairAction: { action, input: { tool: 'native-vm' } } }) }],
-            } } } };
-        } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true,
-                result: optionsPrerequisite ? createMachineProvisionerOptionsFixture({
-                    base: { launch: {}, available: repaired, prerequisites: repaired ? [] : [{ requirement: { kind: 'systemTool', id: 'native-vm' },
-                        status: 'unavailable', repairAction: { action, input: repairInput } }] } }) : createMachineProvisionerOptionsFixture() } } };
-        } });
+            },
+        });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: machine.id, installationId: 'installation', actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            requesterInvocation: 'optional',
+            execute: async () => optionsPrerequisite ? createMachineProvisionerOptionsFixture({
+                base: { launch: {}, available: repaired, prerequisites: repaired ? [] : [{ requirement: { kind: 'systemTool', id: 'native-vm' },
+                    status: 'unavailable', repairAction: { action, input: repairInput } }] } }) : createMachineProvisionerOptionsFixture(),
+        });
+        // Keep the declared controller capabilities and the carrier's actual installation key together.
+        const installedMachineRow = { ...machineRow, installationPublicKey: repairBoundary.machine.installationPublicKey };
+        harness.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => id === installedMachineRow.id ? installedMachineRow : null).json(),
+        }) });
         const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const { ModalProvider } = await import('@/modal');
@@ -209,7 +211,8 @@ describe('mounted provisioner repair', () => {
                 {...(optionsPrerequisite ? { initialEnrollmentIdentity: { kind: 'existingUser', role: 'adopted' } as const } : {})}
                 initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
         // The picker resolves the published controller; configuration receives the selected controller handoff.
-        const card = surface === 'picker' ? `managed-picker.provisioners.${provisioner.descriptor.billing.location}.${buildQualifiedPluginContributionKey(contribution)}.action`
+        const group = readMachineProvisionerSessionPlacementV1(provisioner.descriptor, {})?.kind === 'controller-local' ? 'local' : 'cloud-sandboxes';
+        const card = surface === 'picker' ? `managed-picker.provisioners.${group}.${buildQualifiedPluginContributionKey(contribution)}.action`
             : 'managed-config.repair:systemTool:native-vm';
         if (scenario === 'missingWithoutRepair') {
             await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)

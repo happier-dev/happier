@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { readMachineProvisionerCredentialPurposeSelectorPathsV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readMachineProvisionerSessionPlacementV1, readMachineProvisionerCredentialPurposeSelectorPathsV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -37,14 +37,6 @@ import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/u
 /** The cloud group's one hand-off names no single provider (R8-8). */
 const showCloudHandoff = () => showManagedGetTheAppModal();
 
-/**
- * A VM one of your computers creates (its declared acquire role) waits for a computer that can run it: with
- * none chosen it folds into one row and is not checked (lab af-add). Account-created ones never wait.
- */
-function waitsForComputer(provisioner: MachineProvisionersListResultV1['provisioners'][number], controller: ManagedControllerV1 | undefined): boolean {
-    return !controller && provisioner.acquireExecutionTarget === 'daemon' && provisioner.descriptor.billing.location === 'local';
-}
-
 /** Host discovery is needed before placing Account roles or any recipe without a controller. */
 function needsRuntimeHost(provisioner: MachineProvisionersListResultV1['provisioners'][number], controller: ManagedControllerV1 | undefined): boolean {
     return !controller || provisioner.acquireExecutionTarget === 'account';
@@ -53,6 +45,9 @@ function needsRuntimeHost(provisioner: MachineProvisionersListResultV1['provisio
 export type ManagedProvisionerSelection = Readonly<{ serverId: string; provisioner: string; controller?: ManagedControllerV1; connectPurpose?: string }>;
 type MachineProvisionerPickerProps = Readonly<{
     serverId: string; presetOnly?: boolean;
+    /** Machine Security configures sandboxes on its named controller. */
+    controller?: ManagedControllerV1;
+    sessionPlacement?: 'controller-local';
     /** Where "Set up this computer" leads when no machine here can manage yet (the Add form switches its own path). */
     onSetUpThisComputer?: () => void;
     /** Local presentation handoff to the same configurator, without navigation or acquisition. */
@@ -65,7 +60,8 @@ export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
     if (!selectedHome) return <View testID="managed-picker"><ItemGroup title={t('managedMachines.receipt.joins')}>
         {listServerProfiles().map(home => <Item key={home.id} testID={`managed-picker.home:${home.id}`} title={resolveHomeDisplayLabel(home, home.id)} onPress={() => setSelectedHome(home.id)} />)}
     </ItemGroup></View>;
-    const shared = { serverId: selectedHome, presetOnly: props.presetOnly, onSelectProvisioner: props.onSelectProvisioner,
+    const shared = { serverId: selectedHome, presetOnly: props.presetOnly, controller: props.controller,
+        sessionPlacement: props.sessionPlacement, onSelectProvisioner: props.onSelectProvisioner,
         onSetUpThisComputer: props.onSetUpThisComputer };
     return <MachineProvisionerCatalog key={selectedHome} {...shared} />;
 }
@@ -75,9 +71,16 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => handler.current(registration), []);
     // "Managed from": the Machine that runs the offers placed on a Machine. The invoking host can also place
     // an Account role on it when the browser cannot run that role.
-    const scope = useManagedControllerScope({ serverId: props.serverId, observeThisComputer: !props.presetOnly, testIDPrefix: 'managed-picker.controller' });
+    const scope = useManagedControllerScope({ serverId: props.serverId, preferred: props.controller,
+        delegatedPreset: props.controller !== undefined, observeThisComputer: !props.presetOnly && !props.controller,
+        testIDPrefix: 'managed-picker.controller' });
     const controller = props.presetOnly ? undefined : scope.controller;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, controller);
+    // A conditional declaration is still an offer: the configurator evaluates its selected launch.
+    // Billing describes cost, and cannot decide whether a contribution can sandbox this controller.
+    const provisioners = React.useMemo(() => props.sessionPlacement === 'controller-local'
+        ? catalog.provisioners.filter(provisioner => provisioner.descriptor.sessionPlacement?.kind === 'controller-local')
+        : catalog.provisioners, [catalog.provisioners, props.sessionPlacement]);
     const { checks, setChecks, isCurrentFor } = catalog;
     const approval = useActionApprovalContinuation({ serverId: props.serverId, scopeKey: JSON.stringify([props.serverId, catalog.binding?.accountId]), onExecuted: () => {} });
     handler.current = approval.requestApproval;
@@ -101,7 +104,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     React.useEffect(() => {
         const binding = catalog.binding;
         if (props.presetOnly || !binding || !catalog.homeId || !catalog.client || catalog.reading) return;
-        const needsAccountHost = catalog.provisioners.some(provisioner => needsRuntimeHost(provisioner, controller));
+        const needsAccountHost = provisioners.some(provisioner => needsRuntimeHost(provisioner, controller));
         if (needsAccountHost && accountHost === null) return;
         if (needsAccountHost && accountHost === 'unavailable') { setError('unavailable'); return; }
         const abort = new AbortController();
@@ -111,13 +114,12 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         // Each provisioner settles on its own: a slow or failed check never holds back the others' answers.
         const current = () => !abort.signal.aborted && binding.isCurrent();
         const readChecks = async () => {
-          await Promise.all(catalog.provisioners.map(async provisioner => {
+          await Promise.all(provisioners.map(async provisioner => {
             const id = buildQualifiedPluginContributionKey(provisioner.contribution);
             if (!isCurrentFor(id)) return;
             const placement = readMachineProvisionerHostAvailability({ host: accountHost === 'browser' ? 'browser' : 'native',
                 provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
-            if (!placement.available) return;
-            if (waitsForComputer(provisioner, controller)) return;
+            if (!placement.available || placement.requiresController) return;
             const checkController = placement.controller;
             const result = await readManagedProvisionerAvailability({ binding, client: catalog.client!, occurrenceId: provisioner.occurrenceId,
                 nativeInput: { homeId: catalog.homeId!, ...(checkController ? { controller: checkController } : {}), contribution: provisioner.contribution },
@@ -128,7 +130,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         void readChecks().then(() => { if (current()) setError(null); })
             .catch(() => { if (current()) setError('unavailable'); });
         return () => { abort.abort(); retirement.dispose(); };
-    }, [props.presetOnly, catalog.binding, catalog.homeId, catalog.client, catalog.provisioners, catalog.reading, controller, onApprovalPending, accountHost, setChecks, isCurrentFor]);
+    }, [props.presetOnly, catalog.binding, catalog.homeId, catalog.client, provisioners, catalog.reading, controller, onApprovalPending, accountHost, setChecks, isCurrentFor]);
     const open = (contribution: string, placedController: ManagedControllerV1 | undefined, connectPurpose?: string) => {
         if (!catalog.isCurrentFor(contribution)) return;
         const handoff = placedController ? { controller: placedController } : {};
@@ -149,24 +151,26 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const titleOf = (provisioner: (typeof catalog.provisioners)[number]) => {
         const title = localized(provisioner.contribution.pluginId, provisioner.descriptor.title);
         const kind = provisioner.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : undefined;
-        const sharesTitle = catalog.provisioners.some(other => other !== provisioner
+        const sharesTitle = provisioners.some(other => other !== provisioner
             && localized(other.contribution.pluginId, other.descriptor.title) === title);
         return sharesTitle && kind ? `${title} ${kind}` : title;
     };
-    const cards: ManagedProvisionerCard[] = catalog.provisioners.flatMap<ManagedProvisionerCard>(provisioner => {
+    const cards: ManagedProvisionerCard[] = provisioners.flatMap<ManagedProvisionerCard>(provisioner => {
+        // Discovery has no launch choices yet: conditional types stay offered for configuration.
+        const local = readMachineProvisionerSessionPlacementV1(provisioner.descriptor, {})?.kind === 'controller-local';
         if (props.presetOnly) return [{ id: buildQualifiedPluginContributionKey(provisioner.contribution), title: titleOf(provisioner),
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
-            location: provisioner.descriptor.billing.location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
+            location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: provisioner.acquireExecutionTarget === 'daemon' ? 'daemon' : 'account', mark: (size: number) => markFor(provisioner, size),
             status: { tone: 'none', label: '' }, action: { kind: 'choose', label: t('managedMachines.add.action.choose'),
                 onPress: () => open(buildQualifiedPluginContributionKey(provisioner.contribution), undefined), disabled: !catalog.isCurrentFor(buildQualifiedPluginContributionKey(provisioner.contribution)) } }];
-        if (waitsForComputer(provisioner, controller)) { waiting.push(titleOf(provisioner)); return []; }
         const location = provisioner.descriptor.billing.location;
         const id = buildQualifiedPluginContributionKey(provisioner.contribution);
         const outcome = checks[id];
         // The provisioner's own browser-reachability fact, read by the same owner that refuses its acquire.
         const placement = readMachineProvisionerHostAvailability({ host: accountHost === 'browser' ? 'browser' : 'native',
             provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
+        if (placement.requiresController && local) { waiting.push(titleOf(provisioner)); return []; }
         const hostPending = needsRuntimeHost(provisioner, controller) && (accountHost === null || accountHost === 'unavailable');
         const needsApp = !hostPending && !placement.available;
         const check = outcome?.kind === 'succeeded' ? outcome.value : undefined;
@@ -180,7 +184,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         const unreadable = outcome?.kind === 'failed' && !noAccount;
         const caveat = check?.available === true && check.code === 'home_not_guest_reachable';
         if (caveat) homeUnreachable = true;
-        const statusLabel = needsApp ? t('managedMachines.add.status.needsApp')
+        const statusLabel = placement.requiresController ? t('managedMachines.add.chooseController') : needsApp ? t('managedMachines.add.status.needsApp')
             : caveat ? t('managedMachines.add.status.needsSetup')
             : check?.status ? localized(provisioner.contribution.pluginId, check.status)
             : noAccount ? t('managedMachines.add.status.noAccount')
@@ -190,7 +194,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         const title = titleOf(provisioner);
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
-            location: location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
+            location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: placement.executionTarget, mark: (size: number) => markFor(provisioner, size),
             repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
                 && repairFailure.controller?.machineId === controller?.machineId

@@ -106,6 +106,18 @@ describe('Account managed power role preparation', () => {
 });
 
 describe('provisioner host availability before acquisition', () => {
+    it('awaits a computer for a daemon role with cloud billing and keeps an Account role with local billing usable', () => {
+        const cloudProvisioner = MachineProvisionerContributionV1Schema.parse({ ...provisioner,
+            billing: { location: 'cloud', stoppedBilling: 'billed' } });
+        const localProvisioner = MachineProvisionerContributionV1Schema.parse({ ...provisioner,
+            billing: { location: 'local', stoppedBilling: 'not-billed' } });
+        expect(readMachineProvisionerHostAvailability({ host: 'native',
+            provisioner: cloudProvisioner,
+            acquireExecutionTarget: 'daemon' })).toMatchObject({ executionTarget: 'daemon', requiresController: true });
+        expect(readMachineProvisionerHostAvailability({ host: 'native',
+            provisioner: localProvisioner,
+            acquireExecutionTarget: 'account' })).toMatchObject({ available: true, executionTarget: 'account', requiresController: false });
+    });
     it.each([
         { host: 'browser', browserReachable: false, selected: true, declared: 'account', target: 'daemon', available: true },
         { host: 'browser', browserReachable: false, selected: false, declared: 'account', target: 'account', available: false },
@@ -123,13 +135,13 @@ describe('provisioner host availability before acquisition', () => {
     });
     it.each([undefined, false])('refuses browser allocation without a positively reachable recipe (%s)', browserReachable => {
         expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: { browserReachable } }))
-            .toEqual({ available: false, code: 'provider_unavailable', executionTarget: 'account' });
+            .toEqual({ available: false, code: 'provider_unavailable', executionTarget: 'account', requiresController: false });
     });
     it('keeps browser-reachable recipes and native host recipes available', () => {
         expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: { browserReachable: true } }))
-            .toEqual({ available: true, executionTarget: 'account' });
+            .toEqual({ available: true, executionTarget: 'account', requiresController: false });
         expect(readMachineProvisionerHostAvailability({ host: 'native', provisioner: {} }))
-            .toEqual({ available: true, executionTarget: 'account' });
+            .toEqual({ available: true, executionTarget: 'account', requiresController: false });
     });
 });
 
