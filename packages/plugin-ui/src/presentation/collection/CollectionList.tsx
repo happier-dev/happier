@@ -390,6 +390,8 @@ export type HappierCollectionTableRowFacts = Readonly<{
   insetFill?: boolean;
   /** The row ends its group and the next group's band follows: the band parts them, so the row draws no hairline. */
   beforeBand?: boolean;
+  /** A list row: its content draws the one list-row rule from its text column, so the frame draws no full-bleed line. */
+  listRule?: boolean;
 }>;
 export const HappierCollectionTableRowContext = createContext<HappierCollectionTableRowFacts | null>(null);
 
