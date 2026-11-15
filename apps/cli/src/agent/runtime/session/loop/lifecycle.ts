@@ -1,3 +1,4 @@
+import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { isForegroundTurnRuntimeTranscriptEvent, isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -8,7 +9,7 @@ import { SessionCompactRequestV1Schema } from '@happier-dev/protocol/sessions/co
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
-import type { AgentSessionRuntimeEvent, ProviderBoundModelRef, SessionModelTransitionResultV1, SessionTurnFactsV1, SessionRolePromptContextV1, SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol';
+import type { AgentSessionRuntimeEvent, ProviderBoundModelRef, SessionModelTransitionResultV1, SessionTurnFactsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
 import type { render } from 'ink';
 import type React from 'react';
 
@@ -165,7 +166,7 @@ export async function runHostSessionRuntimePlan(plan: HostSessionRuntimePlan): P
 
 export type SessionLoopLifecycleDeps = Readonly<{
   daemonTurnContributionsBridge?: DaemonAgentRuntimeTurnContributionsBridge;
-  readTeamCredentialDenial?: (turnId: string) => Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null>;
+  readTeamCredentialFailureEvidence?: (turnId: string) => Promise<SessionBrokerApplicationFailureEvidence | null>;
   cleanupBackendRunResourcesFn?: typeof cleanupBackendRunResources;
   createRuntimeOverrideSynchronizersFn?: typeof createRuntimeOverrideSynchronizers;
   runPermissionModePromptLoopFn?: typeof runPermissionModePromptLoop;
@@ -259,6 +260,8 @@ export type SessionLoopLifecycleParams = Readonly<{
   machineId: string;
   memoryRecallGuidanceEnabled: boolean;
   policyAgentId: string;
+  /** The Session's own Agent facts (lease or exact admitted Agent); absent → current catalog. */
+  sessionAgentCatalog?: Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'agentDefinitionsById'>;
   setActiveAgentCompositionToolSelection: (
     selection: AgentCompositionToolSelection | null,
   ) => void;
@@ -655,9 +658,9 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       readQuestionWaitTurnId: () => params.session.readQuestionWaitTurnId?.() ?? null,
     },
     agentId: params.policyAgentId,
-    ...(params.deps.readTeamCredentialDenial || daemonTurnContributionsBridge?.readTeamCredentialDenial ? {
-      readTeamCredentialDenial: params.deps.readTeamCredentialDenial ?? (async (turnId: string) =>
-        await daemonTurnContributionsBridge?.readTeamCredentialDenial?.({ sessionId: params.session.sessionId, turnId }) ?? null),
+    ...(params.deps.readTeamCredentialFailureEvidence || daemonTurnContributionsBridge?.readTeamCredentialFailureEvidence ? {
+      readTeamCredentialFailureEvidence: params.deps.readTeamCredentialFailureEvidence ?? (async (turnId: string) =>
+        await daemonTurnContributionsBridge?.readTeamCredentialFailureEvidence?.({ sessionId: params.session.sessionId, turnId }) ?? null),
     } : {}),
     readTurnFacts: () => preparedTurnFacts ?? stampTurnFacts({
       sessionWorkDepth: params.session.getWorkDepth?.() ?? 0, hostContextOnly: true,
@@ -1152,7 +1155,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       // Only this existing Ink-render branch owns loading its complete subtree.
       const displayProps = {
         messageBuffer: params.messageBuffer,
-        logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
+        logPath: environment.DEBUG ? logger.getLogPath() : undefined,
         onExit: requestTerminalExit,
       };
       const reactModule = import('react').then(module => ({ ...module.default, ...module }));
@@ -1696,7 +1699,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       }, { assertPreparedPlanCurrent: resolveFreshSessionSystemPrompt.assertPreparedPlanCurrent }),
       readSessionPromptPlanDeliveryState: () => {
         const startup = resolveFreshSessionSystemPrompt.readStartupInstructions?.();
-        const capabilities = readAgentSessionCapabilities(readAgentCatalogSnapshot()
+        const capabilities = readAgentSessionCapabilities((params.sessionAgentCatalog ?? readAgentCatalogSnapshot())
           .agentDefinitionsById.get(params.policyAgentId)?.richDefinition?.definition);
         return {
           ...(startup ? { marker: { v: startup.v, id: startup.id, revision: startup.revision } } : {}),
@@ -1711,7 +1714,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       resolveAgentCompositionBeforeDispatch: async ({ signal }) => {
         const executionRunsFeatureEnabled = resolveCliFeatureDecision({
           featureId: 'execution.runs',
-          env: process.env,
+          env: environment,
         }).state === 'enabled';
         try {
           const composition = daemonTurnContributionsBridge

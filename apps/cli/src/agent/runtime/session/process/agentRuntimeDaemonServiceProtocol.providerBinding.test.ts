@@ -38,6 +38,11 @@ describe('Agent runtime daemon provider binding service protocol', () => {
     };
     expect(AgentRuntimeDaemonServiceRequestV1Schema.parse(request)).toEqual(request);
     const denial = { v: 1, resourceId: 'resource-1', reasonCode: 'resource_forbidden' };
+    const carrierFailure = { closingSide: 'initiator', closingStage: 'local_http_head' };
+    const carrierResponse = { ok: true, result: { kind: 'provider_broker.refusal', denial: null, carrierFailure } };
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(carrierResponse)).toEqual(carrierResponse);
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse({ ...carrierResponse, result: { ...carrierResponse.result,
+      carrierFailure: { ...carrierFailure, nativeMessage: 'PRIVATE_DETAIL' } } }).success).toBe(false);
     const response = { ok: true, result: { kind: 'provider_broker.refusal', denial } };
     expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(response)).toEqual(response);
     expect(AgentRuntimeDaemonServiceResponseV1Schema.parse({

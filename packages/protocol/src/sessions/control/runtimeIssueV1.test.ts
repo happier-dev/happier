@@ -13,6 +13,27 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('retains only closed carrier stages through the public Session cause parser', () => {
+    const carrierFailure = { closingSide: 'initiator', closingStage: 'local_http_head' };
+    const failureCause = { phase: 'turn', failureReason: 'unknown', carrierFailure };
+    expect(readSessionRuntimeFailureCause({ failureCause })).toEqual(failureCause);
+    const issue = { v: 1, scope: 'primary_session', status: 'failed', code: 'agent_session_error',
+      source: 'agent_session_error', occurredAt: 1, failureCause };
+    expect(SessionRuntimeIssueV1Schema.parse(issue).failureCause).toEqual(failureCause);
+    let accessorReads = 0;
+    const accessorCarrier = Object.defineProperty({ closingStage: 'local_http_head' }, 'closingSide', {
+      enumerable: true, get: () => { accessorReads++; return 'initiator'; },
+    });
+    expect(readSessionRuntimeFailureCause({ failureCause: { ...failureCause, carrierFailure: accessorCarrier } })).toBeUndefined();
+    expect(accessorReads).toBe(0);
+    for (const invalid of [{ ...carrierFailure, message: 'PRIVATE_DETAIL' },
+      { ...carrierFailure, closingStage: 'PRIVATE_DETAIL' }]) {
+      expect(SessionRuntimeIssueV1Schema.safeParse({ ...issue,
+        failureCause: { ...failureCause, carrierFailure: invalid } }).success).toBe(false);
+    }
+  });
+
+
   it.each([
     { code: 'private_customer_token', expectedCode: null },
     { code: 'ECONNRESET', expectedCode: 'ECONNRESET' },

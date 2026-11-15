@@ -23,6 +23,11 @@ export function recordSessionBrokerApplicationEvidenceRead(input: Readonly<{
   } catch { /* Diagnostics cannot change the refusal read outcome. */ }
 }
 
+export type SessionBrokerApplicationFailureEvidence = Readonly<{
+  denial: SessionRuntimeTeamCredentialDenialDetailsV1 | null;
+  carrierFailure?: MachineCarrierFailureDiagnostic;
+}>;
+
 /** In-memory evidence owned by one host Session lifetime, never Agent state. */
 export function createSessionBrokerApplicationEvidence(input: Readonly<{
   sessionId: string;
@@ -59,7 +64,7 @@ export function createSessionBrokerApplicationEvidence(input: Readonly<{
         else if (lastDenial?.turnId === turnId) lastDenial = null;
       };
     },
-    async readDenial(turnId: string): Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null> {
+    async readFailureEvidence(turnId: string): Promise<SessionBrokerApplicationFailureEvidence> {
       const current = input.isCurrent();
       const denial = current && lastDenial?.turnId === turnId ? lastDenial.denial : null;
       const reason = denial ? undefined : !current ? 'pid_mismatch' : lastDenial ? 'turn_mismatch' : 'no_evidence';
@@ -74,7 +79,7 @@ export function createSessionBrokerApplicationEvidence(input: Readonly<{
         ...(input.processStartTimeMs !== undefined ? { processStartTimeMs: input.processStartTimeMs } : {}),
         ...(reason ? { outcome: 'miss', reason, ...(carrierFailure ? { carrierFailure } : {}) } : { outcome: 'hit' }),
       });
-      return denial;
+      return { denial, ...(carrierFailure ? { carrierFailure } : {}) };
     },
   };
 }

@@ -326,7 +326,7 @@ describe('CLI host Message admission', () => {
     expect(content).toMatchObject({ t: 'plain', v: { meta: { happierInputRequestV1: { replyIntent: { mode: 'wait' } } } } });
   });
 
-  it('returns the accepted failed turn typed runtime cause with an ordinary CLI wait reply', async () => {
+  it.each(['reply', 'legacy_wait'] as const)('returns the accepted failed turn typed runtime cause with an ordinary CLI %s', async mode => {
     // Live shape (QA-WAVE-A r3, Gemini invalid key): custody fulfils `failed` on the accepted
     // ordinary turn, whose projection and transcript both carry the typed authentication issue.
     const sessionId = 'cmv3hostadmissionfailedaaa';
@@ -362,6 +362,7 @@ describe('CLI host Message admission', () => {
         id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
         metadata: JSON.stringify({ permissionMode: 'default', permissionModeUpdatedAt: 1 }), metadataVersion: 1,
         agentState: null, agentStateVersion: 0, dataEncryptionKey: null, encryptionMode: 'plain',
+        latestTurnStatus: 'failed', latestTurnStatusObservedAt: 5, lastRuntimeIssue: runtimeIssueV1,
       } } };
       throw new Error(`Unexpected HTTP read: ${url}`);
     });
@@ -371,11 +372,13 @@ describe('CLI host Message admission', () => {
     });
     const deps = createCliActionDeps({ token: 'test-account-token', sessionId, mode: 'plain', ctx: null,
       credentials: { token: 'test-account-token', encryption: null } });
-    const sent = await deps.sessionSendMessage({ sessionId, localId, message: 'No tools. Reply A_CP2_OK.', reply: 'wait',
+    const sent = await deps.sessionSendMessage({ sessionId, localId, message: 'No tools. Reply A_CP2_OK.', ...(mode === 'reply' ? { reply: 'wait' as const } : { wait: true }),
       callerSurface: 'cli', actionCaller: { kind: 'host' }, context: { surface: 'cli', authority: 'present_user' },
       requestedAction: { v: 1, kind: 'enqueue' } });
-    expect(sent).toEqual({ status: 'replied', localId, inputMessageRef: expect.objectContaining({ messageId: 'committed-input' }),
-      outcome: { kind: 'failed', runtimeIssueV1 } });
+    expect(sent).toEqual(mode === 'reply'
+      ? { status: 'replied', localId, inputMessageRef: expect.objectContaining({ messageId: 'committed-input' }),
+        outcome: { kind: 'failed', runtimeIssueV1 } }
+      : { status: 'failed', localId, code: 'session_input_turn_failed', runtimeIssueV1 });
     expect(SessionMessageSendResultV1Schema.parse(sent)).toEqual(sent);
   });
 

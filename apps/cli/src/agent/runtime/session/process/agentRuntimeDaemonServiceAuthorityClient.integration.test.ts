@@ -34,7 +34,7 @@ import {
   attestCurrentRunnerAgentSessionOpen,
   isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
   openCurrentRunnerTeamCredentialProviderBinding,
-  readCurrentRunnerTeamCredentialBrokerDenial,
+  readCurrentRunnerTeamCredentialBrokerFailureEvidence,
   RUNNER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_TRANSITION_CODE,
   resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
@@ -126,7 +126,7 @@ describe('current Agent runtime daemon service authority client', () => {
     }
   });
 
-  it.each(['hit', 'miss', 'failed', 'cancelled', 'logger_failed'] as const)(
+  it.each(['hit', 'miss', 'carrier', 'failed', 'cancelled', 'logger_failed'] as const)(
     'records a payload-free runner refusal read once without additional authority reads or RPCs (%s)',
     async outcome => {
       const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-runner-refusal-read-'));
@@ -147,7 +147,8 @@ describe('current Agent runtime daemon service authority client', () => {
         }
         return new Response(JSON.stringify(outcome === 'failed'
           ? { ok: false, error: { code: 'private_failure', message: 'PRIVATE_RESPONSE_BODY' } }
-          : { ok: true, result: { kind: 'provider_broker.refusal', denial: outcome === 'miss' ? null : denial } }),
+          : { ok: true, result: { kind: 'provider_broker.refusal', denial: outcome === 'miss' || outcome === 'carrier' ? null : denial,
+            ...(outcome === 'carrier' ? { carrierFailure: { closingSide: 'initiator', closingStage: 'local_http_head' } } : {}) } }),
         { status: 200, headers: { 'content-type': 'application/json' } });
       });
       vi.stubGlobal('fetch', fetchMock);
@@ -157,15 +158,16 @@ describe('current Agent runtime daemon service authority client', () => {
       const privateReads = vi.spyOn(privateBearerFile, 'readPrivateBearerFile');
       processIdentityMock.mockClear();
       try {
-        const read = readCurrentRunnerTeamCredentialBrokerDenial({ authority, turnId: 'turn-1', signal: cancellation.signal });
+        const read = readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority, turnId: 'turn-1', signal: cancellation.signal });
         if (outcome === 'cancelled') await expect(read).rejects.toThrow('PRIVATE_CANCELLATION');
-        else await expect(read).resolves.toEqual(outcome === 'miss' || outcome === 'failed' ? null : denial);
+        else await expect(read).resolves.toEqual(outcome === 'failed' ? null : { denial: outcome === 'miss' || outcome === 'carrier' ? null : denial,
+          ...(outcome === 'carrier' ? { carrierFailure: { closingSide: 'initiator', closingStage: 'local_http_head' } } : {}) });
         expect(log.mock.calls.filter(([message]) => message === '[provider-broker-application]')).toEqual([
           ['[provider-broker-application]', { stage: 'runner-refusal-read', sessionId: 'session-1', turnId: 'turn-1',
             pid: runner.pid, processStartTimeMs: runner.processStartTimeMs,
-            outcome: outcome === 'failed' || outcome === 'cancelled' ? 'failed' : outcome === 'miss' ? 'miss' : 'hit',
+            outcome: outcome === 'failed' || outcome === 'cancelled' ? 'failed' : outcome === 'miss' || outcome === 'carrier' ? 'miss' : 'hit',
             ...(outcome === 'failed' || outcome === 'cancelled' ? { reason: 'read_failed' }
-              : outcome === 'miss' ? { reason: 'no_evidence' } : {}) }],
+              : outcome === 'miss' || outcome === 'carrier' ? { reason: 'no_evidence' } : {}) }],
         ]);
         expect(fetchMock).toHaveBeenCalledOnce();
         expect(privateReads).toHaveBeenCalledTimes(1);

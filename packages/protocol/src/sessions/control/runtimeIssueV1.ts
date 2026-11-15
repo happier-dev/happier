@@ -357,6 +357,14 @@ export const RunnerDaemonPluginServicesPreparationCauseV1Schema = lazyZodSchema(
 export type RunnerDaemonPluginServicesPreparationCauseV1 =
   z.infer<typeof RunnerDaemonPluginServicesPreparationCauseV1Schema>;
 
+/** Content-free native carrier diagnostics; never a credential refusal or authority fact. */
+export const SessionRuntimeCarrierFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  closingSide: z.enum(['initiator', 'broker', 'peer_or_transport', 'unknown']),
+  closingStage: z.enum(['local_http_head', 'local_capability', 'stream_decision',
+    'stream_admission', 'pre_application_custody', 'transport', 'unknown']),
+}));
+export type SessionRuntimeCarrierFailureV1 = z.infer<typeof SessionRuntimeCarrierFailureV1Schema>;
+
 /** Failure diagnostics, never an authority/retry decision. Provider messages are redacted by their producer. */
 export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictObject({
   actionCause: z.optional(ActionFailureCauseV1Schema),
@@ -365,6 +373,7 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
   requestId: z.optional(NonBlankOpaqueIdentifierSchema),
   phase: z.enum(['authentication', 'client_start', 'thread_open', 'turn_start', 'turn']),
   preparationCause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
+  carrierFailure: z.optional(SessionRuntimeCarrierFailureV1Schema),
   connectedServicesDefault: z.optional(ConnectedServicesDefaultUnavailableDetailsV1Schema),
   reason: z.optional(z.enum(CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS)),
   failureReason: z.enum([
@@ -435,6 +444,9 @@ export function readSessionRuntimeFailureCause(
     ...cause,
     ...(Object.hasOwn(cause, 'preparationCause')
       ? { preparationCause: readDataRecord(cause.preparationCause) ?? null }
+      : {}),
+    ...(Object.hasOwn(cause, 'carrierFailure')
+      ? { carrierFailure: readDataRecord(cause.carrierFailure) ?? null }
       : {}),
   });
   if (parsed.success) return parsed.data;

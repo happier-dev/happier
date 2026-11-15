@@ -1027,7 +1027,7 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
           await runHostSessionRuntimePlan({
             ...plan,
             deps: { ...plan.deps, sessionLoopLifecycleDeps: { ...plan.deps?.sessionLoopLifecycleDeps,
-              readTeamCredentialDenial: async turnId => brokerEvidence.readDenial(turnId),
+              readTeamCredentialFailureEvidence: async turnId => brokerEvidence.readFailureEvidence(turnId),
             } },
             config: {
               ...plan.config,

@@ -1,3 +1,4 @@
+import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
@@ -1117,6 +1118,7 @@ export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
     status: z.literal('failed'),
     localId: PendingLocalIdSchema,
     code: z.literal('session_input_turn_failed'),
+    runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   }),
   z.strictObject({
     status: z.literal('failed'),

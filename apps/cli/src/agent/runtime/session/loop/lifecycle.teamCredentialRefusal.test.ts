@@ -70,10 +70,10 @@ it.each(['resource_forbidden', 'connected_service_credential_reconnect_required'
   let evidenceReads = 0;
   await runSessionLoopLifecycle({ ...base, runtime, hookRuntime: runtime,
     deps: { ...base.deps,
-      readTeamCredentialDenial: async turnId => {
+      readTeamCredentialFailureEvidence: async turnId => {
         expect(turnId).toBe('withdrawn-turn');
         evidenceReads++;
-        return evidence.readDenial(turnId);
+        return evidence.readFailureEvidence(turnId);
       },
       runPermissionModePromptLoopFn: async () => {
         runtime.beginTurnLifecycle();

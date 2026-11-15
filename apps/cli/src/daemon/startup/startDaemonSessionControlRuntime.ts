@@ -495,6 +495,7 @@ import {
   type AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
 } from '../agentRuntime/sessionBridgeAuthorization';
 import { refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority } from '../agentRuntime/refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
+import { createTrackedRunnerAgentRegistryAccess } from '../agentRuntime/trackedRunnerAgentRegistryAccess';
 
 import {
   awaitTrackedRunnerAgentSessionOpen,
@@ -4367,7 +4368,7 @@ export async function startDaemonSessionControlRuntime(
               await executeSpawnSessionRequest({
                 ...(() => {
                   const sessionHost = sessionHostPlacement.place();
-                  return sessionHost ? { sessionHost } : {};
+                  return sessionHost ? { sessionHost, machineId: spawnParams.machineId } : {};
                 })(),
                 prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requesterRuntime,
                   shutdownCancellationDomains.daemonWorkSignal, ordinaryAgentIsolationAccountSource
@@ -10912,58 +10913,26 @@ export async function startDaemonSessionControlRuntime(
     sessionId: string,
     httpPort: number,
   ): Promise<void> => {
-    await refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority({
-      happyHomeDir: configuration.happyHomeDir,
-      publicReleaseRing: configuration.publicReleaseRing,
-      httpPort,
-      sessionId,
-      tracked,
-      resolveCurrentRetainedAgent: async ({ agentId }) => {
-        const lease = await acquireDaemonPluginRuntimeRegistryLease();
-        try {
-          const registration =
-            lease.registry.agentRuntimesByAgentId.get(agentId);
-          if (
-            !registration ||
-            !registration.hasPrimaryRuntime ||
-            !registration.sessionRunnerFactoryBinding ||
-            registration.isCurrent() !== true
-          ) {
-            throw new Error(
-              `Runner Agent '${agentId}' has no current retained binding`,
-            );
-          }
-          return registration.sessionRunnerFactoryBinding;
-        } finally {
-          await lease.release();
-        }
-      },
-      ...(params.hardRevokeRunningSessionsForGenerationIntegrityFailure
-        ? {
-            hardRevokeRunningSessionsForGenerationIntegrityFailure:
-              params.hardRevokeRunningSessionsForGenerationIntegrityFailure,
-          }
-        : {}),
-      reserveManagedDependencyRetention: async (retainedAgent) => {
-        const lease = await acquireDaemonPluginRuntimeRegistryLease();
-        try {
-          return (
-            lease.registry.reserveManagedDependencyRetention?.(
-              retainedAgent,
-            ) ?? {
-              retention: {
-                v: 1 as const,
-                sourceCustodies: [],
-                qualifiedDependencyIds: [],
-              },
-              release() {},
+    const registryAccess = createTrackedRunnerAgentRegistryAccess({ tracked, acquireLease: acquireDaemonPluginRuntimeRegistryLease });
+    try {
+      await refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority({
+        happyHomeDir: configuration.happyHomeDir,
+        publicReleaseRing: configuration.publicReleaseRing,
+        httpPort,
+        sessionId,
+        tracked,
+        resolveCurrentRetainedAgent: registryAccess.resolveCurrentRetainedAgent,
+        ...(params.hardRevokeRunningSessionsForGenerationIntegrityFailure
+          ? {
+              hardRevokeRunningSessionsForGenerationIntegrityFailure:
+                params.hardRevokeRunningSessionsForGenerationIntegrityFailure,
             }
-          );
-        } finally {
-          await lease.release();
-        }
-      },
-    });
+          : {}),
+        reserveManagedDependencyRetention: registryAccess.reserveManagedDependencyRetention,
+      });
+    } finally {
+      await registryAccess.release();
+    }
   };
   unsubscribeRunnerAgentAuthorityCurrentness =
     pluginRuntimeController.subscribeRunningSessionDisposition((result) => {
@@ -12964,7 +12933,7 @@ export async function startDaemonSessionControlRuntime(
                 reason: 'no_evidence' });
             }
             return { ok: true as const, result: { kind: 'provider_broker.refusal' as const,
-              denial: await evidence?.readDenial(turnId) ?? null } };
+              ...(await evidence?.readFailureEvidence(turnId) ?? { denial: null }) } };
           }
           if (request.operation.kind === 'provider_broker.binding.open') {
             const tracked = trackedSession;

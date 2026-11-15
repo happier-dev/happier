@@ -55,7 +55,7 @@ import {
     dispatchCurrentRunnerDaemonPluginService,
     isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
     openCurrentRunnerTeamCredentialProviderBinding,
-    readCurrentRunnerTeamCredentialBrokerDenial,
+    readCurrentRunnerTeamCredentialBrokerFailureEvidence,
     recordRunnerTeamCredentialRefusalRead,
     resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
@@ -239,9 +239,9 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
                 if (!bridge?.observeConnectedAccountIdentity) throw new Error('connected_account_identity_observation_unavailable');
                 await bridge.observeConnectedAccountIdentity(observation, options);
             },
-            async readTeamCredentialDenial(params) {
+            async readTeamCredentialFailureEvidence(params) {
                 const bridge = requireClaimed().daemonTurnContributionsBridge;
-                return await bridge?.readTeamCredentialDenial?.(params) ?? null;
+                return await bridge?.readTeamCredentialFailureEvidence?.(params) ?? null;
             },
             pluginMcp: {
                 async prepare(input: Parameters<import('@/mcp/runtime/pluginMcpPort').PluginMcpPort['prepare']>[0]) {
@@ -1183,13 +1183,13 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 },
                 pluginMcp: pluginMcp.port,
                 mcpRequestAuth,
-                async readTeamCredentialDenial(params) {
+                async readTeamCredentialFailureEvidence(params) {
                     if (!hasSessionTeamCredentialBinding || params.sessionId !== expectedAuthority.sessionId) {
                         recordRunnerTeamCredentialRefusalRead({ authority: expectedAuthority,
                             turnId: params.turnId, outcome: 'miss', reason: 'unsupported' });
                         return null;
                     }
-                    return await readCurrentRunnerTeamCredentialBrokerDenial({
+                    return await readCurrentRunnerTeamCredentialBrokerFailureEvidence({
                         authority: expectedAuthority,
                         turnId: params.turnId,
                         ...(params.signal ? { signal: params.signal } : {}),

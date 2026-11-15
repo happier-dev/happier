@@ -265,6 +265,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     const localized = presentSessionContinuationFailure(issue)?.message ?? presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
     const message = presentSessionStartupFailureRecovery([issue?.code])?.message ?? localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
+    const carrierFailure = issue?.failureCause?.carrierFailure;
     // A usage limit is said as the limit itself; the provider's advice stays in Details.
     const usageLimited = issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
     const summary = issue ? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
@@ -274,6 +275,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
         summary,
         cause: message,
         details: issue ? [raw !== summary ? raw : null, issue.code, issue.failureCause?.code, issue.failureCause?.providerErrorCode,
+            carrierFailure ? `${carrierFailure.closingSide}: ${carrierFailure.closingStage}` : null,
             requestId ? t('session.startFailure.requestId', { id: requestId }) : null].filter(value => value != null).join('\n') : null,
         message: message && requestId ? `${message}\n${t('session.startFailure.requestId', { id: requestId })}` : message,
         recovery: issue?.usageLimit?.connectedService ? t('session.usageLimitRecovery.actions.switchAccountNow') : null,

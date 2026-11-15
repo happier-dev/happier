@@ -18,20 +18,20 @@ describe('Session broker application evidence', () => {
     turnId = 'first';
     const oldRequest = evidence.beginRequest();
     oldRequest?.(denial);
-    await expect(evidence.readDenial('first')).resolves.toEqual(denial);
+    await expect(evidence.readFailureEvidence('first')).resolves.toEqual({ denial });
     turnId = 'second';
     const newRequest = evidence.beginRequest();
     newRequest?.(denial);
     oldRequest?.(null); // Late old success must not erase the second turn's denial.
     oldRequest?.(denial); // Nor attribute an old refusal to its successor.
-    await expect(evidence.readDenial('first')).resolves.toBeNull();
-    await expect(evidence.readDenial('second')).resolves.toEqual(denial);
+    await expect(evidence.readFailureEvidence('first')).resolves.toEqual({ denial: null });
+    await expect(evidence.readFailureEvidence('second')).resolves.toEqual({ denial });
     newRequest?.(null);
-    await expect(evidence.readDenial('second')).resolves.toBeNull();
+    await expect(evidence.readFailureEvidence('second')).resolves.toEqual({ denial: null });
     newRequest?.(denial);
     current = false;
     evidence.beginRequest()?.(denial);
-    await expect(evidence.readDenial('second')).resolves.toBeNull();
+    await expect(evidence.readFailureEvidence('second')).resolves.toEqual({ denial: null });
     // Diagnostics reuse admission/outcome snapshots, including on refused reads.
     expect([turnReads, generationReads]).toEqual([10, 14]);
     const records = log.mock.calls.filter(([message, data]) => message === '[provider-broker-application]'

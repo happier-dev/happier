@@ -17,6 +17,18 @@ import {
 const protocol = { ...sessionInputAdmission, SessionMessageMetaSchema };
 
 describe('session input admission metadata', () => {
+  it('retains the typed runtime cause in a failed completion wait wire result', () => {
+    const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'auth_error',
+      source: 'auth_error', occurredAt: 5,
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required' } };
+    const result = { status: 'failed', code: 'session_input_turn_failed', localId: 'failed-wait', runtimeIssueV1 };
+    expect(protocol.SessionMessageSendResultV1Schema.parse(result)).toEqual(result);
+    const validate = compilePluginJsonSchema(protocol.SessionMessageSendResultV1ProtocolSchema.jsonSchema);
+    expect(validate(result)).toBe(true);
+    expect(protocol.SessionMessageSendResultV1Schema.safeParse({ ...result,
+      runtimeIssueV1: { ...runtimeIssueV1, failureCause: { ...runtimeIssueV1.failureCause, transcript: 'private' } } }).success).toBe(false);
+  });
+
   it('publishes a projectable failed-resume result retaining the typed continuity cause', () => {
     const errorDetail = { kind: 'connected_service_resume_unreachable',
       continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',

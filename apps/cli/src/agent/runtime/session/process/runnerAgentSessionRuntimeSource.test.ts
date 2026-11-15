@@ -524,7 +524,7 @@ describe('runner Agent session runtime source', () => {
         mocks.readAuthority.mockClear();
         mocks.readPrivateBearerFile.mockClear();
         try {
-            await expect(source!.daemonTurnContributionsBridge!.readTeamCredentialDenial!({
+            await expect(source!.daemonTurnContributionsBridge!.readTeamCredentialFailureEvidence!({
                 sessionId: 'session-1', turnId: 'turn-1',
             })).resolves.toBeNull();
             expect(mocks.dispatch).not.toHaveBeenCalled();

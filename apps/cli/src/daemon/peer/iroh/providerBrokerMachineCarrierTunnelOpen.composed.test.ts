@@ -177,7 +177,8 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     try {
       expect(getMachineTunnelStatus).not.toHaveBeenCalled();
       // The Pi request was reset by the gated listener before any stream admission.
-      await expect(evidence.readDenial('turn-1')).resolves.toBeNull();
+      await expect(evidence.readFailureEvidence('turn-1')).resolves.toEqual({ denial: null,
+        carrierFailure: { closingSide: 'initiator', closingStage: 'local_http_head' } });
       const reads = log.mock.calls.filter(([message, data]) => message === '[provider-broker-application]'
         && data && typeof data === 'object' && 'stage' in data && data.stage === 'evidence_read').map(([, data]) => data);
       expect(reads).toEqual([{ stage: 'evidence_read', sessionId: 'session-1', turnId: 'turn-1', pid: 123,
@@ -394,7 +395,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     let evidenceReads = 0;
     const lifecycle = createSessionTurnLifecycle({
       session: { sessionId: 'session-1', enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
-      readTeamCredentialDenial: async turnId => { evidenceReads++; return evidence.readDenial(turnId); },
+      readTeamCredentialFailureEvidence: async turnId => { evidenceReads++; return evidence.readFailureEvidence(turnId); },
     });
     let sequence = 0;
     const fail = async (turnId: string, cancelled = false) => {

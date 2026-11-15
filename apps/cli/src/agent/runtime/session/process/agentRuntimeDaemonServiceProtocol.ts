@@ -24,7 +24,7 @@ import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '@happier
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeCarrierFailureV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { WorkflowProjectTargetV1Schema } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { McpRequestAuthOpenV1Schema, McpRequestAuthCloseV1Schema, McpRequestAuthResultV1Schema, McpRequestAuthClosedV1Schema } from '@/mcp/runtime/mcpRequestAuth';
@@ -458,6 +458,7 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
         z.strictObject({
           kind: z.literal('provider_broker.refusal'),
           denial: z.nullable(asHostProtocolZod(SessionRuntimeTeamCredentialDenialDetailsV1Schema)),
+          carrierFailure: z.optional(asHostProtocolZod(SessionRuntimeCarrierFailureV1Schema)),
         }),
         z.strictObject({
           kind: z.literal('turn.admission'),

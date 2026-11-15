@@ -1,3 +1,4 @@
+import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { randomUUID } from 'node:crypto';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { configuration } from '@/configuration';
@@ -17,7 +18,6 @@ import type {
 } from './agentRuntimeRunnerProtocol';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { SessionInputEnqueueResultV1 } from '@happier-dev/protocol';
-import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { TeamCredentialErrorCodeV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import {
@@ -66,13 +66,13 @@ export function recordRunnerTeamCredentialRefusalRead(input: Readonly<{
   } catch { /* Diagnostics cannot change the refusal read outcome. */ }
 }
 
-export async function readCurrentRunnerTeamCredentialBrokerDenial(
+export async function readCurrentRunnerTeamCredentialBrokerFailureEvidence(
   input: Readonly<{
     authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
     turnId: string;
     signal?: AbortSignal;
   }>,
-): Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null> {
+): Promise<SessionBrokerApplicationFailureEvidence | null> {
   let diagnostic: Readonly<{
     outcome: 'hit' | 'miss' | 'failed';
     reason?: 'no_evidence' | 'read_failed';
@@ -91,7 +91,8 @@ export async function readCurrentRunnerTeamCredentialBrokerDenial(
     diagnostic = response.result.denial
       ? { outcome: 'hit' }
       : { outcome: 'miss', reason: 'no_evidence' };
-    return response.result.denial;
+    return { denial: response.result.denial, ...(response.result.carrierFailure
+      ? { carrierFailure: response.result.carrierFailure } : {}) };
   } finally {
     recordRunnerTeamCredentialRefusalRead({ authority: input.authority, turnId: input.turnId, ...diagnostic });
   }

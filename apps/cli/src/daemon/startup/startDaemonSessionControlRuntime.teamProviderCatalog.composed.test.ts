@@ -26,7 +26,7 @@ import { parseCodexProviderBindingEngineConfigV1 } from '../../../../../packages
 import { configuration } from '@/configuration';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
   readCurrentRunnerAgentRuntimeDaemonServiceAuthority, removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import { openCurrentRunnerTeamCredentialProviderBinding, readCurrentRunnerTeamCredentialBrokerDenial } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { openCurrentRunnerTeamCredentialProviderBinding, readCurrentRunnerTeamCredentialBrokerFailureEvidence } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { presentSessionTeamCredentialDenial } from '../../../../ui/sources/components/sessions/presentation/sessionTeamCredentialDenialPresentation';
@@ -177,15 +177,15 @@ it.each(['direct', 'wrapped'] as const)('prepares grantee host input through rea
   const readLog = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
   const readRequests = vi.spyOn(globalThis, 'fetch');
   try {
-    await expect(source.daemonTurnContributionsBridge!.readTeamCredentialDenial!({
+    await expect(source.daemonTurnContributionsBridge!.readTeamCredentialFailureEvidence!({
       sessionId: h.sessionId, turnId: 'refusal-read-turn',
     })).resolves.toBeNull();
     expect(readRequests).not.toHaveBeenCalled();
     h.tracked.activeTurnId = 'refusal-read-turn';
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'refusal-read-turn' })).resolves.toBeNull();
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'previous-turn' })).resolves.toBeNull();
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'refusal-read-turn' })).resolves.toEqual({ denial: null });
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'previous-turn' })).resolves.toEqual({ denial: null });
     let evidenceCurrent = true;
     h.tracked.teamCredentialBrokerEvidence = createSessionBrokerApplicationEvidence({
       sessionId: h.sessionId, pid: issued.runner.pid, processStartTimeMs: issued.runner.processStartTimeMs,
@@ -193,21 +193,21 @@ it.each(['direct', 'wrapped'] as const)('prepares grantee host input through rea
     });
     const denial = { v: 1, resourceId: 'PRIVATE_RESOURCE', reasonCode: 'resource_forbidden' } as const;
     h.tracked.teamCredentialBrokerEvidence.beginRequest()?.(denial);
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'refusal-read-turn' })).resolves.toEqual(denial);
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'refusal-read-turn' })).resolves.toEqual({ denial });
     // A captured refusal belongs to its exact turn even after lifecycle tracking
     // clears or advances. The evidence owner still rejects a different turn.
     delete h.tracked.activeTurnId;
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'refusal-read-turn' })).resolves.toEqual(denial);
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'refusal-read-turn' })).resolves.toEqual({ denial });
     h.tracked.activeTurnId = 'next-turn';
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'refusal-read-turn' })).resolves.toEqual(denial);
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'next-turn' })).resolves.toBeNull();
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'refusal-read-turn' })).resolves.toEqual({ denial });
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'next-turn' })).resolves.toEqual({ denial: null });
     evidenceCurrent = false;
-    await expect(readCurrentRunnerTeamCredentialBrokerDenial({ authority: expectedAuthority,
-      turnId: 'refusal-read-turn' })).resolves.toBeNull();
+    await expect(readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority: expectedAuthority,
+      turnId: 'refusal-read-turn' })).resolves.toEqual({ denial: null });
     // One private RPC per demanded supported read; unsupported runners stay local.
     expect(readRequests).toHaveBeenCalledTimes(7);
     const context = { sessionId: h.sessionId, pid: issued.runner.pid, processStartTimeMs: issued.runner.processStartTimeMs };
@@ -732,10 +732,10 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     const source = await createRunnerAgentSessionRuntimeSource({ happyHomeDir: configuration.happyHomeDir,
       publicReleaseRing: configuration.publicReleaseRing, authorityFilePath: path, expectedSessionId: h.sessionId,
       occurrenceId: 'c165-refusal-runner' });
-    if (!source?.prepareTeamCredentialProviderBinding || !source.daemonTurnContributionsBridge?.readTeamCredentialDenial) {
+    if (!source?.prepareTeamCredentialProviderBinding || !source.daemonTurnContributionsBridge?.readTeamCredentialFailureEvidence) {
       throw new Error('Missing runner Team credential composition');
     }
-    const readTeamCredentialDenial = source.daemonTurnContributionsBridge.readTeamCredentialDenial;
+    const readTeamCredentialFailureEvidence = source.daemonTurnContributionsBridge.readTeamCredentialFailureEvidence;
     onTestFinished(() => source.retire?.());
     bindingSetupStage = 'Team binding';
     const opened = await source.prepareTeamCredentialProviderBinding({ sessionId: h.sessionId,
@@ -816,11 +816,11 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     // close. Host evidence must survive either Agent-visible boundary outcome.
     console.info('Native fresh Team refusal observation', { httpStatus: denied?.status ?? null });
     expect(brokerOpens).toBe(beforeRefusal + 1);
-    expect(await readCurrentRunnerTeamCredentialBrokerDenial({ authority, turnId: 'another-turn' })).toBeNull();
+    expect(await readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority, turnId: 'another-turn' })).toEqual({ denial: null });
     const mutations: SessionTurnMutationV1[] = [];
     const lifecycle = createSessionTurnLifecycle({
       session: { sessionId: h.sessionId, enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
-      readTeamCredentialDenial: turnId => readTeamCredentialDenial({ sessionId: h.sessionId, turnId }),
+      readTeamCredentialFailureEvidence: turnId => readTeamCredentialFailureEvidence({ sessionId: h.sessionId, turnId }),
     });
     lifecycle.observeRuntimeEvent({ sequence: 0, sessionId: h.sessionId, emittedAtMs: 100,
       kind: 'turn-start', turnId: 'later-refusal-turn', startedBy: 'host' });
@@ -845,7 +845,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     laterRefusal = false;
     const accepted = await requestApplication();
     expect(accepted.status).toBe(204);
-    expect(await readCurrentRunnerTeamCredentialBrokerDenial({ authority, turnId: 'later-refusal-turn' })).toBeNull();
+    expect(await readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority, turnId: 'later-refusal-turn' })).toEqual({ denial: null });
     // A Home read that outlives this turn cannot attribute its denial to the successor.
     let notifyRefreshStarted = () => {};
     let releaseRefresh = () => {};
@@ -859,7 +859,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
       h.tracked.activeTurnId = 'successor-turn';
     } finally { releaseRefresh(); }
     await lateRequest.catch(() => null);
-    expect(await readCurrentRunnerTeamCredentialBrokerDenial({ authority, turnId: 'successor-turn' })).toBeNull();
+    expect(await readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority, turnId: 'successor-turn' })).toEqual({ denial: null });
     laterRefusal = false;
     const priorBrokerOpens = brokerOpens;
     // Deliberately remove the requester binding once. This is the original

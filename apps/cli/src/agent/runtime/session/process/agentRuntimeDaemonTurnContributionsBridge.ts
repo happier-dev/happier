@@ -1,3 +1,4 @@
+import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import type {
     AgentRuntimeDaemonTurnContributionsResultV1,
     ComposerStagedMediaAdmissionSettlementV1,
@@ -12,7 +13,6 @@ import type {
     SessionPendingEnqueueByMachineRequestV1,
     SessionPendingExecutionRunEnqueueByMachineRequestV2,
 } from '@happier-dev/protocol';
-import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 type DaemonAgentRuntimePromptContributions = Extract<
@@ -41,11 +41,11 @@ export type DaemonAgentRuntimeTurnContributionsBridge = Readonly<{
         { kind: 'connected-account-identity-observed' }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
     pluginMcp?: import('@/mcp/runtime/pluginMcpPort').PluginMcpPort;
     mcpRequestAuth?: import('@/mcp/runtime/mcpRequestAuth').McpRequestAuthPort;
-    readTeamCredentialDenial?(params: Readonly<{
+    readTeamCredentialFailureEvidence?(params: Readonly<{
         sessionId: string;
         turnId: string;
         signal?: AbortSignal;
-    }>): Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null>;
+    }>): Promise<SessionBrokerApplicationFailureEvidence | null>;
     admitSessionInput?(params: Readonly<{
         sessionId: string;
         request: SessionPendingEnqueueByMachineRequestV1 | SessionPendingExecutionRunEnqueueByMachineRequestV2;

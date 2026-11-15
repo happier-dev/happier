@@ -1,3 +1,4 @@
+import type { SessionRuntimeCarrierFailureV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { PeerTcpTunnelStreamConnection } from '@happier-dev/peer-transport';
 import { MACHINE_ALPN, type IrohNodeMachineHttpHandshakeRefusal } from '@happier-dev/iroh-native/node';
 import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
@@ -123,12 +124,8 @@ export type MachineCarrierTransportOpenInput = Readonly<{
     handshake: ReturnType<typeof IrohMachineHandshakeV1Schema.parse>;
 }>;
 
-/** Fixed host-private facts, with no peer identities, URLs or native messages. */
-export type MachineCarrierFailureDiagnostic = Readonly<{
-    closingSide: 'initiator' | 'broker' | 'peer_or_transport' | 'unknown';
-    closingStage: 'local_http_head' | 'local_capability' | 'stream_decision'
-      | 'stream_admission' | 'pre_application_custody' | 'transport' | 'unknown';
-}>;
+/** Fixed carrier facts, with no peer identities, URLs or native messages. */
+export type MachineCarrierFailureDiagnostic = Readonly<SessionRuntimeCarrierFailureV1>;
 
 /**
  * Provider-broker machine/1 opens deliberately have no same-account flow or

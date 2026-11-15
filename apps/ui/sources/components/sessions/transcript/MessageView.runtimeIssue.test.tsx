@@ -122,7 +122,8 @@ describe('MessageView runtime failure rows', () => {
         const messages = projectPersistedRows([{ id: 'session-failure', data: { type: 'message', message: `codex turn failed: ${preview}` },
             meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
                 code: 'agent_session_error', source: 'agent_session_error', occurredAt: 1_000, sanitizedPreview: preview,
-                failureCause: { phase: 'turn', failureReason: 'unknown', requestId: 'req-42' } } } }]);
+                failureCause: { phase: 'turn', failureReason: 'unknown', requestId: 'req-42',
+                    carrierFailure: { closingSide: 'initiator', closingStage: 'local_http_head' } } } } }]);
         const failure = messages[0]!;
         const screen = await renderScreen(<TranscriptRuntimeIssueRepeatCountsContext.Provider value={{ [failure.id]: 11 }}>
             <MessageView message={failure} metadata={null} sessionId="s1" />
@@ -135,6 +136,8 @@ describe('MessageView runtime failure rows', () => {
         expect(details).not.toBeNull();
         expect(screen.getTextContent()).toContain('agent_session_error');
         expect(screen.getTextContent()).toContain('session.startFailure.requestId');
+        expect(screen.getTextContent()).toContain('initiator');
+        expect(screen.getTextContent()).toContain('local_http_head');
     });
 
     it('leaves a start failure to the composer notice while it states it, and keeps the row once the Session recovers', async () => {

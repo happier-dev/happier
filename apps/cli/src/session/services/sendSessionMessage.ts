@@ -512,8 +512,8 @@ function readTranscriptRuntimeIssuePreview(value: unknown): string | null {
 }
 
 /** The host's failure writers attach the typed issue; only its schema fields leave the transcript. */
-function readTranscriptRuntimeIssueV1(value: unknown): Readonly<{ runtimeIssueV1?: SessionRuntimeIssueV1 }> {
-  const parsed = SessionRuntimeIssueV1Schema.safeParse(asRecord(asRecord(value)?.meta)?.runtimeIssueV1);
+function readRuntimeIssueV1(value: unknown): Readonly<{ runtimeIssueV1?: SessionRuntimeIssueV1 }> {
+  const parsed = SessionRuntimeIssueV1Schema.safeParse(value);
   return parsed.success ? { runtimeIssueV1: parsed.data } : {};
 }
 
@@ -540,7 +540,7 @@ function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
   }
   const lifecycleEvent = detectSessionTurnLifecycleEvent(value);
   if (lifecycleEvent === 'turn_failed') {
-    return { kind: 'failed', message: formatStructuredTurnFailureMessage('failed'), ...readTranscriptRuntimeIssueV1(value) };
+    return { kind: 'failed', message: formatStructuredTurnFailureMessage('failed'), ...readRuntimeIssueV1(asRecord(asRecord(value)?.meta)?.runtimeIssueV1) };
   }
   if (lifecycleEvent === 'turn_cancelled') {
     return { kind: 'cancelled', message: formatStructuredTurnFailureMessage('cancelled') };
@@ -552,7 +552,7 @@ function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
     return {
       kind: 'failed',
       message: formatStructuredTurnFailureMessage('failed', readTranscriptRuntimeIssuePreview(value)),
-      ...readTranscriptRuntimeIssueV1(value),
+      ...readRuntimeIssueV1(asRecord(asRecord(value)?.meta)?.runtimeIssueV1),
     };
   }
   return null;
@@ -569,7 +569,7 @@ function readProjectedCurrentTurnFailure(params: Readonly<{
   const record = asRecord(params.session);
   return { kind: latestTurnStatus, message: formatStructuredTurnFailureMessage(
     latestTurnStatus, readStructuredIssuePreview(record?.lastRuntimeIssue),
-  ) };
+  ), ...(latestTurnStatus === 'failed' ? readRuntimeIssueV1(record?.lastRuntimeIssue) : {}) };
 }
 
 function readProjectedCurrentTurnStatus(params: Readonly<{
@@ -2336,7 +2336,7 @@ export async function sendSessionMessage(
           code: 'wait_failed',
           message: assistantTurnOutcome.message,
           settlementResult: assistantTurnOutcome.kind === 'failed'
-            ? { status: 'failed', localId, code: 'session_input_turn_failed' }
+            ? { status: 'failed', localId, code: 'session_input_turn_failed', ...(assistantTurnOutcome.runtimeIssueV1 ? { runtimeIssueV1: assistantTurnOutcome.runtimeIssueV1 } : {}) }
             : { status: 'cancelled', localId, code: 'session_input_turn_cancelled' },
           ...(admissionResult ? { admissionResult } : {}),
         };
@@ -2454,7 +2454,7 @@ export async function sendSessionMessage(
         message: projectedFailure.message,
         settlementResult: projectedFailure.kind === 'cancelled'
           ? { status: 'cancelled', localId, code: 'session_input_turn_cancelled' }
-          : { status: 'failed', localId, code: 'session_input_turn_failed' },
+          : { status: 'failed', localId, code: 'session_input_turn_failed', ...(projectedFailure.runtimeIssueV1 ? { runtimeIssueV1: projectedFailure.runtimeIssueV1 } : {}) },
         ...(admissionResult ? { admissionResult } : {}),
       };
     }
@@ -2472,7 +2472,7 @@ export async function sendSessionMessage(
         message: transcriptFailure.message,
         settlementResult: transcriptFailure.kind === 'cancelled'
           ? { status: 'cancelled', localId, code: 'session_input_turn_cancelled' }
-          : { status: 'failed', localId, code: 'session_input_turn_failed' },
+          : { status: 'failed', localId, code: 'session_input_turn_failed', ...(transcriptFailure.runtimeIssueV1 ? { runtimeIssueV1: transcriptFailure.runtimeIssueV1 } : {}) },
         ...(admissionResult ? { admissionResult } : {}),
       };
     }
@@ -2507,7 +2507,7 @@ export async function sendSessionMessage(
         code: 'wait_failed',
         message: assistantTurnOutcome.message,
         settlementResult: assistantTurnOutcome.kind === 'failed'
-          ? { status: 'failed', localId, code: 'session_input_turn_failed' }
+          ? { status: 'failed', localId, code: 'session_input_turn_failed', ...(assistantTurnOutcome.runtimeIssueV1 ? { runtimeIssueV1: assistantTurnOutcome.runtimeIssueV1 } : {}) }
           : { status: 'cancelled', localId, code: 'session_input_turn_cancelled' },
         ...(admissionResult ? { admissionResult } : {}),
       };

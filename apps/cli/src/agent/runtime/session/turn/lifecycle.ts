@@ -1,8 +1,9 @@
+import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 import { isForegroundTurnRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
-import type { AgentSessionRuntimeEvent, SessionRuntimeIssueV1, SessionTurnFactsV1, SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol';
+import type { AgentSessionRuntimeEvent, SessionRuntimeIssueV1, SessionTurnFactsV1 } from '@happier-dev/protocol';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { logger } from '@/ui/logger';
 
@@ -25,7 +26,7 @@ type SessionTurnLifecycleParams = Readonly<{
     readTurnFacts?: () => SessionTurnFactsV1;
     /** Exact native start cause, not the mutable active input of a later steer. */
     readStartingInput?: (turnId: string) => Readonly<{ inputId: string; turnId: string }> | null;
-    readTeamCredentialDenial?: (turnId: string) => Promise<SessionRuntimeTeamCredentialDenialDetailsV1 | null>;
+    readTeamCredentialFailureEvidence?: (turnId: string) => Promise<SessionBrokerApplicationFailureEvidence | null>;
     onTurnFactsChanged?: (input: Readonly<{ turnId: string; facts: SessionTurnFactsV1 | null }>) => void;
     onTurnProgressChanged?: (input: Readonly<{ progress: SessionTurnProgressV1 | null; observedAt: number }>) => void;
     onAcceptedTurnFailure?: (event: Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>, issue: SessionRuntimeIssueV1) => Promise<void>;
@@ -161,15 +162,21 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         outcome, ...(reason ? { reason } : {}) });
                 } catch { /* Diagnostics cannot suppress a terminal outcome. */ }
             };
-            if (mutation.action === 'fail' && params.readTeamCredentialDenial) {
+            if (mutation.action === 'fail' && params.readTeamCredentialFailureEvidence) {
                 try {
-                    const denial = await params.readTeamCredentialDenial(mutation.turnId);
+                    const evidence = await params.readTeamCredentialFailureEvidence(mutation.turnId);
+                    const denial = evidence?.denial;
                     if (denial) mutation = { ...mutation, issue: classifyPrimarySessionRuntimeIssue({
                         provider: params.agentId, cause: 'session_error', error: failedEvent?.diagnostic,
                         occurredAt: mutation.issue.occurredAt, agentTurnId: mutation.issue.agentTurnId,
                         teamCredentialDenial: denial,
                     }) };
-                    recordEnrichment(denial ? 'applied' : 'skipped', denial ? undefined : 'evidence_absent');
+                    if (evidence?.carrierFailure) mutation = { ...mutation, issue: { ...mutation.issue,
+                        failureCause: { phase: 'turn', failureReason: 'unknown', ...mutation.issue.failureCause,
+                            carrierFailure: evidence.carrierFailure },
+                    } };
+                    const applied = !!denial || !!evidence?.carrierFailure;
+                    recordEnrichment(applied ? 'applied' : 'skipped', applied ? undefined : 'evidence_absent');
                 } catch {
                     // A failed evidence read cannot suppress the native terminal outcome.
                     logger.debug('[session-turn] Broker refusal evidence unavailable');

@@ -1,5 +1,15 @@
 # Compatibility and version skew
 
+## Failure cause carriers (unreleased 0.3)
+
+Execution-run Action completion observations and review, plan and narration terminal
+values retain optional `runtimeIssueV1`. External-linked takeover operation errors
+and owner progress retain the same optional metadata. The existing runtime issue
+reader and metadata projector own parsing and content-free publication. Existing
+records without the field remain valid. Protocol and CLI reload together; older
+strict development readers may reject the added field. These unreleased 0.3
+contracts receive no compatibility adapter or migration.
+
 ## Stored App Preset Domain selections (unreleased 0.3)
 
 Catalog App preset intent accepts optional root `domainBindings`, using the
@@ -8673,6 +8683,16 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `workflow.run.list` adds optional `starter: 'current_account'`
+to its closed request. The server resolves this selector from the authenticated
+Account and intersects it with the existing Run audience; omission preserves
+shared history. Start-role prefill requests the newest matching Run rather than
+paging teammate history. The selector is not safely ignorable: matching Protocol,
+server, UI and generated SDK source reload together under the development direct
+cut. Earlier strict development readers reject it. The inspected `../0.2`
+frontier `c8867dad513ef489183953878c084d660fbe0653` has no Workflow protocol
+module. No persistence, wire epoch, capability or compatibility adapter is added.
+
 In unreleased 0.3, a `session.message.send` wait reply whose accepted turn failed returns
 `replied` with outcome `{ kind: 'failed', runtimeIssueV1 }`, which is a new strict variant of
 the inline `SessionMessageReplyResolvedOutcomeV1`. The cause is the accepted turn's
@@ -8681,6 +8701,29 @@ typed `SessionRuntimeIssueV1`, taken from the same exact-turn reader as
 `{ kind: 'failed' }`. Matching Protocol, CLI and UI source reload together under the
 direct cut; an older strict reader rejects the added variant. The inspected `../0.2`
 frontier has no inline reply projection.
+
+The legacy `session.message.send` completion wait also retains that typed issue on
+`{ status: 'failed', code: 'session_input_turn_failed', localId, runtimeIssueV1? }`.
+The optional field uses `SessionRuntimeIssueV1` and the same canonical failure
+reader as the reply wait; it carries no transcript text or credentials. Protocol
+and CLI reload together; an older strict development reader rejects the added
+field. No adapter, legacy parser or wire epoch is added for unreleased 0.3.
+
+`SessionRuntimeFailureCauseV1` also retains optional `carrierFailure`, containing
+only the closed `closingSide` and `closingStage` native diagnostic enums. The
+Session evidence reader carries these facts through daemon/runner turn enrichment
+to the existing UI runtime-issue Details disclosure. They never authorize access
+or reclassify a transport failure as a credential refusal. Matching Protocol,
+daemon, runner and UI reload together; no compatibility path is added.
+
+In unreleased 0.3, the existing native state-entry declaration's optional
+`createIfMissing` also accepts `file`. The host creates that shared file without
+truncation before linking; isolated state never creates it. Kimi consumes this
+for its native session index. This executable declaration is closed and is not
+safely ignorable: load matching host, SDK and Kimi source together under the
+unpublished development direct cut. The runtime wire epoch, persisted format,
+and existing directory declarations are unchanged; no compatibility adapter or
+capability gate is added.
 
 Unreleased 0.3 runner activity notifications add
 optional `providerInputAdmissionReady`, decided by the Session client's installed

@@ -87,6 +87,29 @@ describe('createSessionTurnLifecycle', () => {
         expect(mutations.filter(mutation => mutation.action === 'touch_active')).toHaveLength(1);
     });
 
+    it('retains a native carrier close through the failed turn without inventing a Team denial', async () => {
+        const { createSessionBrokerApplicationEvidence } = await import('@/providers/broker/sessionBrokerApplicationEvidence');
+        const evidence = createSessionBrokerApplicationEvidence({ sessionId: 'carrier-session', pid: process.pid,
+            readActiveTurnId: () => 'carrier-turn', isCurrent: () => true });
+        let nativeReads = 0;
+        const carrierFailure = { closingSide: 'initiator', closingStage: 'local_http_head' } as const;
+        evidence.observeCarrierFailure(async () => { nativeReads++; return carrierFailure; });
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({ session: { sessionId: 'carrier-session',
+            enqueueSessionTurnMutation: async mutation => { mutations.push(SessionTurnMutationV1Schema.parse(mutation)); } },
+            readTeamCredentialFailureEvidence: turnId => evidence.readFailureEvidence(turnId),
+        });
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-start', sessionId: 'carrier-session', turnId: 'carrier-turn', emittedAtMs: 1 }));
+        lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-failed', sessionId: 'carrier-session', turnId: 'carrier-turn', emittedAtMs: 2,
+            diagnostic: { code: 'codex_app_server_turn_failed', severity: 'error', message: 'Native transport closed' } }));
+        await lifecycle.drainAcceptedLifecycle();
+        const failed = mutations.find(mutation => mutation.action === 'fail');
+        expect(failed).toMatchObject({ issue: { source: 'agent_session_error', failureCause: { carrierFailure } } });
+        if (!failed || failed.action !== 'fail') throw new Error('Missing failure mutation');
+        expect(failed.issue.teamCredential).toBeUndefined();
+        expect(nativeReads).toBe(1);
+    });
+
     it.each([false, true])('records payload-free enrichment outcomes without extra evidence reads or mutation writes (logging failed=%s)', async loggingFailed => {
         const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => { if (loggingFailed) throw new Error('File logging unavailable'); });
         let reads = 0;
@@ -95,10 +118,10 @@ describe('createSessionTurnLifecycle', () => {
             for (const scenario of ['applied', 'evidence_absent', 'read_failed', 'cancellation', 'non_team_failure'] as const) {
                 const lifecycle = createSessionTurnLifecycle({ session: { sessionId: 'logged-session',
                     enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
-                    ...(scenario === 'non_team_failure' ? {} : { readTeamCredentialDenial: async () => {
+                    ...(scenario === 'non_team_failure' ? {} : { readTeamCredentialFailureEvidence: async () => {
                         reads++;
                         if (scenario === 'read_failed') throw new Error('secret evidence read payload');
-                        return scenario === 'applied' ? { v: 1 as const, resourceId: 'private-resource', reasonCode: 'resource_forbidden' as const } : null;
+                        return { denial: scenario === 'applied' ? { v: 1 as const, resourceId: 'private-resource', reasonCode: 'resource_forbidden' as const } : null };
                     } }),
                 });
                 lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-start', sessionId: 'logged-session', turnId: scenario, emittedAtMs: 1 }));
