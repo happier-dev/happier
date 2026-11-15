@@ -1,9 +1,8 @@
 import * as React from 'react';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Item } from '@/components/ui/lists/Item';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import type { PageRowShape } from '@/components/ui/lists/pageRowMetrics';
@@ -32,30 +31,25 @@ export type ItemLoadState =
 
 type FailedLoadState = Extract<ItemLoadState, { kind: 'failed' }>;
 
-/** One row that says what failed, with Retry when asking again can help. */
+/**
+ * What failed, with Retry when asking again can help: the one shared inline notice (OWNER-UI-1115B A2), so a section's
+ * failed read looks like every other small failure in the app rather than a row of its own with a button.
+ */
 const FailedRow = React.memo(function FailedRow(props: Readonly<{ state: FailedLoadState; testID?: string }>) {
-    const styles = stylesheet;
     const { reason, onRetry } = props.state;
     return (
-        <Item
+        <SurfaceStateCard
             testID={props.testID}
+            size="line"
+            kind="error"
             title={reason}
-            titleStyle={styles.failedTitle}
             // A read that failed after the rows were shown is announced, as the state cards' alerts are.
-            accessibilityLiveRegion="assertive"
-            subtitleLines={0}
-            mode="info"
-            showChevron={false}
-            rightElement={onRetry ? (
-                <RoundButton
-                    testID={props.testID ? `${props.testID}-retry` : undefined}
-                    size="small"
-                    display="secondary"
-                    title={t('common.retry')}
-                    accessibilityLabel={t('common.retry')}
-                    action={() => Promise.resolve(onRetry())}
-                />
-            ) : undefined}
+            accessibilitySemantics="alert"
+            {...(onRetry ? { action: {
+                label: t('common.retry'),
+                onPress: () => Promise.resolve(onRetry()),
+                ...(props.testID ? { testID: `${props.testID}-retry` } : {}),
+            } } : {})}
         />
     );
 });
@@ -69,7 +63,6 @@ const HomeScopedFailedRow = React.memo(function HomeScopedFailedRow(props: Reado
     homeServerIds: readonly string[];
     testID?: string;
 }>) {
-    const styles = stylesheet;
     const deferred = useFailureExplainedByUnreachableHome(props.homeServerIds);
     const wasDeferred = React.useRef(deferred);
     const { onRetry } = props.state;
@@ -80,13 +73,13 @@ const HomeScopedFailedRow = React.memo(function HomeScopedFailedRow(props: Reado
     }, [deferred, onRetry]);
 
     if (!deferred) return <FailedRow testID={props.testID} state={props.state} />;
+    // The page's "can't reach" banner already says why: the section waits quietly in the same inline notice.
     return (
-        <Item
+        <SurfaceStateCard
             testID={props.testID}
+            size="line"
+            kind="unavailable"
             title={t('sidebarFooter.availableWhenHomeAnswers')}
-            titleStyle={styles.failedTitle}
-            mode="info"
-            showChevron={false}
         />
     );
 });
@@ -155,9 +148,3 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
         />
     );
 });
-
-const stylesheet = StyleSheet.create((theme) => ({
-    failedTitle: {
-        color: theme.colors.text.secondary,
-    },
-}));

@@ -78,10 +78,10 @@ describe('ServerRetentionSection', () => {
         // The read needs only this Home, so while it is unreachable the page's banner speaks for it.
         const load = screen.root.findAll((node) => node.props?.testID === 'server-retention-load' && node.props?.state)[0];
         expect(load?.props.state).toMatchObject({ kind: 'failed', homeServerIds: ['server-a'] });
-        expect(screen.findByTestId('server-retention-load')?.props.title).toBe('server.retention.readFailed');
+        expect(screen.getTextContent()).toContain('server.retention.readFailed');
         expect(texts(screen)).not.toContain('server.retention.detailsUnavailable');
-        // `Item` renders its trailing control from `rightElement`: the Retry button.
-        await screen.findByTestId('server-retention-load')?.props.rightElement.props.action();
+        // The section's failed read is the shared inline notice; its Retry reads again.
+        await screen.pressByTestIdAsync('server-retention-load-retry');
         expect(retry).toHaveBeenCalledTimes(1);
     });
 

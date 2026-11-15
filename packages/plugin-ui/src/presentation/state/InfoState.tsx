@@ -4,7 +4,7 @@ import { StyleSheet, View } from 'react-native';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { useHappierPageSection } from '../layout/PageSection.js';
 import { HappierBodyEdgeContext, useHappierColumnEdgePx } from '../layout/columnEdge.js';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '../collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, useHappierCollectionListRow } from '../collection/CollectionList.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_BALANCED_TEXT_WRAP } from '../text/balancedTextWrap.js';
 import type { HappierTone } from '../semantics.js';
@@ -108,6 +108,11 @@ export function HappierStateLine(props: Readonly<{
   const columnEdgePx = useHappierColumnEdgePx();
   // In a body that draws its own content edge (a widget body) the line stands on that edge.
   const onBodyEdge = useContext(HappierBodyEdgeContext);
+  // Among a collection list's rows the line takes their glyph box and inset. Anywhere else with no row edge of its
+  // own (loose on a page, beside the page's titles) there are no rows to align with: it stands on the page's text
+  // edge, its glyph on that edge (OWNER-UI-1115B A2).
+  const inCollectionList = useHappierCollectionListRow();
+  const loosePage = !menu && props.density !== 'catalog' && !onBodyEdge && !pageSection && !inCollectionList;
   // The glyph sits in the leading column of the rows around it, so the sentence starts on their titles'
   // edge: a menu's icon box, a page section's leading column, or a collection row's glyph box. A body that
   // draws its own edge has no glyph column, so there the glyph itself stands on that edge.
@@ -115,7 +120,7 @@ export function HappierStateLine(props: Readonly<{
     ? { boxPx: HAPPIER_MENU_ROW_METRICS.iconBoxSizePx, gapPx: HAPPIER_MENU_ROW_METRICS.iconMarginRightPx }
     : props.density === 'catalog'
       ? { boxPx: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox, gapPx: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap }
-    : onBodyEdge
+    : onBodyEdge || loosePage
       ? { boxPx: metrics.glyphPx, gapPx: metrics.gapPx }
     : pageSection
       ? { boxPx: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, gapPx: HAPPIER_PAGE_METRICS.rowLeadingGapPx }
@@ -131,7 +136,7 @@ export function HappierStateLine(props: Readonly<{
         : onBodyEdge
           ? 0
           : pageSection?.rowInsetPx
-          ?? (columnEdgePx > 0 ? Math.max(0, HAPPIER_PAGE_METRICS.pageTextInsetPx - columnEdgePx) : metrics.paddingHorizontalPx),
+          ?? (columnEdgePx > 0 || loosePage ? Math.max(0, HAPPIER_PAGE_METRICS.pageTextInsetPx - columnEdgePx) : metrics.paddingHorizontalPx),
       paddingVertical: metrics.paddingVerticalPx,
       // One line that wraps its sentence, never its parts: the glyph and the recovery stay beside the
       // text in a narrow column instead of stacking above and below it.

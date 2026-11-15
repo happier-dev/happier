@@ -34,10 +34,9 @@ const { ItemLoadStateRows } = await import('./ItemLoadStateRows');
 
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
 
-function hostTexts(screen: Screen): string[] {
-    return screen.root
-        .findAll((node) => typeof node.type === 'string' && typeof node.props.children === 'string')
-        .map((node) => node.props.children as string);
+/** What the section says, as a reader sees it (the shared notice composes its sentence in nested text). */
+function hostTexts(screen: Screen): string {
+    return screen.getTextContent();
 }
 
 describe('ItemLoadStateRows: a read from the Home this device uses', () => {
@@ -90,7 +89,7 @@ describe('ItemLoadStateRows', () => {
         expect(region?.props.accessibilityState).toEqual({ busy: true });
         expect(region?.props.accessibilityLabel).toBe('Loading machine pools');
         expect(screen.root.findAll((node) => typeof node.type === 'string' && /^pools-skeleton:\d$/.test(String(node.props.testID)))).toHaveLength(3);
-        expect(hostTexts(screen).some((text) => /loading/i.test(text))).toBe(false);
+        expect(/loading/i.test(hostTexts(screen))).toBe(false);
     });
 
     it('turns into one row that says what failed, with Retry, when the source fails', async () => {
@@ -108,6 +107,17 @@ describe('ItemLoadStateRows', () => {
         expect(screen.findHostByTestId('pools')?.props.accessibilityState?.busy).not.toBe(true);
         await screen.pressByTestIdAsync('pools-retry');
         expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    // OWNER-UI-1115B A2: a small failure is drawn one way everywhere, the shared inline notice, never a row of its own
+    // with a button (about 77 sections render their failed read through this owner).
+    it('says a failed read with the one shared inline notice', async () => {
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderScreen(
+            <ItemLoadStateRows testID="pools" state={{ kind: 'failed', reason: "Couldn't read machine pools on Studio", onRetry: () => {} }} />,
+        );
+        const notices = screen.findAllByType(SurfaceStateCard);
+        expect(notices.map((node) => [node.props.size, node.props.kind])).toEqual([['line', 'error']]);
     });
 
     it('offers no Retry when the failure cannot be retried from here', async () => {

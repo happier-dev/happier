@@ -351,7 +351,8 @@ describe('HomeAdministrationTeamsScreen', () => {
         await waitForHomeGovernance(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-teams-archived-retry');
         });
-        expect(screen.findByTestId('home-teams-archived')?.props.accessibilityLiveRegion).toBe('assertive');
+        // The failed read is announced as an alert by the shared inline notice it is drawn with.
+        expect(screen.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLiveRegion === 'assertive').length).toBeGreaterThan(0);
 
         const before = harness.requestsFor(TEAMS_LIST_PATH).length;
         await screen.pressByTestIdAsync('home-teams-archived-retry');

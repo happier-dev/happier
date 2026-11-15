@@ -173,6 +173,12 @@ const ACTION_GAP_PX = 12;
 const STACK_GAP_PX = 16;
 const LINE_ACTION_RADIUS_PX = 6;
 const LINE_ACTION_PADDING_PX = 6;
+/**
+ * A line's recoveries are words, not buttons: each pad reaches outward (its hit area and pressed fill) and the
+ * words stand where the line puts them, so under the sentence the first label starts on its words and inline the
+ * last one ends on the line's edge. Adjacent hit areas meet exactly, so two labels read as one pair.
+ */
+const LINE_ACTION_LABEL_GAP_PX = 2 * LINE_ACTION_PADDING_PX;
 /** A failure block's one type: the body step, for its sentence, Details and recovery alike. */
 const BLOCK_TEXT_METRICS: HappierSurfaceStateQuietMetrics = Object.freeze({
   fontSize: HAPPIER_TYPE_SCALE.body.fontSize,
@@ -549,7 +555,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
   const lineActions = actions.some(Boolean) || detailsToggle ? (
     <View
       // A narrow column (a field inside a step card) wraps the recoveries rather than run them past its edge.
-      style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: HAPPIER_STATE_LINE_METRICS.gapPx }}
+      style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: LINE_ACTION_LABEL_GAP_PX }}
     >
       {detailsToggle}
       {actions.map((action, index) =>
@@ -573,6 +579,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
               minHeight: details ? textMetrics.lineHeight : HAPPIER_STATE_LINE_METRICS.minHeightPx,
               justifyContent: 'center',
               paddingHorizontal: LINE_ACTION_PADDING_PX,
+              marginHorizontal: -LINE_ACTION_PADDING_PX,
               borderRadius: LINE_ACTION_RADIUS_PX,
               backgroundColor:
                 hovered || pressed ? bindings.pressedFill : undefined,
@@ -603,9 +610,9 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           testID={props.testID}
           icon={props.glyph}
           action={lineActions}
-          // Two ways forward never share a line with the words (the banner's rule): one recovery stays beside its
-          // sentence, two go under it on the sentence's edge, so a phone never squeezes the cause beside them.
-          actionPlacement={details || (props.action && props.secondaryAction) ? 'below' : 'trailing'}
+          // One line (OWNER-UI-1115B A2): the recoveries stay beside the sentence where they fit and wrap under it,
+          // on its words, where they don't. A failure that carries its code is the small block (owner 11-08).
+          actionPlacement={details ? 'below' : 'trailing'}
           textLineHeightPx={textMetrics.lineHeight}
           density={props.lineDensity}
           below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (
