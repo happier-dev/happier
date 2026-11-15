@@ -606,33 +606,15 @@ test('historical artifact retention preserves current, last-green and delayed se
     await writeFile(join(detached, 'status'), `State:\tS\nUid:\t${uid}\t${uid}\t${uid}\t${uid}\n`);
     await writeFile(join(detached, 'maps'), '');
     await symlink(fixture.repoRoot, join(detached, 'cwd'), 'dir');
+    // Retention follows reference (owner ruling 2026-11-15): a live Metro bound
+    // to the inventory through either path alias no longer pins superseded graphs.
     for (const [inventoryPath, binding] of [[aliasInventory, outputPath], [outputPath, aliasInventory]]) {
       await writeFile(join(detached, 'environ'), `HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY=${binding}\0`);
-      assert.equal(reap({ inventoryPaths: [inventoryPath, retainedPath, legacyInventoryPath],
-        retainCandidate: () => false }).reclaimedRoots, 0,
-      'a live inventory binding protects detached serving graphs through either path alias');
+      assert.equal(reap({ inventoryPaths: [inventoryPath, retainedPath, legacyInventoryPath], dryRun: true,
+        retainCandidate: () => false }).reclaimableRoots, 2,
+      'a live inventory binding retains only the graphs its inventories name');
       assert.ok(await stat(superseded));
     }
-    await writeFile(join(detached, 'environ'), `HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY=${outputPath}\0`);
-    const currentInventory = await readFile(outputPath, 'utf8');
-    const readProcessFile = fs.readFileSync;
-    // A publisher replaces the inventory after the census observes the live
-    // binding's inode, but before the candidate's final retention check.
-    t.mock.method(fs, 'readFileSync', (path, ...args) => {
-      if (path === join(detached, 'maps')) {
-        const replacement = `${outputPath}.atomic-publication`;
-        writeFileSync(replacement, currentInventory);
-        fs.renameSync(replacement, outputPath);
-      }
-      return readProcessFile(path, ...args);
-    });
-    syncBuiltinESMExports();
-    try {
-      assert.equal(reap({ inventoryPaths: [aliasInventory, retainedPath, legacyInventoryPath],
-        retainCandidate: () => false }).reclaimedRoots, 0,
-      'an atomic inventory publication preserves a live binding across path aliases');
-      assert.ok(await stat(superseded));
-    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
     await rm(detached, { recursive: true });
     const retainedInventory = await readFile(retainedPath, 'utf8');
     await writeFile(retainedPath, 'invalid inventory');

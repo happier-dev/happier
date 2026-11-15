@@ -7,7 +7,7 @@ import { PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY } from '../../../packages/cli-co
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
 import { PLUGIN_PACKAGE_PREFIX, pluginPackageNameToPackageId, readBundledPluginPackageNames } from '../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { readBundledPluginUiDeclarationSource, renderBundledPluginUiDeclarationSource } from './bundledPluginUiDeclarationSource.mjs';
-import { isHistoricalTempPathReferenced, reapHistoricalTempRoots } from '../../stack/scripts/utils/dev_targets/historical_temp_roots.mjs';
+import { reapHistoricalTempRoots } from '../../stack/scripts/utils/dev_targets/historical_temp_roots.mjs';
 
 import {
   createBundledPluginPublicationFailure,
@@ -120,17 +120,10 @@ export function reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPa
   const retainedReferences = readReferences();
   const keep = (directory, currentReferences) => {
     const stage = isStage(basename(directory));
-    // A detached Metro may outlive its parent's state record. Its explicit
-    // inventory binding still protects every graph it could have served.
-    if (!stage) {
-      try {
-        if (currentReferences && inventories.some(path => isHistoricalTempPathReferenced(path, currentReferences))) return true;
-      } catch (error) {
-        result.observationUnavailable ??= error.message;
-        return true;
-      }
-      if (retainCandidate(directory, currentReferences) !== false) return true;
-    }
+    // Retention follows reference (owner ruling 2026-11-15): a live Metro bound
+    // to an inventory serves that inventory's graphs, which the recheck below
+    // retains; the binding alone no longer pins every graph it ever served.
+    if (!stage && retainCandidate(directory, currentReferences) !== false) return true;
     // Recheck the producer's current and last-green selections immediately
     // before the canonical reaper removes an otherwise retired candidate.
     const references = readReferences();

@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { readdirSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -18,7 +18,6 @@ export { applyExpoExportMaxWorkersArgs } from './exportWorkers.mjs';
 import { repairExpoYarnPackageBinShims } from './expoPackageBinShims.mjs';
 import { ensureReactNativeLibsodiumNativeBuild } from './libsodiumNativeBuild.mjs';
 import { reapHistoricalTempRoots } from '../dev_targets/historical_temp_roots.mjs';
-import { observePidLiveness } from '../proc/pids.mjs';
 import {
   ensureReactNativeSkiaAndroidBinaries,
   ensureReactNativeSkiaIosBinaries,
@@ -89,22 +88,17 @@ async function loadCanonicalUiPreflight(projectDir) {
   };
 }
 
-export async function reapExpoPluginUiArtifacts({ projectDir, inventoryPath, statePath, dryRun = false }) {
+/** Retire Plugin UI graphs by reference: the inventory's graphs, graphs a live
+ * process uses and the owner's historical age margin stay; a live Metro does
+ * not pin superseded graphs (owner ruling 2026-11-15, growth fixes). */
+export async function reapExpoPluginUiArtifacts({ projectDir, inventoryPath, dryRun = false }) {
   const canonical = await loadCanonicalUiPreflight(projectDir);
   if (!inventoryPath || !canonical?.module.reapBundledPluginUiArtifactStore) return null;
   return canonical.module.reapBundledPluginUiArtifactStore({
     artifactStoreDir: join(dirname(inventoryPath), 'artifacts'),
     inventoryPaths: [inventoryPath],
     dryRun,
-    retainCandidate: () => {
-      try {
-        const state = JSON.parse(readFileSync(statePath, 'utf8'));
-        const pid = Number(state?.pid);
-        return !Number.isSafeInteger(pid) || pid <= 1 || observePidLiveness(pid).status !== 'dead';
-      } catch {
-        return true;
-      }
-    },
+    retainCandidate: () => false,
   });
 }
 

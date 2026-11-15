@@ -9,6 +9,7 @@ import {
   syncSharedDepsForSourceDev as syncSharedDepsForSourceDevDefault,
 } from '../../stack/scripts/utils/proc/pm.mjs';
 import { waitForDependencyRefresh } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
+import { PLUGIN_UI_PUBLISHED_LINE } from '../../stack/scripts/utils/dev/expo_dev_supervision.mjs';
 import { fileDigestMetadataIdentity } from '../../stack/scripts/utils/fs/cached_file_digest.mjs';
 import { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 import { prepareSourceUiAssets, publishSourceUiAssets, readSourceUiAssetsRecord,
@@ -86,7 +87,7 @@ export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env
   const parent = requestedInventory ? dirname(requestedInventory) : resolve(uiPackageDir, '.expo/hstack/plugin-ui-inputs');
   await mkdir(parent, { recursive: true });
   // Compiler scratch has no serving consumer. Only verified content-addressed
-  // assets outlive this call; older browser/native asset URLs still need them.
+  // assets outlive this call; the Stack retires them once no inventory names them.
   // Metro already excludes this canonical staging prefix at its crawl boundary;
   // otherwise deleting finished scratch races the fallback watcher's descent.
   const outputDir = await mkdtemp(resolve(parent, '.happier-plugin-ui-stage-'));
@@ -111,7 +112,7 @@ export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env
     }
     await publishSourceUiAssets({ recordPath: sourceAssetsRecordPath,
       outputPath: resolveSourceUiAssetsRecordPath(outputPath) });
-    return { ok: true, built: [], skipped: [], outputPath };
+    return { ok: true, built: [], skipped: [], outputPath, published: candidate !== current };
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -188,7 +189,9 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
         } finally { queued = false; }
         if (closed) return;
         try {
-          await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
+          const { published } = await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
+          // The Stack supervisor retires superseded graphs after this line.
+          if (published) logger.info?.(PLUGIN_UI_PUBLISHED_LINE);
         } finally { inputsPromise = null; }
       }).catch(report);
     }).catch(report);

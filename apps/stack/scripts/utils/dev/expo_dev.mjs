@@ -44,6 +44,7 @@ import {
   describeExpoTermination,
   resolveExpoRestartPolicy,
   EXPO_HEAP_RECYCLE_PREFIX,
+  createPluginUiRetirement,
 } from './expo_dev_supervision.mjs';
 
 export { resolveExpoTailscaleEnabled, startExpoTailscaleForwarder } from './expo_dev_tailscale.mjs';
@@ -761,6 +762,11 @@ export async function ensureDevExpoServer({
     let restartOperation = null;
     let spawnedBefore = false;
     let retirementOperation = Promise.resolve();
+    // Metro reports each Plugin UI publication; retire superseded graphs after it.
+    const pluginUiRetirement = createPluginUiRetirement({
+      reap: () => reapExpoPluginUiArtifacts({ projectDir, inventoryPath: env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY }),
+      onError: () => writeSupervisorLine('Plugin UI retirement deferred: cleanup unavailable.'),
+    });
     const restartAbort = new AbortController();
     const stopping = () => closed || isShuttingDown?.() === true;
     const scheduleRestart = (restartAttempt) => {
@@ -888,6 +894,9 @@ export async function ensureDevExpoServer({
               writeSupervisorLine(`Metro heap ${state.usedHeapBytes} bytes reached watermark ${state.thresholdBytes} of configured limit ${state.heapLimitBytes}; no in-flight HTTP requests, recycling owned pid=${supervisedProc.pid}.`);
               void killProcessTree(supervisedProc, 'SIGTERM').catch(error => writeSupervisorLine(`Metro heap recycle failed: ${error.message}`));
             }
+            if (env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY && event.stream === 'stdout' && !stopping()) {
+              pluginUiRetirement.observeLine(event.line);
+            }
             userOnLine?.(event);
           },
         },
@@ -908,8 +917,7 @@ export async function ensureDevExpoServer({
         retirementOperation = waitForExpoMetroRunning({ port: metroPort, env,
           signal: AbortSignal.any([restartAbort.signal, retirementAbort.signal]),
         }).then(async readiness => {
-          if (readiness.ok) await reapExpoPluginUiArtifacts({ projectDir,
-            inventoryPath: env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, statePath: paths.statePath });
+          if (readiness.ok) await pluginUiRetirement.request();
           else if (readiness.reason !== 'aborted') writeSupervisorLine('Plugin UI retirement deferred: Metro readiness unavailable.');
         }).catch(() => writeSupervisorLine('Plugin UI retirement deferred: cleanup unavailable.'));
       }
@@ -937,6 +945,7 @@ export async function ensureDevExpoServer({
         // including a retry already admitted when close was requested.
         await restartOperation;
         await retirementOperation;
+        await pluginUiRetirement.idle();
       },
     };
   };

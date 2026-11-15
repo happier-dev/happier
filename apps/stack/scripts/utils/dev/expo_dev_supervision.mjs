@@ -98,6 +98,25 @@ export function computeExpoRestartDelayMs({ attempt, policy } = {}) {
 
 export const EXPO_HEAP_RECYCLE_PREFIX = 'HSTACK_EXPO_QUIET_HEAP_RECYCLE ';
 
+/** Metro's Plugin UI watcher prints this after it publishes a changed inventory. */
+export const PLUGIN_UI_PUBLISHED_LINE = '[source-ui] phase=plugin-ui-published';
+
+/** Retire superseded Plugin UI graphs after each publication a live Metro
+ * reports (owner ruling 2026-11-15, growth fixes). Passes run one at a time on
+ * the supervisor, never on Metro's own loop; a pass is a /proc census. */
+export function createPluginUiRetirement({ reap, onError = () => {} }) {
+  let chain = Promise.resolve();
+  const request = () => {
+    chain = chain.then(() => reap()).catch(onError);
+    return chain;
+  };
+  return {
+    request,
+    observeLine(line) { if (line === PLUGIN_UI_PUBLISHED_LINE) void request(); },
+    idle: () => chain,
+  };
+}
+
 export function startExpoHeapGuard({
   readHeapStatistics = getHeapStatistics,
   heapLimitBytes = null,

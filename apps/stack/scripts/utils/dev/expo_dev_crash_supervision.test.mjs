@@ -1178,3 +1178,31 @@ test('ensureDevExpoServer does not retry a replacement spawn failure after shutd
     await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 });
+
+test('Plugin UI retirement runs once per reported publication, one pass at a time', async () => {
+  const { PLUGIN_UI_PUBLISHED_LINE, createPluginUiRetirement } = await import('./expo_dev_supervision.mjs');
+  let running = 0;
+  let overlapped = false;
+  const passes = [];
+  const releases = [];
+  // The retention pass is a /proc census plus deletion; this records its calls.
+  const retirement = createPluginUiRetirement({ reap: async () => {
+    overlapped ||= running > 0;
+    running++;
+    passes.push(passes.length);
+    await new Promise(resolve => releases.push(resolve));
+    running--;
+  } });
+  for (const line of [PLUGIN_UI_PUBLISHED_LINE, 'Web Bundled 2852ms apps/ui/index.ts (1 module)',
+    `${PLUGIN_UI_PUBLISHED_LINE}`, '[source-ui] phase=plugin-ui-refresh input=x', PLUGIN_UI_PUBLISHED_LINE]) {
+    retirement.observeLine(line);
+  }
+  let finished = false;
+  void retirement.idle().then(() => { finished = true; });
+  while (!finished) {
+    await new Promise(resolve => setImmediate(resolve));
+    releases.shift()?.();
+  }
+  assert.equal(passes.length, 3, 'one retention pass per publication line');
+  assert.equal(overlapped, false, 'passes never overlap');
+});
