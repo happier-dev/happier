@@ -162,6 +162,7 @@ vi.mock('../../../../server/sources/storage/db', () => ({
   getDbProviderFromEnv: () => 'postgres',
 }));
 
+const memberRunAs = vi.hoisted(() => ({ resolvedPath: '' }));
 const storage = vi.hoisted(() => ({ home: '', persistedToken: 'df38-owner-token',
   credentials: { token: 'df38-owner-token', encryption: null }, io: vi.fn(),
   ordinaryStoredCredentials: false,
@@ -204,6 +205,12 @@ vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawn: (...args: Parameters<typeof actual.spawn>) => {
     const [command, argv] = args;
+    if (command === 'sudo' && memberRunAs.resolvedPath) {
+      // RunAs is the OS boundary: answer the member resolver's request as the member's own lookup would.
+      const record = JSON.stringify({ t: 'resolved', launch: { source: 'managed', resolvedPath: memberRunAs.resolvedPath,
+        command: memberRunAs.resolvedPath, args: [] } });
+      return actual.spawn(process.execPath, ['-e', `process.stdin.on('data', d => { if (String(d).includes('"resolve"')) process.stdout.write(${JSON.stringify(record)} + '\\n'); }); process.stdin.on('end', () => process.exit(0));`], args[2]);
+    }
     if (storage.uncertainTmuxCommands && command === 'tmux' && Array.isArray(argv)) {
       // The tmux process is the OS boundary. Real terminal admission, window
       // reconciliation and the daemon's uncertain-launch ownership stay active.
@@ -488,12 +495,14 @@ describe('Custom ACP fresh daemon launch composition', () => {
         status: { kind: 'effective' as const, platform: 'linux' as const }, workspaceRoots: [home] };
       const launch = params('alpha', async () => false);
       launch.options = { directory: home, backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-        connectedServices: { v: 2, bindingsByServiceId: {} }, workspaceWrites: [] };
+        connectedServices: { v: 2, bindingsByServiceId: {} } };
       launch.processEnv = { HOME: storage.home, PATH: '' };
       // Map only the native process boundary; directory preparation stays real.
       launch.prepareAgentIsolationMember = async () => ({ kind: 'member', identity, snapshot,
         requesterIdentity: { serverId: 'server', accountId: 'member', machineId: 'df38-machine', installationId: 'installation' } });
-      launch.agentIsolation = { read: () => snapshot };
+      // The daemon's Machine-level context, as startDaemon builds it: member placement, installed CLI, no member yet.
+      launch.agentIsolation = { managedHappierBinaryPath: '/opt/happier/cli/current/happier', read: () => snapshot };
+      memberRunAs.resolvedPath = join(home, '.local/bin/claude');
       launch.prepareNativeFilesystemEffect = async () => ({
         request: command => executeNativeSessionDirectoryPreparation(NativeSessionDirectoryCommandSchema.parse(command)),
         async dispose() {},
@@ -519,7 +528,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         const result = await executeSpawnSessionRequest(launch);
         expect({ reachedCommit, result }, JSON.stringify(result)).toMatchObject({ reachedCommit: true });
       } finally { writes.mockRestore(); vi.stubGlobal('fetch', originalFetch); }
-    } finally { input.destroy(); output.destroy(); }
+    } finally { memberRunAs.resolvedPath = ''; input.destroy(); output.destroy(); }
   });
 
   it.each(['quota', 'target', 'attach'] as const)('settles a committed Home Voice carrier, but refuses an unavailable target before birth (%s)', async refusal => {
