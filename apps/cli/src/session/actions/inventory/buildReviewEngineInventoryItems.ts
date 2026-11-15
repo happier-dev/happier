@@ -3,6 +3,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 import { ReviewEngineListItemSchema, type ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AGENT_IDS, isBundledAgentId } from '@happier-dev/agents/agent-ids';
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
@@ -126,7 +127,9 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
       const description = readReviewEngineDescription(agent);
       return [{
         engineId: agent.id,
-        value: agent.id,
+        value: buildBackendTargetKeyV2(agent.identity
+          ? { kind: 'agent', identity: agent.identity }
+          : { kind: 'backend', backendId: agent.id }),
         label: readAgentContributionDisplayTitle(agent, agent.id) ?? agent.id,
         ...(description ? { description } : {}),
         enabled: !isBackendTargetDisabledByAccountSettings(accountSettings, { kind: 'backend', backendId: agent.id }),

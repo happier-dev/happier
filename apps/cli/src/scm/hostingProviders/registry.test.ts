@@ -603,3 +603,27 @@ describe('SCM hosting provider registry', () => {
         expect(detected.kind).toBe('unknown');
     });
 });
+
+
+describe('SCM hosting Action response boundary', () => {
+    it('rejects a null PR list with a readable typed failure while preserving empty lists', async () => {
+        let result: unknown = null;
+        const registry = createScmHostingProviderRegistry({
+            providers: [{ id: 'github', pluginId: 'test.forge', kind: 'github', displayName: 'GitHub', capabilities: [] }],
+            runtimeRegistrations: [{ pluginId: 'test.forge', occurrenceId: 'test-generation', registration: {
+                id: 'github', adapter: { pullRequests: {
+                    getPullRequestAuthProfileKey: () => null,
+                    listPullRequests: async () => [], getPullRequest: async () => null,
+                } },
+            } }],
+            prepareHostingProviderOperation: async () => async () => ({ ok: true, result }),
+        });
+        const adapter = registry.getPullRequests('test.forge/github')!;
+        const input = { provider: { id: 'test.forge/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, head: 'feature' };
+        await expect(adapter.listPullRequests(input)).rejects.toMatchObject({
+            errorCode: 'COMMAND_FAILED', message: 'SCM hosting listPullRequests returned an invalid response',
+        });
+        result = [];
+        await expect(adapter.listPullRequests(input)).resolves.toEqual([]);
+    });
+});

@@ -55,6 +55,7 @@ describe('buildReviewEngineInventoryItems', () => {
     const items = await buildReviewEngineInventoryItems({ accountSettings });
     expect(items.find(item => item.engineId === 'claude')).toMatchObject({ launchModelId: 'account-review-model' });
     expect(items.find(item => item.engineId === 'codex')).not.toHaveProperty('launchModelId');
+    expect(items.find(item => item.engineId === 'codex')?.value).toBe(buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }));
   });
 
   it('projects narration through real admitted Agent declarations without inferring it from engine identity or Session resume', async () => {
@@ -101,8 +102,8 @@ describe('buildReviewEngineInventoryItems', () => {
     });
 
     expect(await buildReviewEngineInventoryItems({})).toEqual([
-      expect.objectContaining({ engineId: 'coderabbit', value: 'coderabbit', label: 'CodeRabbit' }),
-      expect.objectContaining({ engineId: 'deepsec', value: 'deepsec', label: 'DeepSec' }),
+      expect.objectContaining({ engineId: 'coderabbit', value: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'coderabbit' }), label: 'CodeRabbit' }),
+      expect.objectContaining({ engineId: 'deepsec', value: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'deepsec' }), label: 'DeepSec' }),
     ]);
   });
 
@@ -233,14 +234,14 @@ describe('buildReviewEngineInventoryItems', () => {
           agentDefinitionsById: new Map([
             ['acme.reviewer', {
               id: 'acme.reviewer',
-              identity: { pluginId: 'acme', localId: 'acme.reviewer' },
+              identity: { pluginId: 'acme.review', localId: 'reviewer' },
               definition: { id: 'acme.reviewer' },
               richDefinition: { definition: runCapableDefinition({ id: 'acme.reviewer', title: 'Acme Reviewer' }) },
             }],
           ]),
           catalogEntriesById: { 'acme.reviewer': { id: 'acme.reviewer' } },
           executionRunProfiles: [
-            { pluginId: 'acme', definition: { id: 'review', intent: 'review', compatibleAgents: ['acme.reviewer'] } },
+            { pluginId: 'acme.review', definition: { id: 'review', intent: 'review', compatibleAgents: ['reviewer'] } },
           ],
         },
       },

@@ -5,7 +5,7 @@ export { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from './act
 export type { ActionStartDiagnosticV1, ActionStartPhaseV1 } from './actionStartDiagnostics.js';
 import { admitAgentStartV1, AgentStartSessionCallerV1Schema, type AgentStartFactsV1, type AgentStartContextV1, type AgentStartRequestV1, type Unresolved } from '../../account/settings/admitAgentStartV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
-import { BackendTargetKeyV2Schema, PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { BackendTargetKeyV2InputSchema, PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { normalizeConnectedServiceSelectionInput } from '../../connect/normalizeConnectedServiceSelectionInput.js';
 import { AgentStartBaselineSelectionErrorV1, resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
 export { resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
@@ -23,7 +23,7 @@ import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/creden
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
 import type { WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
-import type { RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
+import { readRoleEngineModelRefV1, type RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
 import { parseQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { ManagedAcquireAgentStartV1Schema } from '../../machines/managed/agentStartV1.js';
@@ -296,9 +296,10 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         : (Array.isArray(projectedTargetValues) ? projectedTargetValues : []).map((value) => {
             if (typeof value !== 'string')
                 return null;
-            const canonical = BackendTargetKeyV2Schema.safeParse(value);
-            return canonical.success ? parseBackendTargetKeyV2(canonical.data)
-                : resolveExecutionBackendTargetSelectionForValue(value)?.canonicalBackendTarget ?? null;
+            const canonical = BackendTargetKeyV2InputSchema.safeParse(value);
+            const key = canonical.success ? canonical.data
+                : resolveExecutionBackendTargetSelectionForValue(value)?.backendTargetKey;
+            return key ? parseBackendTargetKeyV2(key) : null;
         });
     if (overrideEngine && selected?.agentTarget)
         targets = (targets.length ? targets : [selected.agentTarget]).map(() => selected.agentTarget!);
@@ -555,10 +556,7 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
     if (stamped.engine.modelId) {
         const baselineModel = baseline.configuration?.modelSelection;
         const inheritedModel = baselineModel && 'ref' in baselineModel ? baselineModel.ref : baselineModel;
-        const ref = modelSelection ?? { agentTargetKey: stamped.engine.agentTargetKey,
-            providerConnectionId: inheritedModel?.agentTargetKey === stamped.engine.agentTargetKey ? inheritedModel.providerConnectionId : null,
-            modelId: stamped.engine.modelId,
-        };
+        const ref = modelSelection ?? readRoleEngineModelRefV1(stamped.engine, inheritedModel)!;
         if (kind === 'spawn_new')
             result.modelSelection = { v: 1, ref, updatedAt: 0 };
         else {

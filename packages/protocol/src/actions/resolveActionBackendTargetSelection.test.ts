@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { tryNormalizeExecutionBackendOptionValue } from '../inputs/inputOptions.js';
+import { buildAvailableExecutionBackendOptionKeys } from './executor/executionRuns.js';
+import { resolveActionAgentStartRequestsV1 } from './executor/agentStartAdmission.js';
 
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
@@ -320,5 +323,20 @@ describe('resolveActionBackendTargetSelection (RU-02 customAcp ingress-only)', (
         },
       },
     });
+  });
+});
+
+
+describe('execution target option identity', () => {
+  it('uses the key owner for aliases and qualified review options', async () => {
+    const key = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+    expect(tryNormalizeExecutionBackendOptionValue('codex')).toBe(key);
+    expect(buildAvailableExecutionBackendOptionKeys({ items: [{ engineId: 'codex', label: 'Codex', enabled: true }] }).has(key)).toBe(true);
+    for (const engineId of ['codex', key, 'backend:codex']) {
+      const resolved = resolveActionAgentStartRequestsV1({ actionId: 'review.start',
+        input: { engineIds: [engineId], instructions: 'Review changes', sessionId: 'session' }, context: {} });
+      expect(resolved).toMatchObject({ ok: true, requests: [{ facts: { agentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } }] });
+    }
   });
 });

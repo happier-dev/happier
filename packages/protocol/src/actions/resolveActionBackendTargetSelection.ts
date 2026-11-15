@@ -56,7 +56,11 @@ export function resolveExecutionBackendTargetSelectionForValue(value: string): A
   const resolved = resolveActionBackendTargetSelection({
     backendTargetKey: candidateKey, ...(!isExplicitTargetKey ? { agentId: normalizedValue } : {}),
   });
-  return resolved.ok ? resolved.selection : null;
+  if (!resolved.ok) return null;
+  const selection = resolved.selection;
+  return selection.canonicalBackendTarget
+    ? { ...selection, backendTargetKey: buildBackendTargetKeyV2(selection.canonicalBackendTarget) }
+    : selection;
 }
 
 function normalizeValue(value: unknown): string | null {

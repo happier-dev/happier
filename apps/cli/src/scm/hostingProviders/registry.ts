@@ -15,6 +15,7 @@ import type {
     HostingProviderRepositoryCloneCapability,
     HostingProviderRepositoryPublishingCapability,
     HostingProviderRoutingCapability,
+    HostingProviderRuntimeServices,
     HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration,
 } from '@happier-dev/plugin-sdk/scm/hosting';
 import { createGuardedRuntimeView } from '@/plugins/runtime/guardedRuntimeView';
@@ -225,6 +226,7 @@ function bindRuntimeCapability<TCapability extends object>(
     target: TCapability,
     operationActions?: ScmHostingOperationActionsV1,
     prepareOperation?: PrepareScmHostingProviderOperation,
+    runtimeServices?: HostingProviderRuntimeServices,
 ): TCapability {
     const boundMethods = new Map<PropertyKey, Function>();
     // Registration already published a frozen, receiver-bound callback map.
@@ -244,9 +246,12 @@ function bindRuntimeCapability<TCapability extends object>(
                     contributionId: binding.registration.id,
                 },
                 () => {
+                    const invokeLocal = () => Reflect.apply(method, target, runtimeServices
+                        ? [{ ...readRecord(args[0]), runtimeServices: readRecord(args[0]).runtimeServices ?? runtimeServices }, ...args.slice(1)]
+                        : args);
                     const operation = prepareOperation && typeof property === 'string'
                         && Object.hasOwn(ScmHostingOperationSchemasV1, property) ? property as ScmHostingOperationV1 : null;
-                    if (!operation || !prepareOperation) return Reflect.apply(method, target, args);
+                    if (!operation || !prepareOperation) return invokeLocal();
                     const localId = operationActions?.[operation];
                     if (operationActions && !localId) throw Object.assign(new Error('SCM hosting Action is unavailable'), {
                         errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, effectNotApplied: true,
@@ -257,9 +262,15 @@ function bindRuntimeCapability<TCapability extends object>(
                             ...(localId ? { action: { pluginId: binding.pluginId, localId } } : {}),
                             input: projectNativeJsonValueForTransport(input),
                         });
-                        if (!invoke) return Reflect.apply(method, target, args);
+                        if (!invoke) return invokeLocal();
                         const result = await invoke();
-                        if (result.ok) return result.result;
+                        if (result.ok) {
+                            const parsed = ScmHostingOperationSchemasV1[operation].result.safeParse(result.result);
+                            if (parsed.success) return parsed.data;
+                            throw Object.assign(new Error(`SCM hosting ${operation} returned an invalid response`), {
+                                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                            });
+                        }
                         const details = readRecord(result.details);
                         const evidence = readRecord(details.details ?? details);
                         throw Object.assign(new PluginError({ code: result.errorCode, message: result.error,
@@ -467,6 +478,7 @@ export function createScmHostingProviderRegistry(params: Readonly<{
     providers: readonly ScmHostingProviderDescriptor[];
     runtimeRegistrations?: readonly ScmHostingProviderRuntimeBinding[];
     prepareHostingProviderOperation?: PrepareScmHostingProviderOperation;
+    runtimeServices?: HostingProviderRuntimeServices;
     /** Keyed by qualified provider id; see `ScmHostingProviderConfiguredDeployments`. */
     configuredDeploymentsByProviderId?: ReadonlyMap<string, ScmHostingProviderConfiguredDeployments>;
 }>): ResolvedScmHostingProviderRegistry {
@@ -604,25 +616,25 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             const descriptor = providersById.get(id);
             const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.pullRequests;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation, params.runtimeServices) : undefined;
         },
         getPullRequestCheckout(id) {
             const descriptor = providersById.get(id);
             const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.pullRequestCheckout;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation, params.runtimeServices) : undefined;
         },
         getRepositoryPublishing(id) {
             const descriptor = providersById.get(id);
             const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.repositoryPublishing;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation, params.runtimeServices) : undefined;
         },
         getRepositoryClone(id) {
             const descriptor = providersById.get(id);
             const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.repositoryClone;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation, params.runtimeServices) : undefined;
         },
         listDeployments(input = {}) {
             const deployments = new Map<string, ScmHostingProviderResolvedRemote>();
