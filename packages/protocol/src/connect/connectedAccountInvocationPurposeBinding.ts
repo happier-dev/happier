@@ -3,6 +3,14 @@ import type { QualifiedConnectedAccountPurposeV1 } from './connectedAccountPurpo
 import type { QualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
 import type { MachineProvisionerRoleV1 } from '../plugins/contributions/machineProvisioners.js';
 
+/** Signed request projection captured by the host for one admitted Action. */
+export type ConnectedAccountActionOperationRequestHeaders = (request: Readonly<{
+  method: 'POST';
+  path: string;
+  body: unknown;
+  signal?: AbortSignal;
+}>) => Promise<Readonly<Record<string, string>> | null>;
+
 /** Host-private accepted-operation boundary; never a wire or persisted authority. */
 export type ConnectedAccountInvocationPurposeBinding = Readonly<{
   identity: Readonly<{ pluginId: string; localId: string }>;
@@ -10,6 +18,9 @@ export type ConnectedAccountInvocationPurposeBinding = Readonly<{
   purposes: readonly QualifiedConnectedAccountPurposeV1[];
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   isCurrent(): boolean;
+  /** Exact finite Action declaration for Session-free Team admission. */
+  actionOperation?: Readonly<{ pluginVersion: string; signal: AbortSignal;
+    resolveRequestHeaders?: ConnectedAccountActionOperationRequestHeaders }>;
   managedOperation?: Readonly<{
     role: MachineProvisionerRoleV1;
     /** Omission is unknown; an explicit null is an admitted unconfigured basis. */
