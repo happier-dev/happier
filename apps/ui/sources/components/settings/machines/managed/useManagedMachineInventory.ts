@@ -105,7 +105,8 @@ function observeInventoryChanges(demand: InventoryDemand) {
 
 function createInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
     includeArchived: boolean, executeAction: InventoryExecute, remove: () => void, onPublished: () => void, retained?: ManagedMachineInventoryEntry,
-    enrolledMachineId?: string, admitted = false, onRead?: (machines: readonly ManagedMachineV1[], absent?: ReadonlyMap<string, string>, admitMembership?: boolean) => void) {
+    enrolledMachineId?: string, admitted = false, onRead?: (machines: readonly ManagedMachineV1[], absent?: ReadonlyMap<string, string>, admitMembership?: boolean) => void,
+    joinedInitialRead = false) {
     const consumers = new Map<() => void, ServerAccountScopeLifetime>();
     let entry: ManagedMachineInventoryEntry = { accountId, homeId, managedId, enrolledMachineId, includeArchived,
         machines: retained?.machines ?? EMPTY_ROWS, ...(retained?.asOf !== undefined ? { asOf: retained.asOf } : {}), status: admitted ? 'ready' : 'loading' };
@@ -275,6 +276,11 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
         getEnrolledMachine: (id: string) => machinesByEnrolledId.get(id),
         isCurrent,
         refresh,
+        /** First answer of a joined reader: the joined list read's current rows. */
+        admitJoinedReceipt(machines: readonly ManagedMachineV1[]) {
+            if (!isCurrent() || entry.asOf !== undefined || refreshing) return;
+            publish({ ...entry, status: 'ready', errorCode: undefined, asOf: Date.now(), machines });
+        },
         receiveRows(sourceServerId: string, sourceAccountId: string, sourceHomeId: string, rows: ReadonlyMap<string, ManagedMachineV1>,
             absent?: ReadonlyMap<string, string>, admitMembership = false) {
             if (sourceServerId !== serverId || sourceAccountId !== accountId || sourceHomeId !== homeId
@@ -292,7 +298,8 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
             };
             const retirement = binding.onRetire(release);
             listener();
-            if (controller === null && !admitted) refresh();
+            // A joined reader takes its first answer from the in-flight read it joined (see getInventoryReader).
+            if (controller === null && !admitted && !joinedInitialRead) refresh();
             return () => { retirement.dispose(); release(); };
         },
     };
@@ -320,6 +327,7 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
         let retained = current?.accountId === accountId && current.homeId === homeId && current.managedId === managedId && current.enrolledMachineId === enrolledMachineId
             && (current.includeArchived ?? false) === includeArchived ? current : undefined;
         let admitted = false;
+        let joined: InventoryReader | undefined;
         if (!managedId && !includeArchived && !enrolledMachineId && !retained) {
             // The archive-including inventory already read the current list. A settled
             // receipt admits its current rows; later wakes refresh this reader itself.
@@ -328,6 +336,9 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
             if (receipt?.status === 'ready' && receipt.asOf !== undefined) {
                 retained = { ...receipt, includeArchived: false, machines: receipt.machines.filter(machine => machine.archivedAt === undefined) };
                 admitted = true;
+            } else if (inventory?.isCurrent() && inventory.isRefreshing() && inventory.get().asOf === undefined) {
+                // Its first list read is in flight (screens mounting together): join it instead of reading the same list again.
+                joined = inventory;
             }
         }
         if (enrolledMachineId && !retained) {
@@ -361,8 +372,26 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
                     if (received !== receipt.machines) receipts?.set(receiptKey, { ...receipt, machines: received });
                 }
                 for (const target of inventories.values()) if (target !== reader) target.receiveRows(serverId, accountId, homeId, rows, absent, admitMembership);
-            });
+            }, joined !== undefined);
         inventories.set(key, reader);
+        if (joined) {
+            const source = joined;
+            const joining = reader;
+            // One-shot: the joined read's first answer (its current rows) settles this reader; if that
+            // read ends without an answer, this reader reads for itself.
+            const settle = () => {
+                if (!joining.isCurrent()) { demand.observers.delete(settle); return; }
+                const answer = source.isCurrent() ? source.get() : undefined;
+                if (answer?.asOf !== undefined && (answer.status === 'ready' || answer.status === 'loading')) {
+                    demand.observers.delete(settle);
+                    joining.admitJoinedReceipt(answer.machines.filter(machine => machine.archivedAt === undefined));
+                } else if (!answer || (answer.status !== 'loading' && answer.status !== 'ready')) {
+                    demand.observers.delete(settle);
+                    void joining.refresh();
+                }
+            };
+            demand.observers.add(settle);
+        }
         demand.unsubscribe ??= observeInventoryChanges(demand);
     }
     return reader;

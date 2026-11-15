@@ -696,6 +696,40 @@ describe('managed Machine inventory', () => {
         await picker.unmount();
         await collection.unmount();
     });
+    it('reads the current list once when the collection and a current-only picker mount together (New Session)', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://joined-inventory.test', scope: 'tab' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_joined');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        const inputs: unknown[] = [];
+        const machine = { id: 'active', homeId: 'srv_joined', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'may-exist', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        setRuntimeFetch(async (raw, init) => {
+            const path = new URL(String(raw)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            const input = JSON.parse(String(init?.body));
+            inputs.push(input);
+            return Response.json({ machines: [input.archived ? { ...machine, id: 'retired', archivedAt: 1 } : machine] });
+        });
+        const execute = createDefaultActionExecutor().execute;
+        // One render mounts both, as the New Session screen's deletion source and target picker do.
+        const both = await renderHook(() => ({
+            collection: useManagedMachineInventory([target.id], undefined, execute, true),
+            picker: useManagedMachineInventory([target.id], undefined, execute),
+        }), { flushOptions: { cycles: 20 } });
+        await waitForHomeGovernance(() => expect(both.getCurrent().picker.entries.srv_joined?.status).toBe('ready'));
+        await waitForHomeGovernance(() => expect(both.getCurrent().collection.entries.srv_joined?.status).toBe('ready'));
+        expect({ reads: inputs, rows: both.getCurrent().picker.machinesByServerId[target.id]?.map(row => row.id) })
+            .toEqual({ reads: [{ homeId: 'srv_joined' }, { homeId: 'srv_joined', archived: true }], rows: ['active'] });
+        // The joined reader still follows a real change on its own.
+        machine.launch.name = 'Renamed';
+        await act(async () => publishHomeAccountChange(target.id));
+        await waitForHomeGovernance(() => expect(both.getCurrent().picker.machinesByServerId[target.id]?.[0]?.launch?.name).toBe('Renamed'));
+        await both.unmount();
+    });
     it('keeps Ask-first list and saved-resource reads on the mounted public review while retaining rows after cancellation', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-inventory-approval.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_inventory_approval');
