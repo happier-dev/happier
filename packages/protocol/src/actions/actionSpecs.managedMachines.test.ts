@@ -170,17 +170,18 @@ describe('managed Machine host Action contracts', () => {
   });
   it('admits exact ordered setup source copies and rejects unreviewed nested authority', () => {
     const spec = getActionSpec('machines.setup.apply');
-    const sources = [{ kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo retained' }] } },
+    const sources = [{ kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain' },
       { kind: 'direct', setup: {}}];
     const target = { homeId: 'home', machineId: 'guest', sources, desiredRevision: 0, recipePlans: [] };
     const input = { homeId: 'home', machineId: 'guest', targets: [target] };
     expect(spec.inputSchema.safeParse(input).success).toBe(true);
     expect(spec.inputSchema.parse(input)).toEqual(input);
+    const publishedSources = [{ kind: 'accountPreset', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain', setup: { scripts: [{ body: 'echo retained' }] } }, sources[1]];
     const metadata = { host: 'guest', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/happier',
-      happyHomeDir: '/home/happier/.happier', setup: { version: 1, revision: 0, sources, exclusions: [] } };
+      happyHomeDir: '/home/happier/.happier', setup: { version: 1, revision: 0, sources: publishedSources, exclusions: [] } };
     expect(MachinePublishedMetadataV1Schema.parse(metadata)).toEqual(metadata);
     expect(StoredMachinePublishedMetadataV1Schema.parse(metadata)).toEqual(metadata);
-    const retainedSources = [{ ...sources[0], setup: { setupScript: 'echo retained' } }, sources[1]];
+    const retainedSources = [{ ...publishedSources[0], setup: { setupScript: 'echo retained' } }, publishedSources[1]];
     const retainedMetadata = { ...metadata, setup: { ...metadata.setup, sources: retainedSources } };
     expect(StoredMachinePublishedMetadataV1Schema.parse(retainedMetadata)).toEqual(metadata);
     expect(MachinePublishedMetadataV1Schema.safeParse(retainedMetadata).success).toBe(false);
@@ -193,7 +194,7 @@ describe('managed Machine host Action contracts', () => {
     const spec = getActionSpec('machines.setup.apply');
     expect(spec.inputSchema.safeParse({ homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 4 }).success).toBe(false);
     const input = { homeId: 'home', machineId: 'guest', targets: [{ homeId: 'home', machineId: 'guest', desiredRevision: 0, recipePlans: [], sources: [
-      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo retained' }] } },
+      { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain' },
       { kind: 'direct', setup: {} },
     ] }] };
     expect(spec.inputSchema.parse(input)).toEqual(input);
@@ -259,7 +260,7 @@ describe('managed Machine host Action contracts', () => {
         bindings: { rpcMethod: actionId },
         executionPlacement: ['machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options', 'machines.managed.acquire',
           'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.cancel', 'machines.managed.power.set',
-          'machines.managed.inspect', 'machines.managed.bootstrap.retry', 'machines.managed.delete'].includes(actionId)
+          'machines.managed.inspect', 'machines.managed.bootstrap.retry', 'machines.managed.delete', 'machines.managed.retire'].includes(actionId)
           ? 'account' : 'machine',
       });
       expect(commands.get(actionId)).toEqual(actionId.split('.'));
