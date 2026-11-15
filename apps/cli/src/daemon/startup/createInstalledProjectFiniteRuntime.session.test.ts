@@ -10,6 +10,8 @@ import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows'
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import axios from 'axios';
+import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { createInstalledProjectFiniteRuntime } from './createInstalledProjectFiniteRuntime';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -68,6 +70,48 @@ it('uses admitted foreign Session custody for installed Project setup without ex
   await f.bootstrap.dispose();
   expect(await runtime.isCurrent?.()).toBe(false);
   expect(await factory({ operationRuntime, terminalSessions }, ingress)).toBeNull();
+});
+
+// A claimed Workflow Run reaches the installed finite receiver with its own
+// requester custody (no caller authorization). Its Project execution preferences
+// are the requester's own Account rows, read with the requester's own bearer
+// through the same owner the standalone Action uses; never the custodian's.
+it.each(['current', 'other-machine'] as const)('reads the requester own execution preferences for Session custody (%s origin)', async origin => {
+  const f = await createProjectSessionRuntimeFixture();
+  const preferenceReads: Array<string | undefined> = [];
+  vi.spyOn(axios, 'post').mockImplementation(async (url: string, _body, config) => {
+    if (!url.endsWith(`${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`)) throw new Error(`Unexpected Home write: ${url}`);
+    preferenceReads.push(String(config?.headers?.Authorization));
+    return { status: 200, data: { status: 'absent' } };
+  });
+  const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'custodian' });
+  const terminalSessions = createTerminalPtySessionManager({
+    ptyProvider: { spawn: () => { throw new Error('No process expected'); } },
+    config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux',
+  });
+  onTestFinished(() => terminalSessions.dispose());
+  const admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
+    readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, source: 'default', metadataVersion: 1 }) });
+  const factory = createInstalledProjectFiniteRuntime({ api: { getMachine: async () => null },
+    credentials: { token: 'custodian-token', encryption: null }, externalActionAccountId: 'custodian',
+    finiteServerId: 'session-home', finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
+    admission, nativeIo: createProjectNativeIo(), successHomeDir: configuration.happyHomeDir, isCurrent: async () => true,
+    prepareBetween: async () => { throw new Error('No worker preparation expected'); },
+    resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: origin === 'current' ? 'machine' : 'other-machine',
+      serverIdentityId: 'srv_session_home' }) });
+  const ingress = { signal: new AbortController().signal, requesterSessionBootstrap: f.bootstrap };
+  const runtime = await factory({ operationRuntime, terminalSessions }, ingress);
+  if (!runtime) throw new Error('Missing Session runtime');
+  const config = await runtime.resolveWorkspaceExecutionConfig({ authority: 'account_automation', surface: 'agent' },
+    ingress, 'projects.script.run');
+  if (origin === 'other-machine') {
+    expect(config).toBeNull();
+    expect(preferenceReads).toEqual([]);
+    return;
+  }
+  expect(await config?.get({ workspace: { serverId: 'session-home', refId: 'workspace' } }))
+    .toMatchObject({ status: 'ready' });
+  expect(preferenceReads).toEqual([`Bearer ${f.bootstrap.credentials.token}`]);
 });
 
 it('scopes private Session operations to the admitted requester and preserves installed attribution', async () => {

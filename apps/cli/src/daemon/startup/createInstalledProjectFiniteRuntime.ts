@@ -55,6 +55,38 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     ...(params.plugins ? { plugins: params.plugins } : {}),
     successHomeDir: params.successHomeDir,
   });
+  // One owner for Project execution preferences: the acting Account reads its
+  // own rows with its own credentials and Home, never the custodian's.
+  const workspaceExecutionConfig = (account: Readonly<{ credentials: StoredCredentials | null; serverHttpBaseUrl: string;
+    operationContext?: SavedSecretOperationContextV1;
+    createRequesterHeaders?: (request: Readonly<{ effectActionId: string; method: string; path: string; body?: unknown }>,
+      signal: AbortSignal) => Promise<Readonly<Record<string, string>> | null>;
+  }>): ProjectFiniteActionRuntime['resolveWorkspaceExecutionConfig'] => async (context, currentIngress, actionId) => {
+    const preferenceCredentials = account.credentials;
+    if (!preferenceCredentials) return null;
+    const origin = await resolveCurrentMachineExecutionOriginContext(currentIngress.signal);
+    if (!origin || origin.machineId !== registeredMachineId) return null;
+    const authorization = currentIngress.callerInputAuthorization;
+    const requestContext = { ...context, ...(authorization ? {
+      externalActionExecutionAuthorization: authorization,
+      externalActionTarget: authorization.binding.target,
+    } : {}) };
+    const installation = readInstallationIdentityIfExistsSync();
+    return await createAccountServerWorkspaceWorkerPreferenceClient({
+      token: preferenceCredentials.token, credentials: preferenceCredentials,
+      serverHttpBaseUrl: account.serverHttpBaseUrl, signal: currentIngress.signal,
+      context: requestContext, actionId,
+      ...(account.operationContext ? { operationContext: account.operationContext } : {}),
+      resolveRequestHeaders: async request => {
+        if (account.createRequesterHeaders) return await account.createRequesterHeaders(request, currentIngress.signal);
+        const result = resolveExternalActionServerRequestHeaders({ ...request,
+          daemonToken: preferenceCredentials.token, serverIdentityId: origin.serverIdentityId,
+          ...(installation ? { privateKey: installation.privateKey, installationId: installation.installationId } : {}),
+        });
+        return requireExternalActionHeaders(result);
+      },
+    });
+  };
   return async (ports, ingress) => {
     const finiteServerHttpBaseUrl = params.finiteServerHttpBaseUrl;
     const refuse = (reason: string): null => {
@@ -89,8 +121,10 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         resolveSecretEnvironment: async (bindings, signal) => bindings
           ? await secretEnvironment(session.savedSecretOperationContext, bindings, signal) : undefined,
         // Ordinary Session custody does not grant the custodian's worker/source
-        // routing ports. Cold native launch consumes only the installed local IO.
-        resolveWorkspaceExecutionConfig: async () => null,
+        // routing ports. Cold native launch consumes only the installed local IO;
+        // execution preferences are the requester's own Account rows.
+        resolveWorkspaceExecutionConfig: workspaceExecutionConfig({ credentials: session.credentials,
+          serverHttpBaseUrl: session.serverHttpBaseUrl, operationContext: session.savedSecretOperationContext }),
       };
     }
     if (!externalActionAccountId) return refuse('installed_account_unavailable');
@@ -134,35 +168,14 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         credentials: workerCredentials,
         ...(requester ? { authorization: requester.accountAuthorization } : {}),
         prepareBetween: (request, signal) => params.prepareBetween(request, signal, requester ? ingress : undefined) }),
-      resolveWorkspaceExecutionConfig: async (context, currentIngress, actionId) => {
-        const preferenceCredentials = requesterContext?.credentials ?? currentCredentials;
-        if (!preferenceCredentials) return null;
-        const origin = await resolveCurrentMachineExecutionOriginContext(currentIngress.signal);
-        if (!origin || origin.machineId !== registeredMachineId) return null;
-        const authorization = currentIngress.callerInputAuthorization;
-        const requestContext = { ...context, ...(authorization ? {
-          externalActionExecutionAuthorization: authorization,
-          externalActionTarget: authorization.binding.target,
-        } : {}) };
-        const installation = readInstallationIdentityIfExistsSync();
-        return await createAccountServerWorkspaceWorkerPreferenceClient({
-          token: preferenceCredentials.token, credentials: preferenceCredentials,
-          serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, signal: currentIngress.signal,
-          context: requestContext, actionId,
-          ...(requesterContext ? { operationContext: requesterContext.savedSecretOperationContext } : {}),
-          resolveRequestHeaders: async request => {
-            if (requester) return await requester.accountAuthorization.requesterHttpProjection!.createRequestHeaders({
-              effectActionId: request.effectActionId, method: request.method, path: request.path,
-              ...(request.body === undefined ? {} : { body: request.body }), signal: currentIngress.signal,
-            });
-            const result = resolveExternalActionServerRequestHeaders({ ...request,
-              daemonToken: preferenceCredentials.token, serverIdentityId: origin.serverIdentityId,
-              ...(installation ? { privateKey: installation.privateKey, installationId: installation.installationId } : {}),
-            });
-            return requireExternalActionHeaders(result);
-          },
-        });
-      },
+      resolveWorkspaceExecutionConfig: workspaceExecutionConfig({
+        credentials: requesterContext?.credentials ?? currentCredentials,
+        serverHttpBaseUrl: accountAccess.serverHttpBaseUrl,
+        ...(requesterContext ? { operationContext: requesterContext.savedSecretOperationContext } : {}),
+        ...(requester ? { createRequesterHeaders: async (request, signal) => await requester.accountAuthorization
+          .requesterHttpProjection!.createRequestHeaders({ effectActionId: request.effectActionId, method: request.method,
+            path: request.path, ...(request.body === undefined ? {} : { body: request.body }), signal }) } : {}),
+      }),
     };
   };
 }
