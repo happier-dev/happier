@@ -55,8 +55,9 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
   const acquired = ManagedAcquireInputV1Schema.safeParse(parent.input);
   if (!acquired.success) return null;
   const controller = resolveManagedAcquireReviewV1(acquired.data).controller;
-  if (acquired.data.selection.homeId !== binding.serverIdentityId
-    || !sameStrictJsonValue(controller, continuation.controller)) return null;
+  // A preset acquire may omit its controller; Home's admitted continuation then names it.
+  if (acquired.data.selection.homeId !== binding.serverIdentityId || !continuation.controller
+    || controller !== undefined && !sameStrictJsonValue(controller, continuation.controller)) return null;
   if (!readRequesterAccountActionContext(context.externalActionExecutionAuthorization)) return null;
   // Home admitted this creation's exact controller and guest; the opened codec
   // binds their signed continuation and original requester. Controller custody

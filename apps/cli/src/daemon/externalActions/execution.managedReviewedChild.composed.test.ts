@@ -17,7 +17,8 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { executeExternalAction } from './executeExternalAction';
 
-it.each(['requester', 'team'] as const)('restores admitted Create review on the guest when controller custody is %s', async controllerAccountId => {
+// Preset acquisitions (app Create one, CLI preset) omit the controller; Home's continuation names it (#160 op dbe4cd8c).
+it.each([['requester', true], ['team', true], ['team', false]] as const)('restores admitted Create review on the guest when controller custody is %s (input names controller: %s)', async (controllerAccountId, inputNamesController) => {
   const currentness = await createRequesterCurrentnessSocketHarness();
   onTestFinished(async () => { vi.restoreAllMocks(); await currentness.close(); });
   const homeId = 'srv_reviewed_creation', serverUrl = 'https://reviewed-creation.test';
@@ -32,7 +33,7 @@ it.each(['requester', 'team'] as const)('restores admitted Create review on the 
   const input = ManagedAcquireInputV1Schema.parse({
     enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
       role: 'server', adminAccessAtCreation: 'none' },
-    selection: { kind: 'one-off', homeId, controller,
+    selection: { kind: 'one-off', homeId, ...(inputNamesController ? { controller } : {}),
       launch: { provider: { pluginId: 'example.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
   });
