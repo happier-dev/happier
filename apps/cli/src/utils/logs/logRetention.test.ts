@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -9,7 +9,9 @@ import {
   resolveSessionLogKeepCount,
   createLogRetentionOwner,
   DAEMON_STDERR_LOG_PATH_ENV,
+  LOG_TOTAL_BUDGET_BYTES,
 } from './logRetention';
+import { pruneLogs } from './pruneLogs';
 
 describe('logRetention', () => {
   it('never offers the current daemon stderr for deletion, including zero retention', async () => {
@@ -52,5 +54,22 @@ describe('logRetention', () => {
   it('accepts zero and integer env keep counts', () => {
     expect(resolveDaemonLogKeepCount({ HAPPIER_DAEMON_LOG_KEEP_COUNT: '0' })).toBe(0);
     expect(resolveSessionLogKeepCount({ HAPPIER_SESSION_LOG_KEEP_COUNT: '2.9' })).toBe(2);
+  });
+
+  it('keeps up to the owner-set 1 GiB of logs, newest first', async () => {
+    await withTempDir('log-total-budget-', async (root) => {
+      const MiB = 1024 * 1024;
+      // Sparse files: the budget counts each log's size without writing a gigabyte.
+      for (const [name, size, mtime] of [['newest.log', 600 * MiB, 3], ['older.log', 300 * MiB, 2], ['oldest.log', 200 * MiB, 1]] as const) {
+        const handle = await open(join(root, name), 'w');
+        await handle.truncate(size);
+        await handle.close();
+        await utimes(join(root, name), mtime, mtime);
+      }
+
+      await pruneLogs({ dir: root, suffix: '.log', maxTotalBytes: LOG_TOTAL_BUDGET_BYTES });
+
+      expect((await readdir(root)).sort()).toEqual(['newest.log', 'older.log']);
+    });
   });
 });
