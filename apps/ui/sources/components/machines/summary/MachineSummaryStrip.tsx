@@ -173,7 +173,9 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { instrument, layout } = props;
-    const tone = instrument?.tone ?? 'calm';
+    // The rail row's instruments stand without figures or names, so a tone there would be colour with no word (DESIGN-2-1114
+    // #17): they stay calm ink and the row says the trouble in its own word beside them.
+    const tone = layout === 'inline' ? 'calm' : instrument?.tone ?? 'calm';
     const toneColor = resolveMachineResourceToneColor(tone, theme.colors);
     // A filling line is the Metric chart's own ink: the signature accent while calm, the tone otherwise.
     const inkColor = tone === 'calm' ? (layout === 'tiles' && props.fill ? usageSignatureAccent(theme) : props.color) : toneColor;

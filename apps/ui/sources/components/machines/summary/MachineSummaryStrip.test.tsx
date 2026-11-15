@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
-import { formatHappierDataBytes, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { CapacityBar, formatHappierDataBytes, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { MachineResourceSummaryV1Schema, projectMachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { MachineVitalsSnapshotV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 
@@ -219,6 +219,22 @@ describe('MachineSummaryStrip', () => {
         expect(charts.every(chart => chart.props.decorative === true)).toBe(true);
         expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain('4%');
         expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain('19 GB');
+    });
+
+    it('draws the rail row\'s unlabelled instruments in calm ink whatever their tone: the row\'s word says the trouble', async () => {
+        const calm = MACHINE_SUMMARY_PREVIEW.calm;
+        if (calm.kind !== 'reporting' || !calm.summary) throw new Error('preview must report');
+        const inks = async (tone: 'calm' | 'crit') => {
+            const summary = { ...calm.summary!, memory: { ...calm.summary!.memory, tone }, cpu: { ...calm.summary!.cpu, tone } };
+            const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={{ ...calm, summary }}
+                style="sparklines" metrics={['cpu', 'memory', 'disk']} layout="inline" />);
+            const bars = screen.findAll(node => node.type === CapacityBar).map(node => node.props.color);
+            const lines = screen.findAll(node => node.type === StackedSeriesChart).map(node => node.props.series[0].color);
+            return [...bars, ...lines];
+        };
+        const calmInks = await inks('calm');
+        expect(calmInks.length).toBeGreaterThan(1);
+        expect(await inks('crit')).toEqual(calmInks);
     });
 
     it.each(['under', 'fact'] as const)('retains held values and dims stale or failed reads in %s layout', async layout => {

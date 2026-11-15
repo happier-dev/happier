@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -8,7 +9,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 
 import { describeMachineAttentionWord, readMachinePublishedResources, selectHeadlineReason } from './machineResourceSentences';
-import { type MachineSummaryMetric, resolveMachineAttentionWordColor } from './machineSummaryStripModel';
+import { resolveMachineAttentionWordColor } from './machineSummaryStripModel';
 
 import { MachineSummaryStrip } from './MachineSummaryStrip';
 import { useMachineSummarySettingValue } from './useMachineSummarySetting';
@@ -36,25 +37,35 @@ export const MachineListRowSummary = React.memo(function MachineListRowSummary(p
     }, [props.machineId, props.serverId]);
     const resources = storage(selectResources);
     const published = React.useMemo(() => resources === null ? null : readMachinePublishedResources({ resources }), [resources]);
-    if (props.online && props.machineId && setting.metrics.length > 0 && availability?.kind === 'monitoring_off') {
-        return <MachineSummaryStrip testID={props.testID} availability={availability} style={setting.style} metrics={setting.metrics} layout="inline" />;
-    }
-    const headline = published && props.online ? selectHeadlineReason(published.attention) : null;
-    // A machine that needs you says why in a word, in tone, when its strip has no instrument for it.
-    if (headline && !(setting.metrics as readonly string[]).includes(headline.metric as MachineSummaryMetric)) {
-        return <Text testID={props.testID} numberOfLines={1} style={[stylesheet.quiet, { color: resolveMachineAttentionWordColor(theme.colors) }]}>
-            {describeMachineAttentionWord(headline)}
-        </Text>;
-    }
+    const chosen = props.online && props.machineId !== null && setting.metrics.length > 0;
     // The strip draws only values it holds: with none yet it would reserve its width as empty tracks and
-    // squeeze the name, so a machine without a reading shows its quiet word, or nothing.
-    if (props.online && props.machineId && setting.metrics.length > 0 && availability?.kind === 'reporting' && availability.summary) {
-        return <MachineSummaryStrip testID={props.testID} availability={availability} style={setting.style} metrics={setting.metrics} layout="inline" />;
-    }
+    // squeeze the name, so a machine without a reading shows no strip.
+    const strip = chosen && (availability?.kind === 'monitoring_off' || (availability?.kind === 'reporting' && availability.summary))
+        ? <MachineSummaryStrip availability={availability} style={setting.style} metrics={setting.metrics} layout="inline" />
+        : null;
+    const headline = published && props.online ? selectHeadlineReason(published.attention) : null;
+    // The strip's instruments carry no names, so a machine that needs you says why in a word, in the attention tone,
+    // beside them (DESIGN-2-1114 #17); colour never speaks without its word.
+    const word = headline ? (
+        <Text numberOfLines={1} style={[stylesheet.word, { color: resolveMachineAttentionWordColor(theme.colors) }]}>
+            {describeMachineAttentionWord(headline)}
+        </Text>
+    ) : null;
+    if (strip || word) return <View testID={props.testID} style={stylesheet.line}>{strip}{word}</View>;
     return props.quietWord ? <Text testID={props.testID} numberOfLines={1} style={stylesheet.quiet}>{props.quietWord}</Text> : null;
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
+    line: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        minWidth: 0,
+    },
+    word: {
+        ...Typography.variant('meta'),
+        flexShrink: 1,
+    },
     quiet: {
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
