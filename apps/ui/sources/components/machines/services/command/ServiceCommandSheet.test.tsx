@@ -1,5 +1,5 @@
 import * as React from 'react';
-import sodium from 'libsodium-wrappers';
+import sodium, { type KeyPair } from 'libsodium-wrappers';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -42,7 +42,7 @@ const target = {
   expectedGeneration: 'gen-7',
 };
 let serverId: string;
-let installationKey: ReturnType<typeof sodium.crypto_sign_seed_keypair>;
+let installationKey: KeyPair;
 
 type Received = Readonly<{
   envelope: ExternalActionRequestEnvelopeV1;

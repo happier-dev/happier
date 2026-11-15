@@ -16,6 +16,6 @@ export function canAdoptMachineService(row: MachineServiceRowV1): boolean {
 }
 
 /** How many captured variables still need a value or a saved secret. The Action refuses any other set of bindings. */
-export function machineServiceAdoptionMissing(variables: readonly Variable[], bindings: readonly EnvironmentVariableBindingV1[]): number {
+export function machineServiceAdoptionMissing(variables: readonly Variable[], bindings: readonly Pick<EnvironmentVariableBindingV1, 'name' | 'phase'>[]): number {
   return variables.filter(variable => !bindings.some(binding => binding.name === variable.name && binding.phase === variable.phase)).length;
 }
