@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionListRenderableSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import * as serverProfiles from '@/sync/domains/server/serverProfiles';
@@ -34,6 +34,36 @@ afterEach(async () => {
 });
 
 describe('reactive Machine presence', () => {
+    it('shows a cold managed Session row wake from published Machine facts without loading input bodies', async () => {
+        const { useSessionManagedWakeStatus } = await import('@/components/sessions/pending/useSessionManagedWakeStatus');
+        const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
+        const session = createSessionListRenderableSessionFixture({ id: 'cold-managed', encryptionMode: 'plain',
+            active: false, activeAt: 1, presence: 1, pendingCount: 1,
+            pendingActivationAuthorization: { status: 'waiting', requestId: 'accepted-input', requestedAt: 10,
+                managedWakeTargetV1: { homeId: serverId, managedId: 'managed-row', enrolledMachineId: 'guest',
+                    expectedIntentRevision: 1, reason: 'admitted-work',
+                    origin: { kind: 'session-input', session: { homeId: serverId, sessionId: 'cold-managed' },
+                        pendingRequestId: 'accepted-input', requestedAt: 10 } } } });
+        const machine = createMachineFixture({ id: 'guest', active: false, activeAt: 0, presenceProtocolVersion: 1,
+            managedInputRuntime: { nativeReady: false, wakeState: 'starting', state: 'starting' } });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        const hook = await renderHook(() => {
+            const facts = useSessionManagedWakeStatus(session, serverId);
+            return getSessionStatus(session, 20, facts ?? {});
+        });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ state: 'resuming', isConnected: false }));
+            await act(async () => storage.getState().applyMachines([{ ...machine,
+                managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep' } }], false, { sourceServerId: serverId }));
+            expect(hook.getCurrent()).toMatchObject({ state: 'pending_input', isConnected: false });
+            await act(async () => storage.getState().applyMachines([{ ...machine,
+                managedInputRuntime: { nativeReady: true, wakeState: null, state: null } }], false, { sourceServerId: serverId }));
+            expect(hook.getCurrent()).toMatchObject({ state: 'pending_input', isConnected: false });
+            expect(home.requests.filter(request => request.path.includes('/pending') || request.path.includes('/managed-machines'))).toEqual([]);
+            expect(storage.getState().sessionPending[session.id]).toBeUndefined();
+        } finally { await hook.unmount(); }
+    });
+
     it('does not resolve a Home inventory until a mounted consumer demands a Machine', async () => {
         const machine = createMachineFixture({ id: 'demanded-machine', activeAt: Date.now() });
         machine.metadata = { ...machine.metadata!, displayName: 'Demanded Machine' };

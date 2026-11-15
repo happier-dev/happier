@@ -312,7 +312,7 @@ describe('getSessionStatus', () => {
         const { getSessionStatus, presentSessionAwarenessV1 } = await import('./sessionUtils');
         const { deriveManagedWakeProjection } = await import('@/sync/domains/pending/managedWakeProjection');
         const { readBotActivity } = await import('@/components/sessions/bots/botActivity');
-        const session = createSessionFixture({ encryptionMode: 'plain', active: false, activeAt: 100, presence: 'offline' });
+        const session = createSessionFixture({ encryptionMode: 'plain', active: false, activeAt: 100, presence: 100 });
         const managed = { id: 'managed-a', homeId: 'home-a', creationState: 'active' as const,
             allocation: 'bound' as const, enrolledMachineId: 'guest-a', wakeOnAcceptedMessage: true,
             controller: { machineId: 'controller-a', installationId: 'installation-a' },
@@ -325,19 +325,28 @@ describe('getSessionStatus', () => {
             activation: { requestId: 'pending-a', requestedAt: 200, status: 'waiting' },
             machineReachable: false, runtimeResuming: false });
         expect(projection?.kind).toBe('starting');
-        for (const source of [session, buildSessionListRenderableFromSession(session, undefined, [])]) {
-            const status = getSessionStatus(source, 300, { managedWakeProjection: projection });
-            expect(status).toMatchObject({ state: 'resuming', bucket: 'working', isConnected: false, isPulsing: false });
-            expect(presentSessionAwarenessV1(status.awareness).state).toBe('resuming');
-            expect(readBotActivity(source, 300, status)).toBe('working');
-        }
         expect(getSessionStatus(session, 300)).toMatchObject({ state: 'disconnected', isConnected: false });
         const terminal = { ...session, latestTurnStatus: 'completed' as const, latestTurnStatusObservedAt: 250,
             latestReadyEventSeq: 1 };
-        expect(getSessionStatus(terminal, 300, { managedWakeProjection: projection }).state).toBe('ready');
         const permission = { ...session, active: true, presence: 'online' as const, pendingPermissionRequestCount: 1,
             pendingUserActionRequestCount: 0, pendingRequestObservedAt: 290 };
-        expect(getSessionStatus(permission, 300, { managedWakeProjection: projection }).state).toBe('permission_required');
+        for (const facts of [{ managedWakeProjection: projection },
+            { managedWakeMachine: { state: 'starting' as const, nativeReady: false, activationStatus: 'waiting' as const } }]) {
+            for (const source of [session, buildSessionListRenderableFromSession(session, undefined, [])]) {
+                const status = getSessionStatus(source, 300, facts);
+                expect(status).toMatchObject({ state: 'resuming', bucket: 'working', isConnected: false, isPulsing: false });
+                expect(presentSessionAwarenessV1(status.awareness).state).toBe('resuming');
+                expect(readBotActivity(source, 300, status)).toBe('working');
+            }
+            expect(getSessionStatus(terminal, 300, facts).state).toBe('ready');
+            expect(getSessionStatus(permission, 300, facts).state).toBe('permission_required');
+        }
+        expect(getSessionStatus(session, 300, { managedWakeMachine: {
+            state: null, nativeReady: true, activationStatus: 'failed',
+        } }).state).toBe('disconnected');
+        expect(getSessionStatus(session, 300, { managedWakeMachine: {
+            state: 'starting', nativeReady: false, activationStatus: 'failed',
+        } }).state).toBe('resuming');
     });
     it.each([
         ['encrypted_access_pending', 'access_pending'],

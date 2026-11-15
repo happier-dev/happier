@@ -1,5 +1,7 @@
 import { readSessionAwarenessWorkStatusV1, type SessionAwarenessPresentationFactsV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { ManagedWakeProjection } from '@/sync/domains/pending/managedWakeProjection';
+import type { ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { SESSION_AWARENESS_OPTIMISTIC_PENDING_INPUT_MS, SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS, hasProjectedActiveTurnV1, hasTerminalPrimaryTurnStatusV1, isFreshAwarenessTimestampV1, isLiveSessionRuntimeV1, isSessionRuntimeRunningV1, projectSessionAwarenessRuntimeV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { normalizeAwarenessTimestampV1 } from '@happier-dev/protocol/sessions/awareness/inputV1';
 import { projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
@@ -26,7 +28,13 @@ export const SESSION_OPTIMISTIC_PENDING_THINKING_MS = SESSION_AWARENESS_OPTIMIST
 export const SESSION_RESUMING_PRESENTATION_TIMEOUT_MS = 30_000;
 
 /** UI-only acquired wake facts; the runtime's actual connectivity remains independent. */
-export type UiSessionManagedWakeFacts = Readonly<{ managedWakeProjection?: ManagedWakeProjection | null }>;
+export type UiSessionManagedWakeFacts = Readonly<{
+    managedWakeProjection?: ManagedWakeProjection | null;
+    /** Cold rows consume published native facts without reading or claiming input custody. */
+    managedWakeMachine?: Readonly<Pick<ManagedMachineInputRuntimeV1, 'state' | 'nativeReady'> & {
+        activationStatus: PendingActivationAuthorizationV1['status'];
+    }> | null;
+}>;
 
 /** Reuse existing Session states for the managed owner's observed wake, without inventing runtime presence. */
 export function readUiSessionAwarenessWorkStatus(input: Readonly<{
@@ -35,10 +43,20 @@ export function readUiSessionAwarenessWorkStatus(input: Readonly<{
 }>): ReturnType<typeof readSessionAwarenessWorkStatusV1> {
     const status = readSessionAwarenessWorkStatusV1(input);
     const wake = input.awareness.managedWakeProjection;
+    const machine = input.awareness.managedWakeMachine;
     // Encryption, terminal outcomes, requests and actual running work keep their canonical precedence.
-    if (!wake || !(status.state === 'disconnected' || status.state === 'unknown' || status.state === 'stale'
+    if ((!wake && !machine) || !(status.state === 'disconnected' || status.state === 'unknown' || status.state === 'stale'
         || status.state === 'waiting' || status.state === 'pending_input' || status.state === 'resuming')) return status;
-    switch (wake.kind) {
+    // An outstanding native Start remains visible after activation failure; a ready Machine alone
+    // does not turn a failed Session activation into a new attempt.
+    let kind = wake?.kind;
+    if (!kind && machine) {
+        if (machine.state === 'starting') kind = 'starting';
+        else if (machine.activationStatus === 'waiting') {
+            if (machine.nativeReady || machine.state === 'asleep') kind = 'waiting';
+        }
+    }
+    switch (kind) {
         case 'starting':
         case 'connecting':
         case 'resuming': return { state: 'resuming', bucket: 'working', tone: 'neutral' };

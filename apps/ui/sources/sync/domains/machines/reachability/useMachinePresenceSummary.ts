@@ -37,6 +37,7 @@ import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/ma
 export type MachinePresenceSummary = Readonly<{
     /** Selected recipient-safe lifecycle and heartbeat facts; UI presentation never reclassifies native power. */
     nativeState?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineInputRuntimeV1['state'];
+    nativeReady?: boolean | null;
     presenceOnline?: boolean | null;
     name: string | null;
     /** The name as a sentence uses it ("Reading it from {machine}"): "this machine" while its details load or are locked. */
@@ -76,6 +77,7 @@ export function useMachinePresenceSummaries(
     const idsKey = JSON.stringify(machineIds);
     const ids = React.useMemo(() => (JSON.parse(idsKey) as string[]).map(id => id.trim()), [idsKey]);
     const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
+        if (ids.length === 0) return [];
         const state = store.getState();
         const activeServerId = getActiveServerSnapshot().serverId;
         const serverId = targetServerId || activeServerId;
@@ -100,6 +102,7 @@ export function useMachinePresenceSummaries(
             const machineIsKnown = Boolean(machine);
             const activeAt = machine ? readMachineActivity(machine).activeAt : null;
             const nativeState = machine?.managedInputRuntime?.state ?? null;
+            const nativeReady = machine?.managedInputRuntime?.nativeReady ?? null;
             const presenceOnline = machine ? isMachineOnline(machine, nowMs) : null;
             const lastSeenAt = reachability === 'unreachable' && machine && presenceOnline === false
                 && typeof activeAt === 'number' && activeAt > 0
@@ -107,8 +110,8 @@ export function useMachinePresenceSummaries(
             const previous = cached.current[index];
             return previous && previous.name === name && previous.sentenceName === sentenceName && previous.homeDir === homeDir
                 && previous.reachability === reachability && previous.lastSeenAt === lastSeenAt && previous.machineIsKnown === machineIsKnown
-                && previous.nativeState === nativeState && previous.presenceOnline === presenceOnline
-                ? previous : { name, sentenceName, homeDir, reachability, lastSeenAt, machineIsKnown, nativeState, presenceOnline };
+                && previous.nativeState === nativeState && previous.nativeReady === nativeReady && previous.presenceOnline === presenceOnline
+                ? previous : { name, sentenceName, homeDir, reachability, lastSeenAt, machineIsKnown, nativeState, nativeReady, presenceOnline };
         });
         if (next.length !== cached.current.length || next.some((value, index) => value !== cached.current[index])) cached.current = next;
         return cached.current;

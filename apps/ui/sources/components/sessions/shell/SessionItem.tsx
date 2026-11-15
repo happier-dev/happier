@@ -2196,7 +2196,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
     const { theme } = useUnistyles();
     const { rowViewModel, ...itemProps } = props;
     const rowSession = rowViewModel.session;
-    const managedWakeProjection = useSessionManagedWakeStatus(rowSession, itemProps.serverId);
+    const managedWakeFacts = useSessionManagedWakeStatus(rowSession, itemProps.serverId);
     const rowStatus = rowViewModel.sessionStatus;
     const archivePending = useSessionArchivePending(normalizeSessionAddress(itemProps.serverId, rowSession?.id));
     if (!rowSession || !rowStatus) {
@@ -2206,11 +2206,11 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
         rowSession,
         providedSession: itemProps.session,
     });
-    const sessionStatus = managedWakeProjection || archivePending || rowStatus.state === 'archiving' || session !== rowSession
+    const sessionStatus = managedWakeFacts || archivePending || rowStatus.state === 'archiving' || session !== rowSession
         ? getSessionStatus(session, Date.now(), {
             archiving: archivePending,
             statusColors: theme.colors.status,
-            managedWakeProjection,
+            ...managedWakeFacts,
         }) : rowStatus;
     const contentUnavailable = !isSessionAwarenessContentReadableV1(sessionStatus.awareness.encryption);
     // Encryption pending is not a reason to forget a name this device already holds:
@@ -2235,7 +2235,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             activityTimeLabel={rowViewModel.activityTimeLabel}
             guardState={rowViewModel.guardState}
             sessionStatus={sessionStatus}
-            botActivity={managedWakeProjection ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}
+            botActivity={managedWakeFacts ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}
             externalSessionIdentity={rowViewModel.externalSessionIdentity}
             sessionNameResolved={sessionNameResolved}
             sessionSubtitle={contentUnavailable ? '' : itemProps.subtitleOverride ?? rowViewModel.subtitleOverride ?? getSessionSubtitle(session, itemProps.serverId)}

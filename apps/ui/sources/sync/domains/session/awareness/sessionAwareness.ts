@@ -147,5 +147,6 @@ export function projectUiSessionAwareness(
     options?: UiSessionAwarenessOptions,
 ): SessionAwarenessProjectionV1 & UiSessionManagedWakeFacts {
     const awareness = projectSessionAwarenessV1(createUiSessionAwarenessInput(session, nowMs, options));
-    return options?.managedWakeProjection ? { ...awareness, managedWakeProjection: options.managedWakeProjection } : awareness;
+    return options?.managedWakeProjection || options?.managedWakeMachine ? { ...awareness,
+        managedWakeProjection: options.managedWakeProjection, managedWakeMachine: options.managedWakeMachine } : awareness;
 }
