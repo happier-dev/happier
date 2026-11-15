@@ -26,7 +26,7 @@ vi.mock('expo-modules-core', async original => ({
 const nativeAudio = createNativeVoicePcmCaptureHarness(false);
 nativeBoundary.module = nativeAudio.nativeModule;
 const network = await installSessionOpsNetworkBoundary();
-const { createMachineFixture } = await import('@/dev/testkit');
+const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
 const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
 const { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } = await import('@/dev/testkit/harness/voiceWebRtcHarness');
 const { storage } = await import('@/sync/domains/state/storage');
@@ -35,7 +35,7 @@ const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await
 const { voiceSettingsParse, readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
 const { VoiceLocalSttSchema } = await import('@/sync/domains/settings/voiceLocalSttSettings');
 const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
-const { createDaemonStreamingSttController } = await import('./DaemonStreamingSttController');
+const { createDaemonStreamingSttController, createDefaultDaemonVoiceInferenceClient } = await import('./DaemonStreamingSttController');
 const { createWebDaemonSpeechPcmCapture } = await import('./WebDaemonSpeechPcmCapture.web');
 const { createDaemonSpeechPcmCapture } = await import('./DaemonSpeechPcmCapture.native');
 const { resolveDaemonSpeechPcmCaptureAvailability } = await import('./resolveDaemonSpeechPcmCaptureAvailability.native');
@@ -88,7 +88,7 @@ beforeEach(async () => {
     handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init),
   });
   const machine = createMachineFixture({ id: 'pipeline-machine', activeAt: Date.now() });
-  storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
+  storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
   const voice = voiceSettingsParse({ providerId: 'local_conversation',
     executionMachine: { mode: 'fixed', machineId: machine.id } });
   const configuredVoice = writeLocalConversationVoiceSettings(voice, {
@@ -124,6 +124,75 @@ afterAll(async () => {
 });
 
 describe('daemon STT capture pipeline through the default client', () => {
+  it.each([
+    { abortSuperseded: false, replaceController: false },
+    { abortSuperseded: true, replaceController: false },
+    { abortSuperseded: true, replaceController: true },
+  ])('serializes overlapping starts through retirement of the preceding stream ($abortSuperseded/$replaceController)', async ({ abortSuperseded, replaceController }) => {
+    const call = new AbortController();
+    const supersededCapture = new AbortController();
+    let releaseStart!: () => void;
+    const startReady = new Promise<void>(resolve => { releaseStart = resolve; });
+    let enteredStart!: () => void;
+    const startEntered = new Promise<void>(resolve => { enteredStart = resolve; });
+    let applicationActive = false;
+    let applicationRequestId: string | null = null;
+    const lifecycle: string[] = [];
+    network.setRpcResponder(async request => {
+      lifecycle.push(request.method);
+      if (request.method === methods.start) {
+        const start = DaemonVoiceInferenceSttStreamStartRequestSchema.parse(request.payload);
+        if (applicationRequestId) expect(start.requestId).toBe(applicationRequestId);
+        applicationRequestId = start.requestId;
+        // The daemon permits one active stream for the call's admitted application.
+        if (applicationActive) {
+          return { ok: false, errorCode: 'invalid_stream_state', error: 'invalid_stream_state' };
+        }
+        applicationActive = true;
+        enteredStart();
+        await startReady;
+        lifecycle.push('start-replied');
+      }
+      if (request.method === methods.chunk) {
+        const chunk = DaemonVoiceInferenceSttStreamChunkRequestSchema.parse(request.payload);
+        return DaemonVoiceInferenceSttStreamChunkResponseSchema.parse({ ok: true,
+          streamId: chunk.streamId, generation: chunk.generation, ackSeq: chunk.seq, events: [],
+        });
+      }
+      if (request.method === methods.cancel || request.method === methods.finish) applicationActive = false;
+      return respond(request);
+    });
+    const sink = createSink();
+    const client = createDefaultDaemonVoiceInferenceClient();
+    const createController = () => createDaemonStreamingSttController({
+      createClient: () => client,
+      getSettings: () => storage.getState().settings, createPcmCapture: createWebDaemonSpeechPcmCapture,
+    });
+    runtime = createController();
+    const startListening = (signal?: AbortSignal) => runtime!.start({
+      sessionId: 'overlap', micSession: browser.micSession, sink, callSignal: call.signal, signal,
+    });
+    try {
+      const first = startListening(supersededCapture.signal);
+      await Promise.race([startEntered, first.then(() => { throw new Error('initial_stream_not_started'); })]);
+      if (abortSuperseded) supersededCapture.abort();
+      if (replaceController) runtime = createController();
+      const second = startListening();
+      // Let a competing request reach the network while the first reply is held.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      releaseStart();
+      await Promise.all([first, second]);
+      expect(sink.onError, lifecycle.join(' -> ')).not.toHaveBeenCalled();
+      context.emitInput(new Float32Array(480).fill(0.25));
+      await vi.waitFor(() => expect(requests('chunk')).toHaveLength(1));
+      await expect(runtime.stop()).resolves.toEqual({ finalText: 'all admitted words' });
+      expect(requests('finish')).toHaveLength(1);
+    } finally {
+      releaseStart();
+      call.abort();
+    }
+  });
+
   it('reports native source finalization failure instead of returning a successful transcript', async () => {
     const harness = nativeAudio;
     expect(resolveDaemonSpeechPcmCaptureAvailability()).toBe('available');

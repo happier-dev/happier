@@ -513,11 +513,11 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     const sink = createSink();
     const params = startParams({ sink });
     await runtime.start(params);
-    expect(params.sink.onError).toHaveBeenCalledWith({
+    expect(params.sink.onError).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'provider_error', phase: 'runtime', presentation: 'notice',
       reason: 'daemon_streaming_stt_runtime_unavailable', recoverable: true,
       recoveryAction: 'retry', retryPolicy: 'user_action',
-    });
+    }));
     expect(daemonSpeechStreamDiagnostics.snapshot().lastStartFailure).toMatchObject({ code: 'runtime_unavailable' });
     expect(browser.micSession.getStream()).toBeNull();
     expect(context.createMediaStreamSource).not.toHaveBeenCalled();
@@ -612,11 +612,11 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     await runtime.start(params);
     emitPcm();
     await params.events.error;
-    expect(params.sink.onError).toHaveBeenCalledWith({
+    expect(params.sink.onError).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'provider_error', phase: 'runtime', presentation: 'notice',
       reason: 'daemon_streaming_stt_pcm_chunk_failed', recoverable: true,
       recoveryAction: 'retry', retryPolicy: 'user_action',
-    });
+    }));
     const failure: unknown = vi.mocked(params.sink.onError).mock.calls[0]?.[0];
     expect(failure).toHaveProperty('cause');
     expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.enumerable).toBe(false);

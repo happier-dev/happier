@@ -712,7 +712,9 @@ export class DaemonVoiceInferenceClient {
                     method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
                     payload,
                     onContentMode: (mode) => { contentMode = mode; },
-                    ...(rpcSignal ? { signal: rpcSignal } : {}),
+                    // Capture retirement still needs this reply's stream key.
+                    // The controller cancels the admitted stream after start
+                    // settles; aborting the reply would strand that admission.
                 }),
             );
             return { response, contentMode };

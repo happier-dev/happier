@@ -48,6 +48,13 @@ type ActiveDaemonStreamingStt = {
     unlinkAbort: () => void;
 };
 
+// Readout may replace the controller while retaining the call's admission.
+// Keep startup and retirement owned by that existing call lifetime.
+const captureStarts = new WeakMap<AbortSignal | DaemonStreamingSttClient, {
+    pending: Promise<void>;
+    retire: () => Promise<void>;
+}>();
+
 const DAEMON_STT_START_ERROR_REASONS = new Set([
     'feature_disabled',
     'machine_unreachable',
@@ -235,7 +242,7 @@ export function createDaemonStreamingSttController(
         await attempt;
     };
 
-    const start = async (params: SttStartParams, prefixText = '') => {
+    const startAttempt = async (params: SttStartParams, prefixText = '') => {
         const { sessionId, micSession, sink, signal, callSignal, capturePurpose } = params;
         const isAborted = () => signal?.aborted || callSignal?.aborted;
         paused = null;
@@ -382,6 +389,7 @@ export function createDaemonStreamingSttController(
                     active = null;
                 }
             }
+            return handle;
         } catch (error) {
             await cancelActive(handle);
             if (active === handle) {
@@ -401,6 +409,22 @@ export function createDaemonStreamingSttController(
             Object.defineProperty(failure, 'cause', { value: error, enumerable: false });
             sink.onError(failure);
         }
+    };
+    const start = (params: SttStartParams, prefixText = ''): Promise<void> => {
+        const key = params.callSignal ?? client;
+        const owner = captureStarts.get(key) ?? { pending: Promise.resolve(), retire: async () => {} };
+        captureStarts.set(key, owner);
+        const attempt = owner.pending.then(async () => {
+            if (params.signal?.aborted || params.callSignal?.aborted) return;
+            await owner.retire();
+            const handle = await startAttempt(params, prefixText);
+            owner.retire = async () => {
+                await stopping;
+                await cancelActive(handle ?? null);
+            };
+        });
+        owner.pending = attempt.catch(() => {});
+        return attempt;
     };
     const finalize = async (): Promise<SttStopResult> => {
         if (stopping) {
