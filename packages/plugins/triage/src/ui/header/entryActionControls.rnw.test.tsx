@@ -395,7 +395,9 @@ describe('the mounted configured entry action controls', () => {
       surface: defineUiSurface(() => <TriageEntryActionControls compact
         target={{ kind: 'entry', sectionId: 'open', entryRef, sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
         actions={TRIAGE_DEFAULT_ACTIONS_V1} workflowSubject="errorIssue" viewerIsAuthor={false}
-        reviewPreparation="unsupported" onAction={(request) => { requests.push(request); }} />),
+        reviewPreparation="unsupported" taskDraft={{ title: 'Checkout fails after payment', originError: { entryRef,
+          display: { title: 'Checkout fails after payment', scopeLabel: 'Production' } } }}
+        onAction={(request) => { requests.push(request); }} />),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
     });
@@ -412,6 +414,8 @@ describe('the mounted configured entry action controls', () => {
     layout(TRIAGE_ACTION_BAND_CONTROLS_TEST_ID_V1, 260);
     await expect(fixture.queryByRole('button', { name: 'Ask' })).resolves.toBeUndefined();
     await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'More actions' })); });
+    // The question that left the band leads the menu, ahead of rarer rows such as Make task.
+    expect((await fixture.getAllByRole('menuitem'))[0]?.name).toBe('Ask');
     await act(async () => { await fixture.press(await fixture.getByRole('menuitem', { name: 'Ask' })); });
     expect(requests.map((request) => request.action.actionId)).toEqual(['ask']);
     // Room for all three again: Ask returns beside the primary.

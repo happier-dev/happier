@@ -486,7 +486,21 @@ export function TriageEntryActionControls(
   // A start runs with nobody at the keyboard, so an action that names no task can only open the composer.
   const startUnavailable = primary === null || applyTriageActionLaunchModeV1(primary, 'start') !== null ? undefined
     : text('plugins.triage.surface.actions.startNeedsTask', 'This action names no task, so it opens the composer.');
+  const actionMenuItem = (action: TriageActionV1) => {
+    const titleKey = readTriageActionTitleKeyV1(action);
+    const blocked = isTriageActionBlockedV1(action, reviewPreparation);
+    const starts = props.withoutRepository === true && titleKey !== null && action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1;
+    return {
+      id: actionItemId(action),
+      label: starts ? text('plugins.triage.surface.actions.start', 'Start')
+        : titleKey === null ? action.label : text(titleKey, action.label),
+      ...(blocked ? { disabled: true } : {}),
+      ...(blocked && sourceCannotPrepare ? { subtitle: preparationReasonLabel } : {}),
+    };
+  };
   const menuItems = [
+    // Ask that left the band is the menu's first row: it is still the one quiet question beside the primary.
+    ...(askYields && asking !== null ? [actionMenuItem(asking)] : []),
     ...(mergeChoices === null ? [] : mergeChoices.readinessItems),
     ...(!writeShown || write === undefined || writeMethods !== null ? [] : [{
       id: `${SOURCE_WRITE_ITEM_PREFIX}write`,
@@ -501,18 +515,7 @@ export function TriageEntryActionControls(
     ...(props.taskDraft !== undefined ? [{
       id: MAKE_TASK_ITEM_ID, label: makeTask.label, ...(makeTask.busy ? { disabled: true } : {}),
     }] : []),
-    ...overflowActions.map((action) => {
-      const titleKey = readTriageActionTitleKeyV1(action);
-      const blocked = isTriageActionBlockedV1(action, reviewPreparation);
-      const starts = props.withoutRepository === true && titleKey !== null && action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1;
-      return {
-        id: actionItemId(action),
-        label: starts ? text('plugins.triage.surface.actions.start', 'Start')
-          : titleKey === null ? action.label : text(titleKey, action.label),
-        ...(blocked ? { disabled: true } : {}),
-        ...(blocked && sourceCannotPrepare ? { subtitle: preparationReasonLabel } : {}),
-      };
-    }),
+    ...overflowActions.filter((action) => action !== asking).map(actionMenuItem),
     ...extraItems.map((item) => ({
       id: `${EXTRA_ITEM_PREFIX}${item.id}`,
       label: item.label,

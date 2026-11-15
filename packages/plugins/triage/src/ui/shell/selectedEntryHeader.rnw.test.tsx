@@ -433,6 +433,24 @@ describe('the selected entry once the window stops holding it', () => {
         await expect(shell.getByText('No active connection is available for this entry’s source. Configure or reconnect a source, then open the entry again.')).resolves.toBeDefined();
         expect(exactReads).toBe(1);
     });
+    it('says in words that an open entry could no longer be read, above its technical details', async () => {
+        const { shell, ephemeralSharedScope } = await mountShell(true);
+        await openTheRow(shell);
+        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
+        const retained = store.getRow(triageEntryRowKey(ENTRY_REF))!;
+        await act(async () => {
+            store.publishObservation({
+                entryRef: retained.entryRef,
+                sourceInstanceId: INSTANCE,
+                observedAtMs: 1_760_000_100_010,
+                outcome: { kind: 'unresolved', failure: { class: 'transient', code: 'github_secondary_rate_limited', retryable: true } },
+            });
+        });
+
+        // Not a lone "Details" fold: the reader is told what happened before the code that says why.
+        await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
+        await expect(shell.getByText('Details')).resolves.toBeDefined();
+    });
     it('settles a retired opening generation as an unavailable detail', async () => {
         const { shell } = await mountShell(true);
         exactFailure = new PluginError({ code: 'plugin_action_generation_retired', retryable: false });

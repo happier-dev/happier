@@ -104,7 +104,7 @@ import { readTriageSessionTitle } from './sessionTitle.js';
 import { TriageFixPullRequests } from './fixPullRequests.js';
 import { useTriageDetailFixPullRequest } from './useTriageDetailFixPullRequest.js';
 import { planTriageDetailTabsV1 } from './tabs.js';
-import { TRIAGE_DETAIL_ACTIONS_PANEL_V1, formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_DETAIL_ACTIONS_PANEL_V1, describeTriageSourceFailureV1, formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageEditTaskScope, type TriageEditTaskPlacementV1 } from './taskFields.js';
 import { TriageTaskStory } from './taskStory.js';
 import { TriageTaskOrigin } from './taskOrigin.js';
@@ -1041,10 +1041,24 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         )}
       />
     );
+    // What a detail that could not be read says under its title, whichever read failed (the row's own observation or
+    // the exact read): when it was last read, then why and whether trying again can help.
+    const unavailableNow = text('plugins.triage.surface.detail.accountError.description', "This entry's details are unavailable right now. Try again when the connection is available.");
+    const readFailedDescription = (why: string) => readRefusal !== null ? undefined : [
+      header.lastReadAtMs === null ? null : text('plugins.triage.surface.detail.lastRead', 'Last read {age}.', {
+        age: formatTriageTimestampV1(context.locale, header.lastReadAtMs, 'relative', Date.now()),
+      }),
+      why,
+    ].filter((part): part is string => part !== null).join(' ');
     return <Stack style={DETAIL_FILL_STYLE_V1}>
       {readFailure !== undefined ? (
         <Stack gap="small">
-          {readRefusal === null ? null : <ErrorState title={readRefusal} />}
+          {/* The same sentence as a failed exact read: what happened first, the code that says why below it. */}
+          <ErrorState
+            titleKey={readRefusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
+            title={readRefusal ?? 'These details could not be read'}
+            description={readFailedDescription(describeTriageSourceFailureV1(readFailure, unavailableNow, text))}
+          />
           <ActionFailureDetails code={readFailure.code} requestId={readFailure.requestId}
             detail={readFailure.detail} showReason={false} />
         </Stack>
@@ -1078,15 +1092,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           <ErrorState
             titleKey={readRefusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
             title={readRefusal ?? 'These details could not be read'}
-            description={readRefusal === null ? [
-              header.lastReadAtMs === null ? null : text('plugins.triage.surface.detail.lastRead', 'Last read {age}.', {
-                age: formatTriageTimestampV1(context.locale, header.lastReadAtMs, 'relative', Date.now()),
-              }),
-              // A retry is offered only when one can succeed; without one, the words don't invite it either.
-              detail.failure?.retryable === false
-                ? text('plugins.triage.surface.detail.accountError.permanent', "The source refused this entry's details. Details below say why.")
-                : text('plugins.triage.surface.detail.accountError.description', "This entry's details are unavailable right now. Try again when the connection is available."),
-            ].filter((part): part is string => part !== null).join(' ') : undefined}
+            // A retry is offered only when one can succeed; without one, the words don't invite it either.
+            description={readFailedDescription(detail.failure?.retryable === false
+              ? text('plugins.triage.surface.detail.accountError.permanent', "The source refused this entry's details. Details below say why.")
+              : unavailableNow)}
             action={detail.failure?.retryable === false ? undefined : (
               <Button
                 titleKey="plugins.triage.surface.actions.retry"
