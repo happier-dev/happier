@@ -812,6 +812,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                     ...(seed.approvalContext ? { approvalContext: seed.approvalContext } : {}),
                     ...(seed.requesterAccount ? { requesterAccount: seed.requesterAccount } : {}),
                     ...(seed.reviewedParent ? { reviewedParent: seed.reviewedParent } : {}),
+                    ...(seed.reviewedParentByPress ? { reviewedParentByPress: seed.reviewedParentByPress } : {}),
                     ...(seed.presentUserIntent ? { presentUserIntent: seed.presentUserIntent } : {}),
                     ...(seed.finiteOperation ? { finiteOperation: seed.finiteOperation } : {}),
                     ...(seed.workflowActionContext ? { workflowActionContext: seed.workflowActionContext } : {}),

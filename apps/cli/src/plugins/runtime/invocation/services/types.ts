@@ -129,6 +129,9 @@ export type PluginInvocationServicesSeed = Readonly<{
     resolveAccountSourceMachine?(signal?: AbortSignal): ReturnType<typeof import('../actions/accountMachineActionTransport').resolveAccountMachineSourceActionMachine>;
     /** Existing issuer's admitted whole-operation parent; never public plugin input. */
     reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
+    /** The reviewed parent is the person's bare own-UI press, not a completed review: it admits the
+     * pressed Action's own host effects, never another contributed Action's policy. */
+    reviewedParentByPress?: true;
     /** The handler admission owner's own-UI decision; host-private, never an SDK operand. */
     presentUserIntent?: 'confirmed';
     /** Existing finite operation owns nested effect progress and early transport acceptance. */

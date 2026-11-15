@@ -16,6 +16,7 @@ import { PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happie
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
 import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
@@ -1152,6 +1153,7 @@ describe('plugin invocation ActionsService', () => {
             name: 'PluginError',
             code: 'resource_changed',
             message: 'The Saved Secret changed before this update.',
+            details: { expectedRevision: 3 },
         });
     });
 
@@ -1215,7 +1217,7 @@ describe('plugin invocation ActionsService', () => {
         });
     });
 
-    it('defaults malformed start evidence to outcome-unknown and drops non-start failure details', async () => {
+    it('defaults malformed start evidence to outcome-unknown and keeps non-start failure details', async () => {
         const materialization = createPluginActionCallerMaterializationFixture('acme.automations');
         const seed = {
             plugin: { id: 'acme.automations', version: '1.0.0' },
@@ -1268,8 +1270,8 @@ describe('plugin invocation ActionsService', () => {
             machineId: 'machine-1',
             query: { v: 1, query: 'x', scope: { type: 'global' }, mode: 'hints' },
         }).catch((caught: unknown) => caught);
-        expect(error).toMatchObject({ code: 'action_disabled' });
-        expect(error).not.toHaveProperty('details');
+        // Plugins are trusted callers: they receive the same public failure as any other Action caller.
+        expect(error).toMatchObject({ code: 'action_disabled', details: { secret: 'must-not-cross-the-plugin-boundary' } });
     });
 
     it('classifies plugin retirement before and after host start dispatch without granting retry authority', async () => {
@@ -2100,11 +2102,17 @@ describe('plugin invocation ActionsService', () => {
     });
 
     it('binds permission-request identity from the host seed instead of accepting plugin-authored identity', async () => {
-        const pluginPermissionGrantAction: NonNullable<ActionExecutorDeps['pluginPermissionGrantAction']> = vi.fn(async () => ({
-            ok: false as const,
-            errorCode: 'test_stop_after_binding',
-            error: 'test_stop_after_binding',
-        }));
+        const failureCause = {
+            phase: 'execution_authorization', errorClass: 'Error',
+            errorCode: 'machine_manage_required', httpStatus: 403,
+        } as const;
+        // The permission-grant transport is the substituted network boundary.
+        const pluginPermissionGrantAction: NonNullable<ActionExecutorDeps['pluginPermissionGrantAction']> = vi.fn(async () => {
+            throw createActionExecuteFailureError({
+                ok: false, errorCode: 'credential_scope_denied', error: 'Manage is required',
+                details: { requiredRole: 'manage' }, failureCause,
+            });
+        });
         const actionExecutor = createPermissionActionExecutor(pluginPermissionGrantAction);
         const service = createPluginInvocationActionsService({
             seed: {
@@ -2128,7 +2136,11 @@ describe('plugin invocation ActionsService', () => {
                 subject: { kind: 'general' },
                 reason: 'Publish approved review comments directly',
             },
-        ])).rejects.toMatchObject({ code: 'test_stop_after_binding' });
+        ])).rejects.toMatchObject({
+            code: 'credential_scope_denied',
+            details: { requiredRole: 'manage' },
+            data: { failureCause, details: { requiredRole: 'manage' } },
+        });
         expect(pluginPermissionGrantAction).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'plugins.permissions.grants.request',
             input: expect.objectContaining({

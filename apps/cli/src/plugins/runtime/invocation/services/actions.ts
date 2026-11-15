@@ -79,6 +79,7 @@ export type PluginActionsServiceSeed = Readonly<{
     resolveAccountSourceMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine'];
     /** The canonical admitted parent, projected once by the target invocation owner. */
     reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
+    reviewedParentByPress?: PluginInvocationServicesSeed['reviewedParentByPress'];
     presentUserIntent?: PluginInvocationServicesSeed['presentUserIntent'];
     finiteOperation?: PluginInvocationServicesSeed['finiteOperation'];
     /** Host-only finite invocation cause; never a fallback for an active-turn reader. */
@@ -345,19 +346,19 @@ function executorFailure(
             result.details,
             readExecutionRunStartRunCreation(result.details),
         )
-        : undefined;
+        : result.details;
     const details = normalizedDetails === undefined
         ? undefined
         : StrictJsonValueSchema.safeParse(normalizedDetails);
-    const error = new PluginError({
+    // The plugin caller receives the same public failure as any other Action caller.
+    return new PluginError({
         code: result.errorCode,
         message: result.error,
-        ...(details?.success ? { details: details.data } : {}),
+        ...readPluginActionFailureAuthorPayload({
+            ...(details?.success ? { details: details.data } : {}),
+            ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+        }),
     });
-    if (actionId !== 'execution.run.start') {
-        Reflect.deleteProperty(error, 'details');
-    }
-    return error;
 }
 
 /**
@@ -523,7 +524,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
             signal,
         });
         const dispatch = async (): Promise<ContributedActionInvocationResult> => {
-            if (!params.seed.reviewedParent || readObservation) return invoke(input, approvalContext, action);
+            // A bare own-UI press admits only the pressed Action. Another contributed
+            // Action keeps its own policy for that present person (owner 2026-11-15, option A).
+            if (!params.seed.reviewedParent || params.seed.reviewedParentByPress || readObservation) {
+                return invoke(input, approvalContext, action);
+            }
             const role = admittedTargetedOperation?.operation.role ?? 'actions.execute';
             const issued = await invokeHostReviewedChildV1({
                 parent: params.seed.reviewedParent,
@@ -826,7 +831,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 ? { bypassActionInterception: true }
                 : {}),
         } satisfies RpcActionExecutorContext & Readonly<{ actionCaller: ActionPluginCaller; signal: AbortSignal }>;
-        const execute = () => params.seed.reviewedParent ? invokeHostReviewedChildV1({
+        // A bare press admits the pressed Action's own host effects (owner-approved
+        // Save-defaults precedent), never another contributed Action (option A).
+        const issueReviewedChild = params.seed.reviewedParent
+            && !(params.seed.reviewedParentByPress && actionId === 'action.invoke');
+        const execute = () => params.seed.reviewedParent && issueReviewedChild ? invokeHostReviewedChildV1({
             parent: params.seed.reviewedParent,
             context: executionContext,
             // Contribution refs already have their canonical action.invoke

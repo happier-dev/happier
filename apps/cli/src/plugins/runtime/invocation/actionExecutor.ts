@@ -6,6 +6,7 @@ import { readCurrentIntentMismatchFieldV1, type CurrentIntentMismatchV1 } from '
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorContext, ApprovalExecutionOriginV1, ApprovalRequesterConfirmationV1, PluginSourceCustodyV1, TargetActionApprovalReplayPlacementV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -122,6 +123,8 @@ export type TargetActionCurrentIntentResult = Readonly<
     fingerprint: string;
     /** Durable identity when approval is Artifact-owned. */
     artifactId?: string;
+    /** Witnessed approval identity; null preserves an anonymous historical decision. */
+    actor?: ActionActorV1 | null;
     /** Captured host writer; raw input and handler output never enter this receipt. */
     settleExecution?: (args: Readonly<{
       artifactId: string;
@@ -266,10 +269,11 @@ export function createTargetActionExecutor(deps: Readonly<{
 
   const prepare = async (args: ExecuteArgs): Promise<Readonly<
     | { kind: 'settled'; result: TargetActionExecutionResult }
-    | { kind: 'ready'; run: () => Promise<TargetActionExecutionResult> }
+    | { kind: 'ready'; actor?: ActionActorV1 | null; run: () => Promise<TargetActionExecutionResult> }
   >> => {
       let action: ResolvedTargetAction | null = null;
       let approvalArtifactId: string | undefined;
+      let actor: ActionActorV1 | null | undefined;
       let settleExecution: Extract<TargetActionCurrentIntentResult, { status: 'approved' }>['settleExecution'];
       const operationCredentialUses: ActionOperationCredentialUseV1[] = [];
       let observingCredentialUse = true;
@@ -388,6 +392,7 @@ export function createTargetActionExecutor(deps: Readonly<{
               });
               if (intent.status === 'approved' && intent.fingerprint === request.fingerprint) {
                 approvalArtifactId = intent.artifactId;
+                actor = intent.actor;
                 settleExecution = intent.settleExecution;
               }
               return intent;
@@ -450,7 +455,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         })();
         return runPromise;
       };
-      return Object.freeze({ kind: 'ready' as const, run });
+      return Object.freeze({ kind: 'ready' as const, ...(actor === undefined ? {} : { actor }), run });
   };
 
   return Object.freeze({

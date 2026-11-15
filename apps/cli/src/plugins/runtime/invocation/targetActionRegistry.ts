@@ -1,6 +1,7 @@
+import { withActionFailureDiagnostic, carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { randomUUID } from 'node:crypto';
-import { logger } from '@/ui/logger';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
+import { logger } from '@/ui/logger';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
 import { projectContributedActionExecuteResult } from './services/actions';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -8,6 +9,7 @@ import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-commo
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 
 import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -253,6 +255,7 @@ export type TargetActionInvocationPreparation = Readonly<
     | { kind: 'settled'; result: TargetActionInvocationResult }
     | {
         kind: 'ready';
+        actor?: ActionActorV1 | null;
         run(options?: Readonly<{
             signal?: AbortSignal;
             operationProgress?: TargetActionOperationProgressPort;
@@ -566,6 +569,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
         let readDataRole: PluginInvocationServicesSeed['readDataRole'];
         const result = await invokePrepared({
+            recordDiagnostic: diagnostic => logger.warnLocalFile('[Deployment] Unavailable', {
+                ...diagnostic, requestId: invocation.requestId ?? correlationId,
+            }),
             ...(invocation.signal ? { signal: invocation.signal } : {}),
             ...(params.revalidateActionFormInput
                 ? {
@@ -644,7 +650,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 const ownUiPress = context?.surface === 'ui'
                     && (isPresentUserHostInvocation(context)
                         || isHomeAdmittedPresentUserHostInvocation(context, 'action.invoke'));
-                const reviewedParent = readHostReviewedParentV1(context)
+                const completedReviewParent = readHostReviewedParentV1(context);
+                // A bare press admits only the pressed Action (owner 2026-11-15, option A).
+                const reviewedParentByPress = !completedReviewParent && ownUiPress;
+                const reviewedParent = completedReviewParent
                     ?? (ownUiPress ? createHostReviewedChildPortV1({
                         actionId: 'action.invoke',
                         input: { action: { pluginId: registration.pluginId, localId: registration.localId }, input },
@@ -658,6 +667,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(managedWorkloads ? { managedWorkloads } : {}),
                     ...(readDataRole ? { readDataRole } : {}),
                     ...(reviewedParent ? { reviewedParent } : {}),
+                    ...(reviewedParentByPress ? { reviewedParentByPress: true as const } : {}),
                     ...(ownUiPress ? { presentUserIntent: 'confirmed' as const } : {}),
                     ...(operationAcceptance && operationOwnerUpdate ? { finiteOperation: Object.freeze({
                         operationAcceptance, operationOwnerUpdate,
@@ -1083,21 +1093,28 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         input: preparedInput.input,
                         context: { ...invocation.approvalContext, signal: lifetime.signal },
                         phase: invocation.requireCurrentIntent ? 'replay' : 'prepare',
-                    }) : { ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+                    }) : withActionFailureDiagnostic({ ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' },
+                        { phase: 'deployment.plugin.approval.scope', causeKind: 'client_required' },
+                        diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId }));
                     if ('errorCode' in admitted) {
+                        const diagnostic = readActionOutputDiagnostic(admitted);
+                        if (diagnostic) logger.warnLocalFile('[Deployment] Unavailable', {
+                            ...diagnostic, requestId: invocation.requestId ?? correlationId,
+                        });
                         await complete();
-                        return Object.freeze({ kind: 'settled' as const, result: {
+                        return Object.freeze({ kind: 'settled' as const, result: carryActionFailureDiagnostic({
                             status: 'failed' as const, code: admitted.errorCode, message: admitted.error,
                             actionHandlerInvocation: 'notStarted' as const,
-                        } });
+                        }, admitted) });
                     }
                     environmentAdmission = admitted;
-                } catch {
+                } catch (error) {
                     await complete();
-                    return Object.freeze({ kind: 'settled' as const, result: {
+                    return Object.freeze({ kind: 'settled' as const, result: withActionFailureDiagnostic({
                         status: 'failed' as const, code: 'deployment_unavailable', message: 'deployment_unavailable',
                         actionHandlerInvocation: 'notStarted' as const,
-                    } });
+                    }, { phase: 'deployment.plugin.approval.scope', causeKind: 'native_failure', error },
+                    diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId })) });
                 }
             }
             const resolveCurrentAction = (): ResolvedTargetAction | null => {
@@ -1285,6 +1302,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             let runPromise: Promise<TargetActionInvocationResult> | null = null;
             return Object.freeze({
                 kind: 'ready' as const,
+                ...(prepared.actor === undefined ? {} : { actor: prepared.actor }),
                 run(options?: Readonly<{
                     signal?: AbortSignal;
                     operationProgress?: TargetActionOperationProgressPort;
