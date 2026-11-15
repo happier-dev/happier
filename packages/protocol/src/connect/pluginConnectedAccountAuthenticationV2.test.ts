@@ -169,14 +169,15 @@ it('admits explicit Account-direct canonical manual fields without admitting dae
   expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, kind: 'oauthDeviceCode' }).success).toBe(false);
 });
 
-it('refuses authorization-code descriptors that omit their callback URL', () => {
+it('admits Home relay callbacks and explicit provider callbacks for authorization-code descriptors', () => {
   const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none' };
   const descriptor = { id: 'work', title: 'Work', authentication: { defaultModeId: 'oauth', modes: [mode] } };
-  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(mode).success).toBe(false);
-  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(false);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(mode).success).toBe(true);
+  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(true);
   expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({
     ...descriptor, authentication: { ...descriptor.authentication, modes: [{ ...mode, callbackUrl: 'https://work.example/callback' }] },
   }).success).toBe(true);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, callbackUrl: 'invalid' }).success).toBe(false);
 });
 
 it('admits configuration-only native account references without inventing a credential field', () => {

@@ -293,13 +293,14 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       kind: z.literal('oauthAuthorizationCode'),
       browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
+      /** Omit to use the Home's Connected Account relay; declare only a provider-fixed callback. */
       callbackUrl: z.optional(z.url().check(z.maxLength(2_048))),
       scopes: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
       pkce: z.literal('required'),
       allowRawAuthorizationCode: z.optional(z.boolean()),
       /** Declared optional Account fields whose choices become available only after authorization. */
       postAuthenticationFieldIds: z.optional(z.array(PluginSettingFieldIdV2Schema)),
-      /** How to register an own client, shown with the client fields; the declared `callbackUrl` is offered to copy. */
+      /** How to register an own client, shown with the client fields; the attempt's callback is offered to copy. */
       setup: z.optional(PluginConnectedAccountSetupGuideV2Schema),
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
@@ -312,13 +313,6 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
           || mode.postAuthenticationFieldIds.some(id => !mode.configuration?.fields.some(field => field.id === id && field.required !== true)))) {
         context.addIssue({ code: 'custom', path: ['postAuthenticationFieldIds'],
           message: 'Post-authentication fields must reference distinct optional Account configuration fields.' });
-      }
-      if (mode.callbackUrl === undefined) {
-        context.addIssue({
-          code: 'custom',
-          path: ['callbackUrl'],
-          message: 'Authorization-code authentication requires a declared callback URL.',
-        });
       }
     })),
     z.strictObject({
