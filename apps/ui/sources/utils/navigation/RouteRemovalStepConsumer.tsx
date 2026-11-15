@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { NavigationContext, usePreventRemove } from '@react-navigation/native';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { isBackwardRouteRemovalAction } from './runGuardedNavigation';
 
 /**
@@ -57,12 +57,14 @@ export function RouteRemovalStepConsumer(props: Readonly<{
     );
 }
 
+const selectRegisterBackStep = (value: WorkspaceNavigationContextValue | null) => value?.registerBackStep;
+
 function HostedRouteRemovalStepConsumer(props: Readonly<{
     active: boolean;
     consume: () => boolean;
     tabId: string;
 }>): null {
-    const registerBackStep = useOptionalWorkspaceNavigation()?.registerBackStep;
+    const registerBackStep = useOptionalWorkspaceNavigation(selectRegisterBackStep);
     const consumeRef = React.useRef(props.consume);
     consumeRef.current = props.consume;
     React.useEffect(() => {

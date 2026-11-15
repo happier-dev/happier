@@ -18,7 +18,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { t } from '@/text';
 import { resolveComposerEntityDrop } from './composerEntityDrop';
 import { describeComposerEntityDropReason } from './composerEntityDropReason';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { resolveDestinationRefFromHref } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
@@ -26,6 +26,8 @@ import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 
 /** Only this feedback leaf observes carry changes; typing and pointer frames stay separate. */
+const selectWorkspaceCatalog = (value: WorkspaceNavigationContextValue | null) => value?.catalog ?? null;
+
 export function ComposerEntityDropTarget(props: Readonly<{
     id: string;
     scope: EntityDragScopeV1;
@@ -43,7 +45,7 @@ export function ComposerEntityDropTarget(props: Readonly<{
 }>): React.ReactElement | null {
     const runtime = useEntityDragDropRuntime();
     const { theme } = useUnistyles();
-    const navigation = useOptionalWorkspaceNavigation();
+    const catalog = useOptionalWorkspaceNavigation(selectWorkspaceCatalog);
     const executor = React.useMemo(() => createDefaultActionExecutor(), []);
     const platform = resolvePluginUiClientExecutablePlatform();
     // Carry frames reuse the canonical normalized map; they do not normalize
@@ -142,8 +144,8 @@ export function ComposerEntityDropTarget(props: Readonly<{
                 dragSources,
                 attachmentComposition: readMountedComposerAttachmentComposition({ scope: props.scope, ref: props.refValue }),
                 resolveDestinationFile: href => {
-                    if (!navigation?.catalog) return null;
-                    const destination = resolveDestinationRefFromHref(navigation.catalog, href);
+                    if (!catalog) return null;
+                    const destination = resolveDestinationRefFromHref(catalog, href);
                     if (!destination || destination.kind !== 'sessionDetails'
                         || (destination.params.serverId && destination.params.serverId !== props.scope.serverId)
                         || (destination.params.accountId && destination.params.accountId !== props.scope.accountId)) return null;

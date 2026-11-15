@@ -31,7 +31,7 @@ import type { RightPanePlacement, RightPaneSurface } from './rightPanePlacement'
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { AppShellTailContext, AppShellTailSlot, useAppShellTail } from '@/components/navigation/shell/appShellTail';
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { ScreenBackdropBoundary } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
 /**
@@ -105,6 +105,10 @@ export type PaneColumnsHostProps = Readonly<{
 const NOOP = () => {};
 const EMPTY_EDITOR = <></>;
 
+/** Whether this page is the only one on screen; a tab's own write (a Session side tab) does not change it. */
+const selectSoleScope = (workspace: WorkspaceNavigationContextValue | null) => !workspace?.active
+    || workspace.state.maximizedGroupId !== null || workspace.state.root.kind === 'leaf';
+
 export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneColumnsHostProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -136,9 +140,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     // the trailing edge (not Editor first, not one pane of a split). The layout keeps budgeting the
     // width the sheet has when the tail is empty, so every placement resolves the same columns.
     const shellTail = useAppShellTail();
-    const workspace = useOptionalWorkspaceNavigation();
     const destinationFocused = useDestinationFocus();
-    const soleScope = !workspace?.active || workspace.state.maximizedGroupId !== null || workspace.state.root.kind === 'leaf';
+    const soleScope = useOptionalWorkspaceNavigation(selectSoleScope);
     const railTail = shellTail?.railOnCanvas === true && Platform.OS === 'web' && !mirrored && soleScope ? shellTail : null;
     const canvasTail = railTail?.placement === 'canvas' ? railTail : null;
     const hostWidthPx = railTail?.containerWidthPx ?? measuredHostWidthPx;

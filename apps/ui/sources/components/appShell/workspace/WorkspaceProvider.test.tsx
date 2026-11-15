@@ -915,6 +915,46 @@ describe('consumed workspace navigation owner', () => {
         expect(boundary.mirrors.at(-1)).toMatch(/^\/session\/A1\/files\?/);
     });
 
+    it('keeps operation and path readers still through a params-only Session pane write', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { serverId: 'home-a' };
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const visit = (href?: string | URL | null) => {
+            if (!href) return;
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+        };
+        const history: { state: unknown } & Pick<History, 'replaceState' | 'pushState' | 'go'> = { state: null,
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) { this.state = state; visit(href); },
+            pushState(state: unknown, _unused: string, href: string) { this.state = state; visit(href); },
+            go() {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        // What the shell's narrow readers take from the workspace (a back step, a reuse lookup, a pane dispatch) and the
+        // route's path. A Session side tab writes `right=` into its tab and the URL; none of these facts changes.
+        const renders = { back: 0, find: 0, dispatch: 0, path: 0 };
+        const selectBack = (value: WorkspaceNavigationContextValue | null) => value?.registerBackStep;
+        const selectFind = (value: WorkspaceNavigationContextValue | null) => value?.findOpenHref;
+        const selectDispatch = (value: WorkspaceNavigationContextValue | null) => value?.dispatch;
+        function BackStepReader() { useOptionalWorkspaceNavigation(selectBack); renders.back++; return null; }
+        function ReuseReader() { useOptionalWorkspaceNavigation(selectFind); renders.find++; return null; }
+        function DispatchReader() { useOptionalWorkspaceNavigation(selectDispatch); renders.dispatch++; return null; }
+        function PathReader() { useCurrentRoutePathname(); renders.path++; return null; }
+        const readers = <><BackStepReader /><ReuseReader /><DispatchReader /><PathReader /></>;
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}{readers}</>}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const state = navigation().state;
+        const tabId = state.groups[state.focusedGroupId].activeTabId;
+        const before = { ...renders };
+        for (const right of ['files', 'git', 'files']) {
+            await act(async () => { navigation().navigationForTab(tabId).setParams!({ right }); });
+        }
+        expect(navigation().state.tabs[tabId].target.params.right).toBe('files');
+        expect(renders).toEqual(before);
+    });
+
     it('switches between Sessions with one browser write and no Expo navigator update, keeping back/forward', async () => {
         boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
         boundary.segments = ['(app)', 'session', '[id]']; onTestFinished(() => { boundary.segments = null; });

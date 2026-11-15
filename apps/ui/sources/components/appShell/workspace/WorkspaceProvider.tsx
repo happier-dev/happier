@@ -29,7 +29,7 @@ import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCan
 import { createWorkspaceActionAdapter, selectWorkspaceTabsToClose, workspaceActionFailure, type WorkspaceActionOutcome } from './workspaceActions';
 import { executeWorkspaceUiAction, registerMountedWorkspaceAction } from './workspaceActionRuntime';
 import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from './workspaceDestinationPolicy';
-import { selectWorkspaceClosableTabIds, selectWorkspaceTabsForGoneDestinations, type WorkspaceState } from './workspaceState';
+import { selectWorkspaceClosableTabIds, selectWorkspaceTabsForGoneDestinations, type WorkspaceAction, type WorkspaceState } from './workspaceState';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
@@ -735,6 +735,37 @@ export function WorkspaceProvider(props: Readonly<{
         });
     }, [activateTab, localOwner.windowId, owner.dispatch, owner.getState, owner.isReady, props.appWindow?.record.layoutId,
         props.appWindow?.record.windowId, props.catalog, props.enabled, scope, paneSubscription, theme.space.s24]);
+    // Operations keep their identity across tab, title and history publications, so a reader that selects one (a back
+    // step, a reuse lookup, a pane dispatch) does not render for a Session side tab's `right=` write.
+    const findOpenHref = React.useCallback((href: string) => isCurrentUiOwner() ? runtime.adapter.findOpenHref(href) : null,
+        [isCurrentUiOwner, runtime]);
+    const registerBackStep = React.useCallback((tabId: string, consume: () => boolean) => {
+        backSteps.current.set(tabId, consume);
+        return () => { if (backSteps.current.get(tabId) === consume) backSteps.current.delete(tabId); };
+    }, []);
+    const closeTab = React.useCallback((groupId: string, tabId: string) => closeTabs(groupId, [tabId], false), [closeTabs]);
+    const closeTabsTogether = React.useCallback((groupId: string, tabIds: readonly string[]) => closeTabs(groupId, tabIds, true), [closeTabs]);
+    const dispatch = React.useCallback((action: WorkspaceAction) => {
+        if (!isCurrentUiOwner()) return;
+        if (action.type === 'activateTab') {
+            activateTab(action.groupId, action.tabId);
+            return;
+        }
+        if (action.type === 'focusGroup' && latest.current.owner.getState().focusedGroupId === action.groupId) return;
+        if (action.type === 'focusGroup' || action.type === 'openTab'
+            || action.type === 'moveTab' || action.type === 'splitTab' || action.type === 'reopenTab') runUiNavigation(() => runtime.adapter.dispatch(action));
+        else runtime.adapter.dispatch(action);
+    }, [activateTab, isCurrentUiOwner, runUiNavigation, runtime]);
+    const back = React.useCallback(() => {
+        if (!isCurrentUiOwner()) return;
+        if (runtime.browser) runtime.adapter.step(-1);
+        else guardTraversal(-1, () => runtime.adapter.step(-1), 'history');
+    }, [guardTraversal, isCurrentUiOwner, runtime]);
+    const forward = React.useCallback(() => {
+        if (!isCurrentUiOwner()) return;
+        if (runtime.browser) runtime.adapter.step(1);
+        else guardTraversal(1, () => runtime.adapter.step(1), 'history');
+    }, [guardTraversal, isCurrentUiOwner, runtime]);
     const navigation = React.useMemo<WorkspaceNavigationContextValue>(() => ({
         desktopPresentation: scope ? { ...scope, windowId: props.appWindow?.record.windowId ?? 'main',
             layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? undefined } : undefined,
@@ -758,36 +789,9 @@ export function WorkspaceProvider(props: Readonly<{
         canvasControlsRef,
         canGoBack: runtime.adapter.canGoBack, canGoForward: runtime.adapter.canGoForward,
         openHref, navigationForTab,
-        findOpenHref: href => isCurrentUiOwner() ? runtime.adapter.findOpenHref(href) : null,
-        registerBackStep: (tabId, consume) => {
-            backSteps.current.set(tabId, consume);
-            return () => { if (backSteps.current.get(tabId) === consume) backSteps.current.delete(tabId); };
-        },
-        activateTab,
-        closeTab: (groupId, tabId) => closeTabs(groupId, [tabId], false),
-        closeTabs: (groupId, tabIds) => closeTabs(groupId, tabIds, true),
-        dispatch: (action) => {
-            if (!isCurrentUiOwner()) return;
-            if (action.type === 'activateTab') {
-                activateTab(action.groupId, action.tabId);
-                return;
-            }
-            if (action.type === 'focusGroup' && latest.current.owner.getState().focusedGroupId === action.groupId) return;
-            if (action.type === 'focusGroup' || action.type === 'openTab'
-                || action.type === 'moveTab' || action.type === 'splitTab' || action.type === 'reopenTab') runUiNavigation(() => runtime.adapter.dispatch(action));
-            else runtime.adapter.dispatch(action);
-        },
-        back: () => {
-            if (!isCurrentUiOwner()) return;
-            if (runtime.browser) runtime.adapter.step(-1);
-            else guardTraversal(-1, () => runtime.adapter.step(-1), 'history');
-        },
-        forward: () => {
-            if (!isCurrentUiOwner()) return;
-            if (runtime.browser) runtime.adapter.step(1);
-            else guardTraversal(1, () => runtime.adapter.step(1), 'history');
-        },
-    }), [activateTab, closeTabs, readDestinationTitles, publishDestinationTitle, eligible, guardTraversal, historyVersion, hostsRoute, isCurrentUiOwner, navigationForTab, openHref, overlayRoute, newSessionOverlay, ownsRoute, phoneControls, owner.isRestored, owner.state, owner.tabSyncStatus, localOwner.windowId, props.appWindow?.record.layoutId, props.appWindow?.record.windowId, props.catalog, runUiNavigation, runtime, scope]);
+        findOpenHref, registerBackStep, activateTab,
+        closeTab, closeTabs: closeTabsTogether, dispatch, back, forward,
+    }), [activateTab, back, closeTab, closeTabsTogether, dispatch, findOpenHref, forward, registerBackStep, readDestinationTitles, publishDestinationTitle, eligible, historyVersion, hostsRoute, navigationForTab, openHref, overlayRoute, newSessionOverlay, ownsRoute, phoneControls, owner.isRestored, owner.state, owner.tabSyncStatus, localOwner.windowId, props.appWindow?.record.layoutId, props.appWindow?.record.windowId, props.catalog, runtime, scope]);
     hostsActiveRoute.current = navigation.active;
     useWorkspaceKeyboardShortcuts(navigation.active && !navigation.overlayActive, () => latest.current.owner.getState(), href => {
         const state = latest.current.owner.getState();

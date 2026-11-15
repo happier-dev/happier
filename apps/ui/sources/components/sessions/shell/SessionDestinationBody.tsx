@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useDestinationParams, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
+import type { PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
@@ -79,6 +81,13 @@ function useInitialMobileSurfaceHint(
     return cacheRef.current?.persistedSurface ?? null;
 }
 
+
+/** The two pane facts that choose the phone surface; the rest of the pane (a side tab's state, sizes) is not read here. */
+const selectSessionSurfaceFacts = (scope: PaneScopeState | null) => ({
+    activeRightTabId: scope?.right?.activeTabId,
+    detailsTargetPresent: scope ? buildDetailsWorkspaceStateView(scope.details).tabs.length > 0 : false,
+});
+
 export function SessionDestinationBody(props: Readonly<{
     messageTarget?: Readonly<{ routeMessageId: string; seq: number }>;
 }> = {}) {
@@ -135,7 +144,7 @@ export function SessionDestinationBody(props: Readonly<{
     }, [recoveryDataId]);
     const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params), [params]);
     const scopeId = createSessionPaneScopeId(sessionId, routeScope.serverId, instanceKey);
-    const pane = useAppPaneScope(scopeId);
+    const { scopeState: surfaceFacts } = useAppPaneScope(scopeId, selectSessionSurfaceFacts);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const activeServerAccountScope = useActiveServerAccountScope();
     const activeServerSnapshot = useActiveServerSnapshot();
@@ -228,8 +237,8 @@ export function SessionDestinationBody(props: Readonly<{
                         scopeId={scopeId}
                         surface={resolveSessionMobileSurfaceIntent({
                             routeKind: 'index',
-                            activeRightTabId: pane.scopeState?.right?.activeTabId,
-                            detailsTargetPresent: (pane.scopeState?.details?.tabs?.length ?? 0) > 0,
+                            activeRightTabId: surfaceFacts.activeRightTabId,
+                            detailsTargetPresent: surfaceFacts.detailsTargetPresent,
                             persistedSurface: props.messageTarget ? 'chat' : initialMobileSurfaceHint,
                             terminalTabAvailable,
                         })}

@@ -24,7 +24,8 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { AppShellMaterialFrame, resolveColumnDrawnWidthPx } from './AppShellMaterialFrame';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
-import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useShallow } from 'zustand/react/shallow';
+import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { useWorkspaceShellEnabled } from '@/components/appShell/workspace/useWorkspaceShellEnabled';
 import { WorkspaceShell } from '@/components/appShell/workspace/WorkspaceShell';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
@@ -55,6 +56,12 @@ const renderPeekColumn = (column: AppShellColumnModel) => (
     </View>
 );
 
+/** The strip's history controls: its tabs subscribe in the title bar, so a tab's own write (a Session side tab) does not reach it. */
+const selectTitleStripNavigation = (workspace: WorkspaceNavigationContextValue | null) => workspace?.active === true ? {
+    canGoBack: workspace.canGoBack, canGoForward: workspace.canGoForward,
+    back: workspace.back, forward: workspace.forward, openHref: workspace.openHref,
+} : null;
+
 /** The strip's workspace tabs and history controls subscribe here, beside the route tree rather than above it. */
 function ShellTitleStrip(props: Readonly<{
     columnVisible: boolean;
@@ -62,12 +69,11 @@ function ShellTitleStrip(props: Readonly<{
     onToggleColumn: () => void;
     catalog: readonly CompactAppDestination[];
 }>) {
-    const workspace = useOptionalWorkspaceNavigation();
-    const active = workspace?.active === true;
+    const navigation = useOptionalWorkspaceNavigation(useShallow(selectTitleStripNavigation));
     return <AppShellTitleStrip columnVisible={props.columnVisible}
         columnToggleAvailable={props.columnToggleAvailable} onToggleColumn={props.onToggleColumn}
-        navigation={active ? workspace : undefined}
-        workspaceCatalog={active ? props.catalog : undefined}
+        navigation={navigation ?? undefined}
+        workspaceCatalog={navigation ? props.catalog : undefined}
         trailing={TITLE_STRIP_TRAILING} />;
 }
 

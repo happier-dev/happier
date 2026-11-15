@@ -46,9 +46,12 @@ export function readCurrentRouteLocation(href: string, pathParams: Readonly<Reco
 
 /** The current route's pathname: the workspace's URL when it leads Expo's mirror, else Expo's. */
 export function useCurrentRoutePathname(): string {
-    const workspace = React.useContext(CurrentRouteLocationContext);
-    const pathname = usePathname();
-    return workspace?.pathname ?? pathname;
+    // The path alone: a query write (a Session side tab's `right=`) publishes a new location on the same path.
+    // The workspace starting to lead Expo on the same path is not a change either.
+    const store = React.useContext(CurrentRouteLocationStoreContext);
+    const expoPathname = usePathname();
+    const readPathname = React.useCallback(() => store?.getSnapshot()?.pathname ?? expoPathname, [expoPathname, store]);
+    return React.useSyncExternalStore(store?.subscribe ?? subscribeNoLocation, readPathname, readPathname);
 }
 
 /** File-pattern segments from the same current location as the route params, never concrete path values. */

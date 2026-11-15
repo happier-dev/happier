@@ -15,7 +15,7 @@ import { registerSessionTranscriptRetentionConsumer } from '@/sync/runtime/sessi
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 export type UseSessionSurfaceActivationInput = Readonly<{
     sessionId: string;
@@ -37,11 +37,13 @@ export type UseSessionSurfaceActivationResult = Readonly<{
     isVisible: boolean;
 }>;
 
+const selectHasWorkspace = (value: WorkspaceNavigationContextValue | null) => value !== null;
+
 export function useSessionSurfaceActivation(
     input: UseSessionSurfaceActivationInput,
 ): UseSessionSurfaceActivationResult {
     const normalizedSessionId = normalizeSessionId(input.sessionId);
-    const workspaceOwnsRouteAnchor = useOptionalWorkspaceNavigation() !== null;
+    const workspaceOwnsRouteAnchor = useOptionalWorkspaceNavigation(selectHasWorkspace);
     const visibilityResetVersion = React.useSyncExternalStore(
         subscribeSessionSurfaceVisibilityReset,
         getSessionSurfaceVisibilityResetVersion,

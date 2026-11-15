@@ -7,6 +7,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { useVisibleModalKind } from '@/modal';
 import { useModalContentId, useVisibleModalId } from '@/modal/ModalProvider';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import type { AppPaneContextValue } from '@/components/appShell/panes/AppPaneContext';
 import {
     useAppShellPluginUiProjectionModel,
     useProjectedPluginLocalizedTextResolver,
@@ -286,6 +287,8 @@ export function CurrentUiContextProvider(props: Readonly<{ children: React.React
 const selectRouteEntityId = (params: Readonly<Record<string, string | string[] | undefined>>) =>
     typeof params.id === 'string' ? params.id : undefined;
 
+const selectFocusedDetailsWorkspace = (value: AppPaneContextValue) => hasActiveDetailsWorkspace(value.state);
+
 function CurrentUiContextProviderContent(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
     const localCommands = useCurrentUiContextComposedCommands();
     const localCommandsRef = React.useRef(localCommands);
@@ -300,7 +303,8 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     );
     const visibleModalKind = useVisibleModalKind();
     const visibleModalId = useVisibleModalId();
-    const { state: appPaneState } = useAppPaneContext();
+    // One pane fact: a side tab or a resize in any scope is not a change of the current UI context.
+    const focusedDetailsWorkspace = useAppPaneContext(selectFocusedDetailsWorkspace);
     const { activeTab } = useMainAppTabState();
     const focusedSessionId = useFocusedSessionId();
     const isSessionRoute = route.segments[0] === 'session' && route.segments[1] === ':id';
@@ -557,7 +561,6 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         createMount,
     }), [createMount]);
 
-    const focusedDetailsWorkspace = hasActiveDetailsWorkspace(appPaneState);
     const snapshot = React.useMemo(() => {
         const baseline = composeCurrentUiContextSnapshot({
             route,

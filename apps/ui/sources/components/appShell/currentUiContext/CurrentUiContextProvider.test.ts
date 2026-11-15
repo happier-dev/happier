@@ -90,7 +90,8 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
-    useAppPaneContext: () => ({
+    // The provider reads one pane fact through the owner's selector form.
+    useAppPaneContext: (select?: (value: unknown) => unknown) => (value => select ? select(value) : value)({
         state: providerState.focusedDetailsWorkspace
             ? {
                 activeScopeId: 'details',
