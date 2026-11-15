@@ -1046,6 +1046,17 @@ export function useAppShellPluginUiProjectionCurrentness(): PluginUiProjectionCu
     return useAppShellPluginUiProjection(selectAppShellPluginUiProjectionCurrentness);
 }
 
+const selectAppShellPluginUiProjectionModel = (value: AppShellPluginUiProjectionValue) => value.pluginUiProjection;
+
+/**
+ * The live projection model alone. Readers of placements, Actions or installed packages subscribe
+ * here instead of to the whole value, so executable-activation and Connected Account diagnostics
+ * (republished several times while plugins load) do not redraw them.
+ */
+export function useAppShellPluginUiProjectionModel(): PluginUiProjectionModel | null {
+    return useAppShellPluginUiProjection(selectAppShellPluginUiProjectionModel);
+}
+
 /** Descriptive declaration consumers do not need executable diagnostics. */
 export function useAppShellPluginUiDeclarationProjection(): PluginUiProjectionModel | null {
     return useAppShellPluginUiDeclarationSources().projection;

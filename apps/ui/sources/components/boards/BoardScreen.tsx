@@ -13,7 +13,7 @@ import { DetailsPaneHost, type DetailsPaneContent } from '@/components/appShell/
 import { ITEM_DETAILS_PREFERRED_WIDTH_PX } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { InboxItemDetail } from '@/components/inbox/detail/InboxItemDetail';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionModel } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { readWidgetDescriptor, resolveWidgetInstanceTitle } from '@/components/widgets/widgetCatalog';
 import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
@@ -323,7 +323,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     }, [board.id, dispatchIntent, mode, widgetSurface]);
     const addWidgets = React.useMemo(() => ({ scope: widgetSurface, instances: widgetInstances, addInstance: addWidgetInstance }),
         [addWidgetInstance, widgetInstances, widgetSurface]);
-    const pluginUi = useAppShellPluginUiProjection().pluginUiProjection;
+    const pluginUi = useAppShellPluginUiProjectionModel();
     const localizeWidgetText = usePluginLocalizedTextResolver({ projection: pluginUi });
     const installedCandidates = React.useMemo(() => widgetInstances.flatMap(instance => {
         const descriptor = readWidgetDescriptor(pluginUi, instance.definition, instance.displayName ? undefined : localizeWidgetText);

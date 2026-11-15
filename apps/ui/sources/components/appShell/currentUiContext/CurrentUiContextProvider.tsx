@@ -8,7 +8,7 @@ import { useVisibleModalKind } from '@/modal';
 import { useModalContentId, useVisibleModalId } from '@/modal/ModalProvider';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import {
-    useAppShellPluginUiProjection,
+    useAppShellPluginUiProjectionModel,
     useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
@@ -332,11 +332,11 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     const settingsTitle = settingsPage?.title?.trim() || null;
     const pluginSettingsPage = settingsPage?.pluginSettingsPage !== undefined;
 
-    const pluginProjection = useAppShellPluginUiProjection();
+    const pluginUiProjection = useAppShellPluginUiProjectionModel();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const pluginRouteIdentity = useCurrentRouteParamsSelector(readPluginPageRouteIdentity);
-    const pluginPagePlacements = React.useMemo(() => selectPluginPagePlacements(pluginProjection.pluginUiProjection,
-        { container: 'appPage', targetKind: 'app' }), [pluginProjection.pluginUiProjection]);
+    const pluginPagePlacements = React.useMemo(() => selectPluginPagePlacements(pluginUiProjection,
+        { container: 'appPage', targetKind: 'app' }), [pluginUiProjection]);
     const pluginPages = usePluginPages({ target: { kind: 'app' }, placements: pluginPagePlacements, localize: localizePluginText });
     const pluginPageLabel = React.useMemo(() => {
         if (route.segments[0] !== 'plugins') return null;

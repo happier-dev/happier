@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityTargetFeedback, useSessionSurfaceEntityDrag, type SessionSurfaceEntityBinding } from '@/components/sessions/board/SessionSurfaceEntityDrag';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionModel } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { buildWidgetDefinitionActions, buildWidgetInstanceActions, orderWidgetMenu } from '@/components/widgets/frame/widgetFrameMenu';
@@ -110,7 +110,7 @@ export const SessionCompanionItemFrame = React.memo(function SessionCompanionIte
 
 function InstanceItemFrame(props: SessionCompanionItemFrameProps & Readonly<{ controls: SessionCompanionInstanceControls }>) {
     const { instance, scope, context, setInputs, rename } = props.controls;
-    const projection = useAppShellPluginUiProjection().pluginUiProjection;
+    const projection = useAppShellPluginUiProjectionModel();
     const localize = usePluginLocalizedTextResolver({ projection });
     const installed = React.useMemo(() => readWidgetDescriptor(projection, instance.definition, instance.displayName ? undefined : localize),
         [instance.definition, instance.displayName, projection, localize]);

@@ -72,8 +72,15 @@ export type CommandPalettePluginActionPresentation = Readonly<{
     signal: AbortSignal;
 }>;
 
+/** The AppShell facts the palette reads: Home, Account and the projection model (never executable diagnostics). */
+const selectPaletteAppShellFacts = (value: AppShellPluginUiProjectionValue) => ({
+    serverId: value.serverId,
+    accountLifetime: value.accountLifetime,
+    pluginUiProjection: value.pluginUiProjection,
+});
+
 export function useCommandPalettePluginActionPresentation(activeSessionId: string | null, presented: boolean): CommandPalettePluginActionPresentation | undefined {
-    const appShellProjection = useAppShellPluginUiProjection();
+    const appShellProjection = useAppShellPluginUiProjection(selectPaletteAppShellFacts);
     const currentUiContextReader = useOptionalCurrentUiContextReader();
     const destinationNavigation = usePluginSurfaceDestinationNavigationBinding();
     const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();

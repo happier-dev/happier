@@ -5,7 +5,7 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 import { AGENT_IDS } from '@/agents/catalog/catalog';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjection, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
@@ -27,11 +27,19 @@ type Options = Readonly<{
 
 const selectPurposeBindings = (snapshot: ConnectedAccountCatalogValueSnapshot<'purposes'>) => snapshot.value;
 
+/** The AppShell facts these readers use: its Account, Home, union Machine and Connected Account reload. */
+const selectConnectedServicesAppShellFacts = (value: AppShellPluginUiProjectionValue) => ({
+    accountLifetime: value.accountLifetime,
+    serverId: value.serverId,
+    machineId: value.machineId,
+    reloadConnectedAccountProjection: value.reloadConnectedAccountProjection,
+});
+
 /** Agent declarations and their selected Machine, without joining the Account service inventory. */
 export function useConnectedServicesAgents(options: Options) {
     const presented = useLayoutPresentationActive();
     const scope = useActiveServerAccountScope();
-    const appShellProjection = useAppShellPluginUiProjection();
+    const appShellProjection = useAppShellPluginUiProjection(selectConnectedServicesAppShellFacts);
     // AppShell's Account union has no selected Machine in a cold multi-Machine scope.
     const acquire = presented && options.agents === 'load';
     const defaultTargetSelection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts, {

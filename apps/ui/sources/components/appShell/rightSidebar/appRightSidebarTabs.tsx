@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness, useAppShellPluginUiProjectionModel, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -25,7 +25,7 @@ export function useAppRightSidebarTabInputs(serverId?: string | null): Readonly<
 }> {
     const browserFeatureEnabled = useFeatureDecision('browser', serverId
         ? { scopeKind: 'spawn', serverId } : { scopeKind: 'runtime' })?.state === 'enabled';
-    const projection = useAppShellPluginUiProjection().pluginUiProjection;
+    const projection = useAppShellPluginUiProjectionModel();
     const appLocalize = useProjectedPluginLocalizedTextResolver();
     const appPluginPlacements = React.useMemo(
         () => (projection ? selectPluginRightSidebarTabPlacements(projection, 'app') : []),
@@ -69,7 +69,7 @@ export const AppRightSidebarTabSurface = React.memo(function AppRightSidebarTabS
     /** The containing Session's initial execution target; never a Session target binding. */
     executionTarget?: Readonly<{ serverId: string; machineId: string }> | null;
 }>) {
-    const shell = useAppShellPluginUiProjection();
+    const shell = useAppShellPluginUiProjectionCurrentness();
     const facts = props.facts ?? {
         pluginUiProjection: shell.pluginUiProjection,
         machineId: shell.machineId,

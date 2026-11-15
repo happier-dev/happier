@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionModel } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { selectWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -35,7 +35,7 @@ function sameCandidates(left: readonly WidgetCandidate[], right: readonly Widget
  * stays inside that widget.
  */
 export function useHomeWidgetCandidates(localize?: PluginLocalizedTextResolver, policyContext?: PluginUiPolicyEvaluationContext): readonly WidgetCandidate[] {
-    const projection = useAppShellPluginUiProjection().pluginUiProjection;
+    const projection = useAppShellPluginUiProjectionModel();
     const moments = useAtmosphereMoments();
     const previous = React.useRef<readonly WidgetCandidate[] | null>(null);
     return React.useMemo(() => {
