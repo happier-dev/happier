@@ -130,7 +130,7 @@ describe('Connected Account runtime declaration ownership', () => {
             .toEqualTypeOf<ConnectedAccountsService>();
         expectTypeOf<PluginConnectedAccountCommonRuntime>().toEqualTypeOf<Pick<
             PluginConnectedAccountRuntime,
-            'refresh' | 'revoke' | 'status' | 'quota' | 'materialize'
+            'refresh' | 'revoke' | 'status' | 'quota' | 'materialize' | 'materializeNative'
         >>();
     });
 

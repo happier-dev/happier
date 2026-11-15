@@ -197,7 +197,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       'command' | 'parseOutput' | 'fallback' | 'commandToolIds' | 'resolveCommandToolId'
     >();
     expectTypeOf<keyof AgentPreflightSessionControlsCommandV1>().toEqualTypeOf<
-      'toolId' | 'executable' | 'args' | 'stdin' | 'prepareCommand' | 'environmentKeys' | 'environmentExcludeKeys' | 'ci'
+      'toolId' | 'executable' | 'args' | 'environment' | 'stdin' | 'prepareCommand' | 'environmentKeys' | 'environmentExcludeKeys' | 'ci'
     >();
     expectTypeOf<AgentPreflightSessionControlsCommandV1>()
       .not.toHaveProperty('timeoutMs');

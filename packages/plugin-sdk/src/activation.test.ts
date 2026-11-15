@@ -276,7 +276,7 @@ describe('plugin activation contract', () => {
         expectTypeOf<keyof Extract<
             PluginConnectedAccountMaterialization,
             { kind: 'httpHeaders' }
-        >>().toEqualTypeOf<'kind' | 'headers' | 'usageAccountScope'>();
+        >>().toEqualTypeOf<'kind' | 'headers' | 'usageAccountScope' | 'facts' | 'expiresAt'>();
         expectTypeOf<Extract<
             PluginConnectedAccountMaterialization,
             { kind: 'httpHeaders' }
