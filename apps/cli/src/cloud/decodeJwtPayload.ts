@@ -35,3 +35,18 @@ export function readAccountIdFromToken(token: string): string | null {
     const subject = decodeJwtPayload(token)?.sub;
     return typeof subject === 'string' && subject.trim() ? subject.trim() : null;
 }
+
+/**
+ * The Account credential epoch a Happier credential token carries (`tokenEpoch`,
+ * top-level or in `extras`; absent reads as 0 like the server's legacy rule), or
+ * null when the token is malformed. Non-secret: the server bumps it to retire
+ * every earlier credential of the Account. Never proof of authority by itself.
+ */
+export function readCredentialEpochFromToken(token: string): number | null {
+    const payload = decodeJwtPayload(token);
+    if (!payload) return null;
+    const extras = payload.extras && typeof payload.extras === 'object' && !Array.isArray(payload.extras)
+        ? payload.extras as Record<string, unknown> : {};
+    const raw = payload.tokenEpoch ?? extras.tokenEpoch ?? 0;
+    return typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 ? raw : null;
+}

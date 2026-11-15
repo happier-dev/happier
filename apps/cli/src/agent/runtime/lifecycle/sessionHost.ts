@@ -7,6 +7,7 @@ import {
   SessionHostClosingError,
   type SessionHostAddRequest,
   type SessionHostCommandEnd,
+  type SessionHostLaunchRecordV1,
   type LocalSessionHostEndResult,
 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { handOverSessionHolderClients, pauseSessionHolderDelivery } from '@/subprocess/supervision/sessionHolder';
@@ -39,8 +40,11 @@ export type SessionHost = Readonly<{
  * next Session).
  */
 export async function startSessionHost(params: Readonly<{
-  /** Runs one Session's runner command line (the CLI dispatch in production). */
-  runSessionCommand: (argv: readonly string[]) => Promise<void>;
+  /**
+   * Runs one Session's runner command line (the CLI dispatch in production) with the launch facts
+   * its daemon admitted, inside that Session's scope.
+   */
+  runSessionCommand: (argv: readonly string[], launch: SessionHostLaunchRecordV1) => Promise<void>;
   /** The daemon that launched this host: the only caller admitted on its endpoint. */
   readTrustedCaller: () => Promise<ProcessBirthWitness | null>;
   process?: Pick<EventEmitter, 'on' | 'removeListener'>;
@@ -84,9 +88,11 @@ export async function startSessionHost(params: Readonly<{
       resolveEnded({ exitCode, ...(failureCause ? { failureCause } : {}) });
       endWhenIdle();
     };
-    void runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end }, async () => {
+    const launch = request.launch ?? {};
+    void runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end,
+      ...(launch.runnerBootstrap ? { runnerBootstrap: launch.runnerBootstrap } : {}) }, async () => {
       session.scope = readHostedSessionScope() ?? null;
-      await params.runSessionCommand(request.argv);
+      await params.runSessionCommand(request.argv, launch);
     }).then(() => end(0), (error: unknown) => {
       logger.warn('[session-host] Session command failed', {
         error: error instanceof Error ? error.message : String(error),

@@ -19,6 +19,7 @@ import type {
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { spawnRegularProcessAndWaitForWebhook } from './spawnRegularProcessAndWaitForWebhook';
 import type { DaemonSessionHost } from '../sessionHost/daemonSessionHost';
+import type { SessionHostLaunchRecordV1 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { spawnTmuxHostedSessionAndWaitForWebhook } from './spawnTmuxHostedSessionAndWaitForWebhook';
 import { spawnAdapterHostedSessionAndWaitForWebhook } from './spawnAdapterHostedSessionAndWaitForWebhook';
 import { spawnWindowsHostedSessionAndWaitForWebhook } from './spawnWindowsHostedSessionAndWaitForWebhook';
@@ -97,6 +98,8 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
    * Session joins it; TTY-bound launches (tmux, Windows terminal, adapter hosts) keep their own process.
    */
   sessionHost?: DaemonSessionHost;
+  /** The Machine Account this launch was admitted under, for the session host's launch record. */
+  sessionHostLaunchAccount?: SessionHostLaunchRecordV1['account'];
 }>): Promise<SpawnSessionResult> {
   // This child is the custodian controller, before native Agent UID delegation.
   // Keep its physical cwd accessible; the Session carries its admitted directory
@@ -369,6 +372,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
 
   return await spawnRegularProcessAndWaitForWebhook({
     ...(params.sessionHost ? { sessionHost: params.sessionHost } : {}),
+    ...(params.sessionHost && params.sessionHostLaunchAccount ? { sessionHostLaunchAccount: params.sessionHostLaunchAccount } : {}),
     memoryHighBytes: params.memoryHighBytes,
     args,
     directory: params.directory,

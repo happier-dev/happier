@@ -17,6 +17,7 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionR
 import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 import { launchDetachedHappierProcess } from './launchDetachedHappierProcess';
 import type { DaemonSessionHost, HostedSessionHandle } from '../sessionHost/daemonSessionHost';
+import type { SessionHostLaunchRecordV1 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { readSessionRunnerStartingModeFromProcessCommand } from '../sessionRunnerRuntime/readSessionRunnerStartingMode';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import {
@@ -93,6 +94,8 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
   /** Placement: present when this headless Session joins the daemon's session host. */
   sessionHost?: DaemonSessionHost;
+  /** The Machine Account this launch was admitted under (session host launch record). */
+  sessionHostLaunchAccount?: SessionHostLaunchRecordV1['account'];
 }>): Promise<SpawnSessionResult> {
   const sanitizeDiagnosticText = params.sanitizeDiagnosticText ?? ((value: string) => value);
   const trackingKey = mintSessionTrackingKey();
@@ -115,6 +118,14 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       argv: params.args,
       env: Object.fromEntries(Object.entries(sessionEnvironment).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
       cwd: params.directory,
+      // What this admission already decided, so the host re-derives none of it (no credential).
+      launch: {
+        ...(params.sessionHostLaunchAccount ? { account: params.sessionHostLaunchAccount } : {}),
+        ...(params.runnerAgentSessionBootstrapAuthorization?.bootstrap ? { runnerBootstrap: {
+          path: params.runnerAgentSessionBootstrapAuthorization.bootstrapFilePath,
+          bootstrap: params.runnerAgentSessionBootstrapAuthorization.bootstrap,
+        } } : {}),
+      },
     });
     if (added.status !== 'added') {
       await cleanupUnstartedLaunch(params);

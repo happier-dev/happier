@@ -14,6 +14,12 @@ const testHome = vi.hoisted(() => {
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 
 import { addLocalSessionHostSession, endLocalSessionHostSession } from '@/session/transport/rpc/localSessionRpcChannel';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { configuration } from '@/configuration';
+import { createRunnerAgentSessionBootstrapAuthorization } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
+import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
+import { PLUGIN_MANIFEST as codexManifest } from '../../../../../../packages/plugins/codex/src/manifest';
 import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { endSessionCommand } from './runnerTerminationHandlers';
 
@@ -52,7 +58,7 @@ describe('session host', () => {
   let hostExit: ReturnType<typeof vi.fn<(code: number) => void>>;
   let host: SessionHost | null = null;
 
-  async function startHost(runSessionCommand: (argv: readonly string[]) => Promise<void>, trustedCallerPid = process.pid): Promise<SessionHost> {
+  async function startHost(runSessionCommand: Parameters<typeof startSessionHost>[0]['runSessionCommand'], trustedCallerPid = process.pid): Promise<SessionHost> {
     const own = await captureProcessBirthWitness(process.pid);
     hostProcess = new EventEmitter();
     hostExit = vi.fn<(code: number) => void>();
@@ -151,6 +157,36 @@ describe('session host', () => {
       stopped.resolve(); sibling.resolve();
       await Promise.all([ended, siblingEnded]);
     }
+  });
+
+  it('runs an added Session from its daemon-admitted launch record: 0 bootstrap-file reads, the admitted Account handed to its command', async () => {
+    const definition = PluginAgentContributionV2Schema.parse(codexManifest.contributes.agents?.[0]);
+    // The daemon's real bootstrap producer writes the file the Session environment names.
+    const issued = await createRunnerAgentSessionBootstrapAuthorization({
+      happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+      descriptor: { v: 1, pluginId: codexManifest.id, pluginVersion: codexManifest.version, agentId: definition.id,
+        backendId: 'codex', occurrenceId: 'recorded-admitted-runtime',
+        sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'pinned_runner_snapshot', snapshotId: 'recorded' } },
+        agentDeclaration: { provenance: 'first_party', source: { kind: 'bundled' }, definition } },
+    });
+    const path = issued.authorization.bootstrapFilePath;
+    const account = { accountId: 'account-a', credentialEpoch: 2, machineId: 'machine-1' };
+    let received: unknown = null;
+    let readBootstrap: unknown = null;
+    await startHost(async (_argv, launch) => {
+      received = launch.account ?? null;
+      readBootstrap = (await readRunnerAgentSessionBootstrap(path)).descriptor.agentId;
+    });
+    // The host never touches the file: it is gone before the Session starts.
+    await issued.cleanupBootstrapFile();
+    const session = addLocalSessionHostSession({ hostPid: process.pid, request: {
+      trackingKey: 'launch-record', argv: ['codex'], env: { [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]: path }, cwd: testHome,
+      launch: { account, runnerBootstrap: { path, bootstrap: issued.authorization.bootstrap! } },
+    } });
+    await expect(session.admitted).resolves.toBe(true);
+    await expect(session.ended).resolves.toMatchObject({ exitCode: 0 });
+    expect(received).toEqual(account);
+    expect(readBootstrap).toBe(definition.id);
   });
 
   it('retains peer refusal without ending the Session', async () => {

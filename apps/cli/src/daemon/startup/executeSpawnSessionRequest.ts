@@ -133,6 +133,7 @@ import {
 } from '../agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
 import { resolveRequesterLaunchAdmissionFailure } from '../lifecycle/requesterWorkAttribution';
+import { readStoredCredentialLaunchIdentity } from '@/agent/runtime/lifecycle/sessionHostCredentialHold';
 import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import { readRequesterAgentStartPolicyV1 } from '../sessionEncryption/requesterAgentStartPolicy';
 import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemoryCeiling';
@@ -171,6 +172,8 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
     /** Present when multi-Session hosting is enabled: headless Sessions join this session host. */
     sessionHost?: import('../sessionHost/daemonSessionHost').DaemonSessionHost;
+    /** This daemon's Machine id: carried in the session host's launch record. */
+    machineId?: string;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
     checkRegistryUpdates?: () => Promise<void>;
     options: SpawnSessionOptions;
@@ -1534,8 +1537,16 @@ export async function executeSpawnSessionRequest(
             if (launchAdmissionRefusal) return launchAdmissionRefusal;
             recordPreparationPhase('runner_launch');
             const launchResources = params.readMachineResourcesPolicy?.();
+            // The launch record's Account: the Machine Account's own stored sign-in only (requester
+            // custody and API tokens keep their per-launch read in the Session).
+            const sessionHostLaunchIdentity = params.sessionHost && !requesterRuntime && params.machineId
+                ? readStoredCredentialLaunchIdentity(params.credentials) : null;
             let spawnResult = await routeSpawnModeAndWaitForWebhook({
                 ...(params.sessionHost ? { sessionHost: params.sessionHost } : {}),
+                ...(sessionHostLaunchIdentity && params.machineId
+                    ? { sessionHostLaunchAccount: { ...sessionHostLaunchIdentity, machineId: params.machineId,
+                        ...(getActiveAccountSettingsSnapshot()?.settingsVersion === undefined ? {}
+                            : { settingsVersion: getActiveAccountSettingsSnapshot()!.settingsVersion }) } } : {}),
                 memoryHighBytes: launchResources
                     ? resolveSessionMemoryCeilingBytes(launchSessionAttachPayload?.snapshot?.metadata,
                         launchResources.status === 'ready' ? launchResources.policy.guard : undefined)

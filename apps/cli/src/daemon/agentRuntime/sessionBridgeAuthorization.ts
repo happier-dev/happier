@@ -13,6 +13,7 @@ import {
   AgentRuntimeDaemonSessionDescriptorV1Schema,
   AgentRuntimeRunnerBootstrapV1Schema,
   type AgentRuntimeRunnerBootstrapLaunchV1,
+  type AgentRuntimeRunnerBootstrapV1,
   HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
   type AgentRuntimeDaemonSessionDescriptorV1,
 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
@@ -90,6 +91,8 @@ export type RunnerAgentSessionBootstrapAuthorization = Readonly<{
   descriptor: AgentRuntimeDaemonSessionDescriptorV1;
   bootstrapFilePath: string;
   authorityFilePath: string;
+  /** The exact content written to `bootstrapFilePath` (carried to a session host instead of re-read). */
+  bootstrap?: AgentRuntimeRunnerBootstrapV1;
 }>;
 
 type AgentRuntimeDaemonServiceAuthorityPathInput = Readonly<{
@@ -584,15 +587,17 @@ export async function createRunnerAgentSessionBootstrapAuthorization(
       happyHomeDir: params.happyHomeDir,
       publicReleaseRing: params.publicReleaseRing,
     });
+  const bootstrap = AgentRuntimeRunnerBootstrapV1Schema.parse({ v: 1, descriptor, ...(params.launch ? { launch: params.launch } : {}) });
   await writePrivateBearerFile({
     path: bootstrapFilePath,
-    contents: `${JSON.stringify(AgentRuntimeRunnerBootstrapV1Schema.parse({ v: 1, descriptor, ...(params.launch ? { launch: params.launch } : {}) }))}\n`,
+    contents: `${JSON.stringify(bootstrap)}\n`,
   });
   return Object.freeze({
     authorization: Object.freeze({
       descriptor,
       bootstrapFilePath,
       authorityFilePath,
+      bootstrap,
     }),
     childEnv: Object.freeze({
       [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]:

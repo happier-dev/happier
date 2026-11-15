@@ -14,6 +14,7 @@ export const handleSessionHostCliCommand: CommandHandler = async (context) => {
     { runWithRunnerHomeTransport },
     { readPublishedDaemonProcessBirth },
     { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup },
+    { createSessionHostCredentialHold },
   ] = await Promise.all([
     import('@/agent/runtime/lifecycle/sessionHost'),
     import('@/cli/dispatch'),
@@ -21,14 +22,35 @@ export const handleSessionHostCliCommand: CommandHandler = async (context) => {
     import('@/api/connection/runWithRunnerHomeTransport'),
     import('@/persistence'),
     import('@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration'),
+    import('@/agent/runtime/lifecycle/sessionHostCredentialHold'),
   ]);
+  // Account credentials read once per (Home, Account) for this host, checked against each add.
+  const credentialHold = createSessionHostCredentialHold();
   // The host leaves the daemon service cgroup once, as a runner does.
   await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
   await runWithRunnerHomeTransport(async () => {
     const host = await startSessionHost({
-      runSessionCommand: async (argv) => {
+      runSessionCommand: async (argv, launch) => {
         const { args, terminalRuntime } = parseCliArgs([...argv]);
-        await dispatchCli({ args, terminalRuntime, rawArgv: [...process.argv.slice(0, 2), ...argv] });
+        // The daemon already admitted this Session's Account and Machine: its command re-derives neither.
+        let credentials: Awaited<ReturnType<typeof credentialHold.resolve>> | null = null;
+        if (launch.account) {
+          try {
+            credentials = await credentialHold.resolve(launch.account);
+          } catch (error) {
+            // A Session admitted for another Account than the one signed in here: end it with its typed cause.
+            const { reportSessionRunnerFailure } = await import('@/cli/resolveSessionRunnerFailureExitCode');
+            const { endSessionCommand } = await import('@/agent/runtime/lifecycle/runnerTerminationHandlers');
+            endSessionCommand(reportSessionRunnerFailure(error));
+            return;
+          }
+        }
+        const sessionStart = launch.account && credentials
+          ? { credentials, machineId: launch.account.machineId,
+              ...(launch.account.settingsVersion === undefined ? {} : { accountSettingsVersionFloor: launch.account.settingsVersion }) }
+          : undefined;
+        await dispatchCli({ args, terminalRuntime, rawArgv: [...process.argv.slice(0, 2), ...argv],
+          ...(sessionStart ? { sessionStart } : {}) });
       },
       // The daemon that launched (or later adopts) this host publishes its process birth in its own state.
       readTrustedCaller: readPublishedDaemonProcessBirth,

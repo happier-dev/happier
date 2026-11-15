@@ -43,12 +43,17 @@ export type CommandContext = Readonly<{
   rawArgv: string[];
   terminalRuntime: TerminalRuntimeFlags | null;
   signal?: AbortSignal;
-  /** Invocation-local authentication and settled Settings used to choose an implicit Agent. */
+  /**
+   * Invocation-local authentication and settled Settings used to choose an implicit Agent. A
+   * session host fills only the credentials and Machine its daemon admitted for the Session.
+   */
   sessionStart?: Readonly<{
     credentials: import('@/persistence').StoredCredentials;
     machineId: string;
-    accountSettingsContext: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext;
-    selectedProfile: import('@/settings/profiles/readProfilesFromAccountSettings').CliAiLaunchProfile;
+    accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext;
+    selectedProfile?: import('@/settings/profiles/readProfilesFromAccountSettings').CliAiLaunchProfile;
+    /** The Account Settings version the daemon admitted this launch with: Settings older than it are refreshed. */
+    accountSettingsVersionFloor?: number;
   }>;
   /** Trusted explicit invocation provenance; contains neither credentials nor persistence authority. */
   explicitServerSelection?: EphemeralResolvedServerSelection;

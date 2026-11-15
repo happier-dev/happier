@@ -282,6 +282,8 @@ export async function dispatchCli(params: Readonly<{
   globalOptionsApplied?: boolean;
   /** @internal Trusted explicit selection retained across recursive global-option dispatch. */
   explicitServerSelection?: EphemeralResolvedServerSelection;
+  /** @internal The session host's admitted launch facts for this hosted Session's command. */
+  sessionStart?: CommandContext['sessionStart'];
 }>): Promise<void> {
   if (!params.globalOptionsApplied) {
     // Consume these process-wide input variables before any command can create
@@ -326,7 +328,7 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
   const globalOptionArgs = argvBeforeOptionTerminator(args);
   const { terminalRuntime, rawArgv } = params;
   let signal = params.signal;
-  let sessionStart: CommandContext['sessionStart'];
+  let sessionStart: CommandContext['sessionStart'] = params.sessionStart;
   // A Session added to a session host reads its own environment, never the host's.
   const invocationEnv = sessionProcessEnvironment();
   const scopedEnvironment =
@@ -541,7 +543,7 @@ async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): P
       ? await (await import('@/cli/profileSessionStart')).prepareProfileSessionStart({
           profileQuery: parsed.profileQuery, startedBy: parsed.startedBy, refreshRequested: parsed.refreshSettings,
         }) : null;
-    sessionStart = prepared?.sessionStart;
+    sessionStart = prepared?.sessionStart ?? sessionStart;
     const target = prepared?.backendTarget;
     if (target && !standaloneAgentCatalog) standaloneAgentCatalog = await ensureMergedAgentCommandRegistryLoaded();
     const { resolveSessionCreationAgentTarget } = await import('@/session/creation/resolveSessionCreationAgentTarget');

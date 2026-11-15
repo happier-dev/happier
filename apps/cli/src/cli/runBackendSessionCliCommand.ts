@@ -364,8 +364,11 @@ Provider CLI Options:
           refresh: resolveSessionStartAccountSettingsRefreshMode({
             mode: accountSettingsBootstrapMode,
             refreshRequested: parsed.refreshSettings,
-            minSettingsVersion: null,
+            minSettingsVersion: params.context.sessionStart?.accountSettingsVersionFloor ?? null,
           }),
+          // A hosted Session never runs on Settings older than its daemon admitted.
+          ...(params.context.sessionStart?.accountSettingsVersionFloor === undefined ? {}
+            : { minSettingsVersion: params.context.sessionStart.accountSettingsVersionFloor }),
         });
         accountSettingsContext = await resolveSessionStartAccountSettingsContext({
           startedBy,

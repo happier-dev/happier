@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 
 /**
  * The Session a piece of runner work belongs to. One process can host several
@@ -33,6 +34,8 @@ export type HostedSessionScope = {
   readonly end?: (exitCode: number) => void;
   /** Work a planned host hand-over saves before it releases this Session's held Agents. */
   handoverSaves?: Set<() => Promise<void>>;
+  /** The daemon-admitted runner bootstrap of the file this Session's environment names (session host). */
+  readonly runnerBootstrap?: Readonly<{ path: string; bootstrap: AgentRuntimeRunnerBootstrapV1 }>;
 };
 
 const hostedSessionScope = new AsyncLocalStorage<HostedSessionScope>();
@@ -54,7 +57,8 @@ export function runInHostedSessionScope<T>(
  * host's per-Session end.
  */
 export function runAddedHostedSession<T>(
-  input: Readonly<{ environment: NodeJS.ProcessEnv; workingDirectory: string; end: (exitCode: number) => void }>,
+  input: Readonly<{ environment: NodeJS.ProcessEnv; workingDirectory: string; end: (exitCode: number) => void;
+    runnerBootstrap?: HostedSessionScope['runnerBootstrap'] }>,
   run: () => T,
 ): T {
   return hostedSessionScope.run({ ...input, termination: null }, run);
