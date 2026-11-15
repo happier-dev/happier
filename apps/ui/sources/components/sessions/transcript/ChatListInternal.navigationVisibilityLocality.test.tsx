@@ -1,7 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { standardCleanup } from '@/dev/testkit';
+import { createOkFetchResponse, createRootLayoutFeaturesResponse, getServerFetchUrl, standardCleanup } from '@/dev/testkit';
 import {
     flashListChatListHarnessState,
     renderFlashListChatListSession,
@@ -138,6 +138,16 @@ const SECOND_TURN_ANCHOR = 'session-1:user-turn:12';
 
 describe('ChatList navigation visibility locality', () => {
     beforeEach(() => {
+        // History discovery loads server capabilities; settle that HTTP boundary
+        // before measuring renders caused by navigation visibility changes.
+        const features = createRootLayoutFeaturesResponse();
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>((input) => {
+            const url = getServerFetchUrl(input);
+            if (url.pathname !== '/v1/features') {
+                throw new Error(`Unexpected request: ${url}`);
+            }
+            return createOkFetchResponse(features);
+        }));
         persistedStorage.clear();
         loadOlderMessagesMock.mockReset();
         loadNewerMessagesMock.mockReset();
@@ -178,6 +188,7 @@ describe('ChatList navigation visibility locality', () => {
             getTranscriptNavigationVisibilityStore('session-1').set(null);
         });
         standardCleanup();
+        vi.unstubAllGlobals();
     });
 
     it('publishes a live anchor from the FlashList surface as soon as a consumer subscribes, with no scroll', async () => {

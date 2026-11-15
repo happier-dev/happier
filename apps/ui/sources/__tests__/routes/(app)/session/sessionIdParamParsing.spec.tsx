@@ -70,11 +70,15 @@ installSessionRouteCommonModuleMocks({
     },
 });
 
-vi.mock('@react-navigation/native', () => ({
-    useRoute: () => {
-        throw new Error('session/[id] screen should not depend on react-navigation useRoute() in expo-router web');
-    },
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        useRoute: () => {
+            throw new Error('session/[id] screen should not depend on react-navigation useRoute() in expo-router web');
+        },
+    };
+});
 
 vi.mock('@/components/sessions/shell/SessionView', () => ({
     SessionView: ({ id, jumpToSeq, paneUrlState }: { id: string; jumpToSeq?: number | null; paneUrlState?: any }) =>
