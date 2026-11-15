@@ -2,12 +2,17 @@ import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
-import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretUpdateInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretDeleteInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { ManagedMachinePresetV1Schema, ManagedMachinePresetListResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedOpaquePresetReadV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ManagedMachinePresetContentV1Schema, projectManagedMachinePresetForRecipientV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { SavedSecretCatalogEntryV1Schema, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { createCliPersonalSavedSecretActionExecute, updateOwnedSavedSecretResourceForOperation } from './personalSavedSecretActionHost';
@@ -48,6 +53,96 @@ vi.mock('axios', async importOriginal => {
 afterEach(() => { vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset(); vi.mocked(axios.request).mockReset(); vi.unstubAllGlobals(); });
 
 describe('personal Saved Secret key rotation', () => {
+    it.each((['plain', 'e2ee'] as const).flatMap(mode =>
+        (['unrelated', 'source', 'snapshot', 'unavailable'] as const).map(target => ({ mode, target }))))(
+        'deletes using the actual opaque Preset census: $mode $target', async ({ mode, target }) => {
+        const accountId = 'secret-owner';
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const keys = tweetnacl.box.keyPair();
+        const credentials = { token, encryption: mode === 'plain' ? null
+            : { type: 'dataKey' as const, publicKey: keys.publicKey, machineKey: keys.secretKey } };
+        const fingerprint = mode === 'plain' ? null : convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+            createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: mode, material: credentials.encryption!,
+                dataKeyPublicKey: keys.publicKey }).contentPublicKeyFingerprint);
+        const operationContext = createInvocationSavedSecretOperationContextV1({ credentials,
+            serverHttpBaseUrl: 'https://preset-delete.example.test', isCurrent: async () => true,
+            snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 0,
+                loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKeyForToken(token), settingsSecretsReadKeys: [] } });
+        const ref = formatSharedSavedSecretRefV1('one');
+        const content = (referenced: boolean) => ({ v: 1, name: 'Saved computer', setup: { secretRefs: { v: 1,
+            bindings: { TOKEN: { ref: referenced ? ref : formatSharedSavedSecretRefV1('another'), revision: 1 } } } } });
+        const seal = (referenced: boolean) => mode === 'plain'
+            ? sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content: ManagedMachinePresetContentV1Schema.parse(content(referenced)) })
+            : sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content: ManagedMachinePresetContentV1Schema.parse(content(referenced)),
+                recipientCensus: [{ account: { kind: 'account', accountId, name: null, firstName: null, lastName: null, username: null, avatarUrl: null },
+                    readiness: { status: 'available', contentPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+                        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(keys.publicKey) }, envelopeStatus: 'missing' }],
+                randomBytes: length => new Uint8Array(length).fill(61) });
+        const source = seal(target === 'source');
+        const snapshot = seal(target === 'snapshot');
+        const preset = ManagedMachinePresetV1Schema.parse({ id: 'preset', homeId: 'srv_delete_home', revision: 1,
+            owner: { kind: 'account', accountId }, contentEncryptionMode: mode,
+            content: source.content, recipients: target === 'unavailable' ? [] : source.recipients });
+        const presetList = ManagedMachinePresetListResultV1Schema.parse({ kind: 'listed', presets: [preset] });
+        const retained = ManagedOpaquePresetReadV1Schema.parse({ machine: { id: 'retained', homeId: preset.homeId,
+            custodianAccountId: accountId, preset: { id: preset.id, revision: 1, contentEncryptionMode: mode },
+            allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            presetContent: projectManagedMachinePresetForRecipientV1({ content: snapshot.content,
+                recipients: snapshot.recipients, recipientAccountId: accountId }) });
+        const resource: SavedSecretResourceMaterialV1 = { resourceId: 'one', encryptionMode: 'plain', recipientEnvelope: null,
+            storedContent: { t: 'plain', v: { v: 1, name: 'Key', kind: 'apiKey', value: 'dummy-test-key' } },
+            entry: SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner', ownerAccountId: accountId,
+                name: 'Key', kind: 'apiKey', revision: 1, materialStatus: 'ready', deploymentReferenceState: 'unreferenced',
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }) };
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: preset.homeId } } }))));
+        vi.mocked(axios.get).mockImplementation(async rawUrl => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: accountId }) };
+            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [resource] } };
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, version: 1,
+                settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: fingerprint, updatedAt: 1,
+                recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } } };
+            if (path === '/v2/account/settings') return { status: 200, data: { version: 0,
+                content: mode === 'plain' ? { t: 'plain', v: {} } : { t: 'encrypted',
+                    c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material: credentials.encryption!, payload: {},
+                        randomBytes: length => new Uint8Array(length).fill(11) }) } } };
+            if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+            if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
+                complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } } };
+            if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 1 } };
+            if (path === PROFILE_TRANSFER_ROUTE_V1 || path.startsWith('/v1/account/')) return { status: 200, data: { status: 'absent' } };
+            throw new Error(`Unexpected boundary request ${path}`);
+        });
+        vi.mocked(axios.post).mockImplementation(async (rawUrl, body) => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path === machinePresetActionEndpointPathV1('machines.presets.list')) return { status: target === 'unavailable' && mode === 'plain' ? 503 : 200,
+                data: presetList };
+            if (path === managedMachineActionEndpointPathV1('machines.managed.list')) return { status: 200,
+                data: { machines: typeof body === 'object' && body && 'archived' in body && body.archived ? [retained] : [] } };
+            throw new Error(`Unexpected boundary request ${path}`);
+        });
+        let deleted = false;
+        const execute = createCliPersonalSavedSecretActionExecute({ credentials, operationContext,
+            // Home HTTP is the boundary: its existing delete contract refuses supplied opaque references.
+            home: async ({ input }) => {
+                const request = SharedSavedSecretDeleteInputV1Schema.parse(input);
+                const opaque = request.referenceCensus.opaquePresetReferences;
+                if (opaque?.presets.length || opaque?.snapshots.length) return { ok: false, errorCode: 'resource_in_use', error: 'resource_in_use' };
+                deleted = true;
+                return { resourceId: request.resourceId };
+            } });
+        const result = await execute({ actionId: 'secrets.delete', input: { secretId: 'one', expectedUpdatedAt: 1 }, context: { surface: 'cli' } });
+        if (target === 'unrelated') expect(result).toEqual({ deleted: true });
+        else expect(result).toMatchObject({ ok: false, errorCode: target === 'unavailable' ? 'secret_unavailable' : 'resource_in_use' });
+        expect(deleted).toBe(target === 'unrelated');
+        const requests = vi.mocked(axios.post).mock.calls.map(([url]) => new URL(String(url)).pathname);
+        expect(requests.filter(path => path === machinePresetActionEndpointPathV1('machines.presets.list'))).toHaveLength(1);
+        expect(requests.filter(path => path === managedMachineActionEndpointPathV1('machines.managed.list'))).toHaveLength(target === 'unavailable' && mode === 'plain' ? 0 : 2);
+        expect(requests).not.toContain('/v1/machines/presets/recipient-census');
+    });
     it.each(['agent', 'mcp'] as const)('stores a person-entered value through %s MCP → private approval RPC → Saved Secret owner without disclosing it', async surface => {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'secret-owner' })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null };

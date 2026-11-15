@@ -4,7 +4,10 @@ import { readServerIdentityIdFromFeaturesSnapshot, fetchServerFeaturesSnapshot }
 import { createManagedPresetHydrator } from '@/machines/managed/presetHydration';
 import type { StoredCredentials } from '@/persistence';
 import {
+  captureManagedMachinePresetSavedSecretReferencesV1,
   prepareManagedMachinePresetSavedSecretPromotionRewritesV1,
+  type ManagedMachinePresetSavedSecretReferenceCaptureV1,
+  type ManagedMachinePresetSavedSecretPromotionReaderV1,
   type ManagedMachinePresetSavedSecretPromotionCaptureV1,
 } from '@happier-dev/cli-common/machines/managed';
 import { managedMachineActionEndpointPathV1, ManagedListInputV1Schema, ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -40,34 +43,32 @@ async function postHomeJson(params: Readonly<{
   }
 }
 
-/**
- * Concrete CLI transport/custody adapter for the common opaque Preset capture.
- * It discovers exactly the authenticated current Home, never a global inventory.
- */
-export async function captureManagedMachinePresetSavedSecretPromotionRewritesForOperation(params: Readonly<{
+type ManagedPresetSavedSecretOperation = Readonly<{
   credentials: StoredCredentials;
   accountId: string;
   serverHttpBaseUrl: string;
-  rewrites: readonly PresetRewriteV1[];
   signal?: AbortSignal;
-}>): Promise<ManagedMachinePresetSavedSecretPromotionCaptureV1> {
+}>;
+
+/** Both captures share current-Home transport and the existing Account custody owner. */
+async function createManagedPresetSavedSecretReader(params: ManagedPresetSavedSecretOperation): Promise<Readonly<{
+  homeId: string;
+  reader: ManagedMachinePresetSavedSecretPromotionReaderV1;
+}> | null> {
   let features;
   try {
     features = await fetchServerFeaturesSnapshot({ serverUrl: params.serverHttpBaseUrl, token: params.credentials.token,
       projection: 'authenticated', signal: params.signal });
   } catch {
     params.signal?.throwIfAborted();
-    return { kind: 'unavailable' };
+    return null;
   }
   const homeId = readServerIdentityIdFromFeaturesSnapshot(features);
-  if (!homeId) return { kind: 'unavailable' };
+  if (!homeId) return null;
 
   const hydrator = createManagedPresetHydrator({ credentials: params.credentials, serverUrl: params.serverHttpBaseUrl });
-  return await prepareManagedMachinePresetSavedSecretPromotionRewritesV1({
+  return {
     homeId,
-    rewrites: params.rewrites,
-    randomBytes: getRandomBytes,
-    signal: params.signal,
     reader: {
       accountId: params.accountId,
       listPresets: async cursor => {
@@ -115,5 +116,22 @@ export async function captureManagedMachinePresetSavedSecretPromotionRewritesFor
         }
       },
     },
-  });
+  };
+}
+
+/** Delete sends only actual bindings; promotion retains its complete rewrite inventory. */
+export async function captureManagedMachinePresetSavedSecretReferencesForOperation(params: ManagedPresetSavedSecretOperation & Readonly<{
+  resourceRef: string;
+}>): Promise<ManagedMachinePresetSavedSecretReferenceCaptureV1> {
+  const captured = await createManagedPresetSavedSecretReader(params);
+  return captured ? captureManagedMachinePresetSavedSecretReferencesV1({ ...captured,
+    resourceRef: params.resourceRef, signal: params.signal }) : { kind: 'unavailable' };
+}
+
+export async function captureManagedMachinePresetSavedSecretPromotionRewritesForOperation(params: ManagedPresetSavedSecretOperation & Readonly<{
+  rewrites: readonly PresetRewriteV1[];
+}>): Promise<ManagedMachinePresetSavedSecretPromotionCaptureV1> {
+  const captured = await createManagedPresetSavedSecretReader(params);
+  return captured ? prepareManagedMachinePresetSavedSecretPromotionRewritesV1({ ...captured,
+    rewrites: params.rewrites, randomBytes: getRandomBytes, signal: params.signal }) : { kind: 'unavailable' };
 }

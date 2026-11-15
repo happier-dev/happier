@@ -333,8 +333,14 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                 await findOwned(args.secretId, args.expectedUpdatedAt);
                 const { captured, references } = await captureReferences(args.secretId);
                 if (references.length) refusal('in_use', { references });
+                const { captureManagedMachinePresetSavedSecretReferencesForOperation } = await import('./managedPresetSavedSecretPromotion');
+                const opaque = await captureManagedMachinePresetSavedSecretReferencesForOperation({ credentials: params.credentials,
+                    accountId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), resourceRef: formatSharedSavedSecretRefV1(args.secretId),
+                    signal: context.signal });
+                if (opaque.kind !== 'ready') refusal('secret_unavailable');
                 SharedSavedSecretDeleteOutputV1Schema.parse(await mutate({ resourceId: args.secretId,
-                    expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion, referenceCensus: captured.referenceCensus }));
+                    expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion,
+                    referenceCensus: { ...captured.referenceCensus, opaquePresetReferences: opaque.opaquePresetReferences } }));
             },
         });
         try { return await execute(actionId, input); }
