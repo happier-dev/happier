@@ -25,11 +25,13 @@ const target = (machineId: string) => ({ homeId: 'home', machineId, scope: 'secu
   plan: createMachineSetupEffectPlan({ basis: { kind: 'updates', machineId, scope: 'security' }, steps: [], nativeFacts: [] }) });
 
 describe('fleet update Workflow composition', () => {
-  it('keeps an interrupted rollout without confirmed child failure uncertain through the real combined owner', async () => {
+  it.each(['interrupted', 'refused', 'disconnected', 'stopped'] as const)(
+    'retains the rollout and its wait cause when observation is %s', async observation => {
     const input = { homeId: 'home', machineId: 'guest', batches: [[target('guest')]], failurePolicy: 'fail_stop' as const };
     const accountId = 'person', requestId = 'rollout-request';
+    const controller = new AbortController();
     const runId = deriveMachineSetupCombinedRunIdV1({ actionId: 'machines.setup.updates.rollout', homeId: input.homeId, accountId, requestId });
-    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, signal: controller.signal,
       serverId: input.homeId, runtimeAccountId: accountId, actionRequestId: requestId,
       approvedActionReplay: { artifactId: 'rollout-approval' }, presentUserApproval: { artifactId: 'rollout-approval',
         actionId: 'machines.setup.updates.rollout', requestId, decidingAccountId: accountId,
@@ -51,16 +53,30 @@ describe('fleet update Workflow composition', () => {
       state: 'interrupted', origin: { kind: 'direct' }, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(
         sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
           acceptedSnapshot: snapshot })) });
-    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId, storage,
+    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
+      storage: { ...storage, execute: async (operation, options) => {
+        if (operation.operation === 'wait' && observation === 'disconnected') {
+          throw Object.assign(new Error('Home storage unavailable'), { response: { status: 503 } });
+        }
+        return storage.execute(operation, options);
+      } },
       definitions: { get: async () => { throw new Error('inline_run'); } },
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       normalizeAbsolutePath: directory => directory, randomBytes: () => { throw new Error('plain_account'); } });
     const deps = createMachineUpdatesRolloutActionDeps({ orchestrationDirectory: '/setup', startCombined: owner.startCombined,
-      waitForRun: owner.waitCombined });
+      // The Action transport can refuse before the retained Run reader is reached.
+      waitForRun: request => {
+        if (observation === 'stopped') controller.abort();
+        return observation === 'refused' || observation === 'stopped'
+          ? Promise.resolve({ ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable' })
+          : owner.waitCombined(request);
+      } });
     expect(await storage.execute({ operation: 'wait', runId, conditions: ['terminal', 'attention'] }))
       .toMatchObject({ observation: 'waiting', run: { state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: false } });
     expect(await deps.machineSetupUpdatesRollout!({ input, context })).toMatchObject({ ok: false,
-      errorCode: 'outcome_uncertain', details: { runId } });
+      errorCode: observation === 'stopped' ? 'stop_unconfirmed' : 'outcome_uncertain', details: { runId }, ...(observation === 'interrupted' ? {} : {
+        failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' },
+      }) });
   });
   it.each([
     { observation: { status: 'satisfied', rebootNeeded: true }, expected: true },

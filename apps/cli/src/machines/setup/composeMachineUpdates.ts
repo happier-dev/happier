@@ -1,5 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -45,6 +45,9 @@ export function createMachineUpdatesRolloutActionDeps(host: Readonly<{
     try { observed = await host.waitForRun(request); }
     catch (error) { return { ...failure('outcome_uncertain', runId),
       failureCause: normalizeActionExecutorThrownError(error, 'workflow.run.wait').failureCause }; }
+    const waitFailure = ActionExecuteFailureSchema.safeParse(observed);
+    if (waitFailure.success) return { ...failure(context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain', runId),
+      failureCause: waitFailure.data.failureCause ?? projectActionFailureCauseV1(waitFailure.data, 'workflow.run.wait') };
     const settled = WorkflowRunWaitSnapshotV1Schema.safeParse(observed);
     if (!settled.success || settled.data.run.workflowCustodyState !== 'settled' || settled.data.run.state === 'interrupted')
       return failure(context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain', runId);
