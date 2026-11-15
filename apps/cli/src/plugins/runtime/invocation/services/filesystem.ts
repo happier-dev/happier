@@ -180,7 +180,7 @@ export function createPluginFileSystemService(params: Readonly<{
         if (!info.isFile()) fail('plugin_fs_unsupported_kind', 'Native identity observation requires a file');
         if (info.size > BigInt(Number.MAX_SAFE_INTEGER)) fail('plugin_fs_invalid_limit', 'Native file size cannot be represented');
         guard(options?.signal);
-        return { identity: `${info.dev}:${info.ino}`, size: Number(info.size) };
+        return { identity: `${info.dev}:${info.ino}`, size: Number(info.size), mtimeNs: info.mtimeNs };
       });
       return await observeMachinePath({ absolutePath, signal: AbortSignal.any([params.signal,
         ...(params.retirementSignal ? [params.retirementSignal] : []),

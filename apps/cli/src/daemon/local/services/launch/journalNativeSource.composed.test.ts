@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { watch as watchFile } from 'node:fs';
@@ -232,7 +232,7 @@ if(args.includes('--header')) {
         } finally { await f.dispose(); }
     });
 
-    it.skipIf(process.platform !== 'linux')('follows an admitted journal cursor without probing unchanged headers and releases native demand on pause', async () => {
+    it.skipIf(process.platform !== 'linux').each(['append', 'in-place'] as const)('follows an admitted journal cursor on %s updates without probing unchanged headers and releases native demand on pause', async update => {
         const f = await fixture(`
 if(args.includes('--header')) process.stdout.write('File path: /var/log/journal/test/system.journal\\nFile ID: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\nBoot ID: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n');
 else {
@@ -241,6 +241,7 @@ else {
   process.stdout.write('MESSAGE=appended\\n__CURSOR=position-2\\n\\n');
 }`);
         try {
+            if (update === 'in-place') await writeFile(f.journalPath, 'journal ');
             const first = await f.logs.read();
             if (first.kind !== 'page' || !first.page.nextCursor) throw new Error('Expected the first journal position');
             const values: unknown[] = [];
@@ -250,7 +251,12 @@ else {
             try {
                 await f.waitForNativeCompletion(args => args.includes('--after-cursor=position-1'));
                 const headers = (await f.calls()).filter(args => args.includes('--header')).length;
-                await appendFile(f.journalPath, ' appended');
+                if (update === 'append') await appendFile(f.journalPath, ' appended');
+                else {
+                    const file = await open(f.journalPath, 'r+');
+                    try { await file.write('appended', 0, 'utf8'); }
+                    finally { await file.close(); }
+                }
                 await next;
                 expect(values).toContainEqual({ kind: 'page', page: {
                     sourceRevision: first.page.sourceRevision, text: 'appended\n',

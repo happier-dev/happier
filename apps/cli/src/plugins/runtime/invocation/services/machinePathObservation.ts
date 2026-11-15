@@ -3,13 +3,14 @@ import type { FileSystemService } from '@happier-dev/plugin-sdk/fs';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 
 type Observation = Awaited<ReturnType<FileSystemService['observeMachinePath']>>;
+type NativeMetadata = NonNullable<Awaited<ReturnType<Observation['read']>>> & Readonly<{ mtimeNs: bigint }>;
 
 /** Lifecycle adaptation only: the filesystem owner supplies every guarded read,
  * and the incumbent shared native watcher retains attachment/recovery ownership. */
 export async function observeMachinePath(input: Readonly<{
     absolutePath: string;
     signal: AbortSignal;
-    read(): ReturnType<Observation['read']>;
+    read(): Promise<NativeMetadata | null>;
     emit: Parameters<FileSystemService['observeMachinePath']>[1];
 }>): Promise<Observation> {
     input.signal.throwIfAborted();
@@ -36,8 +37,11 @@ export async function observeMachinePath(input: Readonly<{
         if (closed || input.signal.aborted) throw new PluginError({ code: 'plugin_fs_aborted' });
         return next;
     };
-    const publish = (next: Awaited<ReturnType<Observation['read']>>) => {
-        if (closed || input.signal.aborted || next?.identity === notified?.identity && next?.size === notified?.size) return;
+    const publish = (next: NativeMetadata | null) => {
+        // Journals are preallocated: new entries change mtime without growing
+        // the file. Keep the native revision private to notification deduplication.
+        if (closed || input.signal.aborted || next?.identity === notified?.identity
+            && next?.size === notified?.size && next?.mtimeNs === notified?.mtimeNs) return;
         notified = next;
         try { input.emit({ kind: 'changed', identity: next?.identity ?? null, size: next?.size ?? null }); }
         catch { void dispose().catch(() => {}); }
@@ -71,6 +75,10 @@ export async function observeMachinePath(input: Readonly<{
         await ready;
         if (closed || input.signal.aborted) throw new PluginError({ code: 'plugin_fs_aborted' });
         const current = notified;
-        return { identity: current?.identity ?? null, size: current?.size ?? null, read, dispose };
+        return { identity: current?.identity ?? null, size: current?.size ?? null,
+            async read() {
+                const next = await read();
+                return next ? { identity: next.identity, size: next.size } : null;
+            }, dispose };
     } catch (error) { await dispose(); throw error; }
 }

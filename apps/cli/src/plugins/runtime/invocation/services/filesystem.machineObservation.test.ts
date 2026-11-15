@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +48,6 @@ describe('Machine filesystem identity observation', () => {
     await appendFile(f.path, '-append');
     await vi.waitFor(() => expect(events).toEqual([{ kind: 'changed', identity: observed.identity, size: 14 }]));
     await writeFile(join(f.root, 'unrelated'), 'unrelated');
-    await utimes(f.path, new Date(), new Date());
     // Let the real native notifications drain; this is a test observation window, not a product timer.
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(events).toEqual([{ kind: 'changed', identity: observed.identity, size: 14 }]);
@@ -67,6 +66,21 @@ describe('Machine filesystem identity observation', () => {
     await writeFile(f.path, 'after-dispose');
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(events).toHaveLength(count);
+  });
+
+  it('publishes in-place updates to preallocated journal files without changing their identity or size', async () => {
+    const f = await fixture();
+    const events: unknown[] = [];
+    const observed = await f.service.observeMachinePath({ absolutePath: f.path }, event => { events.push(event); });
+    cleanups.push(() => observed.dispose());
+    const file = await open(f.path, 'r+');
+    try { await file.write('updated', 0, 'utf8'); }
+    finally { await file.close(); }
+    await vi.waitFor(() => expect(events).toEqual([{ kind: 'changed', identity: observed.identity, size: 7 }]));
+    expect(await observed.read()).toEqual({ identity: observed.identity, size: 7 });
+    await writeFile(join(f.root, 'unrelated'), 'unrelated');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(events).toHaveLength(1);
   });
 
   it('reports truncation without inventing a replacement identity and guards current metadata reads', async () => {
