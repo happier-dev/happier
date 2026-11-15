@@ -1,15 +1,11 @@
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { storage } from '@/sync/domains/state/storage';
-import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { router, type Href } from 'expo-router';
 import { openWorkspaceHrefOrElse } from '@/components/appShell/workspace/workspaceActionRuntime';
 import { resolveVoiceSessionReference, resolveVoiceSessionRef, type VoiceSessionCandidate } from './sessionReference';
 import { setPrimaryActionSessionId } from './sessionTargets';
-import { Platform } from 'react-native';
-import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
-import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { navigateToSession } from '@/hooks/session/useNavigateToSession';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { VoiceSessionCorpusOptions } from './voiceSessionRows';
 
@@ -96,56 +92,25 @@ export async function openSessionForVoiceTool(params: Readonly<{
   }
   const targetServerId = address.serverId;
   const targetServerName = params.resolveServerNameForSessionId ? params.resolveServerNameForSessionId(sessionId) : null;
-  if (targetServerId) {
-    if (String(active.serverId ?? '').trim() !== targetServerId) {
-      const auth = getCurrentAuth();
-      try {
-        const switched = await setActiveServerAndSwitch({
-          serverId: targetServerId,
-          scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
-          refreshAuth: auth?.refreshFromActiveServer ?? null,
-        });
-        if (switched === 'blocked') {
-          return {
-            ok: false,
-            status: 'server_switch_failed',
-            error: {
-              code: 'server_switch_failed',
-              message: 'server_switch_failed',
-              serverId: targetServerId,
-              serverName: targetServerName,
-            },
-          };
-        }
-      } catch {
-        return {
-          ok: false,
-          status: 'server_switch_failed',
-          error: {
-            code: 'server_switch_failed',
-            message: 'server_switch_failed',
-            serverId: targetServerId,
-            serverName: targetServerName,
-          },
-        };
-      }
-    }
+  let homeEstablished = true;
+  try {
+    homeEstablished = await navigateToSession(sessionId, {
+      serverId: targetServerId, query: params.query, requireActiveHome: true,
+    }, {
+      refreshFromActiveServer: getCurrentAuth()?.refreshFromActiveServer ?? (async () => {}),
+      router: { navigate: (href, options) => openWorkspaceHrefOrElse(String(href), () => router.navigate(href as Href, options)) },
+    });
+  } catch {
+    // Navigation remains best-effort after the canonical owner establishes Home.
+  }
+  if (!homeEstablished) {
+    return {
+      ok: false, status: 'server_switch_failed',
+      error: { code: 'server_switch_failed', message: 'server_switch_failed', serverId: targetServerId, serverName: targetServerName },
+    };
   }
 
   await setPrimaryActionSessionId({ sessionId, serverId: address.serverId, updateLastFocused: true });
-
-  try {
-    const href = buildScopedSessionRouteHref({ ...address, query: params.query });
-    await openWorkspaceHrefOrElse(href, () => {
-      router.navigate(href as Href, {
-        dangerouslySingular() {
-          return 'session';
-        },
-      });
-    });
-  } catch {
-    // best-effort
-  }
 
   const session = titleResolution?.kind === 'unique'
     ? titleResolution.candidate

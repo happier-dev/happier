@@ -1,5 +1,7 @@
 import { AppState, Platform } from 'react-native';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
+import { navigateToSession } from '@/hooks/session/useNavigateToSession';
+import { matchWorkspaceDestinationRoute } from '@/components/appShell/workspace/workspaceRoutes';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
@@ -55,8 +57,9 @@ export async function navigateWithNotificationAccount({ target, navigate, refres
             || (target.expectedScope && !areServerAccountScopesEqual(admitted.scope, target.expectedScope))) {
             throw new Error('Notification Account unavailable');
         }
+        const route = new URL(target.route, 'https://internal.invalid');
         const routeServerId = readSessionRouteServerId({
-            serverId: new URL(target.route, 'https://internal.invalid').searchParams.get('serverId'),
+            serverId: route.searchParams.get('serverId'),
         });
         if (routeServerId && !areServerProfileIdentifiersEquivalent(routeServerId, admitted.scope.serverId)) {
             throw new Error('Notification route Home does not match');
@@ -76,7 +79,21 @@ export async function navigateWithNotificationAccount({ target, navigate, refres
             || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, admitted.scope.serverId)) {
             throw new Error('Notification Account changed');
         }
-        if (!isInactive()) navigate();
+        if (isInactive()) return;
+        const destination = matchWorkspaceDestinationRoute(route.pathname);
+        if (destination?.routeKey.startsWith('session/') && destination.params.id) {
+            // Account admission stays here; Session opening has the same Home,
+            // telemetry and route owner as Search, menus and Voice.
+            const opened = await navigateToSession(destination.params.id, {
+                serverId: admitted.scope.serverId, requireActiveHome: true,
+                suffix: route.pathname.replace(/^\/session\/[^/]+/, ''),
+                query: Object.fromEntries(route.searchParams),
+            }, {
+                router: { navigate: () => { if (!isInactive()) navigate(); } },
+                refreshFromActiveServer: refreshAuth ?? (async () => {}),
+            });
+            if (!opened) throw new Error('Notification Home switch blocked');
+        } else navigate();
     } catch {
         if (isInactive()) return;
         console.warn('[notifications] Session navigation Account unavailable');

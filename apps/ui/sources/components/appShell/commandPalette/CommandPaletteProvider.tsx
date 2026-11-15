@@ -21,7 +21,6 @@ import {
 import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
@@ -197,14 +196,9 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const actionExecutor = useMemo(() => ({
         execute: createFrontDoorActionExecute(undefined, {
             resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
-            openSession: (sessionId, options) => {
-                router.push(buildScopedSessionRouteHref({
-                    sessionId,
-                    serverId: options?.serverId,
-                }) as any);
-            },
+            openSession: navigateToSession,
         }),
-    }), [router]);
+    }), [navigateToSession]);
     const openDesktopWindow = React.useCallback(async (input: import('@happier-dev/protocol/actions/actionSpecs').DesktopWindowsOpenInput) => {
         const result = await actionExecutor.execute('desktop.windows.open', input, { surface: 'ui' });
         return result.ok;

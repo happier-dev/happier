@@ -118,7 +118,7 @@ describe('useNavigateToSession (multi-server)', () => {
         } finally { await settleSwitches(); }
     });
 
-    it('navigates from a hosted session through the owning tab and preserves the exact Home', async () => {
+    it('opens another Home through the root router rather than the retired source tab', async () => {
         const { useNavigateToSession } = await import('./useNavigateToSession');
         const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
         const push = vi.fn();
@@ -131,12 +131,28 @@ describe('useNavigateToSession (multi-server)', () => {
         </runtime.Wrapper>);
         try {
             await act(async () => { await navigate('B', { serverId: otherHome.id }); });
-            expect(push).toHaveBeenCalledWith('/session/B?serverId=' + otherHome.id, expect.any(Object));
-            expect(routerNavigate).not.toHaveBeenCalled();
+            expectRoute('/session/B?serverId=' + otherHome.id);
+            expect(push).not.toHaveBeenCalled();
         } finally { await settleSwitches(); }
     });
 
-    it('navigates immediately while the real Home switch waits for credentials', async () => {
+    it('keeps navigation within the owning tab when the Home stays active', async () => {
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const push = vi.fn();
+        function Probe() { navigate = useNavigateToSession(); return null; }
+        await renderScreen(<runtime.Wrapper>
+            <DestinationInstanceHost tabId="session-tab" ref={{ kind: 'session', params: { id: 'A', serverId: runtime.serverId } }}
+                pathname="/session/A" focused visible navigation={{ push, replace: vi.fn(), back: vi.fn() }}>
+                <Probe />
+            </DestinationInstanceHost>
+        </runtime.Wrapper>);
+        await act(async () => { await navigate('B', { serverId: runtime.serverId }); });
+        expect(push).toHaveBeenCalledWith('/session/B?serverId=' + runtime.serverId, expect.any(Object));
+        expect(routerNavigate).not.toHaveBeenCalled();
+    });
+
+    it('opens the target Session only after its Home switch and Account refresh settle', async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl('https://session-pane.test');
         let release!: () => void;
@@ -148,17 +164,23 @@ describe('useNavigateToSession (multi-server)', () => {
             return credentials;
         });
         await renderProbe();
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const homesAtNavigation: string[] = [];
+        routerNavigate.mockImplementation(() => { homesAtNavigation.push(getActiveServerSnapshot().serverId); });
+        let navigation: Promise<void> | undefined;
         try {
-            await act(async () => { await navigate('sess_123', { serverId: otherHome.id }); });
+            await act(async () => {
+                navigation = navigate('sess_123', { serverId: otherHome.id });
+                await requested;
+            });
+            expect(routerNavigate).not.toHaveBeenCalled();
+            await act(async () => { release(); await navigation; });
             expectRoute('/session/sess_123?serverId=' + otherHome.id);
-            expect(routerNavigate).toHaveBeenCalledTimes(1);
-            await requested;
-            // Navigation completed even though the credential read is still pending.
-            expectRoute('/session/sess_123?serverId=' + otherHome.id);
-        } finally { release(); await settleSwitches(); }
+            expect(homesAtNavigation).toEqual([otherHome.id]);
+        } finally { release(); await navigation; routerNavigate.mockReset(); await settleSwitches(); }
     });
 
-    it('keeps the exact target route when the parallel active-Home switch fails', async () => {
+    it('keeps the exact target recovery route after an active-Home switch fails', async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl('https://session-pane.test');
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) => {
