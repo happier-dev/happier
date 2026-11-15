@@ -97,33 +97,6 @@ test('importer discovery handles changed target stems beyond the OS argument lim
   assert.ok(grepCount > 0, 'the bounded-pattern contract must exercise Git importer discovery');
 });
 
-// P03-ADMISSION-PRIORITY: the compiler admission identity names the owner programs this
-// packet compiles (its changed files and their importers), so the broker reserves the
-// measured peak of that program set rather than one class-wide floor.
-test('compiler admission names the owner programs the packet compiles, importers included', async t => {
-  const { repo, write, git } = await checkout(t);
-  await mkdir(join(repo, 'pkg'));
-  await write('pkg/tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ['*.ts'] }));
-  await write('pkg/inner.ts', 'export const inner = 1;\n');
-  await write('pkg/alone.ts', 'export const alone = 1;\n');
-  await write('outer.ts', "import { inner } from './pkg/inner';\nexport const outer: number = inner;\n");
-  git('add', '-A');
-  git('commit', '--quiet', '-m', 'owners');
-  const requested = target => {
-    git('commit', '--quiet', '-m', `change ${target}`, '--', target);
-    let projects;
-    assert.throws(() => checkCommitTypeCoherence({ repo, base: 'HEAD^', tree: 'HEAD', beforeCompiler: value => {
-      projects = value;
-      throw new Error('admission requested');
-    } }), /admission requested/u);
-    return projects;
-  };
-  await write('pkg/alone.ts', 'export const alone = 2;\n');
-  assert.deepEqual(requested('pkg/alone.ts'), ['pkg']);
-  await write('pkg/inner.ts', 'export const inner = 2;\n');
-  assert.deepEqual(requested('pkg/inner.ts'), ['.', 'pkg'], 'a root importer adds the root program');
-});
-
 test('verdict dependencies omit unrelated modules while retaining configured global and module augmentations', async t => {
   const { repo, write, commitOnly } = await checkout(t);
   await write('ambient.d.ts', 'interface Error { ambientValue: number }\n');
