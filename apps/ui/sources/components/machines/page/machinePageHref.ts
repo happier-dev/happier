@@ -11,9 +11,13 @@ export function machinesIndexHref(door: MachinesDoor): typeof MACHINES_RAIL_ROOT
     return door === 'rail' ? MACHINES_RAIL_ROOT : MACHINES_COLLECTION_ROOT;
 }
 
-/** The fleet pages beside the Machines column (pfc-redesign fUpd, fAct), inside the door that opened them. */
-export function machineFleetPageHref(door: MachinesDoor, page: 'updates' | 'activity'): string {
-    return `${machinesIndexHref(door)}/${page}`;
+/**
+ * The fleet pages (pfc-redesign fUpd, fAct) live in the Machines destination beside its column, whichever door
+ * opened them (UI refinements RULING 2026-11-14 20:24Z): Settings → Machines leads there too, never into a Settings
+ * copy of the page.
+ */
+export function machineFleetPageHref(page: 'updates' | 'activity'): string {
+    return `${MACHINES_RAIL_ROOT}/${page}`;
 }
 
 export type MachinePageTarget = Readonly<{ machineId: string; serverId?: string }>;

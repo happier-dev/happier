@@ -8464,6 +8464,8 @@ const machineDetailPageTranslations = { ja: translated({
             columnSecurity: "セキュリティ",
             columnAll: "すべて",
             columnRestart: "再起動",
+            columnChecked: "確認",
+            checkedAsOf: ({ time }: { time: string }) => `${time} 時点`,
             offline: "オフライン · 現在未確認",
             offlineNamed: ({ names }: { names: string }) => `オフライン: ${names}`,
             offlineCount: ({ count }: { count: number }) => `オフライン ${count}`,

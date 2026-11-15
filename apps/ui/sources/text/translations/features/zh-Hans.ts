@@ -8459,6 +8459,8 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             columnSecurity: "安全",
             columnAll: "全部",
             columnRestart: "重启",
+            columnChecked: "检查时间",
+            checkedAsOf: ({ time }: { time: string }) => `截至 ${time}`,
             offline: "离线 · 暂未检查",
             offlineNamed: ({ names }: { names: string }) => `离线：${names}`,
             offlineCount: ({ count }: { count: number }) => `离线 ${count}`,

@@ -325,11 +325,12 @@ it.each(['index', 'rail'] as const)('refreshes a retained offline %s roster row 
   expect(row().props.accessibilityLabel).toContain('settingsOverview.machineOnline');
 });
 
-it('opens fleet Updates and Activity inside the Machines door from its column, so a reload stays there', async () => {
-  routeState.pathname = '/machines';
+it.each(['rail', 'settings'] as const)('opens fleet Updates and Activity in the Machines destination from the %s door\'s column, never inside Settings', async door => {
+  routeState.pathname = door === 'rail' ? '/machines' : '/settings/machines';
   await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('studio', 'Studio', 'studio.local')] }]);
   const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
-  const { tree } = await renderScreen(<MachinesColumn />);
+  const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
+  const { tree } = await renderScreen(door === 'rail' ? <MachinesColumn /> : <MachineCollectionRail />);
   const press = async (testID: string) => {
     const row = tree.findAll(node => node.props.testID === testID && typeof node.props.onPress === 'function')[0]!;
     await act(async () => { await pressTestInstanceAsync(row); });

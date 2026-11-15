@@ -8467,6 +8467,8 @@ const machineDetailPageTranslations = { fr: translated({
             columnSecurity: "Sécurité",
             columnAll: "Toutes",
             columnRestart: "Redémarrage",
+            columnChecked: "Vérifié",
+            checkedAsOf: ({ time }: { time: string }) => `Au ${time}`,
             offline: "Hors ligne · non vérifiée",
             offlineNamed: ({ names }: { names: string }) => `hors ligne : ${names}`,
             offlineCount: ({ count }: { count: number }) => `${count} hors ligne`,

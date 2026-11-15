@@ -8469,6 +8469,8 @@ const machineDetailPageTranslations = { ca: translated({
             columnSecurity: "Seguretat",
             columnAll: "Totes",
             columnRestart: "Reinici",
+            columnChecked: "Comprovat",
+            checkedAsOf: ({ time }: { time: string }) => `A les ${time}`,
             offline: "Fora de línia · no comprovada ara",
             offlineNamed: ({ names }: { names: string }) => `fora de línia: ${names}`,
             offlineCount: ({ count }: { count: number }) => `${count} fora de línia`,

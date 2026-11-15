@@ -296,7 +296,8 @@ describe('settingsRouteRegistry', () => {
         const machines = getSettingsStackScreenDefinitions(translate as never, { navigator: 'machines' });
         expect(machines.map((definition) => definition.name)).toEqual([
             'index', '[id]/index', '[id]/[page]', 'managed/[id]', 'add', 'add/[provisioner]', 'presets/new', 'presets/[presetId]',
-            'this-computer', 'defaults', 'updates', 'activity', 'pools/[poolId]', 'pools/new',
+            // Fleet Updates and Activity live in the Machines destination (/machines/*), not in Settings (RULING 11-14 20:24Z).
+            'this-computer', 'defaults', 'pools/[poolId]', 'pools/new',
         ]);
         expect(machines.find((definition) => definition.name === 'pools/new')?.options.headerTitle).toBe('');
         expect(machines.find((definition) => definition.name === 'pools/[poolId]')?.options.headerTitle).toBe('');

@@ -17,6 +17,7 @@ import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import type { FleetUpdatesRow } from './machineFleetUpdates';
 
@@ -25,6 +26,8 @@ const s = 'machineFleetUpdates' as const;
 const LIST_MIN_WIDTH_PX = 320;
 const COUNT_COLUMN_WIDTH_PX = 88;
 const RESTART_COLUMN_WIDTH_PX = 160;
+/** Holds the as-of time in its longest form ("26 Sep, 18:44"), or "As of" before it. */
+const CHECKED_COLUMN_WIDTH_PX = 136;
 
 const keyOfRow = (row: FleetUpdatesRow) => row.machineId;
 
@@ -103,6 +106,14 @@ export function MachineFleetUpdatesTable(
         priority: 1,
         render: (row) => <RestartCell row={row} />,
       },
+      {
+        key: 'checked',
+        title: t(`${s}.columnChecked`),
+        minWidth: CHECKED_COLUMN_WIDTH_PX,
+        priority: 0,
+        align: 'end',
+        render: (row) => <CheckedCell row={row} />,
+      },
     ];
     return {
       glyph: (row) => (
@@ -118,8 +129,11 @@ export function MachineFleetUpdatesTable(
       title: (row) => row.name,
       // What the Machine runs beside its name, as the Machines table says its facts (lab fUpd: \"Ubuntu 24.04\").
       titleSuffix: (row) => (phone ? null : formatOSPlatform(row.platform) || null),
-      ...(phone ? { byline: (row: FleetUpdatesRow) => [formatOSPlatform(row.platform), describeFacts(row)].filter(Boolean).join(' · ') } : {}),
-      fields: phone ? [] : fields,
+      // The list's second line (where the table recomposes on a phone, lab fUpd · 390): the system and the same facts
+      // as the columns; the table draws its columns instead. A phone keeps the check time at the row's end.
+      byline: (row) => [formatOSPlatform(row.platform), describeFacts(row)].filter(Boolean).join(' · '),
+      ...(phone ? { titleMeta: (row: FleetUpdatesRow) => <CheckedCell row={row} /> } : {}),
+      fields,
       accessibilityLabel: (row) =>
         [row.name, formatOSPlatform(row.platform), describeFacts(row)]
           .filter(Boolean)
@@ -134,8 +148,8 @@ export function MachineFleetUpdatesTable(
         model={model}
         anatomy={anatomy}
         accessibilityLabel={t(`${s}.title`)}
-        // A phone lists the Machines with their facts beneath (lab fUpd · 390); wider, the table.
-        presentation={phone ? 'list' : 'table'}
+        // Where no column fits beside the Machine (a phone), the table recomposes into its list (as the Machines index).
+        presentation="table"
         detail="none"
         // A fleet is user-sized data: the table windows its rows in the page.
         scroll="page-virtualized"
@@ -163,6 +177,21 @@ function CountCell(
         {String(props.value)}
       </Text>
     </View>
+  );
+}
+
+/**
+ * When the Machine last checked (lab fUpd Checked): the time it reported; an offline Machine's is its last one
+ * ("As of 14:02"); never checked reads "—".
+ */
+function CheckedCell(props: Readonly<{ row: FleetUpdatesRow }>) {
+  const { checkedAt, online } = props.row;
+  if (checkedAt === null) return <Text style={styles.quiet}>—</Text>;
+  const time = formatAsOfTime(checkedAt);
+  return (
+    <Text numberOfLines={1} style={online === true ? styles.count : styles.quiet}>
+      {online === true ? time : t(`${s}.checkedAsOf`, { time })}
+    </Text>
   );
 }
 

@@ -20,20 +20,24 @@ export type FleetUpdatesRow = FleetMachine &
     security: number | null;
     all: number | null;
     restartNeeded: boolean;
+    /** When the Machine's last native update check completed (epoch ms); null when it never reported one. */
+    checkedAt: number | null;
   }>;
 
 export function readFleetUpdatesRow(
   machine: FleetMachine,
   entry: MachineUpdatesPageEntry | undefined,
 ): FleetUpdatesRow {
-  // An offline Machine's last answer is not today's count (lab fUpd: "—", never zero).
+  // An offline Machine's last answer is not today's count (lab fUpd: "—", never zero); when it last checked stays
+  // true, so the row keeps it ("As of 14:02").
   return {
     ...machine,
     ...readMachineUpdateFacts(machine.online === true ? (entry?.observation ?? null) : null),
+    checkedAt: entry?.observation?.checkedAt ?? null,
   };
 }
 
-export type MachineUpdateFacts = Pick<FleetUpdatesRow, 'security' | 'all' | 'restartNeeded'>;
+export type MachineUpdateFacts = Pick<FleetUpdatesRow, 'security' | 'all' | 'restartNeeded' | 'checkedAt'>;
 
 /** One online Machine's pushed update observation as counts; unknown stays null. */
 export function readMachineUpdateFacts(observation: MachineUpdatesPageEntry['observation']): MachineUpdateFacts {
@@ -41,6 +45,7 @@ export function readMachineUpdateFacts(observation: MachineUpdatesPageEntry['obs
     security: observation?.pendingSecurity ?? null,
     all: observation?.pendingAll ?? null,
     restartNeeded: observation?.rebootNeeded === true,
+    checkedAt: observation?.checkedAt ?? null,
   };
 }
 

@@ -8458,6 +8458,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             columnSecurity: "安全性",
             columnAll: "全部",
             columnRestart: "重新啟動",
+            columnChecked: "檢查時間",
+            checkedAsOf: ({ time }: { time: string }) => `截至 ${time}`,
             offline: "離線 · 暫未檢查",
             offlineNamed: ({ names }: { names: string }) => `離線：${names}`,
             offlineCount: ({ count }: { count: number }) => `離線 ${count}`,

@@ -8496,6 +8496,8 @@ const machineDetailPageTranslations = { ru: translated({
             columnSecurity: "Безопасность",
             columnAll: "Все",
             columnRestart: "Перезапуск",
+            columnChecked: "Проверено",
+            checkedAsOf: ({ time }: { time: string }) => `На ${time}`,
             offline: "Не в сети · сейчас не проверена",
             offlineNamed: ({ names }: { names: string }) => `не в сети: ${names}`,
             offlineCount: ({ count }: { count: number }) => `не в сети: ${count}`,

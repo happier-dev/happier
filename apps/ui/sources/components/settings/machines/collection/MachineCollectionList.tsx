@@ -3,7 +3,7 @@ import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph'
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { View, type Pressable } from 'react-native';
 import { useMachineCollection, useMachineCollectionPresenceRows, useMachineCollectionRowPresence } from './useMachineCollection';
-import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useGlobalSearchParams, useOpenAppSection, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
@@ -313,6 +313,12 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     ]).size, [fleetAttention]);
     const onDetailRoute = pathname === doorRoot || pathname.startsWith(`${doorRoot}/`);
     const replaceConfiguration = rail && onDetailRoute && door === 'settings';
+    // The fleet pages are the Machines destination's (RULING 11-14 20:24Z): from Settings → Machines they open as that
+    // section, so their shell column is Machines; inside the rail door they open in place like any row.
+    const openSection = useOpenAppSection();
+    const openFleetPage = (page: 'updates' | 'activity') => door === 'settings'
+        ? openSection(machineFleetPageHref(page))
+        : openHref(router, machineFleetPageHref(page), replaceConfiguration, `MachineCollectionList.${page}`);
     const selectedKey = rail ? resolveSelectedMachineCollectionKey(pathname, { serverId: readParam(params.serverId) }) : null;
 
     const [query, setQuery] = React.useState(() => readLastVisitedMachine()?.query ?? '');
@@ -416,7 +422,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 density: rail ? 'compact' : undefined,
                 showChevron: !rail,
                 pressableStyle: rail ? collectionListStyles.row : undefined,
-                onPress: () => openHref(router, machineFleetPageHref(door, 'updates'), replaceConfiguration, 'MachineCollectionList.updates'),
+                onPress: () => openFleetPage('updates'),
             }}
         />
     );
@@ -436,7 +442,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             density={rail ? 'compact' : undefined}
             showChevron={!rail}
             pressableStyle={rail ? collectionListStyles.row : undefined}
-            onPress={() => openHref(router, machineFleetPageHref(door, 'activity'), replaceConfiguration, 'MachineCollectionList.activity')}
+            onPress={() => openFleetPage('activity')}
         />
     );
 

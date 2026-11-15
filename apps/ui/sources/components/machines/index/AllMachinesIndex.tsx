@@ -91,6 +91,11 @@ const LIST_MIN_WIDTH_PX = 360;
 const METRIC_COLUMN_WIDTH_PX = 120;
 /** Memory's figure turns into its pressure word under load, so its column holds the longest one ("Memoria scarsa") whole. */
 const MEMORY_COLUMN_WIDTH_PX = 152;
+/**
+ * Work holds the work, the services and how many fail (lab mIdx); at 944 it sits beside all three metric columns and
+ * a longer line wraps rather than clipping the failing count.
+ */
+const WORK_COLUMN_WIDTH_PX = 160;
 type MachineIndexItem = MachineCollectionRow & Readonly<{
     key: string;
     sectionKey: string;
@@ -479,7 +484,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         ...(phone ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
         fields: [
             // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
-            { key: 'work', title: t('allMachines.columnWork'), minWidth: 104, priority: 2,
+            { key: 'work', title: t('allMachines.columnWork'), minWidth: WORK_COLUMN_WIDTH_PX, priority: 2,
                 ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => item.online && item.reason !== null } : {}),
                 render: (item) => metrics.length > 0 && (!item.online || item.reason !== null)
                     ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : (
@@ -605,15 +610,20 @@ const MachineWorkCell = React.memo(function MachineWorkCell(props: Readonly<{ it
     if (!item.online && count === 0) return props.offlineLabel ? <Text style={stylesheet.quiet}>{props.offlineLabel}</Text> : null;
     const total = live && summary ? summary.running + summary.failing : 0;
     return (
-        <Text numberOfLines={1} style={count > 0 ? stylesheet.work : stylesheet.quiet} testID={`machines.index.work.${item.key}`}>
-            {count > 0 ? t('machineDetailPage.work.working', { count }) : t('machineDetailPage.work.none')}
-            {total > 0 ? ` · ${t('machineDetailPage.work.services', { count: total })}` : null}
+        <Text numberOfLines={props.services ? 2 : 1} style={count > 0 ? stylesheet.work : stylesheet.quiet} testID={`machines.index.work.${item.key}`}>
+            {keepWhole(count > 0 ? t('machineDetailPage.work.working', { count }) : t('machineDetailPage.work.none'))}
+            {total > 0 ? ` · ${keepWhole(t('machineDetailPage.work.services', { count: total }))}` : null}
             {total > 0 && summary!.failing > 0 ? (
-                <Text style={stylesheet.failing}>{` · ${t('machineDetailPage.work.failing', { count: summary!.failing })}`}</Text>
+                <Text style={stylesheet.failing}>{` · ${keepWhole(t('machineDetailPage.work.failing', { count: summary!.failing }))}`}</Text>
             ) : null}
         </Text>
     );
 });
+
+/** A wrapped Work line breaks between its parts, never inside one ("1 failing" stays whole). */
+function keepWhole(part: string): string {
+    return part.replace(/ /g, '\u00a0');
+}
 
 /** "3 security updates" or "Restart needed" in amber, from the Machine's pushed update facts; nothing otherwise. */
 const MachineIndexUpdateLine = React.memo(function MachineIndexUpdateLine(props: Readonly<{ item: MachineIndexItem }>) {

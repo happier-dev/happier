@@ -2094,6 +2094,8 @@ export const english = {
         columnSecurity: "Security",
         columnAll: "All",
         columnRestart: "Restart",
+        columnChecked: "Checked",
+        checkedAsOf: ({ time }: { time: string }) => `As of ${time}`,
         offline: "Offline · not checked now",
         offlineNamed: ({ names }: { names: string }) => `offline: ${names}`,
         offlineCount: ({ count }: { count: number }) => `${count} offline`,

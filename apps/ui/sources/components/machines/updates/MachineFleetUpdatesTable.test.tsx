@@ -9,6 +9,7 @@ import {
 } from '@/dev/testkit';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import type { FleetUpdatesRow } from './machineFleetUpdates';
 
@@ -39,6 +40,7 @@ const row = (
   security: null,
   all: null,
   restartNeeded: false,
+  checkedAt: null,
   ...facts,
 });
 
@@ -51,7 +53,9 @@ function textOf(node: ReactTestInstance | undefined): string {
     .trim();
 }
 
-it('says each Machine’s Security, All and Restart in its own column, and "—" where a Machine can’t say today, never zero', async () => {
+const CHECKED = Date.UTC(2026, 10, 14, 6, 12);
+
+it('says each Machine’s Security, All, Restart and when it last checked in its own column, and "—" where a Machine can’t say today, never zero', async () => {
   const onOpen = vi.fn();
   const screen = await renderScreen(
     <CoreCollectionScope>
@@ -59,11 +63,11 @@ it('says each Machine’s Security, All and Restart in its own column, and "—"
       testID="fleet"
       onOpen={onOpen}
       rows={[
-        row('hetzner', { security: 3, all: 7 }),
-        row('vps', { security: 0, all: 2, restartNeeded: true }),
+        row('hetzner', { security: 3, all: 7, checkedAt: CHECKED }),
+        row('vps', { security: 0, all: 2, restartNeeded: true, checkedAt: CHECKED }),
         row('fresh', {}),
-        // Offline: its last answer is not today's count (readFleetUpdatesRow drops it; the row says so too).
-        row('build', { online: false, security: 4, all: 9 }),
+        // Offline: its last answer is not today's count (readFleetUpdatesRow drops it), but when it last checked stays true.
+        row('build', { online: false, security: 4, all: 9, checkedAt: CHECKED }),
       ]}
     />
     </CoreCollectionScope>,
@@ -80,16 +84,19 @@ it('says each Machine’s Security, All and Restart in its own column, and "—"
     'columnSecurity',
     'columnAll',
     'columnRestart',
+    'columnChecked',
   ] as const) {
     expect(text).toContain(t(`machineFleetUpdates.${column}`));
   }
   const notNeeded = t('machineFleetUpdates.restartNotNeeded');
   const needed = t('machineFleetUpdates.restartNeeded');
-  // Each row reads the Machine and its system, then Security · All · Restart, in the columns' order.
-  expect(rowText('hetzner')).toContain(`hetzner Linux 3 7 ${notNeeded}`);
-  expect(rowText('vps')).toContain(`vps Linux 0 2 ${needed}`);
-  expect(rowText('fresh')).toContain('fresh Linux — — —');
-  expect(rowText('build')).toContain('build Linux — — —');
+  // Each row reads the Machine and its system, then Security · All · Restart · Checked, in the columns' order.
+  const checked = formatAsOfTime(CHECKED);
+  expect(rowText('hetzner')).toContain(`hetzner Linux 3 7 ${notNeeded} ${checked}`);
+  expect(rowText('vps')).toContain(`vps Linux 0 2 ${needed} ${checked}`);
+  expect(rowText('fresh')).toContain('fresh Linux — — — —');
+  // Offline (lab fUpd build-01): the counts are not today's, the check time is the last one it reported.
+  expect(rowText('build')).toContain(`build Linux — — — ${t('machineFleetUpdates.checkedAsOf', { time: checked })}`);
   expect(rowText('build')).not.toMatch(/\b[49]\b/);
 
   await screen.pressByTestIdAsync('machines.updates.row.hetzner');
