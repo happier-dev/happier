@@ -112,7 +112,7 @@ import {
 import { projectAcceptedWorkflowRunTarget } from '../run/projectAcceptedWorkflowRunTarget';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { WorkflowRunAgentOverrideField } from '../run/WorkflowRunAgentOverrideField';
-import { createMachineExecutionRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { useOpenExecutionRunDetails } from '@/components/sessions/runs/useOpenExecutionRunDetails';
 import {
     resolveWorkflowProblemPresentation,
     type WorkflowProblemPresentation,
@@ -358,6 +358,7 @@ const selectMachineName = (machine: Machine | null): string | null => getMachine
 const selectMachineHomeDir = (machine: Machine | null): string | null => machine?.metadata?.homeDir ?? null;
 
 function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedded?: boolean; acknowledgeFailure: boolean }>): React.ReactElement {
+    const openExecutionRunDetails = useOpenExecutionRunDetails();
     const { theme } = useUnistyles();
     const contentStyle = React.useMemo(() => ({
         paddingHorizontal: theme.space.s16,
@@ -2259,12 +2260,8 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                     buildScopedSessionRouteHref({ sessionId, serverId: activeAccountScope.serverId }) as never,
                 )}
                 onOpenExecutionRun={activeAccountScope === null || !summary.machineId.trim() ? undefined : (executionRunId) => {
-                    const route = createMachineExecutionRunRoute(
-                        activeAccountScope.serverId,
-                        summary.machineId,
-                        executionRunId,
-                    );
-                    if (route !== null) router.push(route as never);
+                    void openExecutionRunDetails({ sessionId: null, serverId: activeAccountScope.serverId,
+                        machineId: summary.machineId, runId: executionRunId });
                 }}
                 // Native permission answers have their own Session/execution
                 // authority; Run edit access only controls mutations of this Run.

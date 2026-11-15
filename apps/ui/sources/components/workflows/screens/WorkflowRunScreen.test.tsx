@@ -88,6 +88,7 @@ import { isWorkflowRunPeekDetailsResource } from '@/components/sessions/work/cre
 import { Alert, Platform, Pressable } from 'react-native';
 import type { WorkItem } from '@/components/sessions/work/workProjection';
 import { CollectionRequestPeekBody } from '@/components/ui/lists/collection/CollectionRequestPeekBody';
+import { SessionExecutionRunDetailsView } from '@/components/sessions/runs/details/SessionExecutionRunDetailsView';
 
 // These Run fixtures do not stream Markdown; keep its external web adapter at the boundary.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -1408,6 +1409,19 @@ describe('WorkflowRunScreen', () => {
         expect(readContentProps()?.selectedInvocationId).toBe(failed.id);
         expect(screen.findAllByType(WorkflowInvocationDetail)[0]?.props.recovery).toBe(readContentProps()?.failurePresentation?.recovery);
     });
+    it('opens the exact detached execution inspector rather than an unclaimed destination', async () => {
+        const screen = await renderSelectedPermissionRequests();
+        await act(async () => { await readContentProps()?.onOpenExecutionRun?.('exec-exact'); });
+        const details = screen.findAllByType(SessionExecutionRunDetailsView);
+        expect(details).toHaveLength(1);
+        expect(details[0]?.props).toMatchObject({ sessionId: null, serverId: storeState.state.profileScope!.serverId,
+            workspace: { machineId: 'machine-1' }, runId: 'exec-exact' });
+        expect(routerSpy.push.mock.calls.some(([href]) => String(href).startsWith('/runs?'))).toBe(false);
+        await act(async () => readContentProps()?.onOpenSession?.('session-exact'));
+        expect(routerSpy.push).toHaveBeenCalledWith(`/session/session-exact?serverId=${storeState.state.profileScope!.serverId}`);
+        await screen.unmount();
+    });
+
     it('opens interrupted root attention with its stored cause and an eligible structural retry', async () => {
         const run = createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' });
         const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333',
