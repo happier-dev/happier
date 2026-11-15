@@ -1912,6 +1912,11 @@ export function createStablePluginExecService(params: Readonly<{
         request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
         options?: HostExecOptions,
         openAccess = false,
+        /**
+         * A protocol client reads the whole stdout itself: the supervisor then retains none
+         * of it (as ACP), so a long-lived Agent's output is not also buffered for a result.
+         */
+        protocolOwnsStdout = false,
     ): Promise<SupervisedPluginProcess> {
         const launchStartedAt = performance.now();
         // Only the supervisor installs this exact host-owned request; public
@@ -1977,6 +1982,7 @@ export function createStablePluginExecService(params: Readonly<{
         const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch, env: environment,
             processOwnerTag: managedCustody?.processOwnerTag ?? processOwnerTag }, {
             readSpawnFailureLimits: params.readSpawnFailureLimits,
+            ...(protocolOwnsStdout ? { pipeStdout: true as const } : {}),
             ...(params.posixProcessGroup ? { posixProcessGroup: params.posixProcessGroup } : {}),
             ...(params.processTreeSystemBoundary ? { processTreeSystemBoundary: params.processTreeSystemBoundary } : {}),
             ...(options?.descendantDisposition ? { descendantDisposition: options.descendantDisposition } : {}),
@@ -2037,7 +2043,7 @@ export function createStablePluginExecService(params: Readonly<{
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
         options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'jsonRpc'>> {
-        const supervised = await launchProcess(spec.launch, options, true);
+        const supervised = await launchProcess(spec.launch, options, true, true);
         const protocol = createJsonRpcProcessClient({
             stdout: supervised.child.stdout,
             write: async (data) => supervised.handle.write(typeof data === 'string'
@@ -2096,7 +2102,7 @@ export function createStablePluginExecService(params: Readonly<{
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonStream' }>,
         options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'jsonStream'>> {
-        const supervised = await launchProcess(spec.launch, options, true);
+        const supervised = await launchProcess(spec.launch, options, true, true);
         const readStderrPreview = () => sanitizeExecDiagnosticText(
             Buffer.from(supervised.readBufferedStderr()).toString('utf8'),
             spec.launch.maxStderrBytes ?? 4_096,
@@ -2165,7 +2171,7 @@ export function createStablePluginExecService(params: Readonly<{
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'framedBytes' }>,
         options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'framedBytes'>> {
-        const supervised = await launchProcess(spec.launch, options, true);
+        const supervised = await launchProcess(spec.launch, options, true, true);
         const protocol = createFramedBytesProcessClient({
             process: adaptStablePluginExecLegacyProcessHandle(supervised),
             stdout: supervised.child.stdout,
