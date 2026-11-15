@@ -1,3 +1,4 @@
+import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountCredentialStore, ConnectedAccountHealthResult, ConnectedAccountMutationContext, ConnectedAccountReadContext, ConnectedAccountRuntime, PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { cloudflareEnabledFeatures, cloudflarePermissionNames, cloudflarePermissionScope } from './permissions.js';
@@ -173,10 +174,14 @@ async function authorizedAccounts(token: string, context: Context, signal: Abort
 async function exchange(context: Context, form: URLSearchParams, signal: AbortSignal, config: OAuthConfiguration, previousRefresh?: string, previousScopes?: readonly string[], discover = false) {
   let response: HttpResponse;
   try { response = await request(context, 'token', signal, { form }); }
-  catch {
+  catch (error) {
     signal.throwIfAborted();
     // A public-client refresh may rotate its grant before a reply is lost.
-    throw new OAuthFailure({ status: 'outcomeUnknown', diagnostic: diagnostic('cloudflare_oauth_exchange_unknown', 'Cloudflare did not confirm the token exchange. Reconnect before trying again.') });
+    const failureCause = projectActionFailureCauseV1(error, 'cloudflare.oauth.exchange', { allowUnknownErrorCode: isPluginError(error) });
+    throw new OAuthFailure(withActionFailureDiagnostic({ status: 'outcomeUnknown', diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed', 'Cloudflare did not confirm the token exchange. Reconnect before trying again.'),
+      details: { failureCause },
+    } }, { phase: 'cloudflare.oauth.exchange', causeKind: 'native_failure', error: new Error(failureCause.errorClass) }));
   }
   const body = bodyOf(response);
   const receivedAtMs = Date.now();
@@ -207,7 +212,13 @@ async function stage(store: ConnectedAccountCredentialStore, result: Awaited<Ret
   signal.throwIfAborted();
 }
 function failure(error: unknown, signal: AbortSignal): Failure {
-  signal.throwIfAborted(); return error instanceof OAuthFailure ? error.result : unavailable();
+  signal.throwIfAborted();
+  if (error instanceof OAuthFailure) return error.result;
+  const failureCause = projectActionFailureCauseV1(error, 'cloudflare.oauth', { allowUnknownErrorCode: isPluginError(error) });
+  return withActionFailureDiagnostic({ status: 'unavailable', diagnostic: {
+    ...diagnostic(failureCause.errorCode ?? 'action_failed', 'Cloudflare authorization failed on this device. Check its network access and reconnect.'),
+    details: { failureCause },
+  } }, { phase: 'cloudflare.oauth', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
 }
 async function retainedScopes(store: Pick<ConnectedAccountCredentialStore, 'get'>, signal: AbortSignal) {
   const raw = await store.get('scopes', { signal });

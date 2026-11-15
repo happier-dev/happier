@@ -1,3 +1,4 @@
+import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterialization, ConnectedAccountPortableRuntime, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
@@ -19,15 +20,23 @@ async function probe(token: string, context: Context, signal: AbortSignal) {
       headers: { authorization: `Bearer ${token}` } }, { signal });
     signal.throwIfAborted();
     if (response.status === 401 || response.status === 403 || response.status === 404) return { status: 'rejected' as const, diagnostic: diagnostic(response.status === 401 ? 'supabase_invalid_token' : 'supabase_organization_unavailable') };
-    if (response.status !== 200 || response.finalUrl !== url) return { status: 'unavailable' as const, diagnostic: diagnostic('supabase_unavailable') };
+    if (response.status !== 200 || response.finalUrl !== url) return { status: 'unavailable' as const, diagnostic: {
+      ...diagnostic('supabase_unavailable'), details: {
+        failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'supabase.verification'),
+        ...(response.status === 429 ? { failureClass: 'rateLimit' } : {}),
+      },
+    } };
     const body: unknown = JSON.parse(new TextDecoder().decode(response.body));
     const value: unknown = projectRef ? body : Array.isArray(body) ? body.find((item: unknown) => item !== null && typeof item === 'object' && 'slug' in item && item.slug === slug) : null;
     if (!value || typeof value !== 'object' || !('name' in value) || typeof value.name !== 'string'
       || (projectRef ? !('ref' in value) || value.ref !== projectRef || !('organization_slug' in value) || value.organization_slug !== slug : !('slug' in value) || value.slug !== slug)) return { status: 'rejected' as const, diagnostic: diagnostic('supabase_scope_mismatch') };
     return { status: 'connected' as const, displayName: value.name, providerIdentity: { accountId: null, email: null, organizationId: slug }, scopes: [] };
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
-    return { status: 'unavailable' as const, diagnostic: diagnostic('supabase_unavailable') };
+    const failureCause = projectActionFailureCauseV1(error, 'supabase.verification', { allowUnknownErrorCode: isPluginError(error) });
+    return withActionFailureDiagnostic({ status: 'unavailable' as const, diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed'), details: { failureCause },
+    } }, { phase: 'supabase.verification', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
   }
 }
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {
@@ -38,9 +47,12 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
     if (!tokenValid(token)) return { status: 'reconnectRequired' as const, diagnostic: diagnostic('supabase_invalid_token') };
     const result = await probe(token, context, signal);
     return result.status === 'rejected' ? { status: 'reconnectRequired' as const, diagnostic: result.diagnostic } : result;
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
-    return { status: 'unavailable' as const, diagnostic: diagnostic('supabase_unavailable') };
+    const failureCause = projectActionFailureCauseV1(error, 'supabase.health', { allowUnknownErrorCode: isPluginError(error) });
+    return withActionFailureDiagnostic({ status: 'unavailable' as const, diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed'), details: { failureCause },
+    } }, { phase: 'supabase.health', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
   }
 }
 const materialize: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options): Promise<ConnectedAccountMaterialization> => {

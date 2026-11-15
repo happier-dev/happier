@@ -1,3 +1,4 @@
+import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterialization, ConnectedAccountPortableRuntime, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
@@ -17,7 +18,12 @@ async function probe(token: string, context: Context, signal: AbortSignal) {
     signal.throwIfAborted();
     if (response.status === 401 || response.status === 403 || response.status === 404) return { status: 'rejected' as const,
       diagnostic: diagnostic(response.status === 401 ? 'neon_invalid_token' : 'neon_scope_unavailable') };
-    if (response.status !== 200 || response.finalUrl !== url) return { status: 'unavailable' as const, diagnostic: diagnostic('neon_unavailable') };
+    if (response.status !== 200 || response.finalUrl !== url) return { status: 'unavailable' as const, diagnostic: {
+      ...diagnostic('neon_unavailable'), details: {
+        failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'neon.verification'),
+        ...(response.status === 429 ? { failureClass: 'rateLimit' } : {}),
+      },
+    } };
     const body: unknown = JSON.parse(new TextDecoder().decode(response.body));
     const scope: unknown = projectId && body && typeof body === 'object' && 'project' in body ? body.project : body;
     if (!scope || typeof scope !== 'object' || !('id' in scope) || scope.id !== (projectId ?? organizationId)
@@ -27,9 +33,12 @@ async function probe(token: string, context: Context, signal: AbortSignal) {
     }
     return { status: 'connected' as const, displayName: scope.name,
       providerIdentity: { accountId: null, email: null, organizationId }, scopes: [] };
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
-    return { status: 'unavailable' as const, diagnostic: diagnostic('neon_unavailable') };
+    const failureCause = projectActionFailureCauseV1(error, 'neon.verification', { allowUnknownErrorCode: isPluginError(error) });
+    return withActionFailureDiagnostic({ status: 'unavailable' as const, diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed'), details: { failureCause },
+    } }, { phase: 'neon.verification', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
   }
 }
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {
@@ -40,9 +49,12 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
     if (!validToken(token)) return { status: 'reconnectRequired' as const, diagnostic: diagnostic('neon_invalid_token') };
     const result = await probe(token, context, signal);
     return result.status === 'rejected' ? { status: 'reconnectRequired' as const, diagnostic: result.diagnostic } : result;
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
-    return { status: 'unavailable' as const, diagnostic: diagnostic('neon_unavailable') };
+    const failureCause = projectActionFailureCauseV1(error, 'neon.health', { allowUnknownErrorCode: isPluginError(error) });
+    return withActionFailureDiagnostic({ status: 'unavailable' as const, diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed'), details: { failureCause },
+    } }, { phase: 'neon.health', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
   }
 }
 const materialize: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options): Promise<ConnectedAccountMaterialization> => {

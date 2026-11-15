@@ -1,4 +1,5 @@
 import { cloudflareFeatureReadPaths, cloudflareFeatureNames } from './permissions.js';
+import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 
 export const CLOUDFLARE_API_ORIGIN = 'https://api.cloudflare.com';
@@ -10,6 +11,7 @@ export type VerifiedCloudflareToken = Readonly<{ status: 'verified'; identity: C
 export function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
 }
+
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -43,7 +45,10 @@ async function read(context: Context, token: string, path: string, signal: Abort
   const url = `${CLOUDFLARE_API_ORIGIN}/client/v4${path}`;
   const response = await context.services.http.request({ url, method: 'GET', headers: { authorization: `Bearer ${token}` }, redirect: 'error' }, { signal });
   signal.throwIfAborted();
-  if (response.status >= 300 && response.status < 400) throw new Error('Unexpected Cloudflare redirect');
+  if (response.status >= 300 && response.status < 400) throw new ProbeFailure({ status: 'unavailable', diagnostic: {
+    ...diagnostic('cloudflare_http_redirect', 'Cloudflare refused the verification request with a redirect.'),
+    details: { failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'cloudflare.verification') },
+  } });
   // Cloudflare reports a malformed Bearer token as 400 / 6003 → 6111.
   const verificationError: unknown = purpose === 'verification' && response.status === 400
     ? JSON.parse(new TextDecoder().decode(response.body)) : null;
@@ -54,7 +59,10 @@ async function read(context: Context, token: string, path: string, signal: Abort
     throw new ProbeFailure({ status: 'rejected', diagnostic: diagnostic('cloudflare_token_rejected', 'The Cloudflare token is invalid, expired or revoked.') });
   }
   if (response.status === 403 || response.status === 404) throw new ProbeFailure(missingPermissions());
-  if (response.status !== 200) throw new Error('Cloudflare verification unavailable');
+  if (response.status !== 200) throw new ProbeFailure({ status: 'unavailable', diagnostic: {
+    ...diagnostic('cloudflare_http_error', 'Cloudflare refused verification. Check the provider status and this device’s network access, then retry.'),
+    details: { failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'cloudflare.verification') },
+  } });
   const body: unknown = JSON.parse(new TextDecoder().decode(response.body));
   if (!isObject(body) || body.success !== true || !('result' in body)) throw new Error('Invalid Cloudflare response');
   return body.result;
@@ -111,6 +119,11 @@ export async function verifyCloudflareToken(token: string, context: Context, sig
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof ProbeFailure) return error.result;
-    return { status: 'unavailable', diagnostic: diagnostic('cloudflare_verification_unavailable', 'Cloudflare could not verify this connection. No token was saved; try again.') };
+    const failureCause = projectActionFailureCauseV1(error, 'cloudflare.verification', { allowUnknownErrorCode: isPluginError(error) });
+    return withActionFailureDiagnostic({ status: 'unavailable', diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed',
+        'Cloudflare verification failed on this device. Check its network access or connect from a Machine using the CLI.'),
+      details: { failureCause },
+    } }, { phase: 'cloudflare.verification', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
   }
 }

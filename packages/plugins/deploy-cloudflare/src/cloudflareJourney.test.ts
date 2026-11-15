@@ -4,6 +4,8 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountCredentialS
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { manifest } from './manifest.js';
 import { activate, activateAccount } from './activate.js';
+import { PluginConnectedAccountDescriptorContributionV2Schema, resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
+import { PluginError, readActionOutputDiagnostic } from '@happier-dev/plugin-sdk/errors';
 
 const accountId = 'a'.repeat(32);
 const tokenId = 'b'.repeat(32);
@@ -69,6 +71,35 @@ async function harness(product: 'workers' | 'pages' | 'tunnel' = 'workers') {
 }
 
 describe('Cloudflare Connected Account through plugin activation', () => {
+  it('places browser verification on a Machine while native clients retain Account execution', () => {
+    const modes = PluginConnectedAccountDescriptorContributionV2Schema.parse(manifest.contributes?.connectedAccountDescriptors?.[0]).authentication.modes;
+    expect(modes.length).toBeGreaterThan(0);
+    for (const mode of modes) {
+      expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)).toBe('browser_unreachable');
+      expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, false)).toBeNull();
+    }
+  });
+
+  it.each(['ENOTFOUND', 'ECONNREFUSED', 'plugin_fetch_redirect_refused'])('retains the typed %s cause without credential echoes', async code => {
+    const h = await harness();
+    h.request.mockRejectedValueOnce(code === 'plugin_fetch_redirect_refused'
+      ? new PluginError({ code, message: 'private-token-echo' })
+      : Object.assign(new Error('private-token-echo'), { code }));
+    const result = await h.mode.complete({ fields: { token: 'private-token-echo' } }, h.context);
+    expect(result).toMatchObject({ status: 'unavailable', diagnostic: { code,
+      details: { failureCause: { errorCode: code } } } });
+    expect(JSON.stringify(result)).not.toContain('private-token-echo');
+    expect(h.staged.values.size).toBe(0);
+  });
+
+  it('retains credential acquisition failures during health checks', async () => {
+    const h = await harness();
+    const credentials = { ...h.staged.store, async get() { throw new PluginError({ code: 'credential_unavailable', message: 'private-token-echo' }); } };
+    const result = await h.runtime.status({ ...h.context, credentials, account: { service, accountId: 'connected' } });
+    expect(result).toMatchObject({ status: 'unavailable', diagnostic: { code: 'credential_unavailable',
+      details: { failureCause: { errorCode: 'credential_unavailable' } } } });
+    expect(JSON.stringify(result)).not.toContain('private-token-echo');
+  });
   it.each(['workers', 'pages', 'tunnel'] as const)('connects %s without token inspection rights and probes only selected resources', async product => {
     const h = await harness(product);
     const scopes = product === 'workers' ? ['Workers'] : product === 'pages' ? ['Pages'] : ['Tunnel', 'DNS'];
@@ -178,7 +209,7 @@ describe('Cloudflare Connected Account through plugin activation', () => {
       success: false, errors: [{ code: 1000, message: 'Provider request unavailable' }], result: null,
     })) }));
     await expect(h.mode.complete({ fields: { token: 'not-a-real-cloudflare-token' } }, h.context))
-      .resolves.toMatchObject({ status: 'unavailable', diagnostic: { code: 'cloudflare_verification_unavailable' } });
+      .resolves.toMatchObject({ status: 'unavailable', diagnostic: { code: 'cloudflare_http_error', details: { failureCause: { httpStatus: status } } } });
     expect(h.staged.values.size).toBe(0);
   });
 
@@ -190,7 +221,10 @@ describe('Cloudflare Connected Account through plugin activation', () => {
     expect(JSON.stringify(result)).not.toContain('echoed-secret-test-token');
     expect(h.staged.values.size).toBe(0);
     h.request.mockRejectedValueOnce(new Error('echoed-secret-test-token'));
-    await expect(h.mode.complete({ fields: { token: 'echoed-secret-test-token' } }, h.context)).resolves.toMatchObject({ status: 'unavailable', diagnostic: { code: 'cloudflare_verification_unavailable' } });
+    const failed = await h.mode.complete({ fields: { token: 'echoed-secret-test-token' } }, h.context);
+    expect(failed).toMatchObject({ status: 'unavailable', diagnostic: { code: 'action_failed' } });
+    expect(readActionOutputDiagnostic(failed)).toMatchObject({ phase: 'cloudflare.verification' });
+    expect(JSON.stringify(failed)).not.toContain('echoed-secret-test-token');
     expect(h.staged.values.size).toBe(0);
   });
 

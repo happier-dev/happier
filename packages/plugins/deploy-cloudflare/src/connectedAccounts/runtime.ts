@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountHealthResult, ConnectedAccountMaterialization, ConnectedAccountPortableRuntime, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLOUDFLARE_API_ORIGIN, diagnostic, validToken, verifyCloudflareToken } from './probe.js';
 import { cloudflareOAuthMode, cloudflareOAuthStatus, refreshCloudflareOAuth, revokeCloudflareOAuth } from './oauth.js';
@@ -23,9 +24,13 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
     const result = await verifyCloudflareToken(token, context, signal);
     return result.status === 'verified' ? result.identity
       : result.status === 'rejected' ? { status: 'reconnectRequired', diagnostic: result.diagnostic } : result;
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
-    return { status: 'unavailable', diagnostic: diagnostic('cloudflare_verification_unavailable', 'The Cloudflare connection could not be checked.') };
+    const failureCause = projectActionFailureCauseV1(error, 'cloudflare.health', { allowUnknownErrorCode: isPluginError(error) });
+    return withActionFailureDiagnostic({ status: 'unavailable', diagnostic: {
+      ...diagnostic(failureCause.errorCode ?? 'action_failed', 'The Cloudflare connection could not be checked. Check this device’s credential storage and network access, then reconnect.'),
+      details: { failureCause },
+    } }, { phase: 'cloudflare.health', causeKind: 'native_failure', error: new Error(failureCause.errorClass) });
   }
 }
 

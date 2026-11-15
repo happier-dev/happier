@@ -88,6 +88,16 @@ async function harness(product: 'workers' | 'pages' = 'workers', options?: { byo
 
 const completion = { code: 'code-private', callbackUrl, state: 'oauth-attempt.nonce', pkceVerifier: 'host-verifier' };
 describe('portable Cloudflare authentication through Account registration and the shared dispatcher', () => {
+  it.each(['exchange', 'identity'] as const)('retains an OAuth %s transport cause without staging or echoing credentials', async phase => {
+    const h = await harness();
+    if (phase === 'identity') h.request.mockImplementationOnce(h.request.getMockImplementation()!);
+    h.request.mockRejectedValueOnce(Object.assign(new Error('access-private'), { code: 'ENOTFOUND' }));
+    const result = await h.mode.complete(completion, h.context);
+    expect(result).toMatchObject({ status: phase === 'exchange' ? 'outcomeUnknown' : 'unavailable', diagnostic: { code: 'ENOTFOUND',
+      details: { failureCause: { errorCode: 'ENOTFOUND' } } } });
+    expect(h.staged.values.size).toBe(0);
+    expect(JSON.stringify(result)).not.toContain('access-private');
+  });
   async function portable() {
     const target = { artifactId: 'connected-account-authentication', exportName: 'activate' };
     const descriptor = entry.manifest.contributes.connectedAccountDescriptors![0]!;
@@ -131,7 +141,8 @@ describe('portable Cloudflare authentication through Account registration and th
     h.request.mockImplementationOnce(async input => ({ status: 400, finalUrl: input.url, headers: {}, body: new TextEncoder().encode('{"error":"invalid_grant"}') }));
     expect(await invoke()).toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_oauth_reconnect_required' } });
     h.request.mockRejectedValueOnce(new Error('lost response'));
-    expect(await invoke()).toMatchObject({ status: 'outcomeUnknown', diagnostic: { code: 'cloudflare_oauth_exchange_unknown' } });
+    // The no-catch-all ruling retains uncertainty while exposing codeless failures.
+    expect(await invoke()).toMatchObject({ status: 'outcomeUnknown', diagnostic: { code: 'action_failed' } });
     h.controller.abort();
     await expect(invoke()).rejects.toMatchObject({ name: 'AbortError' });
     expect(h.request).toHaveBeenCalledTimes(2);
