@@ -32,12 +32,12 @@ export const DIAGNOSTIC_RECENT_SESSION_LOG_COUNT = 10;
 export const LOG_FILE_TAIL_WINDOW_BYTES = DEFAULT_BUG_REPORTS_CAPABILITIES.maxArtifactBytes;
 
 /**
- * Total bytes all logs in the logs directory may use: every file a diagnostic surface can name
- * (recent daemon + session logs, preserved crashed-session logs) with its full shareable tail.
- * Oldest logs go first; the current, live and crashed logs are never removed for it.
+ * Total bytes all logs in the logs directory may use (owner ruling 2026-11-15, "Growth decisions
+ * final"). It exceeds the reach of the diagnostic surfaces (recent daemon + session logs and
+ * preserved crashed-session logs, each with its full shareable tail). Oldest logs go first; the
+ * current, live and crashed logs are never removed for it.
  */
-export const LOG_TOTAL_BUDGET_BYTES = LOG_FILE_TAIL_WINDOW_BYTES
-  * (DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT + DIAGNOSTIC_RECENT_SESSION_LOG_COUNT + DEFAULT_CRASHED_SESSION_LOG_KEEP_COUNT);
+export const LOG_TOTAL_BUDGET_BYTES = 1024 * 1024 * 1024;
 
 type EnvLike = Readonly<Record<string, string | undefined>>;
 
