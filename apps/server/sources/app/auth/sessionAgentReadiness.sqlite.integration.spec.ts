@@ -34,16 +34,15 @@ describe('signed Session Agent readiness children', () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('spends exact reviewed children on the selected installation, preserving Use reads and Manage acquisition', async () => {
+    it('spends exact reviewed readiness children on the selected installation with requester Use access', async () => {
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const f = await createSignedDiscussionHttpFixture(undefined, [], false, custodian.id, { machineReads: true });
         try {
             await db.machine.update({ where: { id: f.machine.id }, data: { active: true, operationProtocolCapabilitiesRevision: 1,
                 operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ requesterExecutionIsolation: { protocolVersions: [1] },
                     externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
-            const grant = (level: 'view' | 'admin') => inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
-                actorAccountId: custodian.id, machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id }, level }));
-            await grant('view');
+            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+                actorAccountId: custodian.id, machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id }, level: 'view' }));
             const rootInput = { executionTarget: { serverId: await getOrCreateServerIdentityId(), machineId: f.machine.id },
                 directory: { kind: 'path', path: '/workspace' },
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
@@ -74,13 +73,10 @@ describe('signed Session Agent readiness children', () => {
                         machineSignature: options.signature ?? signExternalActionMachineRpcRequestV1({ ...signed, privateKey: f.keyPair.secretKey }) },
                     { method, requestId, params });
                 };
-                if (child.action === definitions.acquire.action) {
-                    await expect(verify({ reviewedChild })).resolves.toBeNull();
-                    await grant('admin');
-                }
                 const admitted = await verify({ reviewedChild });
                 expect(admitted).toMatchObject({ effectActionId: child.action,
-                    binding: { actionId: 'session.spawn_new', admittedMachineRole: 'use' } });
+                    binding: { actionId: 'session.spawn_new', admittedMachineRole: 'use' },
+                    sessionAgentReadinessAdmission: { role: 'use' } });
                 if (!admitted?.sessionAgentReadinessAdmission) throw new Error('Expected the child machine admission');
                 const { kind: _kind, ...context } = admitted.sessionAgentReadinessAdmission;
                 const method = `${f.machine.id}:${child.method}`;
@@ -104,9 +100,6 @@ describe('signed Session Agent readiness children', () => {
                 };
                 const received = await receive();
                 expect(received.statusCode, received.body).toBe(200);
-                if (child.action === definitions.acquire.action) {
-                    expect((await receive({ ...context, role: 'use' })).statusCode).toBe(403);
-                }
                 if (child.action === definitions.inventory.action) {
                     expect((await receive(context, { ...workspaceSyncSourceExecution, originalActionEnvelope: {
                         ...workspaceSyncSourceExecution.originalActionEnvelope, input: { ...rootInput,
@@ -139,7 +132,6 @@ describe('signed Session Agent readiness children', () => {
                 expect(response.statusCode, response.body).toBe(200);
                 await expect(f.verify(root, { method: 'GET', path: `/v1/machines/${randomUUID()}`, reviewedChild }, child.action)).resolves.toBeNull();
                 await expect(f.verify(root, { method: 'GET', path: '/v1/machines', reviewedChild }, child.action)).resolves.toBeNull();
-                await grant('view');
             }
         } finally { await f.app.close(); }
     });
@@ -211,7 +203,7 @@ describe('signed Session Agent readiness children', () => {
                     return { ready: true };
                 } }) };
             const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room === `rpc:${f.account.id}:${method}` ? [target] : []);
-            const caller = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped',
+            const caller = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped', userId: f.account.id,
                 authTokenKind: 'account', accountStoredContentCompatibility } }), { handshake: { auth: { token: f.presentUserToken } } });
             registerSocketRpcHandlers({ userId: f.account.id, socket: caller as unknown as Socket, io });
             let response: unknown;

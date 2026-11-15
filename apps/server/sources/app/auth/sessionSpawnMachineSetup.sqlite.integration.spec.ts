@@ -1,5 +1,9 @@
 import { Server } from 'socket.io';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
+import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
+import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarness';
+import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol';
 import { resolveExternalActionExecutionMachineAdmissionInTx, verifyCurrentExternalActionPrincipal, verifyWorkflowExternalActionRequesterAuthorization } from './externalActionExecutionAuthorization';
 import { randomUUID } from 'node:crypto';
 import { projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/specs/session/lifecycle';
@@ -36,6 +40,8 @@ import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('spawn-reviewed Machine software setup HTTP authority', () => {
+    const accountStoredContentCompatibility = evaluateAccountStoredContentSocketCompatibility(
+        buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)).evaluation;
     let harness: LightSqliteHarness;
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-spawn-setup-auth-', initAuth: true, initEncrypt: true,
@@ -150,12 +156,21 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                     expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
                         machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
                     const target = { id: 'admitted-daemon', data: { clientType: 'machine-scoped', userId: custodian.id,
-                        machineId: f.machine.id, verifiedMachineInstallationId: f.machine.installationId },
-                        timeout: () => { throw new Error('Boundary fixture does not send Socket events'); } };
-                    const targets = await request.targetGuard?.filterTargets([target]);
-                    admittedDaemonReachable = targets?.[0] === target;
-                    expect(await request.targetGuard?.filterTargets([{ ...target, data: { ...target.data, machineId: randomUUID() } }])).toEqual([]);
-                    expect(await request.targetGuard?.filterTargets([{ ...target, data: { ...target.data, verifiedMachineInstallationId: randomUUID() } }])).toEqual([]);
+                        machineId: f.machine.id, verifiedMachineInstallationId: f.machine.installationId, accountStoredContentCompatibility },
+                        timeout: () => ({ emitWithAck: async () => { admittedDaemonReachable = true; return {}; } }) };
+                    let selectedTarget = target;
+                    const io = createSocketRoomDiscoveryHarness(async room => room === selectedTarget.id
+                        || room === `rpc:${custodian.id}:${request.method}` ? [selectedTarget] : []);
+                    expect(await forwardRpcCall({ ...request, io })).toMatchObject({ ok: true });
+                    admittedDaemonReachable = false;
+                    selectedTarget = { ...target, data: { ...target.data, machineId: randomUUID() } };
+                    expect(await forwardRpcCall({ ...request, io })).toMatchObject({ ok: false });
+                    expect(admittedDaemonReachable).toBe(false);
+                    selectedTarget = { ...target, data: { ...target.data, verifiedMachineInstallationId: randomUUID() } };
+                    expect(await forwardRpcCall({ ...request, io })).toMatchObject({ ok: false });
+                    expect(admittedDaemonReachable).toBe(false);
+                    selectedTarget = target;
+                    expect(await forwardRpcCall({ ...request, io })).toMatchObject({ ok: true });
                     return { ok: false, error: 'Boundary observation complete' };
                 } });
                 await dispatch({ actionId: 'session.spawn_new', principal, envelope });
@@ -369,10 +384,11 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             let guardedTarget = false;
             const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
                 const target = { id: 'admitted-daemon', data: { clientType: 'machine-scoped', userId: custodian.id,
-                    machineId: f.machine.id, verifiedMachineInstallationId: f.machine.installationId },
-                    timeout: () => { throw new Error('Boundary fixture does not send Socket events'); } };
-                const targets = await request.targetGuard?.filterTargets([target]);
-                guardedTarget = targets?.[0] === target;
+                    machineId: f.machine.id, verifiedMachineInstallationId: f.machine.installationId, accountStoredContentCompatibility },
+                    timeout: () => ({ emitWithAck: async () => { guardedTarget = true; return {}; } }) };
+                const io = createSocketRoomDiscoveryHarness(async room => room === target.id
+                    || room === `rpc:${custodian.id}:${request.method}` ? [target] : []);
+                expect(await forwardRpcCall({ ...request, io })).toMatchObject({ ok: true });
                 return { ok: false, error: 'Boundary observation complete' };
             } });
             await dispatch({ actionId: 'machines.setup.apply', principal, envelope, executionAuthorization: leaf, workflowAdmission });
