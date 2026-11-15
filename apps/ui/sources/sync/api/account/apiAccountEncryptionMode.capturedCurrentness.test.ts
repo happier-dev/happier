@@ -564,7 +564,8 @@ it('lets an ambient request borrow only its current transport binding for the sa
     const rotated = { token: credentials.token.replace(/\.signature$/, '.rotated-signature') };
     const binding = { credentials, credentialScopeKey: resolveAuthCredentialsScopeKey(credentials), serverId: 'ambient', endpointUrl: 'https://ambient.test',
         runtimeOrigin: 'https://ambient.test', homeCarrierEndpointId: null, isCurrent: () => current,
-        read: async () => settled, peek: () => current ? settled : null };
+        read: async () => settled, readWitness: async () => createPlainAccountEncryptionCurrentnessFixture(),
+        peek: () => current ? settled : null };
     let transport: typeof binding | null = null;
     const ambient = bindCurrentAccountEncryptionObservation(async () => {
         reads += 1;
@@ -604,7 +605,8 @@ it('refuses to replace a captured request binding with a different one', async (
     const settled = { ...createPlainAccountEncryptionCurrentnessFixture() } as Awaited<ReturnType<typeof fetchAccountEncryptionIdentity>>;
     const create = () => ({ credentials, credentialScopeKey: 'rebind', serverId: 'rebind', endpointUrl: 'https://rebind.test',
         runtimeOrigin: 'https://rebind.test', homeCarrierEndpointId: null, isCurrent: () => true,
-        read: async () => settled, peek: () => settled });
+        read: async () => settled, readWitness: async () => createPlainAccountEncryptionCurrentnessFixture(),
+        peek: () => settled });
     const first = create();
     const request = bindAccountEncryptionObservation(async () => Response.json({}), first);
     // Re-wrapping with the same binding stays a no-op.

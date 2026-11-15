@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { sync } from '@/sync/sync';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
@@ -40,6 +41,8 @@ export type AccountEncryptionObservationBinding = Readonly<{
     homeCarrierEndpointId: string | null;
     isCurrent: () => boolean;
     read: (signal?: AbortSignal) => Promise<AccountEncryptionIdentity>;
+    /** The retained full witness of the same observation; never a fresh HTTP read. */
+    readWitness: (signal?: AbortSignal) => Promise<AccountEncryptionCurrentnessResponse>;
     peek: () => AccountEncryptionIdentity | null;
 }>;
 
@@ -131,6 +134,15 @@ export function captureAccountEncryptionObservationForHome(params: Readonly<{
                 const identity = await source.read(cancellation.signal);
                 assertCurrent('captured_binding_after_read');
                 return identity;
+            } finally { cancellation.dispose(); }
+        },
+        readWitness: async signal => {
+            assertCurrent('captured_binding_before_read');
+            const cancellation = mergeAbortSignals([...(params.signals ?? []), signal]);
+            try {
+                const witness = await source.readWitness(cancellation.signal);
+                assertCurrent('captured_binding_after_read');
+                return witness;
             } finally { cancellation.dispose(); }
         },
         peek: () => isCurrent() ? source.peek() : null,

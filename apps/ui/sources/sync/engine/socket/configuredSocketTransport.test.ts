@@ -8,7 +8,7 @@ const credentials = { token: 'configured-socket-token' };
 const settled = createPlainAccountEncryptionCurrentnessFixture();
 const createBinding = (name: string): AccountEncryptionObservationBinding => ({ credentials, credentialScopeKey: name,
     serverId: name, endpointUrl: `https://${name}.test`, runtimeOrigin: `https://${name}.test`, homeCarrierEndpointId: null,
-    isCurrent: () => true, read: async () => settled, peek: () => settled });
+    isCurrent: () => true, read: async () => settled, readWitness: async () => settled, peek: () => settled });
 
 describe('createConfiguredSocketRequest', () => {
     it('borrows only the binding of the transport it sends through', async () => {

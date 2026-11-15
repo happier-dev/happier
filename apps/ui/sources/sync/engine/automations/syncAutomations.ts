@@ -25,7 +25,8 @@ import {
     hasPrivateAutomationDefinitionDisplayCarrierV1,
     readAutomationDefinitionDisplayV1,
 } from '@happier-dev/protocol/automations/automationDefinitionDisplayReaderV1';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchBorrowedAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { bindAccountEncryptionObservation, readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import { deriveAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
@@ -37,14 +38,18 @@ async function openAutomationListDisplays<T extends AutomationDefinitionListResp
     shouldContinue: () => boolean;
 }>): Promise<T[]> {
     if (!params.automations.some(hasPrivateAutomationDefinitionDisplayCarrierV1)) return params.automations;
+    // Opening stored displays is a read: it borrows the held Account observation
+    // (pushed mode/key changes retire it) instead of a fresh read per sync.
+    const requestContext = params.requestContext;
+    const request = requestContext ? bindAccountEncryptionObservation(
+        (path: string, init?: RequestInit) => requestContext.request(path, init, { includeAuth: false }),
+        readAccountEncryptionObservationBinding(requestContext.request, params.credentials) ?? undefined,
+    ) : undefined;
     const resolveEncryption = async (): Promise<AvailableAutomationAccountEncryptionV1> => {
         const resolved = await resolveValidatedAutomationAccountEncryptionV1({
             signal: new AbortController().signal,
-            resolveAccountEncryptionCurrentness: async signal => await fetchAccountEncryptionCurrentness(params.credentials,
-                params.requestContext ? {
-                    request: (path, init) => params.requestContext!.request(path, init, { includeAuth: false }),
-                    signal,
-                } : { signal }),
+            resolveAccountEncryptionCurrentness: async signal => await fetchBorrowedAccountEncryptionCurrentness(params.credentials,
+                request ? { request, signal } : { signal }),
             resolveAccountEncryptionMaterial: async () => deriveAccountScopedCryptoMaterialSnapshot(
                 params.credentials,
                 params.serverId,

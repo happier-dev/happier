@@ -193,6 +193,12 @@ export function createSocketAccountEncryptionObservation(options: Readonly<{
             if (!options.isCurrent()) throw unavailable('socket_binding_after_read');
             return identity;
         },
+        readWitness: async signal => {
+            if (!options.isCurrent()) throw unavailable('socket_binding_before_read');
+            const witness = await observation.readWitness(signal);
+            if (!options.isCurrent()) throw unavailable('socket_binding_after_read');
+            return witness;
+        },
         peek: () => options.isCurrent() ? observation.peek() : null,
     };
     return {
@@ -357,6 +363,28 @@ export async function fetchOperationAccountEncryptionIdentity(
     if (!settled) return projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentness(credentials, options));
     admitReportedAccountMode({ reported: settled.mode, custody: readAccountE2eeCustody(credentials) });
     return settled;
+}
+
+/**
+ * A read projection (opening already-stored content for display) borrows the
+ * held Account observation's retained witness: mode and key changes arrive by
+ * push and the Home refuses mismatched writes. Without a held observation, or
+ * when it cannot settle, the operation reads once over its own request.
+ */
+export async function fetchBorrowedAccountEncryptionCurrentness(
+    credentials: AuthCredentials,
+    options: AccountEncryptionCurrentnessReadOptions = {},
+): Promise<AccountEncryptionCurrentnessResponse> {
+    throwIfAborted(options.signal);
+    const binding = options.request ? readAccountEncryptionObservationBinding(options.request, credentials)
+        : sync?.getAccountEncryptionObservationBinding(credentials) ?? null;
+    const held = binding && await binding.readWitness(options.signal).catch(() => {
+        throwIfAborted(options.signal);
+        return null;
+    });
+    if (!held) return await fetchAccountEncryptionCurrentness(credentials, options);
+    admitReportedAccountMode({ reported: held.mode, custody: readAccountE2eeCustody(credentials) });
+    return held;
 }
 
 async function readAccountEncryptionCurrentness(

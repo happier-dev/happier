@@ -9,6 +9,8 @@ import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
+import { createSocketAccountEncryptionObservation } from '@/sync/api/account/apiAccountEncryptionMode';
+import { bindAccountEncryptionObservation } from '@/sync/http/accountEncryptionObservationBinding';
 import { storage } from '@/sync/domains/state/storage';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { AutomationRequestContext } from '@/sync/api/automations/apiAutomations';
@@ -272,6 +274,42 @@ describe('fetchAndApplyAutomations', () => {
         expect(network.httpRequests.filter(({ url }) => new URL(url).pathname.startsWith('/v3/automations'))
             .map(({ url }) => new URL(url).pathname)).toEqual(['/v3/automations']);
         expect(network.httpRequests.filter(({ url }) => new URL(url).pathname === '/v1/account/encryption/currentness')).toHaveLength(2);
+    });
+
+    it('opens list displays from the held Account observation: repeated syncs add no currentness reads', async () => {
+        const privateSummary = AutomationDefinitionListItemSchema.parse({
+            ...eventSummary, id: 'private-workflow', name: 'Automation', description: null,
+            targetType: null, existingSessionId: null,
+            executionRecipe: { v: 2, templateVersion: 3, triggerEvidence: null,
+                workflow: { t: 'plain', v: {
+                    workspace: { directory: '/workspace/project' }, executionTarget: { kind: 'session' },
+                    display: { name: 'Nightly release review', description: 'Review the release branch every night' },
+                } } },
+        });
+        listAutomationDefinitionsMock.mockResolvedValue({ automations: [privateSummary], nextCursor: null });
+        // The real socket observation owner; only HTTP is the boundary.
+        const observation = createSocketAccountEncryptionObservation({
+            credentials, serverId: requestContext.serverId, endpointUrl: 'https://automations-sync.example.test',
+            runtimeOrigin: 'https://automations-sync.example.test', homeCarrierEndpointId: null,
+            request: requestContext.request, isCurrent: () => true,
+        });
+        const held = { ...requestContext, request: bindAccountEncryptionObservation(requestContext.request, observation.binding) };
+        const currentnessReads = () => network.httpRequests
+            .filter(({ url }) => new URL(url).pathname === '/v1/account/encryption/currentness').length;
+        try {
+            observation.connected();
+            const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+            for (let sync = 0; sync < 3; sync += 1) {
+                await fetchAndApplyAutomations({ credentials, requestContext: held, applyAutomations });
+            }
+            expect(applyAutomations).toHaveBeenLastCalledWith([expect.objectContaining({
+                id: 'private-workflow', name: 'Nightly release review',
+            })], null);
+            // One read when the observation connects; three list syncs borrow it.
+            expect(currentnessReads()).toBe(1);
+        } finally {
+            observation.dispose('transport-withdrawal');
+        }
     });
 
     it('opens one current Action display carrier for the list without a detail fanout', async () => {

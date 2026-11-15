@@ -1208,6 +1208,12 @@ class ApiSocket {
                 if (!isCurrent()) throw new StaleServerGenerationError();
                 return identity;
             },
+            readWitness: async readerSignal => {
+                if (!isCurrent()) throw new StaleServerGenerationError();
+                const witness = await waitForAccountEncryptionObservation(binding.readWitness(readerSignal), signal);
+                if (!isCurrent()) throw new StaleServerGenerationError();
+                return witness;
+            },
             peek: () => isCurrent() ? binding.peek() : null,
         });
     }
