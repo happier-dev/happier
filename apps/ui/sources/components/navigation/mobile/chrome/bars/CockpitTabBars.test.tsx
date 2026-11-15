@@ -6,7 +6,7 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 import { MetadataSchema } from '@happier-dev/session-core/state';
 
 import { renderScreen as renderRealScreen } from '@/dev/testkit/render/renderScreen';
-import { createMachineFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import type { ScmStatus } from '@/sync/domains/state/storageTypes';
 import { getUiListsModalMockRef, installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
 import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
@@ -420,6 +420,7 @@ describe('cockpit tab bars', () => {
         await act(async () => { menu.props.onSelect('code'); });
         expect(navigate).toHaveBeenCalledWith('code');
         await act(async () => { screen.findHostByTestId('project-cockpit-tab-overview')?.props.onPress(); });
+        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
         expect(navigate).toHaveBeenCalledWith('overview');
     });
 
@@ -834,6 +835,43 @@ describe('cockpit tab bars', () => {
         expect(pressed).toEqual(['services']);
     });
 
+    it('lists the page\'s ⋯ actions after its navigation in More, the list the desktop header reads (ruling b, 11-14)', async () => {
+        const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { resolveDetailNavigationItems } = await import('@/components/appShell/rightSidebar/detailNavigationItems');
+        const { usePublishDetailPageMenuActions } = await import('../pageMenuActions');
+        const availableOn = vi.fn();
+        const actions = [
+            { id: 'availableOn', title: 'Available on', testID: 'project-shell-header.availableOn', onSelect: availableOn },
+            // Terminal is also a navigation item on the phone bar: More lists it once, as that item.
+            { id: 'terminal', title: 'en:settings.terminal', onSelect: vi.fn() },
+        ];
+        function PageActions(props: Readonly<{ on: boolean }>) {
+            usePublishDetailPageMenuActions('project', props.on ? actions : null);
+            return null;
+        }
+        const catalogPages = await projectPages();
+        const items = resolveDetailNavigationItems({ scope: 'project', presentation: 'mobile',
+            projectPages: catalogPages, terminalTabAvailable: true, browserFeatureEnabled: true });
+        const bar = (on: boolean) => <>
+            <PageActions on={on} />
+            <ProjectCockpitTabBar pages={catalogPages} items={items} workspaceRefId="workspace-a" activeSurface="overview"
+                terminalTabAvailable={true} onSurfacePress={() => {}} />
+        </>;
+        const screen = await renderScreen(bar(true));
+        const ids = () => (screen.root.findByType(DropdownMenu).props.items as Array<{ id: string }>).map(item => item.id);
+        expect(ids().filter(id => id.endsWith('availableOn'))).toHaveLength(1);
+        expect(ids().filter(id => id === 'terminal' || id.endsWith(':terminal'))).toEqual(['terminal']);
+        // Navigation first, then the page's actions, then Customize.
+        const actionAt = ids().findIndex(id => id.endsWith('availableOn'));
+        expect(ids().slice(actionAt + 1)).toEqual(['customize']);
+        await act(async () => { screen.root.findByType(DropdownMenu).props.onSelect(ids()[actionAt]); });
+        expect(availableOn).toHaveBeenCalledTimes(1);
+        // A page that stops offering its actions takes them out of More.
+        await screen.update(bar(false));
+        expect(ids().some(id => id.endsWith('availableOn'))).toBe(false);
+    });
+
     it('opens Browser from More when it is not kept on the bar (native More → Browser)', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         const pressed: string[] = [];
@@ -1108,6 +1146,7 @@ describe('cockpit tab bars', () => {
         await act(async () => {
             navigationTab?.props.onPress();
         });
+        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
 
         expect(pressed).toEqual(['navigation']);
     });

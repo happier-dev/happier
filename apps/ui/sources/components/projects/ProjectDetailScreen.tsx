@@ -15,6 +15,8 @@ import { ProjectPagePaneScopeHost } from './detail/PluginProjectPageBody';
 import { projectPageActionsKey } from './shell/ProjectShellHeader';
 import { ProjectPageCatalogProvider } from './navigation/useProjectPageCatalog';
 import { ProjectPhonePageStrip } from '@/components/navigation/mobile/chrome/bars/ProjectCockpitTabBar';
+import { usePublishDetailPageMenuActions } from '@/components/navigation/mobile/chrome/pageMenuActions';
+import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import type { ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { DetailsPaneSlotHost } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { DetailsPaneContentView } from '@/components/appShell/panes/details/DetailsPaneHost';
@@ -97,6 +99,9 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         { id: 'availableOn', title: t('workspaceSync.availableOn'), testID: 'project-shell-header.availableOn', onSelect: openProjectInfo },
         { id: 'terminal', title: t('settings.terminal'), onSelect: openProjectTerminal },
     ], [openProjectInfo, openProjectTerminal]);
+    // A phone draws no Project header: the same list goes to the phone bar's More while this page is the one shown.
+    const projectPageFocused = useIsFocused();
+    usePublishDetailPageMenuActions('project', deviceType === 'phone' && projectPageFocused ? projectMenuActions : null);
     // The page's menus and Add surfaces float inside its own column (header and body), never over the sidebar.
     const pageColumnRef = React.useRef<View>(null);
     const workspaceRefs = useWorkspaceRefs();

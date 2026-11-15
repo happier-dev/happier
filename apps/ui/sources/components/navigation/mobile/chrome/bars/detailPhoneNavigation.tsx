@@ -21,6 +21,8 @@ import { sfSymbolForCockpitTabIcon } from './cockpitTabSymbols';
 import { resolveDetailPhoneBarFit, resolveDetailPhonePlacement, type PhonePlacementItem } from './detailPhoneNavigationProjection';
 import { resolveDetailPhoneNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import { CockpitBarFoldedContext } from '../pageBarChromeFold';
+import { useDetailPageMenuActions } from '../pageMenuActions';
+import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 
 type PhoneMenuItem = PhonePlacementItem & Readonly<{
     title: string;
@@ -33,6 +35,7 @@ type PhoneMenuItem = PhonePlacementItem & Readonly<{
 }>;
 
 const styles = StyleSheet.create((theme) => ({
+    markSlot: { width: 18, height: 18 },
     // A row's quiet fact and its pin share one line.
     rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
 }));
@@ -119,9 +122,14 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
         if (!open) setTabMenu(current => current && { ...current, open: false });
     }, []);
     const heldItem = tabMenu ? input.items.find(item => item.id === tabMenu.id) : undefined;
+    // The shown page's ⋯ actions, the list its desktop header reads (ruling 11-14 b); one that is also a navigation
+    // item here (Terminal) is listed once, as that item.
+    const publishedActions = useDetailPageMenuActions(input.pageKind);
+    const pageActions = React.useMemo(() => publishedActions.filter(action => !input.items.some(item => item.id === action.id)),
+        [publishedActions, input.items]);
     const more = <DetailPhoneMoreMenu testIDPrefix={`${input.pageKind}-cockpit`} nativeAnchorTestID={`${input.pageKind}-native-more-anchor`}
         native={input.native} surfaceId={input.address} preferences={preferences} activeId={input.activeId}
-        open={moreOpen} onOpenChange={setMoreOpen} onSelect={input.select} onCustomize={customize}
+        open={moreOpen} onOpenChange={setMoreOpen} onSelect={input.select} onCustomize={customize} pageActions={pageActions}
         activeTrigger={foldedActive ? { title: foldedActive.count ? `${foldedActive.title}, ${foldedActive.count}` : foldedActive.title,
             name: foldedActive.title, icon: foldedActive.icon } : null}
         pinnedEntries={onBar.map(entry => ({ id: entry.id, title: entry.title, icon: entry.icon, kind: entry.navigation.kind,
@@ -146,6 +154,9 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     </>;
     return { ...fit, shown, behindMore, layout: barLayout, menu, openMore, metrics, slotCount, onTabLongPress: input.native ? undefined : holdTab };
 }
+
+const PAGE_ACTION_PREFIX = 'page-action:';
+const NO_PAGE_ACTIONS: readonly PageHeaderMenuAction[] = Object.freeze([]);
 
 export type DetailPhoneMoreEntry = Readonly<{
     id: string;
@@ -182,8 +193,11 @@ export function DetailPhoneMoreMenu(props: Readonly<{
     onOpenChange: (open: boolean) => void;
     onSelect: (id: string) => void;
     onCustomize: () => void;
+    /** The shown page's ⋯ actions, after its navigation and before Customize. */
+    pageActions?: readonly PageHeaderMenuAction[];
 }>) {
     const { entries, open, testIDPrefix: prefix } = props;
+    const pageActions = props.pageActions ?? NO_PAGE_ACTIONS;
     const ordered = [...entries.filter(entry => entry.kind !== 'companion'), ...entries.filter(entry => entry.kind === 'companion')];
     const pinnedTitle = t('phoneNav.bar.pinnedSection');
     const categoryTitles = React.useMemo(() => ({ pinned: pinnedTitle }), [pinnedTitle]);
@@ -201,11 +215,28 @@ export function DetailPhoneMoreMenu(props: Readonly<{
                 label={t(entry.pinned ? 'phoneNav.bar.removeFromBar' : 'phoneNav.bar.keepOnBar')} preferences={props.preferences}
                 testID={`${prefix}-pin:${entry.id}`} /> : null}
         </View> : undefined,
+    })), ...pageActions.map((action): DropdownMenuItem => ({
+        id: `${PAGE_ACTION_PREFIX}${action.id}`, title: action.title, category: 'actions',
+        // Operations carry no mark; the empty mark slot keeps their titles on the tabs' title edge.
+        icon: <View style={styles.markSlot} />,
+        testID: action.testID ?? `${prefix}-more-action:${action.id}`,
+        ...(action.disabled || action.loading ? { disabled: true } : {}),
+        ...(action.destructive ? { destructive: true } : {}),
     })), { id: 'customize', title: t('navigationPlacement.customizeTabs'), icon: <Icon name="sliders-horizontal" size={18} />,
         testID: `${prefix}-more-customize` }];
+    // The page's operations read as their own group: a hairline sets them apart from the tabs (DESIGN-9 N46 menus).
     return <DropdownMenu open={open} onOpenChange={props.onOpenChange} items={items} categoryTitles={categoryTitles}
+        separateCategories={pageActions.length > 0}
         selectedId={rows.some(({ entry }) => entry.id === props.activeId) ? props.activeId : null}
-        onSelect={id => { props.onOpenChange(false); if (id === 'customize') props.onCustomize(); else props.onSelect(id); }}
+        onSelect={id => {
+            props.onOpenChange(false);
+            if (id === 'customize') { props.onCustomize(); return; }
+            if (id.startsWith(PAGE_ACTION_PREFIX)) {
+                void pageActions.find(action => `${PAGE_ACTION_PREFIX}${action.id}` === id)?.onSelect();
+                return;
+            }
+            props.onSelect(id);
+        }}
         matchTriggerWidth={false} placement="top" trigger={({ open: expanded, toggle }) => props.native
             ? <View collapsable={false} testID={props.nativeAnchorTestID} style={{ width: 0, height: 0 }} />
             : <CockpitTabBarAction testID={`${prefix}-tab-more`} label={props.activeTrigger?.title ?? t('common.more')}
