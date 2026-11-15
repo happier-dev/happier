@@ -190,12 +190,7 @@ export function applyMessageChangeToTranscriptRenderableAggregate(params: Readon
     return true;
 }
 
-export function canReuseTranscriptRenderableAggregateRequestStates(
-    aggregate: TranscriptRenderableAggregate,
-    completedRequests: CompletedRequests,
-): boolean {
-    return aggregate.completedRequestsRef === completedRequests;
-}
+export { canReuseTranscriptRenderableAggregateRequestStates } from './transcriptRenderableAggregateReuse';
 
 export function isTranscriptRenderableAggregate(value: unknown): value is TranscriptRenderableAggregate {
     if (!value || typeof value !== 'object') return false;

@@ -67,34 +67,51 @@ function buildShellVisibleAgentStateRequestSignatureValue(
     return signature.length > 0 ? signature : null;
 }
 
+// Session turns, rollback starts, metadata and agent state grow with the session and keep their
+// identity across the per-message session updates of a streamed turn. The shell signature is
+// rebuilt on every store notification, so their serialized parts are memoized by object identity:
+// an update that did not replace them costs no re-serialization.
+const serializedPartByObject = new WeakMap<object, string>();
+
+function serializeByIdentity<T extends object>(value: T | null | undefined, serialize: (value: T) => unknown): string {
+    if (value === null || value === undefined) return 'null';
+    const cached = serializedPartByObject.get(value);
+    if (cached !== undefined) return cached;
+    const serialized = JSON.stringify(serialize(value)) ?? 'null';
+    serializedPartByObject.set(value, serialized);
+    return serialized;
+}
+
 export function buildSessionViewShellSessionSignature(session: Session): string {
-    return JSON.stringify({
-        id: session.id,
-        serverId: normalizeServerId((session as { serverId?: unknown }).serverId),
-        hasTranscriptHistory: (session.seq ?? 0) > 0,
-        createdAt: session.createdAt ?? 0,
-        active: session.active === true,
-        archivedAt: session.archivedAt ?? null,
-        agentStateVersion: session.agentStateVersion ?? null,
-        encryptionMode: session.encryptionMode ?? null,
-        presence: session.presence ?? null,
-        thinking: session.thinking === true,
-        optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
-        thinkingGraceUntil: session.thinking ? null : session.thinkingGraceUntil ?? null,
-        latestTurnId: session.latestTurnId ?? null,
-        latestTurnStatus: session.latestTurnStatus ?? null,
-        lastRuntimeIssue: session.lastRuntimeIssue ?? null,
-        owner: session.owner ?? null,
-        accessLevel: session.accessLevel ?? null,
-        canApprovePermissions: session.canApprovePermissions ?? null,
-        pendingPermissionRequestCount: session.pendingPermissionRequestCount ?? null,
-        pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
-        pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
-        rollbackEligibleTurnStarts: session.rollbackEligibleTurnStarts ?? null,
-        sessionTurns: session.sessionTurns ?? null,
-        agentStateRequests: buildShellVisibleAgentStateRequestSignatureValue(session.agentState),
-        metadata: buildShellVisibleMetadataSignatureValue(session.metadata),
-    });
+    return [
+        JSON.stringify({
+            id: session.id,
+            serverId: normalizeServerId((session as { serverId?: unknown }).serverId),
+            hasTranscriptHistory: (session.seq ?? 0) > 0,
+            createdAt: session.createdAt ?? 0,
+            active: session.active === true,
+            archivedAt: session.archivedAt ?? null,
+            agentStateVersion: session.agentStateVersion ?? null,
+            encryptionMode: session.encryptionMode ?? null,
+            presence: session.presence ?? null,
+            thinking: session.thinking === true,
+            optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
+            thinkingGraceUntil: session.thinking ? null : session.thinkingGraceUntil ?? null,
+            latestTurnId: session.latestTurnId ?? null,
+            latestTurnStatus: session.latestTurnStatus ?? null,
+            lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+            owner: session.owner ?? null,
+            accessLevel: session.accessLevel ?? null,
+            canApprovePermissions: session.canApprovePermissions ?? null,
+            pendingPermissionRequestCount: session.pendingPermissionRequestCount ?? null,
+            pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
+            pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
+        }),
+        serializeByIdentity(session.rollbackEligibleTurnStarts, (value) => value),
+        serializeByIdentity(session.sessionTurns, (value) => value),
+        serializeByIdentity(session.agentState, (agentState) => buildShellVisibleAgentStateRequestSignatureValue(agentState)),
+        serializeByIdentity(session.metadata, (metadata) => buildShellVisibleMetadataSignatureValue(metadata)),
+    ].join('\u0000');
 }
 
 export function useStableSessionViewShellSession(session: Session | null): Session | null {

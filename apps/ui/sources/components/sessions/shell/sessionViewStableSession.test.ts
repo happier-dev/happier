@@ -564,3 +564,31 @@ describe('useSessionViewShellSession', () => {
         }
     });
 });
+
+describe('selectSessionViewShellSessionForRouteState', () => {
+    it('does not re-serialize session turns that every store notification leaves untouched', () => {
+        let turnSerializations = 0;
+        const sessionTurns = Object.assign([{ turnId: 't1', startedAt: 1 }], {
+            toJSON() {
+                turnSerializations += 1;
+                return [{ turnId: 't1', startedAt: 1 }];
+            },
+        });
+        const base = createSession({ id: 'shell-turns', sessionTurns } as unknown as Partial<Session>);
+        selectSessionViewShellSessionForRouteState(
+            { sessions: { [base.id]: base }, sessionListViewDataByServerId: {} } as never,
+            base.id,
+        );
+        turnSerializations = 0;
+
+        // A streamed turn publishes a new session record per message, with the same turns.
+        for (let seq = 26; seq < 31; seq += 1) {
+            selectSessionViewShellSessionForRouteState(
+                { sessions: { [base.id]: { ...base, seq } }, sessionListViewDataByServerId: {} } as never,
+                base.id,
+            );
+        }
+
+        expect(turnSerializations).toBe(0);
+    });
+});
