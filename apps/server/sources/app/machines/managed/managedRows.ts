@@ -280,9 +280,9 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
     homeId: string; custodianAccountId: string; controller?: { machineId: string; installationId: string };
     provider: ValidatedLaunchSnapshotV1["provider"];
     reviewedFacts?: unknown;
-}>): Promise<ManagedDeclaration | null> {
+}>, options: Readonly<{ retainedInstallation?: boolean }> = {}): Promise<ManagedDeclaration | null> {
     if (!input.controller) return readManagedReviewedDeclaration(input.reviewedFacts);
-    return (await readManagedProjectionFactsInTx(tx, [input])).declarationFor(input);
+    return (await readManagedProjectionFactsInTx(tx, [input], options)).declarationFor(input);
 }
 
 /** An admitted row keeps its reviewed native schema across controller publication changes. */
@@ -292,8 +292,11 @@ export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManage
     if (isStoredOpaquePresetMachine(row)) return null;
     const reviewed = readManagedReviewedDeclaration(row.reviewedFacts);
     if (reviewed) return reviewed;
+    // An unreviewed row reads the declaration its exact retained installation
+    // published, also after retirement; admission owns controller lifecycle.
     return resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
-        controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts });
+        controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts },
+        { retainedInstallation: true });
 }
 
 type ManagedProjectionInput = Readonly<{
@@ -312,7 +315,8 @@ export interface ManagedProjectionFacts {
 }
 
 /** Admitted facts live only for this projection; every new request reads current authority. */
-export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly ManagedProjectionInput[]): Promise<ManagedProjectionFacts> {
+export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly ManagedProjectionInput[],
+    options: Readonly<{ retainedInstallation?: boolean }> = {}): Promise<ManagedProjectionFacts> {
     inputs = inputs.filter((input): input is ManagedProjectionInput & { controller: ManagedControllerV1 } => input.controller !== undefined);
     const controllers = new Map<string, ManagedProjectionController>();
     // Exact controller IDs plus Prisma's nested Account and pagination bindings.
@@ -337,7 +341,7 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
     const declarations = new Map<string, ManagedDeclaration | null>();
     for (const group of groups.values()) {
         const occurrences = await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx,
-            accountId: group.accountId, serverIdentityId: group.homeId,
+            accountId: group.accountId, serverIdentityId: group.homeId, retainedInstallation: options.retainedInstallation,
             targets: group.inputs.map(input => ({ machineId: input.controller!.machineId,
                 machineInstallationId: input.controller!.installationId, pluginId: input.provider.pluginId })),
         });

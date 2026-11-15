@@ -72,7 +72,10 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         return { controller, keys };
     };
 
-    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired'] as const)('persists signed submitted Lima acquire, power and delete results after %s withdrawal and rejects fresh admission and tampering', async (withdrawal) => {
+    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired', 'controller-retired-unreviewed'] as const)('persists signed submitted Lima acquire, power and delete results after %s withdrawal and rejects fresh admission and tampering', async (withdrawal) => {
+        // Configurator admissions retain reviewed facts; Action/Session-originated
+        // admissions may not, and report them with the issued native fact.
+        const retired = withdrawal === 'controller-retired' || withdrawal === 'controller-retired-unreviewed';
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const { controller, keys } = await createController(account.id);
@@ -93,7 +96,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             choices };
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
         const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
-        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || withdrawal === 'controller-retired' ? undefined : await auth.createApiToken({
+        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' || retired ? undefined : await auth.createApiToken({
             accountId: account.id, tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Acquire completion'),
         });
         const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -177,7 +180,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
 
             // Retiring the controller closes new effects; the purchase it already
             // submitted must still be able to return its native identity.
-            if (withdrawal === 'controller-retired') expect(await inTx(tx => revokeMachineInTx(tx, { accountId: account.id,
+            if (retired) expect(await inTx(tx => revokeMachineInTx(tx, { accountId: account.id,
                 machineId: controller.machineId }))).toMatchObject({ ok: true });
             else if (!apiToken) await auth.signOutEverywhere(account.id);
             else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
@@ -187,7 +190,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
                     envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: controller.machineId }, input } } });
             expect(freshAcquire.statusCode, freshAcquire.body).toBe(withdrawal === 'api-token-grant' ? 403
-                : withdrawal === 'controller-retired' ? 409 : 401);
+                : retired ? 409 : 401);
 
             const fact = AcquireResultV1Schema.parse(await provider.acquire({ managedId: admitted.machine.id, launch: launch.choices }));
             if (fact.kind !== 'bound') throw new Error(`Lima did not bind: ${fact.kind}`);
@@ -213,7 +216,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             const wrongJob = { ...reportBody, requestId: randomUUID() };
             const mismatched = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: wrongJob,
                 headers: reportHeaders(wrongJob) });
-            if (withdrawal === 'controller-retired') {
+            if (retired) {
                 // Only the exact submitted fact skips controller lifecycle; any
                 // other signed call from the retired controller is refused there.
                 expect(mismatched.statusCode, mismatched.body).toBe(401);
@@ -271,7 +274,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             expect(await client.reportIssuedAcquireFact(admitted.machine, fact, { ...configurationFacts, optionStatus: 'unavailable' }))
                 .toMatchObject({ id: reported.id, resource: fact.resource, reviewedFacts: configurationFacts });
             // A retired controller admits no further effects to exercise below.
-            if (withdrawal === 'controller-retired') return;
+            if (retired) return;
             const installedReport = { homeId, managedId: reported.id, controller, expectedIntentRevision: reported.intentRevision,
                 requestId, result: fact, bootstrapInstalled: true };
             const installed = await client.post('/v1/machines/managed/controller/report', installedReport, ManagedControllerMachineOutputV1Schema);

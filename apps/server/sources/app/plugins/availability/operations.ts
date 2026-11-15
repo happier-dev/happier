@@ -1348,10 +1348,11 @@ type ClaimableMachineRowV1 = Readonly<{
 function isClaimableMachineRowV1(
     machine: ClaimableMachineRowV1 | null,
     requiredMachineOperationCapability?: MachineOperationProtocolCapabilityNameV1,
+    retainedInstallation = false,
 ): machine is ClaimableMachineRowV1 {
     return machine !== null
         && machine.pluginMaterializationRevision !== null
-        && classifyMachineAvailabilityState(machine) === "available"
+        && (retainedInstallation || classifyMachineAvailabilityState(machine) === "available")
         && (
             requiredMachineOperationCapability === undefined
             || (
@@ -1383,6 +1384,8 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
     accountId: string;
     serverIdentityId: string;
     requiredMachineOperationCapability?: MachineOperationProtocolCapabilityNameV1;
+    /** An admitted row reads what its exact installation published; admission owns lifecycle. */
+    retainedInstallation?: boolean;
 }> & (ClaimableMaterializationTarget | Readonly<{ targets: readonly ClaimableMaterializationTarget[] }>)): Promise<readonly PluginMachineMaterializationV1[]> {
     const targets = [...new Map(('targets' in params ? params.targets : [params]).map(target =>
         [JSON.stringify([target.machineId, target.machineInstallationId, target.pluginId]), target])).values()];
@@ -1403,12 +1406,12 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
                 OR: chunk.map(target => ({ id: target.machineId, installationId: target.machineInstallationId })) }, select: machineSelect }));
         }
         const currentInstallations = new Set(machines.filter(machine => isClaimableMachineRowV1(machine,
-            params.requiredMachineOperationCapability)).map(machine => JSON.stringify([machine.id, machine.installationId])));
+            params.requiredMachineOperationCapability, params.retainedInstallation)).map(machine => JSON.stringify([machine.id, machine.installationId])));
         currentTargets = targets.filter(target => currentInstallations.has(JSON.stringify([target.machineId, target.machineInstallationId])));
     } else {
         const machine = await params.tx.machine.findFirst({ where: { accountId: params.accountId,
             id: params.machineId, installationId: params.machineInstallationId }, select: machineSelect });
-        currentTargets = isClaimableMachineRowV1(machine, params.requiredMachineOperationCapability) ? [params] : [];
+        currentTargets = isClaimableMachineRowV1(machine, params.requiredMachineOperationCapability, params.retainedInstallation) ? [params] : [];
     }
     if (currentTargets.length === 0) return [];
 

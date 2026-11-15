@@ -2060,13 +2060,11 @@ describe('ordinary Account managed Action origination', () => {
             expect((await post(report, body)).statusCode).toBe(200);
             await db.account.update({ where: { id: selected.account.id }, data: { tokenEpoch: selected.account.tokenEpoch } });
             // Retiring the signing installation closes new effects, not this
-            // already-submitted fact (FACT-REPORT-1114). An unreviewed row still
-            // resolves its native declaration from the retired controller's
-            // current materialization, which is unavailable (residual F1b).
+            // already-submitted fact; an unreviewed row still reads the
+            // declaration its retained installation published.
             await db.machine.update({ where: { id: selected.controller.machineId }, data: { revokedAt: new Date() } });
             const retiredReport = await post(report, body);
-            expect(retiredReport.statusCode, retiredReport.body).toBe(controller ? 409 : 200);
-            if (controller) expect(retiredReport.json()).toMatchObject({ code: 'provider_unavailable' });
+            expect(retiredReport.statusCode, retiredReport.body).toBe(200);
             expect((await post(report, { ...body, requestId: 'unrelated-creation' })).statusCode).toBe(401);
             await db.machine.update({ where: { id: selected.controller.machineId }, data: { revokedAt: null } });
             expect((await post(report, body)).statusCode).toBe(200);
