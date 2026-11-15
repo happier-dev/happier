@@ -36,6 +36,7 @@ describe('readPiProviderFailureDiagnostic', () => {
       code: 'rate_limit_exceeded',
       sanitizedPreview: 'Service temporarily unavailable. Please retry.',
       piRetryable: true,
+      failureCause: expect.objectContaining({ phase: 'turn', failureReason: 'unknown', httpStatus: 429 }),
     });
   });
 
@@ -71,6 +72,7 @@ describe('readPiProviderFailureDiagnostic', () => {
       code: 'provider_auth_failed',
       sanitizedPreview: 'Credential [REDACTED] was rejected',
       piRetryable: false,
+      failureCause: expect.objectContaining({ phase: 'turn', failureReason: 'unknown' }),
     });
     expect(JSON.stringify(diagnostic)).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   });
