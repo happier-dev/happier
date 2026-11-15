@@ -31,4 +31,22 @@ describe('classifyLocalServiceProcess', () => {
             signals: expect.arrayContaining(['noise:system-listener']),
         });
     });
+
+    it.each([
+        'python3 -u -m http.server 39997',
+        String.raw`C:\Python\python.exe -u -m http.server 39997`,
+        `python3 -c 'import http.server;http.server.HTTPServer(("127.0.0.1",39997),http.server.SimpleHTTPRequestHandler).serve_forever()'`,
+        `python3 -u -c 'import http.server;http.server.ThreadingHTTPServer(("127.0.0.1",39997),http.server.SimpleHTTPRequestHandler).serve_forever()'`,
+    ])('recognizes the Python HTTP server command %s', command => {
+        expect(classifyLocalServiceProcess({ command })).toMatchObject({
+            kind: 'python-http-server', role: 'dev_server', confidence: 'high',
+        });
+    });
+
+    it.each([
+        'python3 worker.py',
+        `python3 -c 'import http.server;print(http.server.__file__)'`,
+    ])('does not infer a server from the Python runtime or module import: %s', command => {
+        expect(classifyLocalServiceProcess({ command }).kind).toBeUndefined();
+    });
 });

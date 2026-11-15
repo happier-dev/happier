@@ -39,7 +39,7 @@ const DEV_SERVER_PATTERNS: readonly Readonly<{
     { kind: 'dotnet', displayName: '.NET server', confidence: 'medium', pattern: /\bdotnet\s+(?:run|watch)\b/i, signal: 'command:dotnet' },
     { kind: 'deno', displayName: 'Deno server', confidence: 'medium', pattern: /\bdeno\s+(?:run|task)\b/i, signal: 'command:deno' },
     { kind: 'php', displayName: 'PHP server', confidence: 'high', pattern: /\bphp\s+-S\b/i, signal: 'command:php' },
-    { kind: 'python-http-server', displayName: 'Python HTTP server', confidence: 'high', pattern: /\bpython3?\s+-m\s+http\.server\b/i, signal: 'command:python-http-server' },
+    { kind: 'python-http-server', displayName: 'Python HTTP server', confidence: 'high', pattern: /\bpython3?(?:\.exe)?\s+(?:-u\s+)*(?:-m\s+http\.server\b|-c\s+[\s\S]*\bhttp\.server\.(?:Threading)?HTTPServer\s*\()/i, signal: 'command:python-http-server' },
     { kind: 'react-scripts', displayName: 'React scripts', confidence: 'medium', pattern: /\breact-scripts\s+start\b/i, signal: 'command:react-scripts' },
     { kind: 'npm-dev', displayName: 'NPM dev server', confidence: 'medium', pattern: /\bnpm\s+(?:run\s+)?dev\b/i, signal: 'command:npm-dev' },
     { kind: 'package-start', displayName: 'Package start script', confidence: 'medium', pattern: /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?start\b/i, signal: 'command:package-start' },
