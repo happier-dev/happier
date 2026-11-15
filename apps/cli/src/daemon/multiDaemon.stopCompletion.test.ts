@@ -28,7 +28,7 @@ describe.sequential('stopAllDaemonsBestEffort completion', () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ ok: true }),
+        json: async () => ({ status: 'ok' }),
       } as Response);
 
       try {
@@ -37,7 +37,7 @@ describe.sequential('stopAllDaemonsBestEffort completion', () => {
           reason: 'graceful_stop_unconfirmed',
           pid: sleepy.pid,
         });
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(fetchSpy.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/stop')).toHaveLength(1);
       } finally {
         fetchSpy.mockRestore();
         await sleepy.kill();
@@ -48,8 +48,8 @@ describe.sequential('stopAllDaemonsBestEffort completion', () => {
   it('stops every canonical and legacy state under a removed server profile before logout can remove its home', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-removed-profile-' }, async ({ homeDir }) => {
       await writeDaemonSettingsFixture(homeDir);
-      const canonical = spawnSleepyDetachedProcess();
-      const legacy = spawnSleepyDetachedProcess();
+      const canonical = spawnSleepyDetachedProcess(['/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync']);
+      const legacy = spawnSleepyDetachedProcess(['/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync']);
       const serverDir = join(homeDir, 'servers', 'removed-profile');
       const legacyBasename = resolveLegacyDaemonStateBasenames()[0];
       if (!legacyBasename) throw new Error('expected a supported legacy daemon state basename');

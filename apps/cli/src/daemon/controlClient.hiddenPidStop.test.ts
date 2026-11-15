@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import type { DaemonLockRecord } from '@happier-dev/cli-common/process';
 import { resolveDaemonStateCandidatePaths } from './ownership/daemonOwnershipPaths';
 import { configuration } from '@/configuration';
-import { waitForProcessExit } from '@/testkit/process/spawn';
+import { spawnTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
 import { reserveEphemeralPort, waitForHttpReady } from '@/testkit/http/portUtils';
 import { spawnSleepyDetachedProcess, spawnStoppableHttpDaemon, withConfiguredDaemonTestHome, writeDaemonStateFixture } from './testkit/fakeDaemonLifecycle.testkit';
 
@@ -29,6 +31,110 @@ afterAll(() => {
 
 // The HTTP service and child are real. Only the caller's PID namespace is an OS boundary fixture.
 describe('confirmed stop across a hidden daemon PID namespace', () => {
+
+  it('preserves a live successor publication during concurrent status inspection', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'daemon-live-successor-status-' }, async () => {
+      const { acquireDaemonLock, releaseDaemonLock, writeDaemonStateForLockOwner } = await import('@/persistence');
+      const predecessor = await acquireDaemonLock();
+      expect(predecessor).not.toBeNull();
+      const oldState = { pid: process.pid, httpPort: 43123, startedAt: 1, startedWithCliVersion: 'test', controlToken: 'predecessor' };
+      expect(writeDaemonStateForLockOwner(predecessor!, oldState)).toBe(true);
+      await releaseDaemonLock(predecessor!);
+      const childSource = `
+        const { acquireDaemonLock, releaseDaemonLock, writeDaemonStateForLockOwner } = await import(${JSON.stringify(new URL('../persistence.ts', import.meta.url).href)});
+        const lock = await acquireDaemonLock();
+        if (!lock) throw new Error('Successor could not acquire lifecycle lock');
+        const state = { ...${JSON.stringify(oldState)}, pid: process.pid, startedAt: 2, controlToken: 'successor' };
+        if (!writeDaemonStateForLockOwner(lock, state)) throw new Error('Successor initial publication failed');
+        process.on('message', async message => {
+          if (message === 'publish') process.send(writeDaemonStateForLockOwner(lock, { ...state, httpPort: 43124 }));
+          if (message === 'release') { await releaseDaemonLock(lock); process.exit(0); }
+        });
+        process.send(state);
+      `;
+      const child = spawnTestProcess(process.execPath, [
+        '--import', fileURLToPath(new URL('../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url)),
+        '--conditions=happier-source', '--input-type=module', '-e', childSource,
+        '/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync',
+      ], { env: { ...process.env, TSX_TSCONFIG_PATH: fileURLToPath(new URL('../../tsconfig.runtime.json', import.meta.url)) }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      let childError = '';
+      child.stderr?.on('data', data => { childError += String(data); });
+      const readMessage = () => Promise.race([
+        once(child, 'message').then(([message]) => message as unknown),
+        once(child, 'exit').then(([code]) => { throw new Error(`Successor exited ${code}: ${childError}`); }),
+      ]);
+      let restoreProbe: (() => void) | undefined;
+      try {
+        const successorState = await readMessage();
+        expect(successorState).toMatchObject({ pid: child.pid, controlToken: 'successor' });
+        const published = JSON.parse(readFileSync(configuration.daemonStateFile, 'utf8')) as typeof oldState;
+        const stateRaw = readFileSync(configuration.daemonStateFile, 'utf8');
+        const lockRaw = readFileSync(configuration.daemonLockFile, 'utf8');
+        // Retired control routing is network evidence, never proof either live PID has exited.
+        const probe = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 404 }));
+        restoreProbe = () => { probe.mockRestore(); };
+        const observation = controlClient.observePublishedDaemonOwner(published);
+        await Promise.all([
+          controlClient.inspectDaemonRunningStateAndCleanupStaleState(),
+          (async () => { expect(await observation.isPresent()).toBe(false); await observation.reclaimIfDead(); })(),
+        ]);
+        expect(readFileSync(configuration.daemonStateFile, 'utf8')).toBe(stateRaw);
+        expect(readFileSync(configuration.daemonLockFile, 'utf8')).toBe(lockRaw);
+        expect(process.kill(process.pid, 0)).toBe(true);
+        expect(process.kill(child.pid!, 0)).toBe(true);
+        const publishedAgain = readMessage();
+        child.send('publish');
+        expect(await publishedAgain).toBe(true);
+      } finally {
+        restoreProbe?.();
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit');
+          child.kill('SIGKILL');
+          await exited;
+        }
+      }
+    });
+  }, 300_000);
+
+  // DAEMON-STALE-STATE-1114: a reboot can leave both coordinates owned by strangers.
+  it.each((['dead', 'foreign', 'other-daemon'] as const).flatMap(kind =>
+    (['inspect', 'stop'] as const).map(operation => ({ kind, operation }))))('$operation replaces a $kind PID publication with a reused foreign control port without signalling it', async ({ kind, operation }) => {
+    await withConfiguredDaemonTestHome({ prefix: 'daemon-reused-coordinates-' }, async ({ homeDir }) => {
+      const { createServer } = await import('node:http');
+      const { once } = await import('node:events');
+      const server = createServer((req, res) => { req.resume(); res.writeHead(404); res.end('foreign endpoint'); });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener');
+      const child = spawnSleepyDetachedProcess(kind === 'other-daemon' ? ['/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync'] : []);
+      if (kind === 'dead') expect(await child.kill()).toBe(true);
+      const statePath = await writeDaemonStateFixture(homeDir, configuration.activeServerId, { pid: child.pid, httpPort: address.port, controlToken: 'stale-token' });
+      writeFileSync(configuration.daemonLockFile, String(child.pid));
+      const realKill = process.kill.bind(process);
+      const signals: number[] = [];
+      const spy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === child.pid && signal !== 0) signals.push(pid);
+        return realKill(pid, signal);
+      });
+      try {
+        if (operation === 'inspect') expect(await controlClient.inspectDaemonRunningStateAndCleanupStaleState()).toEqual({ status: 'not-running' });
+        else await expect(controlClient.stopDaemon()).resolves.toEqual({ status: 'not_running' });
+        expect((await multiDaemon.readDaemonStateForServerId(configuration.activeServerId))?.running ?? false).toBe(false);
+        expect(await multiDaemon.resolveLiveDaemonControlTargetForServer(configuration.activeServerId)).toBeNull();
+        await expect(controlClient.stopDaemon()).resolves.toEqual({ status: 'not_running' });
+        expect(existsSync(statePath)).toBe(kind !== 'dead');
+        expect(existsSync(configuration.daemonLockFile)).toBe(kind !== 'dead');
+        expect(signals).toEqual([]);
+        if (kind !== 'dead') expect(realKill(child.pid, 0)).toBe(true);
+      } finally {
+        spy.mockRestore();
+        await child.kill();
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      }
+    });
+  });
 
   it('preserves another departed lock owner when force stop targets a different PID', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'daemon-dead-other-lock-' }, async () => {

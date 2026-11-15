@@ -6,6 +6,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { projectPath } from '@/projectPath';
 import type { HappyProcessInfo } from './doctor';
+import type { ProcessCensusInput, ProcessCensusRow, ProcessCensusSnapshot } from '@/processes/census/processCensus';
 
 const {
   findHappyProcessByPidMock,
@@ -29,13 +30,23 @@ const {
   })),
 }));
 
-vi.mock('@/daemon/doctor', () => ({
-  findHappyProcessByPid: (pid: number) => findHappyProcessByPidMock(pid),
-  classifyDaemonLifecycleProcessByPid: async (pid: number) => ({
-    kind: 'daemon' as const,
-    process: await findHappyProcessByPidMock(pid),
-  }),
-}));
+// OS process inventory is the boundary; lifecycle classification and scope checks stay real.
+vi.mock('@/processes/census/processCensus', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/processes/census/processCensus')>();
+  return {
+    ...actual,
+    readProcessCensus: async (input: ProcessCensusInput): Promise<ProcessCensusSnapshot> => ({
+      status: 'ok', capturedAtMs: Date.now(), logicalCpus: 1,
+      rows: await Promise.all((input.pids ?? []).map(async (pid): Promise<ProcessCensusRow> => {
+        const proc = await findHappyProcessByPidMock(pid);
+        return { pid: proc.pid, ppid: null, name: 'happier', commandLine: proc.command,
+          start: { startTimeMs: 1_000 }, principal: { kind: 'uid', value: '1000' },
+          ownershipEnvironment: proc.daemonOwnershipEnvironmentVariables,
+          memory: null, cpuTimeUs: null };
+      })),
+    }),
+  };
+});
 
 vi.mock('@/daemon/processIdentity', () => ({
   readProcessIdentityByPid: (pid: number) => readProcessIdentityByPidMock(pid),
@@ -373,7 +384,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid,
         command: 'happier daemon start-sync',
         type: 'daemon',
@@ -433,7 +444,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid,
         command: 'happier daemon start-sync',
         type: 'daemon',
@@ -493,7 +504,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid,
         command: 'happier daemon start-sync',
         type: 'daemon',
@@ -611,7 +622,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid,
         command: [
           `${projectPath()}\\bin\\_importRuntimeEntrypoint.mjs`,
@@ -697,7 +708,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid,
         command: [
           `${projectPath()}\\bin\\_importRuntimeEntrypoint.mjs`,
@@ -774,7 +785,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid,
         command: `${projectPath()}\\src\\index.ts daemon start-sync`,
         type: 'daemon',
@@ -833,7 +844,7 @@ describe('stopDaemon: graceful wait before force kill', () => {
       stubUndiciFetch(async () => {
         throw new Error('daemon control endpoint unavailable');
       });
-      findHappyProcessByPidMock.mockResolvedValueOnce({
+      findHappyProcessByPidMock.mockResolvedValue({
         pid: daemonPid + 1,
         command: `${projectPath()}\\src\\index.ts daemon start-sync`,
         type: 'daemon',
@@ -857,11 +868,9 @@ describe('stopDaemon: graceful wait before force kill', () => {
       }), 'utf-8');
       writeDaemonLockFixture(configuration.daemonLockFile, daemonPid);
 
-      await expect(stopDaemon()).rejects.toMatchObject({
-        code: 'daemon_stop_incomplete',
-        reason: 'process_identity_unverified',
-        pid: daemonPid,
-      });
+      // DAEMON-STALE-STATE-1114: an unverified PID plus a refused endpoint is stale,
+      // and completing stop still must not signal the inventory's foreign PID.
+      await expect(stopDaemon()).resolves.toEqual({ status: 'not_running' });
       expect(killSpy.mock.calls.map(([, signal]) => signal)).not.toContain('SIGTERM');
       expect(killSpy.mock.calls.map(([, signal]) => signal)).not.toContain('SIGKILL');
     } finally {

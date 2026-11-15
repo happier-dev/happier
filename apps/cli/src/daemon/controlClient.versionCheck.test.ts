@@ -58,7 +58,7 @@ describe('daemon control client version check', () => {
       if (req.method === 'POST' && req.url === '/ping') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ status: 'ok' }));
         return;
       }
       res.statusCode = 404;
@@ -92,7 +92,7 @@ describe('daemon control client version check', () => {
       if (req.method === 'POST' && req.url === '/ping') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ status: 'ok' }));
         return;
       }
       res.statusCode = 404;

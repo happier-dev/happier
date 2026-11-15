@@ -119,20 +119,11 @@ describe.sequential('daemon control client PID safety', () => {
         'utf-8',
       );
 
-      await expect(stopDaemon()).rejects.toMatchObject({
-        code: 'daemon_stop_incomplete',
-        reason: 'process_identity_unverified',
-        pid: child.pid,
-      });
-
-      // Process should still be alive (PID reuse safety).
+      // DAEMON-STALE-STATE-1114: a foreign PID and dead endpoint are stale state,
+      // not an incomplete stop. Retain the publication until PID absence is proven.
+      await expect(stopDaemon()).resolves.toEqual({ status: 'not_running' });
       expect(() => process.kill(child.pid!, 0)).not.toThrow();
-      // An external client must not delete a publication it cannot prove it owns.
       expect(existsSync(configuration.daemonStateFile)).toBe(true);
-      expect(JSON.parse(readFileSync(configuration.daemonStateFile, 'utf8'))).toMatchObject({
-        pid: child.pid,
-        controlToken: 'token-123',
-      });
     } finally {
       removeTempDirSync(homeDir);
     }

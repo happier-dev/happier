@@ -33,12 +33,11 @@ import {
   isDaemonProcessForCurrentRuntimeRoot,
 } from '@/daemon/ownership/daemonProcessScopeIdentity';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
-import { classifyDaemonLifecycleProcessByPid } from '@/daemon/processInspection';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
@@ -188,7 +187,6 @@ export async function admitDaemonExecutionRunStart(options: DaemonControlRequest
 }
 const DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = 12_000;
 const DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS = 10_000;
-const DAEMON_STATE_FRESHNESS_GRACE_MS = 60_000;
 const DAEMON_PING_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PING_TIMEOUT_MS';
 const DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS';
 const DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_ENV_KEY = 'HAPPIER_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS';
@@ -212,32 +210,6 @@ function serializeSpawnDaemonSessionRequestForLocalControl(
     };
   }
   return request as unknown as Record<string, unknown>;
-}
-
-function resolveDaemonStateFreshnessAgeMs(state: unknown): number | null {
-  if (state && typeof state === 'object') {
-    const lastHeartbeatAt = (state as any).lastHeartbeatAt;
-    if (typeof lastHeartbeatAt === 'number' && Number.isFinite(lastHeartbeatAt)) {
-      return Math.max(0, Date.now() - lastHeartbeatAt);
-    }
-
-    const startedAt = (state as any).startedAt;
-    if (typeof startedAt === 'number' && Number.isFinite(startedAt)) {
-      return Math.max(0, Date.now() - startedAt);
-    }
-  }
-
-  // Fall back to file mtime if startedAt is missing; helps avoid deleting freshly written state.
-  try {
-    const stat = statSync(configuration.daemonStateFile);
-    if (Number.isFinite(stat.mtimeMs)) {
-      return Math.max(0, Date.now() - stat.mtimeMs);
-    }
-  } catch {
-    // ignore
-  }
-
-  return null;
 }
 
 function resolvePositiveIntValue(
@@ -324,76 +296,18 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
     return { status: 'not-running' };
   }
 
-  const liveness = probeProcessLiveness(state.pid);
-  if (liveness !== 'alive') {
-    if (liveness === 'absent') {
-      if (state.controlToken) {
-        const presence = await inspectPublishedDaemonPresence(state);
-        if (presence.status === 'running') return { status: 'running', state };
-        if (presence.status === 'unverified') return { status: 'starting', state };
-      }
-      // State can still name a departed predecessor while its successor owns the
-      // lifecycle lock and has not published its own state yet.
-      const lockStartup = await inspectDaemonLockStartupProgress();
-      if (lockStartup) return lockStartup;
-      return { status: 'not-running' };
-    }
-
-    logger.debug('[DAEMON RUN] Daemon PID liveness is inconclusive, keeping state fail-closed');
-    return { status: 'starting', state };
+  const observedLock = readDaemonLockSnapshot();
+  const presence = await inspectPublishedDaemonPresence(state);
+  if (presence.status === 'running') {
+    return state.httpPort === 0 ? { status: 'starting', state } : { status: 'running', state };
   }
-
-  const ownerProcess = await classifyDaemonLifecycleProcessByPid(state.pid)
-    .catch(() => ({ kind: 'unknown' as const }));
-
-  if (state.httpPort === 0) {
-    return ownerProcess.kind === 'not_daemon'
-      ? { status: 'not-running' }
-      : { status: 'starting', state };
-  }
-
-  try {
-    if (state.controlToken) {
-      const ping = await daemonPost('/ping', undefined, { timeoutMs: resolveDaemonPingTimeoutMs() });
-
-      if (ping && typeof ping === 'object' && (ping as any).success === false) {
-        logger.debug('[DAEMON RUN] Daemon /ping rejected control token, cleaning up state');
-        await cleanupDaemonState();
-        return { status: 'not-running' };
-      }
-
-      if (ping?.error) {
-        if (ownerProcess.kind === 'not_daemon') {
-          logger.debug('[DAEMON RUN] Daemon control is unreachable and its state PID belongs to an unrelated process, treating state as replaceable');
-          return { status: 'not-running' };
-        }
-        logger.debug('[DAEMON RUN] Daemon /ping unreachable while PID is alive, treating daemon as busy/unknown and keeping state');
-        return { status: 'starting', state };
-      }
-
-      return { status: 'running', state };
-    }
-
-    if (ownerProcess.kind === 'not_daemon') {
-      logger.debug('[DAEMON RUN] Daemon state PID belongs to an unrelated process, treating state as replaceable');
-      return { status: 'not-running' };
-    }
-
-    return { status: 'running', state };
-  } catch {
-    if (ownerProcess.kind === 'not_daemon') {
-      logger.debug('[DAEMON RUN] Daemon control probe failed and its state PID belongs to an unrelated process, treating state as replaceable');
-      return { status: 'not-running' };
-    }
-    const ageMs = resolveDaemonStateFreshnessAgeMs(state);
-    if (ageMs !== null && ageMs <= DAEMON_STATE_FRESHNESS_GRACE_MS) {
-      logger.debug('[DAEMON RUN] Daemon PID is not running but state is still fresh, keeping state while startup arbitration settles');
-      return { status: 'starting', state };
-    }
-
-    logger.debug('[DAEMON RUN] Daemon PID is not running and state is stale, treating daemon as replaceable without client cleanup');
-    return { status: 'not-running' };
-  }
+  if (presence.status === 'unverified') return { status: 'starting', state };
+  // A different successor may own the lock before publishing. The stale PID's
+  // own lock cannot override the presence owner's foreign-endpoint evidence.
+  const startup = await inspectDaemonLockStartupProgress();
+  if (startup && startup.pid !== state.pid) return startup;
+  await reclaimDeadDaemonPublication({ expectedState: state, expectedLockRaw: observedLock?.raw ?? null });
+  return { status: 'not-running' };
 }
 
 export async function notifyDaemonSessionStarted(

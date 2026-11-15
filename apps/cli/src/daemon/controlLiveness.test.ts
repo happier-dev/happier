@@ -115,7 +115,7 @@ describe('probeDaemonAuthenticatedControl', () => {
     [400, 'unreachable'],
     [401, 'unauthorized'],
     [403, 'unauthorized'],
-    [404, 'unreachable'],
+    [404, 'foreign_control'],
     [429, 'unreachable'],
     [500, 'unreachable'],
     [503, 'unreachable'],

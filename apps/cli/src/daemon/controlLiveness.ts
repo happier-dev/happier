@@ -1,10 +1,12 @@
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
+import { classifyDaemonLifecycleProcessByPid } from './processInspection';
 import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from './controlHttp';
 
 export type DaemonControlLivenessProbeResult =
   | 'running'
   | 'control_not_running'
+  | 'foreign_control'
   | 'unauthorized'
   | 'unreachable';
 
@@ -21,12 +23,13 @@ async function pingAuthenticatedControl(input: Readonly<{
       signal: AbortSignal.timeout(input.timeoutMs),
     }, undefined, new Set([DAEMON_CONTROL_TOKEN_HEADER]));
     if (response.status === 401 || response.status === 403) return 'unauthorized';
+    if (response.status === 404 || response.status === 405) return 'foreign_control';
     if (!response.ok) return 'unreachable';
-    const payload = await response.json() as unknown;
+    const payload = await response.json().catch(() => null) as unknown;
     return payload && typeof payload === 'object' && !Array.isArray(payload)
       && (payload as Readonly<{ status?: unknown }>).status === 'ok'
       ? 'running'
-      : 'unreachable';
+      : 'foreign_control';
   } catch (error) {
     if (error instanceof CredentialRequestRedirectError) throw error;
     const cause = error && typeof error === 'object' && 'cause' in error ? error.cause : error;
@@ -77,9 +80,20 @@ export async function inspectDaemonPublicationPresence(input: Readonly<{
   controlToken?: string;
   timeoutMs: number;
 }>): Promise<DaemonPublicationPresenceInspection> {
-  if (isPidPresent(input.pid)) return { status: 'running', hiddenPid: false };
-  if (!input.controlToken) return { status: 'not_running' };
-  const liveness = await probeDaemonAuthenticatedControl({ ...input, controlToken: input.controlToken });
-  if (liveness === 'running') return { status: 'running', hiddenPid: true };
+  const pidPresent = isPidPresent(input.pid);
+  const liveness = input.controlToken
+    ? await probeDaemonAuthenticatedControl({ ...input, controlToken: input.controlToken })
+    : 'control_not_running';
+  if (liveness === 'running') return { status: 'running', hiddenPid: !pidPresent };
+  // An unrelated HTTP responder is not a busy daemon, even if the recycled PID
+  // now names another Happier daemon. A refused listener remains distinct.
+  if (liveness === 'foreign_control') return { status: 'not_running' };
+  if (!pidPresent) return { status: liveness === 'unreachable' ? 'unverified' : 'not_running' };
+
+  // A reused PID is not the published daemon. Keep platform identity discovery
+  // at this owner so status, start and stop consume the same evidence.
+  const owner = await classifyDaemonLifecycleProcessByPid(input.pid).catch(() => ({ kind: 'unknown' as const }));
+  if (owner.kind === 'not_daemon') return { status: 'not_running' };
+  if (owner.kind === 'daemon') return { status: 'running', hiddenPid: false };
   return { status: liveness === 'unreachable' ? 'unverified' : 'not_running' };
 }

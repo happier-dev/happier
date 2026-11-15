@@ -21,7 +21,6 @@ import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from '@/da
 import { DaemonStopIncompleteError, inspectPublishedDaemonPresence, observePublishedDaemonOwner, type PublishedDaemonOwnerObservation } from '@/daemon/controlClient';
 import { isLoopbackHttpServerUrl } from '@/server/serverUrlClassification';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
-import { isPidPresent } from '@happier-dev/cli-common/process';
 import { selectServingDaemonService } from '@happier-dev/cli-common/systemTasks';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 type NormalizedDaemonState = Readonly<{
@@ -126,8 +125,8 @@ export async function readDaemonStateForServerId(serverId: string): Promise<Read
   running: boolean;
   state: NormalizedDaemonState;
 }> | null> {
-  const { state } = await resolveDaemonStateForServer(serverId);
-  return state ? { running: isPidPresent(state.pid), state } : null;
+  const { state, presence } = await resolveDaemonStateForServer(serverId);
+  return state ? { running: presence?.status === 'running', state } : null;
 }
 
 /**
@@ -145,8 +144,8 @@ export async function resolveLiveDaemonControlTargetForServer(serverId: string):
 }> | null> {
   const normalizedServerId = String(serverId ?? '').trim();
   if (!normalizedServerId) return null;
-  const { state } = await resolveDaemonStateForServer(normalizedServerId);
-  if (!state || state.httpPort === 0 || !isPidPresent(state.pid)) return null;
+  const { state, presence } = await resolveDaemonStateForServer(normalizedServerId);
+  if (!state || state.httpPort === 0 || presence?.status !== 'running') return null;
   return {
     pid: state.pid,
     httpPort: state.httpPort,
