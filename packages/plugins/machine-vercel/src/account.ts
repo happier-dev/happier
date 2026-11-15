@@ -1,4 +1,5 @@
 import { PluginError, type PluginAccountApi } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
   ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext,
   ConnectedAccountHealthResult, ConnectedAccountMaterialization, ConnectedAccountMaterializationRequest,
@@ -64,8 +65,11 @@ function parseBody(response: HttpResponse): unknown {
 
 function transportFailure(error: unknown, signal: AbortSignal): Failure {
   signal.throwIfAborted();
-  if (error instanceof PluginError && error.code === 'vercel_invalid_response') return unexpectedResponse();
-  return { status: 'unavailable', diagnostic: diagnostic('vercel_unavailable', 'Vercel could not be reached. Try the connection again.') };
+  const result = error instanceof PluginError && error.code === 'vercel_invalid_response'
+    ? unexpectedResponse()
+    : { status: 'unavailable' as const, diagnostic: diagnostic('vercel_unavailable', 'Vercel could not be reached. Try the connection again.') };
+  return { ...result, diagnostic: { ...result.diagnostic,
+    details: { failureCause: projectActionFailureCauseV1(error, 'machine.account.probe') } } };
 }
 
 function invalidToken(response: HttpResponse, body: unknown): boolean {
@@ -78,7 +82,11 @@ function responseFailure(response: HttpResponse, body: unknown): Failure | null 
   }
   if (response.status === 403) return { status: 'rejected', diagnostic: diagnostic('vercel_missing_permission', 'The Vercel token cannot access the selected scope. Check its team and project access.') };
   if (response.status === 404) return { status: 'rejected', diagnostic: diagnostic('vercel_scope_unavailable', 'The selected Vercel team or project is unavailable to this token.') };
-  if (response.status === 429 || response.status >= 500) return { status: 'unavailable', diagnostic: diagnostic('vercel_unavailable', 'Vercel is temporarily unavailable. Try connecting again.') };
+  if (response.status === 429 || response.status >= 500) return { status: 'unavailable',
+    ...(response.status === 429 ? { failureClass: 'rateLimit' as const } : {}),
+    diagnostic: { ...diagnostic('vercel_unavailable', 'Vercel is temporarily unavailable. Try connecting again.'),
+      details: { httpStatus: response.status,
+        failureCause: projectActionFailureCauseV1({ status: response.status }, 'machine.account.probe') } } };
   if (response.status !== 200) return unexpectedResponse();
   return null;
 }
@@ -197,9 +205,11 @@ async function discover(token: string, context: ConnectedAccountAuthenticationCo
     try {
       await context.stageAccountConfiguration({ fields: [teamField(teams)],
         values: { ...context.configuration.values, teamId: only.id } });
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
-      return { status: 'unavailable', diagnostic: diagnostic('vercel_configuration_unavailable', 'The Vercel team could not be saved. Try the connection again.') };
+      // The host's staging refusal keeps its code-only cause; this plugin does not decide why staging failed.
+      return { status: 'unavailable', diagnostic: { ...diagnostic('vercel_configuration_unavailable', 'The Vercel team could not be saved. Try the connection again.'),
+        details: { failureCause: projectActionFailureCauseV1(error, 'machine.account.stage_configuration') } } };
     }
     return await stageToken(context, token, signal) ?? result;
   }
@@ -218,9 +228,12 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
     if (!validToken(token)) return { status: 'reconnectRequired', diagnostic: diagnostic('vercel_invalid_token', 'Reconnect Vercel with a personal access token.') };
     const result = await probe(token, scopeOf(context), context, signal);
     return result.status === 'rejected' ? { status: 'reconnectRequired', diagnostic: result.diagnostic } : result;
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
-    return { status: 'unavailable', diagnostic: diagnostic('vercel_unavailable', 'The Vercel connection could not be checked.') };
+    return { status: 'unavailable', diagnostic: {
+      ...diagnostic('vercel_unavailable', 'The Vercel connection could not be checked.'),
+      details: { failureCause: projectActionFailureCauseV1(error, 'machine.account.health') },
+    } };
   }
 }
 

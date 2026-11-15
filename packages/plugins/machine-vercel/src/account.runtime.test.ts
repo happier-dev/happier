@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountCredentialStore, ConnectedAccountMutationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpRequest, HttpResponse } from '@happier-dev/plugin-sdk/http';
@@ -83,6 +84,43 @@ async function host(options: {
 }
 
 describe('activated Vercel vendor Connected Account', () => {
+  it.each([{}, { teamId }] as const)('retains transport causes through team probing and discovery (%j)', async values => {
+    const h = await host({ values, failure: new PluginError({ code: 'plugin_fetch_adapter_unavailable', message: secret }) });
+    try {
+      const result = await h.mode.complete({ fields: { token: secret } }, h.authentication);
+      expect(result).toMatchObject({ status: 'unavailable', diagnostic: { details: { failureCause: {
+        phase: 'machine.account.probe', errorCode: 'plugin_fetch_adapter_unavailable',
+      } } } });
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(h.staged.size).toBe(0);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each([429, 503])('retains HTTP %s and rate-limit evidence', async status => {
+    const h = await host({ status });
+    try {
+      const result = await h.mode.complete({ fields: { token: secret } }, h.authentication);
+      expect(result).toMatchObject({ status: 'unavailable', diagnostic: { details: {
+        httpStatus: status, failureCause: { phase: 'machine.account.probe', httpStatus: status },
+      } } });
+      if (status === 429) expect(result).toHaveProperty('failureClass', 'rateLimit');
+      else expect(result).not.toHaveProperty('failureClass');
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('retains credential-read failures at the health boundary', async () => {
+    const h = await host();
+    try {
+      const result = await h.runtime.status({ ...h.read, credentials: { ...h.read.credentials,
+        async get() { throw new PluginError({ code: 'credential_unavailable', message: secret }); },
+      } });
+      expect(result).toMatchObject({ status: 'unavailable', diagnostic: { details: { failureCause: {
+        phase: 'machine.account.health', errorCode: 'credential_unavailable',
+      } } } });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('probes an exact project with a project token before staging in the host attempt', async () => {
     const h = await host();
     try {
@@ -311,6 +349,20 @@ describe('Vercel team picker from a pasted token', () => {
       expect(stagedConfiguration).toEqual([expect.objectContaining({ values: { teamId } })]);
       expect(h.requests.map(request => request.url)).toEqual([teamsUrl, 'https://api.vercel.com/v2/teams/team_example']);
       expect(h.staged.get('token')).toBe(secret);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('keeps the host staging refusal cause when the only team cannot be saved (COR4B blank Team)', async () => {
+    const h = await host({ values: {}, stageAccountConfiguration: async () => {
+      throw Object.assign(new Error('configuration_revision_conflict'), { code: 'configuration_revision_conflict' });
+    }, route: request => new URL(request.url).pathname === '/v2/teams'
+      ? { status: 200, body: { teams: [{ id: teamId, name: 'Example team' }], pagination: { count: 1, next: null, prev: null } } }
+      : { status: 200, body: team } });
+    try {
+      const result = await h.mode.complete({ fields: { token: secret } }, h.authentication);
+      expect(result).toMatchObject({ status: 'unavailable', diagnostic: { code: 'vercel_configuration_unavailable',
+        details: { failureCause: { phase: 'machine.account.stage_configuration', errorCode: 'configuration_revision_conflict' } } } });
+      expect(JSON.stringify(result)).not.toContain(secret);
     } finally { await h.kit.dispose(); }
   });
 

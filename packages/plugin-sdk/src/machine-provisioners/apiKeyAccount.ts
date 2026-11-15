@@ -1,5 +1,5 @@
 /** @moduleRealm any */
-import { PluginError } from '../errors.js';
+import { PluginError, projectActionFailureCauseV1 } from '../errors.js';
 import type {
   ConnectedAccountAuthenticationContext, ConnectedAccountAuthCompletionResult,
   ConnectedAccountHealthResult, ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime,
@@ -58,8 +58,10 @@ export function createMachineProvisionerApiKeyAccount(definition: MachineProvisi
   const diagnostic = (suffix: string, message: string) => ({ code: `${definition.codePrefix}_${suffix}`, severity: 'error' as const, message });
   const refused = () => ({ status: 'rejected' as const,
     diagnostic: diagnostic('invalid_token', `${definition.name} refused this key. Use ${definition.keyDescription}. Check that it has access to this account or team.`) });
-  const unavailable = () => ({ status: 'unavailable' as const,
-    diagnostic: diagnostic('unavailable', `${definition.name} could not be reached or is temporarily unavailable. Try connecting again.`) });
+  const unavailable = (error: unknown, httpStatus?: number) => ({ status: 'unavailable' as const,
+    diagnostic: { ...diagnostic('unavailable', `${definition.name} could not be reached or is temporarily unavailable. Try connecting again.`),
+      details: { failureCause: projectActionFailureCauseV1(error, 'machine.account.probe'),
+        ...(httpStatus === undefined ? {} : { httpStatus }) } } });
   const unexpected = () => ({ status: 'unavailable' as const,
     diagnostic: diagnostic('invalid_response', `${definition.name} returned an unexpected response. Try connecting again; if it continues, check the provider's service status.`) });
   const storageUnavailable = () => ({ status: 'unavailable' as const,
@@ -76,7 +78,7 @@ export function createMachineProvisionerApiKeyAccount(definition: MachineProvisi
       response = await context.services.http.request({ ...request, redirect: 'error',
         headers: { ...request.headers, [binding.headerName]: authorization(binding, token) } }, { signal });
       signal.throwIfAborted();
-    } catch { signal.throwIfAborted(); return unavailable(); }
+    } catch (error) { signal.throwIfAborted(); return unavailable(error); }
     if (response.finalUrl !== request.url || response.status >= 300 && response.status < 400) return unexpected();
     // A refusal needs no decodable body; a malformed 401 still says the key was refused.
     let value: unknown;
@@ -84,7 +86,10 @@ export function createMachineProvisionerApiKeyAccount(definition: MachineProvisi
     const rejection = definition.probe.rejection?.(response.status, value);
     if (rejection) return rejection;
     if (response.status === 401 || response.status === 403) return refused();
-    if (response.status === 429 || response.status >= 500) return unavailable();
+    if (response.status === 429 || response.status >= 500) return {
+      ...unavailable({ status: response.status }, response.status),
+      ...(response.status === 429 ? { failureClass: 'rateLimit' as const } : {}),
+    };
     if (response.status !== 200 || value === undefined) return unexpected();
     return definition.probe.read(value, context) ?? unexpected();
   }
