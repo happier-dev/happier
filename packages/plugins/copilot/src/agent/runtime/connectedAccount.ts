@@ -7,6 +7,7 @@ import type {
   AgentRuntimeContext,
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { COPILOT_ACP_MODEL_CONTROLS } from '../acp/modelControls.js';
 import { COPILOT_CONNECTED_ACCOUNT_PURPOSES, COPILOT_GITHUB_PURPOSE_ID, COPILOT_NATIVE_KEY_PURPOSES } from '../auth/services/accountPurposes.js';
@@ -33,7 +34,9 @@ function withAccountEnvironment<T extends CopilotAccountRequest>(
 /** One static access-token snapshot per native process; the host owns renewal. */
 export async function prepareCopilotConnectedAccount<T extends CopilotAccountRequest>(
   request: T,
-  context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
+  context: Pick<AgentRuntimeContext, 'signal'> & Readonly<{
+    services: Readonly<{ connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }>;
+  }>,
   modelId?: string | null,
 ): Promise<Readonly<{ request: T; models?: AgentAcpModelControls; dispose(): void }>> {
   const accounts = context.services.connectedAccounts;

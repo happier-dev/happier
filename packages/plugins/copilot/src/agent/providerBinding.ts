@@ -25,6 +25,8 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
   if (input.prepared.materialization !== 'spawnEnv' || (protocol !== 'openai-chat' && protocol !== 'anthropic')) {
     throw new Error('Copilot Provider binding requires OpenAI Chat or Anthropic and a spawn environment');
   }
+  // The open protocol vocabulary (`string & {}`) does not narrow by comparison; restate the admitted pair.
+  const copilotProtocol = protocol === 'anthropic' ? 'anthropic' as const : 'openai-chat' as const;
   if (Object.keys(input.binding.endpoint.publicHeaders).length) {
     throw new Error('Copilot Provider binding cannot preserve custom public headers');
   }
@@ -49,7 +51,7 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
       throw new Error('Copilot Provider binding does not support this credential transport');
     }
   }
-  const values = buildCopilotProviderEnvironment({ protocol, baseUrl: input.binding.endpoint.normalizedUrl,
+  const values = buildCopilotProviderEnvironment({ protocol: copilotProtocol, baseUrl: input.binding.endpoint.normalizedUrl,
     modelId: input.binding.selection.model.id, ...(selectedCredential ? { credential: selectedCredential } : {}) });
   return { v: 1 as const, kind: 'spawnEnv' as const,
     env: COPILOT_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name, value: values[name] ?? null, source: 'provider' as const })) };

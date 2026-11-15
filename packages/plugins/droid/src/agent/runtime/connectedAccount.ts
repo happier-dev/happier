@@ -56,21 +56,19 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
         phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   }
   const invalid = () => new PluginError({ code: 'droid_connected_account_materialization_invalid', message: 'Droid requires the selected account credentials and native endpoint.' });
+  // Every declared purpose derives from DROID_NATIVE_KEY_PURPOSES, so a selection always has its native key row.
   const nativeKey = DROID_NATIVE_KEY_PURPOSES.find(row => row.purpose === declaration.purpose);
-  let secret: string;
-  let settings: string;
-  if (nativeKey) {
-    const baseKey = 'baseUrlEnvironmentKey' in nativeKey ? nativeKey.baseUrlEnvironmentKey : undefined;
-    const materialized = await context.services.connectedAccounts.materialize(declaration.purpose, {
-      kind: 'environment', keys: [nativeKey.environmentKey, ...(baseKey ? [baseKey] : [])],
-    }, { signal: context.signal, expectedAccount: account });
-    if (materialized.kind !== 'environment') throw invalid();
-    const key = materialized.env[nativeKey.environmentKey];
-    const baseUrl = baseKey ? materialized.env[baseKey] : 'baseUrl' in nativeKey ? nativeKey.baseUrl : undefined;
-    if (!key?.trim() || !baseUrl) throw invalid();
-    secret = key;
-    settings = buildDroidModelSettings({ modelId, provider: nativeKey.provider, baseUrl, hasCredential: true, headers: {} });
-  }
+  if (!nativeKey) throw invalid();
+  const baseKey = 'baseUrlEnvironmentKey' in nativeKey ? nativeKey.baseUrlEnvironmentKey : undefined;
+  const materialized = await context.services.connectedAccounts.materialize(declaration.purpose, {
+    kind: 'environment', keys: [nativeKey.environmentKey, ...(baseKey ? [baseKey] : [])],
+  }, { signal: context.signal, expectedAccount: account });
+  if (materialized.kind !== 'environment') throw invalid();
+  const key = materialized.env[nativeKey.environmentKey];
+  const baseUrl = baseKey ? materialized.env[baseKey] : 'baseUrl' in nativeKey ? nativeKey.baseUrl : undefined;
+  if (!key?.trim() || !baseUrl) throw invalid();
+  const secret = key;
+  const settings = buildDroidModelSettings({ modelId, provider: nativeKey.provider, baseUrl, hasCredential: true, headers: {} });
   const directory = createSecureTempDirectorySync({ prefix: 'droid-connected-account' });
   try {
     const settingsPath = join(directory.path, 'settings.json');
