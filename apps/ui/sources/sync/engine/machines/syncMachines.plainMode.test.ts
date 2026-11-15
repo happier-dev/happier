@@ -508,7 +508,7 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
                 metadata: null,
                 metadataVersion: 8,
                 daemonState: null,
-                daemonStateVersion: 13,
+                daemonStateVersion: 0,
                 storageMode: 'plain',
                 availability: {
                     kind: 'locked',
@@ -556,7 +556,7 @@ describe('fetchAndApplyMachines plaintext account storage', () => {
                 metadata: null,
                 metadataVersion: 5,
                 daemonState: null,
-                daemonStateVersion: 7,
+                daemonStateVersion: 0,
                 storageMode: 'plain',
                 availability: {
                     kind: 'locked',

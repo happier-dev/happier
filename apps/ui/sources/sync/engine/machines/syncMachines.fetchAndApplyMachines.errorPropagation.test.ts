@@ -138,7 +138,7 @@ describe('fetchAndApplyMachines error propagation', () => {
                 metadata: null,
                 metadataVersion: 7,
                 daemonState: null,
-                daemonStateVersion: 11,
+                daemonStateVersion: 0,
                 storageMode: 'e2ee',
                 availability: {
                     kind: 'locked',
@@ -148,7 +148,7 @@ describe('fetchAndApplyMachines error propagation', () => {
         ], false, expect.any(Array));
     });
 
-    it('keeps authoritative versions and reports a locked machine when E2EE content decryption fails', async () => {
+    it('keeps the authoritative metadata version, opens no daemon revision, and reports a locked machine when E2EE content decryption fails', async () => {
         const credentials: AuthCredentials = { token: 't', secret: 's' };
         const applyMachines = vi.fn();
         const decryptDaemonState = vi.fn(async () => ({ status: 'running' }));
@@ -200,7 +200,8 @@ describe('fetchAndApplyMachines error propagation', () => {
                 metadata: null,
                 metadataVersion: 23,
                 daemonState: null,
-                daemonStateVersion: 29,
+                // Nothing opened under a locked view; the published revision is a hint.
+                daemonStateVersion: 0,
                 storageMode: 'e2ee',
                 availability: {
                     kind: 'locked',

@@ -40,6 +40,15 @@ export function hasCurrentMachineContent(machine: MachineWithId): boolean {
             && (machine.daemonStateVersion ?? 0) >= machine.keyBasis.daemonStateVersion));
 }
 
+/**
+ * The newest daemon-state revision this row has observed: the revision it holds opened, or, before
+ * anything opened (locked views, placeholders, shells), its published `keyBasis` hint. Stale checks
+ * compare incoming server publications against it; `daemonStateVersion` itself only names opened content.
+ */
+export function readObservedMachineDaemonStateVersion(machine: MachineWithId): number {
+    return machine.daemonStateVersion || machine.keyBasis?.daemonStateVersion || 0;
+}
+
 /** Content admission is independent of list settlement and presence. */
 export function readMachineInventoryRowReadiness(machine: MachineWithId): MachineInventoryRowReadiness {
     const { metadata, metadataVersion, daemonStateVersion, keyBasis } = machine;

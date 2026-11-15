@@ -6,7 +6,7 @@ import { didSessionRuntimeObservationRecover, readSessionFullPublicationUpdatedA
 import { resolveSessionViewerProjectionUpdate } from '@/sync/domains/session/readState/sessionViewer';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveRunnerMachineContentKeyTrustV1 } from '@/sync/domains/machines/runnerMachineContentKeyTrust';
-import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { readMachineInventoryRowReadiness, readObservedMachineDaemonStateVersion } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     isSessionAccessOwner,
@@ -2066,7 +2066,7 @@ export async function handleUpdateContainer(params: {
         const machineId = machineUpdate.machineId;
         const existingMachine = storage.getState().machines[machineId];
         if (existingMachine && (machineUpdate.metadataVersion < existingMachine.metadataVersion
-            || machineUpdate.daemonStateVersion < existingMachine.daemonStateVersion)) {
+            || machineUpdate.daemonStateVersion < readObservedMachineDaemonStateVersion(existingMachine))) {
             invalidateMachines(machineId);
             return;
         }
@@ -2197,7 +2197,8 @@ export async function handleUpdateContainer(params: {
             metadata: null,
             metadataVersion: machineUpdate.metadataVersion,
             daemonState: null,
-            daemonStateVersion: machineUpdate.daemonStateVersion,
+            // The placeholder opens nothing; the published revision stays in `keyBasis`.
+            daemonStateVersion: 0,
             dataEncryptionKey: typeof publishedDataEncryptionKey === 'string' ? publishedDataEncryptionKey : null,
             ...(access.success ? { access: access.data, isShared: access.data.custodian.accountId !== viewerAccountId } : {}),
             ...(keyBasis.success ? { keyBasis: keyBasis.data } : {}),
@@ -2219,7 +2220,7 @@ export async function handleUpdateContainer(params: {
         const daemonStateVersion = hintBasis.success ? hintBasis.data.daemonStateVersion : machineUpdate.daemonState?.version;
         if (machine && ('dataEncryptionKey' in machineUpdate || 'keyBasis' in machineUpdate || 'access' in machineUpdate)
             && ((metadataVersion !== undefined && metadataVersion < machine.metadataVersion)
-            || (daemonStateVersion !== undefined && daemonStateVersion < machine.daemonStateVersion))) {
+            || (daemonStateVersion !== undefined && daemonStateVersion < readObservedMachineDaemonStateVersion(machine)))) {
             invalidateMachines(machineId);
             return;
         }

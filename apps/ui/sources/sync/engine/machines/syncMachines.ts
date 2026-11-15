@@ -21,7 +21,7 @@ import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machin
 import { encodeBase64 } from '@/encryption/base64';
 import { yieldToEventLoop } from '@/sync/encryption/cryptoBatchYield';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { hasCurrentMachineContent } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { hasCurrentMachineContent, readObservedMachineDaemonStateVersion } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { readMachineCensus, readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
@@ -171,7 +171,7 @@ function readMachinePublishedContext(machine: FetchedMachineRow) {
  * A hydrating row's daemon-state version names the daemon state it holds opened. Before an encrypted
  * daemon state opens, the display shell holds none: the published revision stays a hint (`keyBasis`)
  * instead of claiming that version, so opening its metadata and then its daemon state only ever
- * advances the version. Locked views keep the authoritative revision; nothing opens under them.
+ * advances the version. Locked views hold nothing opened either (0).
  */
 function readUnopenedDaemonStateVersion(machine: FetchedMachineRow): number {
     return typeof machine.daemonState === 'string' && machine.daemonState.length > 0 ? 0 : machine.daemonStateVersion ?? 0;
@@ -194,7 +194,8 @@ function createLockedMachineView(
         metadata: null,
         metadataVersion: machine.metadataVersion,
         daemonState: null,
-        daemonStateVersion: machine.daemonStateVersion ?? 0,
+        // Nothing is opened under a locked view; the published revision stays in `keyBasis`.
+        daemonStateVersion: 0,
         ...readMachineIdentityFields(machine),
         ...readMachinePublishedContext(machine),
         storageMode,
@@ -576,7 +577,7 @@ export async function fetchAndApplyMachines(params: {
     const rowIsNotOlder = (machine: FetchedMachineRow) => {
         const existing = params.getExistingMachine?.(machine.id) ?? params.getMachineSnapshot?.()[machine.id];
         return !existing || (machine.metadataVersion >= existing.metadataVersion
-            && (machine.daemonStateVersion ?? 0) >= existing.daemonStateVersion);
+            && (machine.daemonStateVersion ?? 0) >= readObservedMachineDaemonStateVersion(existing));
     };
     machines = machines.filter((machine) => {
         const accepted = rowIsNotOlder(machine) && isRequestMachineContextCurrent?.(machine.id) !== false

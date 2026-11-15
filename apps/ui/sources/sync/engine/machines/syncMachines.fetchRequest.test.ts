@@ -14,7 +14,7 @@ import { createDeferred } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
-import { hasCurrentMachineContent, readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { hasCurrentMachineContent, readMachineInventoryRowReadiness, readObservedMachineDaemonStateVersion } from '@/sync/domains/machines/resolveServerScopedMachines';
 
 function createMachineStore() {
     type State = MachinesDomain & Pick<StorageState, 'sessions' | 'sessionListRowsByServerId'
@@ -152,7 +152,10 @@ describe('fetchAndApplyMachines request override', () => {
         requests.length = 0;
         await refresh([]);
         expect(requests).toEqual([]);
-        available = fleet.map(row => row.id === 'machine-0' ? { ...row, daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 } : row);
+        // The server always publishes its revision in `keyBasis`; a locked row opens nothing, so it is read there.
+        available = fleet.map(row => row.id === 'machine-0' ? { ...row, daemonStateVersion: (row.daemonStateVersion ?? 0) + 1,
+            keyBasis: { dataEncryptionKey: row.dataEncryptionKey ?? null, metadataVersion: row.metadataVersion,
+                daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 } } : row);
         const { applyPlannedChangeActions } = await import('@/sync/runtime/orchestration/changesApplier');
         const { planSyncActionsFromChanges } = await import('@/sync/runtime/orchestration/changesPlanner');
         const result = await applyPlannedChangeActions({
@@ -169,7 +172,7 @@ describe('fetchAndApplyMachines request override', () => {
         expect(result.status).toBe('complete');
         expect(requests).toEqual(['/v1/machines/read-batch']);
         expect(selections).toEqual([['machine-0']]);
-        expect(store.getState().machines['machine-0']?.daemonStateVersion).toBe(available[0]!.daemonStateVersion);
+        expect(readObservedMachineDaemonStateVersion(store.getState().machines['machine-0']!)).toBe(available[0]!.daemonStateVersion);
         expect(store.getState().machines['machine-136']).toBe(untouched);
         expect(Object.keys(store.getState().machines)).toHaveLength(137);
         requests.length = 0;
@@ -1053,6 +1056,33 @@ describe('fetchAndApplyMachines request override', () => {
         }
         await vi.waitFor(() => expect(published.at(-1)).toEqual({ daemonStateVersion: 84, metadata: true, daemonState: true }));
         const versions = published.map(row => row.daemonStateVersion);
+        expect(versions).toEqual([...versions].sort((left, right) => left - right));
+    });
+
+    it('never publishes a lower daemon-state version while a locked row opens', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const encryption = await createEncryptionHarness();
+        const row = { id: 'm_locked', metadata: 'encrypted-meta', metadataVersion: 5,
+            daemonState: 'encrypted-daemon', daemonStateVersion: 84, dataEncryptionKey: 'key-1', seq: 1, active: true,
+            activeAt: 10, revokedAt: null, createdAt: 1, updatedAt: 10 } satisfies RawMachine;
+        const store = createMachineStore();
+        const versions: number[] = [];
+        const read = (withEncryption: boolean) => fetchAndApplyMachines({
+            credentials: legacyCredentials, sourceServerId: 'home-1', encryption: withEncryption ? encryption : null,
+            machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
+            request: async () => jsonResponse([row]),
+            getMachineSnapshot: () => store.getState().machines,
+            getExistingMachine: id => store.getState().machines[id],
+            applyMachineDisplayEntries: rows => store.getState().replaceMachineDisplays(rows),
+            applyMachines: (rows, replace) => {
+                for (const machine of rows) versions.push(machine.daemonStateVersion);
+                store.getState().applyMachines(rows, replace);
+            },
+        });
+        await read(false);
+        expect(store.getState().machines.m_locked?.availability?.kind).toBe('locked');
+        await read(true);
+        expect(store.getState().machines.m_locked).toMatchObject({ daemonStateVersion: 84, availability: { kind: 'available' } });
         expect(versions).toEqual([...versions].sort((left, right) => left - right));
     });
 
