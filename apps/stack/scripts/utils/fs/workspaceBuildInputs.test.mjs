@@ -1,11 +1,11 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { captureBuildInputFiles, readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 
@@ -145,6 +145,28 @@ test('source build inputs capture and watch pnpm dependency resolution and polic
   for (const name of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
     assert.ok(inputs.files.includes(name), `${name} must be captured`);
     assert.ok(inputs.watchPaths.includes(join(fixture.root, name)), `${name} must be watched`);
+  }
+});
+
+test('daemon capture retains the SEA Node pin and invalidates its identity on version changes', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-sea-capture-input-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  await writeFile(join(repoDir, 'package.json'), '{}');
+  await writeFile(join(repoDir, '.node-version'), '24.22.1\n');
+  const inputs = await readSourceComponentBuildInputs({ repoDir, component: 'daemon' });
+  const captureDir = fixture.path('capture');
+  await captureBuildInputFiles({ sourceDir: repoDir, captureDir, readPaths: () => inputs.files });
+  // The SEA producer reads this path relative to the captured repo, not the live checkout.
+  assert.equal(await readFile(join(captureDir, '.node-version'), 'utf8'), '24.22.1\n');
+  assert.ok(inputs.watchPaths.includes(join(repoDir, '.node-version')));
+  const identity = await readBuildInputIdentity({ sourceDir: repoDir, files: inputs.files });
+  await writeFile(join(repoDir, '.node-version'), '24.22.2\n');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: repoDir, files: inputs.files }), identity);
+  assert.equal(await readFile(join(captureDir, '.node-version'), 'utf8'), '24.22.1\n');
+  for (const component of ['server', 'expo']) {
+    const other = await readSourceComponentBuildInputs({ repoDir, component });
+    assert.equal(other.files.includes('.node-version'), false, `${component} does not compile the CLI SEA`);
   }
 });
 
