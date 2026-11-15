@@ -30,6 +30,7 @@ let homeId: string;
 beforeEach(async () => {
     await homes.reset();
     homeId = await homes.addHome({ name: 'Banner Home', serverUrl: 'https://guard-banner.test', accountId: 'owner', currentAccount: true });
+    storage.getState().activateProfileScope({ serverId: homeId, accountId: 'owner' });
 });
 
 const before = storage.getState();
@@ -48,6 +49,25 @@ function stoppingNamed(stopAt: number): Session {
 }
 
 describe('GuardStopWarningDesktopBanners', () => {
+    it('announces the same warning separately after its Home changes Account', async () => {
+        const stopAt = Date.now() + 8 * 60_000;
+        storage.getState().activateProfileScope({ serverId: homeId, accountId: 'owner' });
+        storage.setState({ sessions: { tidy: stopping(stopAt) } });
+        const screen = await renderScreen(<GuardStopWarningDesktopBanners />);
+        const shows = () => os.invoke.mock.calls.filter(([command]) => command === 'desktop_notification_show');
+        await vi.waitFor(() => expect(shows()).toHaveLength(1));
+        await act(async () => {
+            await homes.switchAccount(homeId, 'replacement-owner', { currentAccount: true });
+            storage.getState().activateProfileScope({ serverId: homeId, accountId: 'replacement-owner' });
+            storage.setState({ sessions: { tidy: stopping(stopAt) } });
+        });
+        await vi.waitFor(() => expect(shows()).toHaveLength(2));
+        const payloads = shows().map(([, args]) => (args as { notification: { identifier: string; accountId: string } }).notification);
+        expect(payloads.map(payload => payload.accountId)).toEqual(['owner', 'replacement-owner']);
+        expect(payloads[0].identifier).not.toBe(payloads[1].identifier);
+        await screen.unmount();
+    });
+
     it('omits recording-private guard banners while still announcing a public Session', async () => {
         const stopAt = Date.now() + 7 * 60_000;
         storage.setState({ sessions: { named: stoppingNamed(stopAt), tidy: stopping(stopAt) } });

@@ -79,6 +79,24 @@ User-action requests include cases such as:
 
 A confirmed canonical completion can also remove the matching ordinary permission or question notification. Cleanup checks the original Home, Account, session, request and turn; it preserves unknown or newer requests and runs even when sending local notifications is disabled.
 
+## Desktop and browser Activity clicks (development)
+
+In unreleased development builds, clicking a desktop Activity notification
+brings back Happier's main window and opens its original session on its saved
+Home. Browser Activity clicks use the same saved Account checks. Signing in to
+another Account on that Home prevents an old notification from opening the
+session. These clicks open the session for review; they cannot approve a request
+or execute a plugin action.
+
+Desktop clicks received before the interface is ready are queued until it can
+check their destination. Windows requires the app's notification identity and app
+links to be registered. On Windows 11, native development checks have verified
+banner clicks with the window minimized or normally closed (hidden), and retained
+Notification Center clicks with the window minimized, hidden, or the app exited.
+Each restored or launched the main window and opened the original session on its
+saved Home and Account. Signed/installed release journeys, Windows 10, and live
+activation on macOS and Linux remain unvalidated.
+
 ## Desktop Guard warnings (development)
 
 The development Tauri client has a native transport for **Keep running** and
@@ -98,9 +116,9 @@ cannot run after signing in to another Account on that Home.
 
 Keep Happier running on Linux, including in the background, to receive native
 actions. Fully quitting ends its notification connection; reopen the session to
-use its current in-app warning. Retained Windows Action Center activation still
-needs an installer identity change, and native cold-start behavior remains
-unverified. Open the session to inspect its countdown and use its in-app control.
+use its current in-app warning. Windows Guard button activation and native
+cold-start behavior for Guard warnings remain unverified. Open the session to
+inspect its countdown and use its in-app control.
 
 ## Server-aware safety rules
 

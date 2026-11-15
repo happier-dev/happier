@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { isDesktopMainWindowFocused } from '@/desktop/window/desktopMainWindowPresence';
+import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { readSessionListGuardState } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -17,7 +18,7 @@ import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/
 
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
 
-type Warning = Readonly<{ key: string; sessionId: string; serverId: string; machineId: string;
+type Warning = Readonly<{ key: string; sessionId: string; serverId: string; accountId: string; machineId: string;
     rule: 'idle_sessions' | 'memory_guard'; stopAt: number; title: string }>;
 
 /** Each warning is announced once on this computer (a Session's stop at one time). */
@@ -32,8 +33,10 @@ function selectWarnings(state: ReturnType<typeof storage.getState>, isSessionVis
         const serverId = typeof session.serverId === 'string' ? session.serverId : '';
         if (!isSessionVisible({ serverId, sessionId: session.id })) continue;
         const machineId = readSessionOwnerMetadataView(session)?.machineId;
-        if (!serverId || !machineId) continue;
-        warnings.push({ key: JSON.stringify([serverId, session.id, guard.stopAt]), sessionId: session.id, serverId,
+        const scope = selectActiveServerAccountScopeForServer(state.profileScope, serverId);
+        if (!scope || !machineId) continue;
+        warnings.push({ key: JSON.stringify([serverId, scope.accountId, session.id, guard.stopAt]), sessionId: session.id, serverId,
+            accountId: scope.accountId,
             machineId, rule: guard.rule, stopAt: guard.stopAt,
             title: readSessionNameIfNamed(session) ?? t('machineGuard.activity.kinds.something') });
     }
@@ -65,7 +68,7 @@ export function GuardStopWarningDesktopBanners(): null {
             fireAndForget(sendTauriLocalNotification({
                 title: t('machineGuard.session.bannerTitle', { title: warning.title, minutes }),
                 body: t('machineGuard.session.bannerBody'),
-                ...(native ? { interaction: { identifier: warning.key, data, actions: [
+                ...(native ? { interaction: { identifier: warning.key, accountId: warning.accountId, data, actions: [
                     { id: PUSH_NOTIFICATION_ACTION_IDS.guardKeepRunningV1, title: t('machineGuard.session.keepRunning') },
                     { id: PUSH_NOTIFICATION_ACTION_IDS.guardStopNowV1, title: t('common.stop') },
                 ] } } : {}),

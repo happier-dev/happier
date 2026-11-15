@@ -3424,11 +3424,11 @@ and canonical action identifiers back through `useNotificationResponseRouting`.
 `guardStopWarningLifecycle` rechecks the saved Home, current Account and current
 warning before invoking the normal Action executor, and owns withdrawal through
 the same transport interface used by Expo. Rust owns OS handles only; it does
-not decide Guard eligibility or Action approval. Ordinary text notifications
-retain their existing plugin delivery within that same channel.
+not decide Guard eligibility or Action approval. Notifications without interaction
+metadata retain their existing plugin delivery within that same channel.
 
-This is unreleased development implementation, pending loaded desktop validation.
-The native notification retains the original Home, Account and warning occurrence:
+This Guard transport is unreleased development implementation, pending Guard
+desktop validation. The native notification retains the original Home, Account and warning occurrence:
 macOS uses `userInfo`, and Windows uses protocol activation arguments with the
 installed channel's URL scheme. A process-local response queue bridges native
 launch to renderer readiness; there is no notification disk store. Recovered
@@ -3444,11 +3444,15 @@ Linux requires an action-capable notification daemon and the original sending
 connection: full process exit ends XDG action delivery. Reopen the app to use
 the current in-app warning in that state. macOS requires a real application
 bundle and notification permission. Windows protocol activation requires the
-installed application's AppUserModelID and registered URL scheme; Action Center
-persistence additionally needs the shortcut's `ToastActivatorCLSID`, which the
-current stock installer does not set. Retained Windows cold-start activation
-therefore remains incomplete. Signed/installed native notification journeys are
-release checks; host tests do not establish visible delivery or OS activation.
+application's configured AppUserModelID, matching Start-menu shortcut and
+registered URL scheme. Actual Windows 11 development checks verified ordinary
+Activity banner clicks from minimized/hidden states and retained Notification
+Center clicks from minimized, hidden and fully exited states, preserving the
+original Home, Account and Session. Those checks used a matching shortcut without
+`ToastActivatorCLSID`; they do not establish Windows 10 or signed/installed release
+behavior. Guard button activation remains unvalidated. Signed/installed native
+notification journeys are release checks; host tests alone do not establish
+visible delivery or OS activation.
 
 `machines.list { refresh: true }` runs the existing Home machine inventory
 fetch-and-apply owner before listing, including Overview Retry and page refresh.

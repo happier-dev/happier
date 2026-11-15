@@ -5,7 +5,6 @@ import * as React from 'react';
 import { AppState, Platform } from 'react-native';
 
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
-import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
 import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
 import { openAddHome } from '@/components/homes/add/openAddHome';
@@ -16,6 +15,7 @@ import { consumeNotificationPermissionRecoveryNotice, markNotificationPermission
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerSnapshot,
+    getServerProfileById,
     listServerProfiles,
     resolveSavedServerProfileByUrl,
 } from '@/sync/domains/server/serverProfiles';
@@ -38,7 +38,7 @@ import { resolveNotificationSavedHome as findSavedServerProfile } from '../resol
 import type { ActivityInteractionCommand } from '@/activity/actions/resolveActivityInteractionCommand';
 import { executeGuardStopWarningAction, reconcileGuardStopWarningNotifications } from '../guardStopWarningLifecycle';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { claimNotificationNavigationIntent, navigateWithNotificationAccount, type NotificationAccountNavigationTarget, type NotificationNavigationIntent } from './navigateWithNotificationAccount';
 import { usePluginNotificationCategories } from './usePluginNotificationCategories';
 import { subscribeDesktopNotificationResponses } from '../channels/tauriNotificationPlugin';
 import { usePluginPageExplicitNavigation } from '@/components/plugins/pages/pluginPageNavigation';
@@ -181,40 +181,14 @@ export function useNotificationResponseRouting(params: Readonly<{
                     {
                         text: t('notifications.actions.reviewPendingRequests'),
                         onPress: () => {
-                            fireAndForget((async () => {
-                                try {
-                                    if (cancellation.signal.aborted || AppState.currentState !== 'active') return;
-                                    if (notice.target) {
-                                        const target = notice.target;
-                                        const admitted = await resolveServerCredentialAccountScope(target.serverId);
-                                        if (admitted.kind !== 'bound' || !areServerAccountScopesEqual(admitted.scope, target)) {
-                                            throw new Error('Recovery target unavailable');
-                                        }
-                                        if (cancellation.signal.aborted || AppState.currentState !== 'active') return;
-                                        const switched = await setActiveServerAndSwitch({
-                                            serverId: target.serverId,
-                                            scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
-                                            refreshAuth: refreshAuthRef.current,
-                                        });
-                                        if (switched === 'blocked') throw new Error('Recovery Home switch blocked');
-                                        // Home focus and credentials may change while switching.
-                                        // Revalidate the same Account before opening its Inbox.
-                                        const current = await resolveServerCredentialAccountScope(target.serverId);
-                                        if (current.kind !== 'bound' || !areServerAccountScopesEqual(current.scope, target)
-                                            || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, target.serverId)) {
-                                            throw new Error('Recovery target changed');
-                                        }
-                                    }
-                                    if (!cancellation.signal.aborted && AppState.currentState === 'active') {
-                                        navigateExplicit('/inbox');
-                                    }
-                                } catch {
-                                    console.warn('[notifications] Permission action review target unavailable');
-                                    if (!cancellation.signal.aborted && AppState.currentState === 'active') {
-                                        Modal.alert(t('common.error'), t('notifications.permissionActionReviewUnavailable'));
-                                    }
-                                }
-                            })(), { tag: 'notificationPermissionAction.review' });
+                            const profile = notice.target ? getServerProfileById(notice.target.serverId) : null;
+                            fireAndForget(navigateWithNotificationAccount({
+                                target: { serverId: notice.target?.serverId, serverUrl: profile?.serverUrl ?? null,
+                                    route: '/inbox', expectedScope: notice.target ?? undefined },
+                                navigate: () => { navigateExplicit('/inbox'); },
+                                refreshAuth: refreshAuthRef.current,
+                                isDisposed: () => cancellation.signal.aborted || AppState.currentState !== 'active',
+                            }), { tag: 'notificationPermissionAction.review' });
                         },
                     },
                 ]);
@@ -223,63 +197,34 @@ export function useNotificationResponseRouting(params: Readonly<{
             }
         };
 
-        const navigateWithNotificationAccount = (
-            target: Readonly<{ serverId?: string | null; serverUrl?: string | null; route: string; accountId?: string | null }>,
-            navigate: () => void,
-        ): void => {
-            if (cancellation.signal.aborted) return;
-            if (!target.accountId) {
-                navigate();
-                return;
-            }
-            fireAndForget((async () => {
-                try {
-                    const saved = findSavedServerProfile({ serverId: target.serverId, serverUrl: target.serverUrl ?? '' });
-                    if (!saved) throw new Error('Notification Home unavailable');
-                    const admitted = await resolveServerCredentialAccountScope(saved.id);
-                    if (admitted.kind !== 'bound' || admitted.scope.accountId !== target.accountId) {
-                        throw new Error('Notification Account unavailable');
-                    }
-                    const routeServerId = readSessionRouteServerId({
-                        serverId: new URL(target.route, 'https://internal.invalid').searchParams.get('serverId'),
-                    });
-                    if (routeServerId && !areServerProfileIdentifiersEquivalent(routeServerId, admitted.scope.serverId)) {
-                        throw new Error('Notification route Home does not match');
-                    }
-                    if (cancellation.signal.aborted) return;
-                    if (!isNotificationServerActive({ serverId: saved.id, serverUrl: saved.serverUrl })) {
-                        const switched = await setActiveServerAndSwitch({
-                            serverId: saved.id,
-                            scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
-                            refreshAuth: refreshAuthRef.current,
-                        });
-                        if (switched === 'blocked') throw new Error('Notification Home switch blocked');
-                    }
-                    const current = await resolveServerCredentialAccountScope(saved.id);
-                    if (current.kind !== 'bound' || !areServerAccountScopesEqual(current.scope, admitted.scope)
-                        || !areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, admitted.scope.serverId)) {
-                        throw new Error('Notification Account changed');
-                    }
-                    if (!cancellation.signal.aborted) navigate();
-                } catch {
-                    console.warn('[notifications] Session navigation Account unavailable');
-                    if (!cancellation.signal.aborted && AppState.currentState === 'active') {
-                        Modal.alert(t('common.error'), t('notifications.permissionActionReviewUnavailable'));
-                    }
-                }
-            })(), { tag: 'notificationSessionNavigation' });
+        const navigateToNotificationAccount = (target: NotificationAccountNavigationTarget, navigate: () => void, intent?: NotificationNavigationIntent): void => {
+            fireAndForget(navigateWithNotificationAccount({ target, navigate,
+                refreshAuth: refreshAuthRef.current, isDisposed: () => cancellation.signal.aborted, intent,
+            }), { tag: 'notificationSessionNavigation' });
         };
 
-        const connectAndSwitchUnsavedHome = (serverUrl: string, route: string, command: ActivityInteractionCommand, tag: string, accountId?: string | null): void => {
+        const connectAndSwitchUnsavedHome = (serverUrl: string, route: string, command: ActivityInteractionCommand, tag: string, accountId: string | null | undefined, initialIntent: NotificationNavigationIntent): void => {
+            let intent = initialIntent;
+            const isInactive = () => cancellation.signal.aborted || !intent.isCurrent();
             setPendingNotificationNav({ serverUrl, route, ...(accountId ? { accountId } : {}) });
             fireAndForget((async () => {
                 try {
                     const connected = await connectHomeAtAddress({
                         serverUrl,
                         source: 'notification',
-                        confirmInsecureHttp: confirmInsecureHomeHttp,
-                        confirmCanonicalUrl: confirmCanonicalHomeUrl,
+                        confirmInsecureHttp: async () => {
+                            const accepted = await confirmInsecureHomeHttp();
+                            if (accepted && !cancellation.signal.aborted) intent = claimNotificationNavigationIntent();
+                            return accepted;
+                        },
+                        confirmCanonicalUrl: async (addressChange) => {
+                            const accepted = await confirmCanonicalHomeUrl(addressChange);
+                            // Keep/Use both choose an address; a mismatch Cancel grants nothing.
+                            if ((accepted || !addressChange) && !cancellation.signal.aborted) intent = claimNotificationNavigationIntent();
+                            return accepted;
+                        },
                     });
+                    if (isInactive()) return;
                     if (connected.kind !== 'connected') {
                         if (connected.kind === 'declined') clearPendingNotificationNav();
                         const message = homeConnectFailureMessage(connected);
@@ -299,11 +244,12 @@ export function useNotificationResponseRouting(params: Readonly<{
                         scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
                         refreshAuth: refreshAuthRef.current,
                     });
-                    if (switched === 'blocked') return;
+                    if (switched === 'blocked' || isInactive()) return;
                     clearPendingNotificationNav();
-                    navigateWithNotificationAccount({ serverUrl: connected.profile.serverUrl, serverId: connected.profile.id,
-                        route: verifiedRoute, accountId }, () => { navigateExplicit(verifiedRoute); });
+                    navigateToNotificationAccount({ serverUrl: connected.profile.serverUrl, serverId: connected.profile.id,
+                        route: verifiedRoute, accountId }, () => { navigateExplicit(verifiedRoute); }, intent);
                 } catch (error) {
+                    if (isInactive()) return;
                     Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
                 }
             })(), { tag });
@@ -327,7 +273,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                 const route = admittedServerId
                     ? withInternalRouteQueryParams(pending.route, { serverId: admittedServerId })
                     : pending.route;
-                navigateWithNotificationAccount({ ...pending, route }, () => { navigateExplicit(route); });
+                navigateToNotificationAccount({ ...pending, route }, () => { navigateExplicit(route); });
                 return () => { cancellation.abort(); };
             }
         }
@@ -363,7 +309,10 @@ export function useNotificationResponseRouting(params: Readonly<{
                 if (handled.has(parsed.dedupeKey)) return;
                 handled.add(parsed.dedupeKey);
             }
-            if (command.kind === 'ignore') return;
+            if (command.kind === 'ignore' || cancellation.signal.aborted) return;
+            const route = resolveNotificationCommandRoute(command);
+            if (!route) return;
+            const navigationIntent = claimNotificationNavigationIntent();
 
             if (command.kind === 'openNotice') {
                 const notice = command;
@@ -379,32 +328,43 @@ export function useNotificationResponseRouting(params: Readonly<{
                             allowExecution, signal: cancellation.signal,
                         }) : notice.route;
                     if (!route || cancellation.signal.aborted) return;
-                    navigateWithNotificationAccount({ ...notice, route }, () => { navigateExplicit(route); });
+                    navigateToNotificationAccount({ ...notice, route }, () => { navigateExplicit(route); }, navigationIntent);
                 })(), { tag: 'RootLayout.notificationNav.notice' });
                 return;
             }
 
-            const route = resolveNotificationCommandRoute(command);
-            if (!route) return;
             if (command.kind === 'executeAction' && command.guardWarning) {
                 fireAndForget((async () => {
                     const result = await executeGuardStopWarningAction(command, cancellation.signal, expectedAccountId);
                     if (cancellation.signal.aborted) return;
                     if (result && !result.ok) Modal.alert(t('common.error'), result.error);
                     await reconcileGuardStopWarningNotifications();
-                    navigateWithNotificationAccount({ serverId: command.target.serverId, serverUrl: command.target.serverUrl,
-                        route, accountId: expectedAccountId ?? parsed.accountId }, () => { navigateExplicit(route); });
+                    navigateToNotificationAccount({ serverId: command.target.serverId, serverUrl: command.target.serverUrl,
+                        route, accountId: expectedAccountId ?? parsed.accountId }, () => { navigateExplicit(route); }, navigationIntent);
                 })(), { tag: 'RootLayout.guardNotificationAction' });
                 return;
             }
 
             const serverUrl = resolveNotificationCommandServerUrl(command);
             const serverId = resolveNotificationCommandServerId(command);
-            const navigationAccountId = command.kind === 'openSettings' || command.kind === 'openInbox' ? null : parsed.accountId;
+            const navigationAccountId = command.kind === 'openSettings' || command.kind === 'openInbox' ? null : expectedAccountId ?? parsed.accountId;
             const navigationTarget = { serverId, serverUrl, accountId: navigationAccountId };
             // Opening a disk alert is the person's intent to prepare the low-disk pile on that exact Home (STO-23).
             if (command.kind === 'openMachine' && command.serverId) {
                 beginMachinePageTabIntent({ serverId: command.serverId, machineId: command.machineId }, command.tab);
+            }
+            // Account-bound navigation admits and switches through one owner. Native
+            // URI input can only target an already saved Home and Account.
+            const savedAccountHome = navigationAccountId
+                ? findSavedServerProfile({ serverId, serverUrl: serverUrl ?? '' }) : null;
+            if (navigationAccountId && (savedAccountHome || expectedAccountId)) {
+                const accountRoute = savedAccountHome
+                    ? resolveNotificationCommandRouteForVerifiedHome(command, savedAccountHome.id) ?? route : route;
+                navigateToNotificationAccount({ ...navigationTarget,
+                    serverId: savedAccountHome?.id ?? serverId,
+                    serverUrl: savedAccountHome?.serverUrl ?? serverUrl, route: accountRoute },
+                () => { navigateExplicit(accountRoute); }, navigationIntent);
+                return;
             }
             const routeToServerSettingsForUrl = (url: string) => {
                 openAddHome({ ...router, push: navigateExplicit }, { address: url, source: 'notification' });
@@ -425,9 +385,10 @@ export function useNotificationResponseRouting(params: Readonly<{
                                     scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
                                     refreshAuth: refreshAuthRef.current,
                                 });
+                                if (cancellation.signal.aborted || !navigationIntent.isCurrent()) return;
                                 clearPendingNotificationNav();
-                                navigateWithNotificationAccount({ ...navigationTarget, serverId: saved.id, serverUrl: saved.serverUrl,
-                                    route: savedRoute }, () => { navigateExplicit(savedRoute); });
+                                navigateToNotificationAccount({ ...navigationTarget, serverId: saved.id, serverUrl: saved.serverUrl,
+                                    route: savedRoute }, () => { navigateExplicit(savedRoute); }, navigationIntent);
                             } catch {
                                 // keep pending notification nav as fallback
                             }
@@ -437,12 +398,12 @@ export function useNotificationResponseRouting(params: Readonly<{
 
                     if (isUnsafeNotificationServerUrl(serverUrl)) {
                         // Unsafe/mismatched server url: fail closed for actions; navigate only.
-                        navigateWithNotificationAccount({ ...navigationTarget, route }, () => { navigateExplicit(route); });
+                        navigateToNotificationAccount({ ...navigationTarget, route }, () => { navigateExplicit(route); }, navigationIntent);
                         return;
                     }
 
                     if (listServerProfiles().length === 0) {
-                        connectAndSwitchUnsavedHome(serverUrl, route, command, 'RootLayout.notificationNav.autoAddServer', navigationAccountId);
+                        connectAndSwitchUnsavedHome(serverUrl, route, command, 'RootLayout.notificationNav.autoAddServer', navigationAccountId, navigationIntent);
                         return;
                     }
                     // Servers exist but the target isn't saved: redirect to server settings with a prefilled url.
@@ -467,7 +428,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                 || command.kind === 'openWorkflowRun'
                 || command.kind === 'openMachine'
             ) {
-                navigateWithNotificationAccount({ ...navigationTarget, route: admittedRoute }, () => { navigateExplicit(admittedRoute); });
+                navigateToNotificationAccount({ ...navigationTarget, route: admittedRoute }, () => { navigateExplicit(admittedRoute); }, navigationIntent);
             }
         };
 
@@ -480,11 +441,18 @@ export function useNotificationResponseRouting(params: Readonly<{
         if (nativeDesktop) {
             fireAndForget(subscribeDesktopNotificationResponses(response => {
                 const content = response?.notification?.request?.content;
-                // URI activation is public input. This native channel carries Guard warnings only;
-                // permission answers and plugin Actions cannot enter through a forged launch URL.
-                if (content?.data?.topic !== 'guard_stop_warning' || !content.accountId) return;
-                maybeRedirectFromResponse(response, 'default', true, content.accountId);
-            }).then(remove => {
+                // URI activation is public input. Guard keeps its action authority;
+                // ordinary Activity permits only a default Session navigation.
+                if (!content?.accountId) return;
+                if (content.data?.topic === 'guard_stop_warning') {
+                    maybeRedirectFromResponse(response, 'default', true, content.accountId);
+                    return;
+                }
+                const tap = parseNotificationTap({ response, defaultActionIdentifier: 'default' });
+                if (response.actionIdentifier !== 'default' || tap?.command.kind !== 'openSession'
+                    || !tap.accountId || tap.accountId !== content.accountId) return;
+                maybeRedirectFromResponse(response, 'default', false, content.accountId);
+            }, cancellation.signal).then(remove => {
                 if (disposed) remove();
                 else subscription = { remove };
             }), { tag: 'RootLayout.desktopNotificationResponse' });

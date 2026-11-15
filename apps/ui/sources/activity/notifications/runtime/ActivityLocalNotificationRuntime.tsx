@@ -37,6 +37,7 @@ import { findSessionListLookupSession } from '@/sync/domains/session/listing/ses
 import { buildSessionFromListRenderable } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { isDesktopHost, desktopHostKind } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { randomUUID } from '@/platform/randomUUID';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     buildSessionContextFacts,
@@ -56,6 +57,8 @@ import {
     sendWebLocalNotification,
     subscribeWebLocalNotificationPermission,
 } from '../channels/sendWebLocalNotification';
+import { parseNotificationTap } from '../notificationRouting';
+import { navigateWithNotificationAccount } from './navigateWithNotificationAccount';
 import { GuardStopWarningDesktopBanners } from './GuardStopWarningDesktopBanners';
 import { ManagedMachineDeletionNotificationRuntime } from './ManagedMachineDeletionNotificationRuntime';
 import { observeGuardStopWarningNotifications } from '../guardStopWarningLifecycle';
@@ -145,8 +148,8 @@ function resolveDocumentHostForegroundState(): 'foreground' | 'background' | und
  * Every open tab receives the same event, and the browser replaces a notification with the same
  * tag, so tagging by the event's canonical identity shows one notification per event.
  */
-function resolveWebNotificationTag(event: ActivityLocalNotificationEvent, identity: string | undefined): string | undefined {
-    return identity ? `happier:${JSON.stringify([sessionAddressKey(event.address), event.event, identity])}` : undefined;
+function resolveWebNotificationTag(event: ActivityLocalNotificationEvent, identity: string | undefined, accountId: string): string | undefined {
+    return identity ? `happier:${JSON.stringify([sessionAddressKey(event.address), accountId, event.event, identity])}` : undefined;
 }
 
 function useActivityLocalNotificationLocalSettings(): Partial<LocalSettings> {
@@ -180,10 +183,26 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     // A clicked browser notification opens its Session through the shared Home switch.
     const router = useDestinationRouter();
     const refreshFromActiveServer = useOptionalAuth()?.refreshFromActiveServer;
-    const openSessionRef = React.useRef((_address: ActivityLocalNotificationEvent['address']) => {});
-    openSessionRef.current = (address) => {
-        void navigateToSession(address.sessionId, { serverId: address.serverId },
-            { router, refreshFromActiveServer: refreshFromActiveServer ?? (async () => {}) });
+    const openSessionRef = React.useRef((_data: unknown) => {});
+    openSessionRef.current = (data) => {
+        const parsed = parseNotificationTap({
+            response: { actionIdentifier: 'default', notification: { request: { content: { data } } } },
+            defaultActionIdentifier: 'default',
+        });
+        if (parsed?.command.kind !== 'openSession' || !parsed.accountId) return;
+        const command = parsed.command;
+        fireAndForget(navigateWithNotificationAccount({
+            target: { serverId: command.serverId, serverUrl: command.serverUrl,
+                route: command.route, accountId: parsed.accountId },
+            refreshAuth: refreshFromActiveServer ?? null,
+            // Browser notifications remain clickable after their delivering effect retires.
+            isDisposed: () => false,
+            navigate: () => {
+                fireAndForget(navigateToSession(command.sessionId, { serverId: command.serverId ?? undefined },
+                    { router, refreshFromActiveServer: refreshFromActiveServer ?? (async () => {}) }),
+                { tag: 'ActivityLocalNotificationRuntime.openSession' });
+            },
+        }), { tag: 'ActivityLocalNotificationRuntime.admitSession' });
     };
     React.useEffect(() => {
         const nativeDesktop = isDesktopHost() && desktopHostKind() === 'tauri';
@@ -295,7 +314,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
             }
 
             const eventIdentity = resolveLocalNotificationEventIdentity(event);
-            const accountId = audienceSource.audienceScopes?.get(event.address.serverId)?.accountId;
+            const accountId = scope.accountId;
             // Desktop has no Expo foreground presentation callback. Native
             // arrivals arbitrate there after current policy, not while scheduling.
             // Identityless state observations always continue through the
@@ -360,6 +379,11 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                 const submission = sendTauriLocalNotification({
                     title: notification.title,
                     body: notification.body,
+                    ...(desktopHostKind() === 'tauri' ? { interaction: {
+                        identifier: resolveWebNotificationTag(event, eventIdentity, accountId) ?? randomUUID(),
+                        data: notification.data,
+                        actions: [],
+                    } } : {}),
                 }).then((accepted) => {
                     if (!accepted || !eventIdentity || !accountId) return;
                     noteActivityAlertPresented({
@@ -377,13 +401,12 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
 
             if (Platform.OS === 'web') {
                 // Plain browsers have no push leg on this device, so there is nothing to arbitrate.
-                const address = event.address;
                 fireAndForget(sendWebLocalNotification({
                     title: notification.title,
                     body: notification.body,
-                    tag: resolveWebNotificationTag(event, eventIdentity),
+                    tag: resolveWebNotificationTag(event, eventIdentity, accountId),
                     silent: deliveryPlan.delivery === 'silent',
-                    onClick: () => openSessionRef.current(address),
+                    onClick: () => openSessionRef.current(notification.data),
                 }), { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
                 return;
             }

@@ -93,7 +93,9 @@ fn make_content(notification: &DesktopNotification) -> Retained<UNMutableNotific
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(&notification.title));
     content.setBody(&NSString::from_str(&notification.body));
-    content.setCategoryIdentifier(&NSString::from_str("happier.guardStopWarning.v1"));
+    if !notification.actions.is_empty() {
+        content.setCategoryIdentifier(&NSString::from_str("happier.guardStopWarning.v1"));
+    }
     let payload = NSString::from_str(
         &serde_json::to_string(notification).expect("JSON notification envelope"),
     );
@@ -144,27 +146,29 @@ pub async fn show(
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // Objective-C objects stay on this synchronous side of the IPC await.
     {
-        let category_id = NSString::from_str("happier.guardStopWarning.v1");
-        let actions = notification
-            .actions
-            .iter()
-            .map(|action| {
-                UNNotificationAction::actionWithIdentifier_title_options(
-                    &NSString::from_str(&action.id),
-                    &NSString::from_str(&action.title),
-                    UNNotificationActionOptions::Foreground,
-                )
-            })
-            .collect::<Vec<_>>();
-        let category =
-            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
-                &category_id,
-                &NSArray::from_retained_slice(&actions),
-                &NSArray::new(),
-                UNNotificationCategoryOptions::empty(),
-            );
         let center = UNUserNotificationCenter::currentNotificationCenter();
-        center.setNotificationCategories(&NSSet::from_retained_slice(&[category]));
+        if !notification.actions.is_empty() {
+            let category_id = NSString::from_str("happier.guardStopWarning.v1");
+            let actions = notification
+                .actions
+                .iter()
+                .map(|action| {
+                    UNNotificationAction::actionWithIdentifier_title_options(
+                        &NSString::from_str(&action.id),
+                        &NSString::from_str(&action.title),
+                        UNNotificationActionOptions::Foreground,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let category =
+                UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                    &category_id,
+                    &NSArray::from_retained_slice(&actions),
+                    &NSArray::new(),
+                    UNNotificationCategoryOptions::empty(),
+                );
+            center.setNotificationCategories(&NSSet::from_retained_slice(&[category]));
+        }
         let content = make_content(notification);
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
             &NSString::from_str(&notification.identifier),
@@ -237,6 +241,19 @@ pub async fn list(_app: &AppHandle) -> Result<Vec<DesktopNotification>, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_only_content_does_not_use_the_guard_button_category() {
+        let mut notification: DesktopNotification = serde_json::from_value(serde_json::json!({
+            "identifier": "activity:home:s", "accountId": "owner", "title": "Ready", "body": "Finished",
+            "data": { "sessionId": "s" }, "actions": []
+        })).unwrap();
+        assert!(make_content(&notification).categoryIdentifier().is_empty());
+        notification.actions.push(super::super::NotificationAction {
+            id: "keep".into(), title: "Keep running".into()
+        });
+        assert_eq!(make_content(&notification).categoryIdentifier().to_string(), "happier.guardStopWarning.v1");
+    }
 
     #[test]
     fn delivered_content_recovers_the_original_envelope_without_process_state() {

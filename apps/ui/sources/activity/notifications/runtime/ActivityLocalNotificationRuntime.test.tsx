@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { createDeferred, createSessionAccessFixture, createSessionFixture, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
-import { createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -17,7 +17,11 @@ import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch'
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNotification';
+import type { DesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
+import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -48,7 +52,10 @@ type NotificationSessionFixture = Partial<Omit<Session, 'metadata'>> & {
 };
 const initialState = storage.getInitialState();
 const homes = createHomeGovernanceHarness();
+const desktopSecureStorage = createDesktopSecureStorageBoundary();
 let managedMachines: ManagedMachineV1[] = [];
+let desktopAppWindowSurfaces: readonly DesktopAppWindowSurface[] = [];
+let browserRuntime: Awaited<ReturnType<typeof installBrowserRuntimeForTests>> | null = null;
 const notificationHttp: RuntimeFetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: managedMachines });
@@ -79,7 +86,7 @@ type ExpoLocalNotificationParams =
     Parameters<typeof import('../channels/sendExpoLocalNotification')['sendExpoLocalNotification']>[0];
 
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async (_params: ExpoLocalNotificationParams) => 'notif-1'));
-const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
+const nativeNotificationShow = vi.hoisted(() => vi.fn(async (_notification: unknown): Promise<void> => {}));
 const cancelScheduledNotification = vi.hoisted(() => vi.fn(async (_identifier: string) => undefined));
 const routerNavigate = vi.hoisted(() => vi.fn());
 
@@ -135,6 +142,22 @@ vi.mock('@/text', async () => {
 // Publish fixtures at the same real state boundary the notification source reads.
 // No activity selector, Account scope, policy, or profile decision is stubbed.
 async function renderScreen(element: React.ReactElement) {
+    // A case may select web after the native beforeEach restore. Seed that
+    // platform's genuine credential SDK store instead of bypassing TokenStorage.
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    let restoredPlatformCredentials = false;
+    for (const serverUrl of ['https://stack.example.test', 'https://secondary.example.test']) {
+        const home = homes.findByServerUrl(serverUrl);
+        if (home?.accountId && !await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId: home.serverId })) {
+            await homes.switchAccount(home.serverId, home.accountId);
+            restoredPlatformCredentials = true;
+        }
+    }
+    setRuntimeFetch(notificationHttp);
+    if (restoredPlatformCredentials) {
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+    }
     const sessions = Object.fromEntries(Object.entries(sessionsByIdValue).map(([id, fixture]) => {
         return [id, createSessionFixture({
             active: true,
@@ -160,22 +183,19 @@ async function renderScreen(element: React.ReactElement) {
     return screen;
 }
 
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: {
-            getCredentialsForServerUrl: async (serverUrl: string) => ({
-                token: createAccountTokenForTests(serverUrl.includes('secondary') ? 'account-b' : 'account-a'),
-            }),
-        },
-    });
-});
-
-
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
     isDesktopHost: () => reactNativeRuntime.isDesktopHost,
+    desktopHostKind: () => reactNativeRuntime.isDesktopHost ? 'tauri' : null,
+    invokeDesktopHost: async (command: string, args?: Readonly<Record<string, unknown>>) => {
+        if (command.startsWith('desktop_secure_storage_')) return desktopSecureStorage.invoke(command, args);
+        if (command === 'desktop_app_window_surfaces') return desktopAppWindowSurfaces;
+        if (command === 'desktop_app_window_surface') return;
+        if (command === 'desktop_notification_show') return nativeNotificationShow(args?.notification);
+        if (command === 'desktop_notification_list') return [];
+        if (command === 'desktop_notification_take_responses') return [];
+        throw new Error(`Unexpected desktop command ${command}`);
+    },
     listenDesktopHostEvent: async (event: string, handler: (payload: unknown) => void) => {
         const listener = (event: { payload: unknown }) => handler(event.payload);
         const listeners = nativeSurfaceListeners.get(event) ?? new Set();
@@ -193,9 +213,8 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 await loadSyncSingletonForTests();
 
-vi.mock('../channels/sendTauriLocalNotification', () => ({
-    sendTauriLocalNotification,
-}));
+vi.mock('@tauri-apps/plugin-notification', () => ({ isPermissionGranted: async () => true,
+    requestPermission: async () => 'granted', sendNotification: vi.fn() }));
 
 describe('ActivityLocalNotificationRuntime', () => {
     beforeEach(async () => {
@@ -227,11 +246,13 @@ describe('ActivityLocalNotificationRuntime', () => {
         standardCleanup();
         vi.unstubAllGlobals();
         nativeSurfaceListeners.clear();
+        desktopAppWindowSurfaces = [];
         await restoredHome?.dispose(); restoredHome = null;
         vi.restoreAllMocks();
         resetSessionSurfaceVisibilityForTests();
         storage.setState(initialState, true);
         await homes.reset();
+        desktopSecureStorage.values.clear();
         reactNativeRuntime.platformOs = 'ios';
         reactNativeRuntime.isDesktopHost = false;
         visibleSessionIdsValue = [];
@@ -264,13 +285,15 @@ describe('ActivityLocalNotificationRuntime', () => {
             'srv_home_b': { serverName: 'Home B', listObservation: { phase: 'ready', lastSuccessAt: 1 } },
         };
         sendExpoLocalNotification.mockClear();
-        sendTauriLocalNotification.mockClear();
+        nativeNotificationShow.mockClear();
         routerNavigate.mockClear();
 
         const { resetActivityLocalNotificationRuntimeForTests } = await import('./activityLocalNotificationBus');
         resetActivityLocalNotificationRuntimeForTests();
         const { resetActivityAlertPresentationNotesForTests } = await import('../remoteAlerts/activityAlertPresentationNotes');
         resetActivityAlertPresentationNotesForTests();
+        browserRuntime?.restore();
+        browserRuntime = null;
     });
 
     it('schedules the provider deletion reminder and cancels a withdrawn deadline on a managed inventory push', async () => {
@@ -304,9 +327,8 @@ describe('ActivityLocalNotificationRuntime', () => {
         reactNativeRuntime.isDesktopHost = true;
         const surface = { windowId: 'full-b', homeId: 'srv_home_a', accountId: 'account-a', sessionId: 'session-1', focused: true };
         vi.stubGlobal('document', { visibilityState: 'hidden', hasFocus: () => false });
-        vi.stubGlobal('__TAURI_INTERNALS__', { metadata: { currentWindow: { label: 'main' } },
-            invoke: async (command: string) => command === 'desktop_app_window_surfaces' ? [surface]
-                : command === 'desktop_notification_list' ? [] : null });
+        desktopAppWindowSurfaces = [surface];
+        vi.stubGlobal('__TAURI_INTERNALS__', { metadata: { currentWindow: { label: 'main' } } });
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { CurrentSessionPresentationRuntime } = await import('@/components/sessions/presentation/CurrentSessionPresentationRuntime');
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
@@ -320,9 +342,9 @@ describe('ActivityLocalNotificationRuntime', () => {
             }
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'background-ready');
         });
-        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1));
+        await expectNotificationDelivery(() => expect(nativeNotificationShow).toHaveBeenCalledTimes(1));
         await screen.unmount();
-        expect([...nativeSurfaceListeners.values()].every(listeners => listeners.size === 0)).toBe(true);
+        expect(nativeSurfaceListeners.get('desktopAppWindow://surface')?.size).toBe(0);
     });
 
     it('does not demand mute policy for notification arrivals on a browser without an OS delivery channel', async () => {
@@ -345,7 +367,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
         expect(muteReads).toBe(0);
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
         await act(async () => { screen.tree.unmount(); });
     });
 
@@ -682,7 +704,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     it('does not record presentation when the desktop platform declines the notification', async () => {
         reactNativeRuntime.platformOs = 'web';
         reactNativeRuntime.isDesktopHost = true;
-        sendTauriLocalNotification.mockResolvedValueOnce(false);
+        nativeNotificationShow.mockRejectedValueOnce(new Error('OS notification declined'));
         const { consumeOtherLegActivityAlertPresentation } =
             await import('../remoteAlerts/activityAlertPresentationNotes');
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
@@ -701,7 +723,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             } as any], { sequenceDomain: 'session_transcript', sequence: 23 });
         });
 
-        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1));
+        await expectNotificationDelivery(() => expect(nativeNotificationShow).toHaveBeenCalledTimes(1));
         expect(consumeOtherLegActivityAlertPresentation(presentation)).toBe(false);
         await act(async () => { screen.tree.unmount(); });
     });
@@ -973,7 +995,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             data: expect.objectContaining({ sessionId: 'session-1' }),
             sound: 'happier_soft.wav',
         })));
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -1052,7 +1074,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -1082,7 +1104,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             });
 
             expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-            await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            await expectNotificationDelivery(() => expect(nativeNotificationShow).toHaveBeenCalledWith(expect.objectContaining({
                 title: 'Ready session · Home A',
             })));
 
@@ -1128,7 +1150,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -1150,7 +1172,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -1183,9 +1205,12 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(nativeNotificationShow).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Ready session · Home A',
             body: 'Command: pwd',
+            data: expect.objectContaining({ serverId: 'srv_home_a', sessionId: 'session-1', accountId: 'account-a', requestId: 'req-7' }),
+            actions: [],
+            identifier: expect.any(String),
         })));
 
         await act(async () => {
@@ -1216,7 +1241,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -1323,7 +1348,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -1424,6 +1449,7 @@ describe('ActivityLocalNotificationRuntime', () => {
 
     it('shows one browser notification per event across tabs and opens its Session on its Home when clicked', async () => {
         reactNativeRuntime.platformOs = 'web';
+        browserRuntime = await installBrowserRuntimeForTests({ url: 'https://happier.example.test/' });
         const browser = installBrowserNotificationApiStub('granted');
         vi.stubGlobal('focus', vi.fn());
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
@@ -1447,14 +1473,59 @@ describe('ActivityLocalNotificationRuntime', () => {
         expect(tags[2]).not.toBe(tags[0]);
         expect(browser.shown[0].title).toBe('Ready session · Home A');
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
+        await act(async () => {
+            expect(await setActiveServerAndSwitch({ serverId: 'srv_home_b', scope: 'tab', refreshAuth: null })).not.toBe('blocked');
+        });
         await act(async () => { browser.shown[0].onclick?.(); });
-        expect(routerNavigate).toHaveBeenCalledWith(expect.stringContaining('session-1'), expect.anything());
+        await vi.waitFor(() => expect(routerNavigate).toHaveBeenCalledWith(expect.stringContaining('session-1'), expect.anything()));
         expect(String(routerNavigate.mock.calls[0]?.[0])).toContain('srv_home_a');
 
         await firstTab.unmount();
         await secondTab.unmount();
+    });
+
+    it('keeps per-topic device-local Activity occurrences separate for each Account', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const first = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await act(async () => { notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'shared-ready'); });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(1));
+        await first.unmount();
+        await restoredHome?.dispose();
+        await homes.switchAccount('srv_home_a', 'replacement-account');
+        restoredHome = await restoreServerAccountForTest({ serverUrl: 'https://stack.example.test',
+            serverIdentityId: 'srv_home_a', accountId: 'replacement-account', request: notificationHttp });
+        storage.getState().activateProfileScope({ serverId: 'srv_home_a', accountId: 'replacement-account' });
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        saveAccountSettings({ serverId: 'srv_home_a', accountId: 'replacement-account' }, settingsParse({}), 1);
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        const second = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await act(async () => { notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'shared-ready'); });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(2));
+        expect(browser.shown[0].options?.tag).toBeTruthy();
+        expect(browser.shown[1].options?.tag).not.toBe(browser.shown[0].options?.tag);
+        await second.unmount();
+    });
+
+    it('does not open an old browser notification after the Home changes Account', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await act(async () => { notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'browser-rebound'); });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(1));
+        await homes.switchAccount('srv_home_a', 'replacement-account');
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await act(async () => { browser.shown[0].onclick?.(); });
+        await vi.waitFor(() => expect(warning).toHaveBeenCalled());
+        expect(routerNavigate).not.toHaveBeenCalled();
+        await screen.unmount();
     });
 
     it('notifies about the open browser Session only while its window does not have focus', async () => {
@@ -1537,13 +1608,13 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'focused-off');
         });
         await act(async () => {});
-        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        expect(nativeNotificationShow).not.toHaveBeenCalled();
 
         hostDocument.hasFocus = () => false;
         await act(async () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'background-full');
         });
-        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1));
+        await expectNotificationDelivery(() => expect(nativeNotificationShow).toHaveBeenCalledTimes(1));
         await screen.unmount();
     });
 });

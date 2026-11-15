@@ -64,16 +64,8 @@ pub async fn show(
     app: &AppHandle,
     notification: &DesktopNotification,
 ) -> Result<Presented, String> {
-    let scheme = app
-        .config()
-        .plugins
-        .0
-        .get("deep-link")
-        .and_then(|config| config.get("desktop"))
-        .and_then(|desktop| desktop.get("schemes"))
-        .and_then(serde_json::Value::as_array)
-        .and_then(|schemes| schemes.first())
-        .and_then(serde_json::Value::as_str)
+    let scheme = super::activation_schemes(app.config())
+        .next()
         .ok_or("notification_activation_unavailable")?;
     let content = toast_xml(notification, scheme)?;
     let result = (|| -> windows::core::Result<Presented> {
@@ -84,8 +76,6 @@ pub async fn show(
         toast.SetTag(&tag)?;
         toast.SetGroup(&HSTRING::from("guard"))?;
         // The installed Start-menu shortcut must carry this same AppUserModelID.
-        // Unpackaged apps also require a stub ToastActivatorCLSID on the shortcut
-        // for Action Center persistence; protocol activation needs no COM server.
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(
             &app.config().identifier,
         ))?
@@ -109,7 +99,7 @@ pub async fn list(app: &AppHandle) -> Result<Vec<DesktopNotification>, String> {
                 .Content()?
                 .DocumentElement()?
                 .GetAttribute(&HSTRING::from("launch"))?;
-            if let Some((notification, _)) = super::decode_activation_url(&launch.to_string()) {
+            if let Some((notification, _)) = super::decode_activation_url(&launch.to_string(), app.config()) {
                 notifications.push(notification);
             }
         }

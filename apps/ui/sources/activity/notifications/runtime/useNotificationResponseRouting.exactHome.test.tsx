@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { MMKV } from 'react-native-mmkv';
 
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { pendingServerScopedKey } from '@/sync/domains/pending/pendingServerScopedKeys';
 
@@ -32,6 +32,27 @@ vi.mock('expo-router', async () => {
 });
 
 const pushSpy = vi.hoisted(() => vi.fn());
+
+// Native desktop invocation/events are the OS boundary; routing and Account admission stay real.
+const desktop = vi.hoisted(() => ({ enabled: false, failListener: false, pending: [] as unknown[], wake: null as (() => void) | null, registrationWait: null as Promise<void> | null, removals: 0 }));
+vi.mock('@tauri-apps/plugin-notification', () => ({ isPermissionGranted: async () => true,
+    requestPermission: async () => 'granted', sendNotification: vi.fn() }));
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+    isDesktopHost: () => desktop.enabled,
+    desktopHostKind: () => desktop.enabled ? 'tauri' : null,
+    listenDesktopHostEvent: async (_event: string, listener: () => void) => {
+        if (_event !== 'desktop-notification-action') return () => {};
+        if (desktop.failListener) throw new Error('OS listener unavailable');
+        await desktop.registrationWait;
+        desktop.wake = listener; return () => { desktop.removals += 1; desktop.wake = null; };
+    },
+    invokeDesktopHost: async (command: string) => {
+        if (command === 'desktop_notification_take_responses') return desktop.pending.splice(0);
+        if (command === 'desktop_notification_list') return [];
+        throw new Error(`Unexpected desktop command ${command}`);
+    },
+}));
 
 const nativeBackground = vi.hoisted(() => ({
     pending: [] as Array<{ deliveryId: string; response: unknown }>,
@@ -121,7 +142,7 @@ await loadSyncSingletonForTests();
 await import('./useNotificationResponseRouting');
 await initialNetwork.dispose();
 
-function permissionResponse(params: Readonly<{ serverId?: string; serverUrl: string; identifier: string; turnId?: string; accountId?: string; actionIdentifier?: string }>) {
+function permissionResponse(params: Readonly<{ serverId?: string; serverUrl?: string; identifier: string; turnId?: string; accountId?: string; actionIdentifier?: string }>) {
     return {
         actionIdentifier: params.actionIdentifier ?? PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
         notification: {
@@ -250,6 +271,7 @@ function disableConfiguredHomeSeeds(): void {
 describe('useNotificationResponseRouting exact-Home permission dispatch', () => {
     beforeEach(async () => {
         vi.resetModules();
+        desktop.enabled = false; desktop.failListener = false; desktop.pending = []; desktop.wake = null; desktop.registrationWait = null; desktop.removals = 0;
         notifications.listener = null;
         notifications.lastResponse = null;
         rpc.wait = null;
@@ -285,6 +307,137 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
         syncBridge?.dispose();
         syncBridge = null;
         vi.unstubAllEnvs();
+    });
+
+    it('keeps a newer Expo navigation after an older legacy Home switch finishes', async () => {
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await saveNotificationAccount(homeB);
+        await setActiveServerId(homeB.id);
+        const refreshStarted = createDeferred<void>();
+        const releaseRefresh = createDeferred<void>();
+        await mountRouting(async () => { refreshStarted.resolve(); await releaseRefresh.promise; });
+        await waitFor(() => notifications.listener !== null);
+        const response = (sessionId: string) => ({
+            actionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
+            notification: { request: { identifier: `legacy-${sessionId}`, content: { data: {
+                sessionId, serverId: homeA.id, serverUrl: homeA.serverUrl,
+            } } } },
+        });
+        // Only the OS delivery and the caller's refresh completion are controlled;
+        // saved-Home lookup, credential admission, switching and routing remain real.
+        await act(async () => { notifications.listener!(response('older')); });
+        await refreshStarted.promise;
+        try {
+            await act(async () => { notifications.listener!(response('newer')); });
+            await waitFor(() => pushSpy.mock.calls.length === 1);
+            expect(pushSpy).toHaveBeenCalledWith(`/session/newer?serverId=${encodeURIComponent(homeA.id)}`);
+        } finally {
+            await act(async () => { releaseRefresh.resolve(); });
+        }
+        // Wait for the older Home switch's public completion before checking that
+        // it cannot take navigation back from the newer accepted response.
+        await act(async () => {});
+        expect(pushSpy.mock.calls).toEqual([[`/session/newer?serverId=${encodeURIComponent(homeA.id)}`]]);
+    });
+
+    it('keeps newer notification navigation after an older Account switch finishes', async () => {
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await saveNotificationAccount(homeB);
+        await setActiveServerId(homeB.id);
+        await prepareNotificationRuntime();
+        const { navigateWithNotificationAccount } = await import('./navigateWithNotificationAccount');
+        const refreshStarted = createDeferred<void>();
+        const releaseRefresh = createDeferred<void>();
+        const target = { serverId: homeA.id, serverUrl: homeA.serverUrl,
+            accountId: 'notification-account', route: `/session/older?serverId=${encodeURIComponent(homeA.id)}` };
+        // The caller's auth-refresh boundary stays pending after selecting the original Home.
+        const older = navigateWithNotificationAccount({ target, isDisposed: () => false,
+            refreshAuth: async () => { refreshStarted.resolve(); await releaseRefresh.promise; },
+            navigate: () => pushSpy('older') });
+        await refreshStarted.promise;
+        try {
+            await navigateWithNotificationAccount({ target: { ...target, route: `/session/newer?serverId=${encodeURIComponent(homeA.id)}` },
+                isDisposed: () => false, refreshAuth: async () => {}, navigate: () => pushSpy('newer') });
+            expect(pushSpy.mock.calls).toEqual([['newer']]);
+        } finally {
+            releaseRefresh.resolve();
+            await older;
+        }
+        expect(pushSpy.mock.calls).toEqual([['newer']]);
+    });
+
+    it('leaves a queued desktop click for the next mount when registration outlives its subscriber', async () => {
+        desktop.enabled = true;
+        const registration = createDeferred<void>();
+        desktop.registrationWait = registration.promise;
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await saveNotificationAccount(homeB);
+        await setActiveServerId(homeB.id);
+        const response = sessionNavigationResponse(homeA, 'default', 'registration-outlived-mount');
+        desktop.pending.push({ ...response, notification: { request: { ...response.notification.request,
+            content: { ...response.notification.request.content, accountId: 'notification-account' } } } });
+        await mountRouting();
+        await routingScreen!.unmount();
+        routingScreen = null;
+        registration.resolve();
+        await waitFor(() => desktop.removals === 1);
+        expect(desktop.pending).toHaveLength(1);
+        expect(pushSpy).not.toHaveBeenCalled();
+        desktop.registrationWait = null;
+        await mountRouting();
+        await waitFor(() => pushSpy.mock.calls.length === 1);
+        expect(pushSpy).toHaveBeenCalledWith(`/session/${SESSION_ID}?serverId=${encodeURIComponent(homeA.id)}`);
+        expect(desktop.pending).toEqual([]);
+    });
+
+    it.each([false, true])('opens a queued desktop Activity click from another Home when listener failure is %s', async (failListener) => {
+        desktop.enabled = true; desktop.failListener = failListener;
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await saveNotificationAccount(homeB);
+        await setActiveServerId(homeB.id);
+        const response = sessionNavigationResponse(homeA, 'default', 'desktop-original-home');
+        desktop.pending = [{ ...response, notification: { request: { ...response.notification.request,
+            content: { ...response.notification.request.content, accountId: 'notification-account' } } } }];
+        await mountRouting();
+        await waitFor(() => pushSpy.mock.calls.length === 1);
+        expect(pushSpy).toHaveBeenCalledWith(`/session/${SESSION_ID}?serverId=${encodeURIComponent(homeA.id)}`);
+        expect(rpc.calls).toEqual([]);
+        expect(desktop.pending).toEqual([]);
+    });
+
+    it('refuses a desktop Activity click after its Home is rebound to another Account', async () => {
+        desktop.enabled = true;
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await saveNotificationAccount(homeB);
+        await setActiveServerId(homeB.id);
+        await rpcBoundary!.setAccount(homeA.serverUrl, 'replacement-account');
+        const response = sessionNavigationResponse(homeA, 'default', 'desktop-rebound');
+        desktop.pending = [{ ...response, notification: { request: { ...response.notification.request,
+            content: { ...response.notification.request.content, accountId: 'notification-account' } } } }];
+        await mountRouting();
+        await waitFor(() => nativeUI.alerts.mock.calls.length === 1);
+        expect(pushSpy).not.toHaveBeenCalled(); expect(rpc.calls).toEqual([]);
+        expect((await import('@/sync/domains/server/serverProfiles')).getActiveServerId()).toBe(homeB.id);
+    });
+
+    it.each([
+        { action: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1, envelopeAccount: 'notification-account' },
+        { action: 'default', envelopeAccount: 'forged-account' },
+        { action: 'open-settings:notifications', envelopeAccount: 'notification-account' },
+        { action: 'happier.pluginNotification.v1/acme.tasks/review/Show', envelopeAccount: 'notification-account', topic: 'plugin_session' },
+        { action: 'default', envelopeAccount: 'notification-account', topic: 'plugin_session' },
+        { action: 'default', envelopeAccount: 'notification-account', topic: 'malformed' },
+    ])('rejects desktop non-session or unbound action $action', async ({ action, envelopeAccount, topic }) => {
+        desktop.enabled = true;
+        const { homeA, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await setActiveServerId(homeA.id);
+        const response = sessionNavigationResponse(homeA, action, `desktop-reject-${action}`);
+        desktop.pending = [{ ...response, notification: { request: { ...response.notification.request,
+            content: { ...response.notification.request.content, accountId: envelopeAccount, data: topic ? { ...response.notification.request.content.data, v: 1, topic: 'plugin_session', ...(topic === 'malformed' ? { sessionId: null } : {}), pluginNotification: { pluginId: 'acme.tasks', categoryId: 'review', occurrenceId: 'current', clientRequestId: 'send-one' } } : response.notification.request.content.data } } } }];
+        await mountRouting();
+        await waitFor(() => desktop.pending.length === 0 && desktop.wake !== null);
+        await act(async () => {});
+        expect(pushSpy).not.toHaveBeenCalled(); expect(rpc.calls).toEqual([]);
     });
 
     it.each([
@@ -476,6 +629,32 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
         await waitFor(() => pushSpy.mock.calls.length === 1);
         expect(pushSpy).toHaveBeenCalledWith('/inbox');
         expect((await import('@/sync/domains/server/serverProfiles')).getActiveServerId()).toBe(homeA.id);
+        expect(rpc.calls).toEqual([]);
+    });
+
+    it('does not let a delayed recovery Review replace newer Session navigation', async () => {
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA); await saveNotificationAccount(homeB);
+        await setActiveServerId(homeB.id);
+        await markRecoveryForHome(homeA.id);
+        const refreshStarted = createDeferred<void>();
+        const releaseRefresh = createDeferred<void>();
+        await mountRouting(async () => { refreshStarted.resolve(); await releaseRefresh.promise; });
+        const review = nativeUI.alerts.mock.calls[0]?.[2]?.find(button => button.onPress);
+        if (!review?.onPress) throw new Error('Expected the native recovery Review choice');
+        await act(async () => { review.onPress!(); });
+        await refreshStarted.promise;
+        try {
+            await waitFor(() => notifications.listener !== null);
+            await act(async () => { notifications.listener!(sessionNavigationResponse(homeA,
+                'expo.modules.notifications.actions.DEFAULT', 'newer-than-review')); });
+            await waitFor(() => pushSpy.mock.calls.length === 1);
+            expect(pushSpy).toHaveBeenCalledWith(`/session/${SESSION_ID}?serverId=${encodeURIComponent(homeA.id)}`);
+        } finally {
+            await act(async () => { releaseRefresh.resolve(); });
+        }
+        await act(async () => {});
+        expect(pushSpy.mock.calls).toEqual([[`/session/${SESSION_ID}?serverId=${encodeURIComponent(homeA.id)}`]]);
         expect(rpc.calls).toEqual([]);
     });
 
@@ -1199,7 +1378,7 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
         expect(pendingStorage.getString(key)).toBeUndefined();
     });
 
-    it('routes a connected notification to its verified Home, not the supplied unknown id', async () => {
+    it('preserves a later explicit Home confirmation as a new navigation intent', async () => {
         const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `notification_connected_${Date.now()}`;
         try {
@@ -1213,10 +1392,19 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
 
             notifications.listener!(permissionResponse({ actionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
                 serverId: 'unverified-notification-id',
-                serverUrl: 'https://unsaved.example.test',
+                serverUrl: 'https://entered-home.example.test',
                 identifier: 'n-connected',
             }));
-            await waitFor(() => pushSpy.mock.calls.length > 0);
+            await waitFor(() => nativeUI.alerts.mock.calls.length === 1);
+            await act(async () => { notifications.listener!(permissionResponse({
+                actionIdentifier: 'open-settings:notifications', identifier: 'n-newer-settings',
+            })); });
+            await waitFor(() => pushSpy.mock.calls.length === 1);
+            expect(pushSpy).toHaveBeenCalledWith('/settings/notifications');
+            const useCanonical = nativeUI.alerts.mock.calls[0]?.[2]?.find(button => button.style === 'default');
+            if (!useCanonical?.onPress) throw new Error('Expected the native Home address choice');
+            await act(async () => { useCanonical.onPress!(); });
+            await waitFor(() => pushSpy.mock.calls.length === 2);
 
             const [connected] = listServerProfiles();
             expect(connected).toBeDefined();

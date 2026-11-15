@@ -82,6 +82,16 @@ describe('sendTauriLocalNotification', () => {
         expect(native.invoke).toHaveBeenLastCalledWith('desktop_notification_remove', { identifier: interaction.identifier });
     });
 
+    it.each(['data', 'envelope'] as const)('refuses presentation for an Account replaced after the %s was produced', async location => {
+        const { sendTauriLocalNotification } = await import('./sendTauriLocalNotification');
+        await expect(sendTauriLocalNotification({ title: 'Original private session', body: 'Original content',
+            interaction: { identifier: 'original-event',
+                ...(location === 'envelope' ? { accountId: 'previous-owner' } : {}),
+                data: { serverId: homeId, sessionId: 's1', ...(location === 'data' ? { accountId: 'previous-owner' } : {}) }, actions: [] },
+        })).rejects.toThrow('notification_account_unavailable');
+        expect(native.invoke).not.toHaveBeenCalled(); expect(sendNotification).not.toHaveBeenCalled();
+    });
+
     it('recovers a native action received before the renderer subscribed, then drains only on native arrival', async () => {
         const { subscribeDesktopNotificationResponses } = await import('./tauriNotificationPlugin');
         const response = { actionIdentifier: 'HAPPIER_GUARD_KEEP_RUNNING_V1', notification: {

@@ -33,7 +33,8 @@ const boundary = vi.hoisted(() => ({
     received: new Set<() => void>(),
     active: { serverId: 'srv_home_a', serverUrl: 'https://stack.example.test', generation: 1 },
     expo: vi.fn(async (_params: ExpoNotificationParams) => 'notification-1'),
-    tauri: vi.fn((_params: Readonly<{ title: string; body: string }>) => undefined),
+    tauri: vi.fn(async (_notification: unknown) => undefined),
+    plugin: vi.fn(),
 }));
 
 vi.mock('react-native', async () => {
@@ -43,7 +44,7 @@ vi.mock('react-native', async () => {
 vi.mock('@tauri-apps/plugin-notification', () => ({
     isPermissionGranted: async () => true,
     requestPermission: async () => 'granted',
-    sendNotification: boundary.tauri,
+    sendNotification: boundary.plugin,
 }));
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -214,7 +215,11 @@ describe('live Follow socket notifications', () => {
         previousDesktopHost = Object.getOwnPropertyDescriptor(globalThis, '__TAURI_INTERNALS__');
         Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
             configurable: true,
-            get: () => boundary.desktop ? { invoke: desktopStorage.invoke } : undefined,
+            get: () => boundary.desktop ? { invoke: async (command: string, args?: Readonly<Record<string, unknown>>) => {
+                if (command === 'desktop_notification_show') return boundary.tauri(args?.notification);
+                if (command === 'desktop_notification_list') return [];
+                return desktopStorage.invoke(command, args);
+            } } : undefined,
         });
         localStorage = installLocalStorageMock();
         webLocks = installWebLockManagerMock();
@@ -256,7 +261,7 @@ describe('live Follow socket notifications', () => {
             await write.rollback();
         }
         boundary.desktop = false;
-        boundary.expo.mockClear(); boundary.tauri.mockClear();
+        boundary.expo.mockClear(); boundary.tauri.mockClear(); boundary.plugin.mockClear();
         vi.restoreAllMocks();
         resetActivityLocalNotificationRuntimeForTests();
         resetActivityAlertPresentationNotesForTests();
@@ -363,19 +368,26 @@ describe('live Follow socket notifications', () => {
         screen = await renderScreen(<ActivityLocalNotificationRuntime />);
         const submit = desktop ? boundary.tauri : boundary.expo;
         await act(async () => { await deliverMessage(1, true); });
-        expect(submit).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+        if (desktop) {
+            expect(boundary.tauri).toHaveBeenCalledWith(expect.objectContaining({
+                accountId: 'account-a', actions: [],
+                data: expect.objectContaining({ serverId: 'srv_home_a', sessionId: 'session-1', accountId: 'account-a' }),
+            }));
+            expect(boundary.plugin).not.toHaveBeenCalled();
+        }
         await act(async () => { await deliverMessage(2, false); });
         expect(submit).toHaveBeenCalledTimes(1);
         await act(async () => { applySessions([{ ...getSession(), viewer: { ...getSession().viewer!, follow: { follows: true, notificationLevel: 'all_messages', policy: { preset: 'everything' } } } }]); });
         await act(async () => { await deliverMessage(3, false); });
-        expect(submit).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
         await act(async () => { await handleEphemeralSocketUpdate({ sourceServerId: 'srv_home_a',
             update: { type: 'session-personal-event', sessionId: 'session-1', eventId: 'discussion-message-3', event: 'message',
                 message: { sequenceDomain: 'discussion', discussionId: 'discussion-1', messageSeq: 3 } },
             addActivityUpdate: () => undefined, addMachineActivityUpdate: () => undefined,
             getSessionEncryption: () => null, getSession, applyMessages: () => undefined,
         }); });
-        expect(submit).toHaveBeenCalledTimes(3);
+        await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(3));
         await act(async () => { await deliverMessage(6, true, false, 'account-a'); });
         expect(submit).toHaveBeenCalledTimes(3);
         await act(async () => { await deliverMessage(4, true, true); });

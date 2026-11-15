@@ -9,6 +9,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type DesktopNotificationInteraction = Readonly<{
     identifier: string;
+    accountId?: string;
     data: Record<string, unknown>;
     actions: readonly Readonly<{ id: string; title: string }>[];
 }>;
@@ -51,7 +52,12 @@ export async function sendNotification(payload: { title: string; body: string; i
     const serverId = payload.interaction.data.serverId;
     if (typeof serverId !== 'string' || !serverId) throw new Error('notification_scope_unavailable');
     const binding = await resolveServerCredentialAccountScope(serverId);
-    if (binding.kind !== 'bound') throw new Error('notification_account_unavailable');
+    if (binding.kind !== 'bound' || (payload.interaction.accountId !== undefined
+        && payload.interaction.accountId !== binding.scope.accountId)
+        || (payload.interaction.data.accountId !== undefined
+            && payload.interaction.data.accountId !== binding.scope.accountId)) {
+        throw new Error('notification_account_unavailable');
+    }
     await invokeDesktopHost('desktop_notification_show', { notification: {
         title: payload.title, body: payload.body, ...payload.interaction, accountId: binding.scope.accountId,
     } });
@@ -72,22 +78,31 @@ export const desktopGuardNotificationTransport = {
     },
 };
 
-export async function subscribeDesktopNotificationResponses(listener: (response: DesktopNotificationResponse) => void): Promise<() => void> {
+export async function subscribeDesktopNotificationResponses(listener: (response: DesktopNotificationResponse) => void, signal?: AbortSignal): Promise<() => void> {
     let disposed = false;
+    const isInactive = () => disposed || signal?.aborted === true;
     const drain = async () => {
+        if (isInactive()) return;
         const responses = await invokeDesktopHost<DesktopNotificationResponse[]>('desktop_notification_take_responses');
-        if (disposed) return;
+        if (isInactive()) return;
         for (const response of responses) listener(response);
     };
     // Subscribe first so an activation during the initial drain cannot be lost.
     const remove = await listenDesktopHostEvent<void>('desktop-notification-action', () => {
         fireAndForget(drain(), { tag: 'desktopNotificationResponse' });
+    }).catch(error => {
+        console.warn('[notifications] Desktop notification listener unavailable', error);
+        return undefined;
     });
+    if (isInactive()) {
+        remove?.();
+        return () => {};
+    }
     try {
         await drain();
     } catch (error) {
-        remove();
+        remove?.();
         throw error;
     }
-    return () => { disposed = true; remove(); };
+    return () => { disposed = true; remove?.(); };
 }
