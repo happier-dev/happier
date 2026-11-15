@@ -36,7 +36,7 @@ const appStateAddListener = vi.hoisted(() => vi.fn((_event: string, handler: (st
 }));
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));
-const platformOs = vi.hoisted(() => ({ value: 'web' as 'web' | 'ios' }));
+const platformOs = vi.hoisted(() => ({ value: 'web' as 'web' | 'ios' | 'android' }));
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => tauriDesktopState.value,
@@ -169,6 +169,8 @@ describe('sync AppState pause/resume', () => {
 
         for (const handler of socketStatusHandlers) handler('connected');
         for (const handler of appStateHandlers) handler('background');
+        // The kept socket's own liveness reports it gone while away.
+        for (const handler of socketStatusHandlers) handler('disconnected');
         expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
 
         for (const handler of appStateHandlers) handler('active');
@@ -186,6 +188,63 @@ describe('sync AppState pause/resume', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
     });
+
+    describe('native short pauses (deep link, notification tap, system dialog)', () => {
+        const startConnectedNativeSync = async (os: 'android' | 'ios') => {
+            platformOs.value = os;
+            await loadSyncSingletonForTests();
+            const { sync } = await import('./sync');
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+            (sync as unknown as { subscribeToUpdates(): void }).subscribeToUpdates();
+            for (const handler of socketStatusHandlers) handler('connected');
+            const resumeSync = vi.spyOn(sync, 'resumeSync').mockResolvedValue(undefined);
+            apiSocketDisconnect.mockClear();
+            apiSocketConnect.mockClear();
+            return { sync, resumeSync, isServerReachabilityNetworkAllowed };
+        };
+
+        it.each(['android', 'ios'] as const)('keeps the %s socket and resumes nothing when it stayed connected through the pause', async (os) => {
+            const { sync, resumeSync, isServerReachabilityNetworkAllowed } = await startConnectedNativeSync(os);
+            const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+
+            for (const handler of appStateHandlers) handler('background');
+            expect(apiSocketDisconnect).not.toHaveBeenCalled();
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
+            expect(pauseController.isPaused()).toBe(true);
+
+            for (const handler of appStateHandlers) handler('active');
+            expect(pauseController.isPaused()).toBe(false);
+            expect(resumeSync).not.toHaveBeenCalled();
+            expect(apiSocketConnect).not.toHaveBeenCalled();
+        });
+
+        it('tears connectivity down when the kept socket is lost while away and resumes fully on return', async () => {
+            const { resumeSync, isServerReachabilityNetworkAllowed } = await startConnectedNativeSync('android');
+
+            for (const handler of appStateHandlers) handler('background');
+            for (const handler of socketStatusHandlers) handler('disconnected');
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(isServerReachabilityNetworkAllowed()).toBe(false);
+
+            for (const handler of appStateHandlers) handler('active');
+            expect(resumeSync.mock.calls.map(([reason]) => reason)).toEqual(['app-foreground']);
+            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+        });
+
+        it('runs one changes catch-up on return for a change wake that arrived while away', async () => {
+            const { sync, resumeSync } = await startConnectedNativeSync('android');
+            const requestChangesCatchUp = (sync as unknown as { requestChangesCatchUp(): void }).requestChangesCatchUp;
+
+            for (const handler of appStateHandlers) handler('background');
+            requestChangesCatchUp();
+            requestChangesCatchUp();
+            expect(resumeSync).not.toHaveBeenCalled();
+
+            for (const handler of appStateHandlers) handler('active');
+            expect(resumeSync.mock.calls.map(([reason]) => reason)).toEqual(['changes-catch-up']);
+        });
+    });
+
 
     it('rearms only current-scope durable outbox sessions once without mounting a session route', async () => {
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
@@ -384,6 +443,25 @@ describe('sync AppState pause/resume', () => {
 
         expect(apiSocketDisconnect).not.toHaveBeenCalled();
         expect(pauseController.isPaused()).toBe(false);
+    });
+
+    it('re-reads nothing when a Tauri desktop window is shown again after a hide: its socket stayed connected', async () => {
+        tauriDesktopState.value = true;
+        await loadSyncSingletonForTests();
+        const { sync } = await import('./sync');
+        const handler = Array.from(appStateHandlers)[0];
+        expect(handler).toBeTruthy();
+        const resumeSync = vi.spyOn(sync, 'resumeSync');
+        const connectsBefore = apiSocketConnect.mock.calls.length;
+
+        for (let i = 0; i < 3; i++) {
+            handler!('background');
+            handler!('active');
+        }
+
+        expect(resumeSync).toHaveBeenCalledTimes(0);
+        expect(apiSocketConnect.mock.calls.length - connectsBefore).toBe(0);
+        expect(apiSocketDisconnect).not.toHaveBeenCalled();
     });
 
     it('quiesces native crypto worker dispatch on background and resumes it on active', async () => {

@@ -1594,6 +1594,10 @@ class Sync {
       private lastSocketOfflineDurationMs: number | null = null;
       private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
       private socketStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+      /** A native pause began with this socket connected and it has not been lost since. */
+      private nativeSocketKeptWhileAway = false;
+      /** A changes wake arrived while not in the foreground and has not been caught up yet. */
+      private changesCatchUpOwedWhileAway = false;
       private postSubscriptionChangesCatchUpPending = false;
       revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
@@ -1878,28 +1882,37 @@ class Sync {
               if (nextAppState === 'active') {
                   this.userRequestLeaseOwner.cancelDeferredRoutineTeardown();
                   this.clearNativeInactiveCheckpointTimer();
+                  const socketStayedConnected = this.nativeSocketKeptWhileAway && this.socketStatus === 'connected';
+                  this.nativeSocketKeptWhileAway = false;
                   this.isForeground = true;
                   this.resumeNativeCryptoWorkerDispatchAfterForeground('Sync.nativeCryptoWorkerQueue.active.appState');
                   setServerReachabilityNetworkAllowed(true);
                   log.log('📱 App became active');
                   this.pauseController.resume();
+                  if (socketStayedConnected) {
+                      // Nothing was missed on a socket that stayed up; only a wake this pause held back is owed.
+                      if (this.changesCatchUpOwedWhileAway) {
+                          this.changesCatchUpOwedWhileAway = false;
+                          this.requestChangesCatchUp();
+                      }
+                      return;
+                  }
                   fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors' });
                   this.resumeAfterForegroundTransition('Sync.resumeSync.app-foreground');
               } else {
+                  const leavingForeground = this.isForeground;
                   this.isForeground = false;
                   log.log(`📱 App state changed to: ${nextAppState}`);
                   this.pauseController.pause();
-                  const teardownConnectivity = () => {
-                      this.markNativeCryptoWorkerBackgroundQuiescent();
-                      setServerReachabilityNetworkAllowed(false);
-                      try {
-                          this.disconnectSocketIntentionally({ visibilityPause: true });
-                      } catch {
-                          // ignore
-                      }
-                      fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors' });
-                  };
-                  this.userRequestLeaseOwner.deferRoutineTeardown(teardownConnectivity);
+                  // A native pause (deep link, notification tap, system dialog, or the start of a real
+                  // background period) keeps a connected socket: its own liveness decides when it is
+                  // gone, and only then is routine connectivity torn down (see the socket status handler).
+                  if (Platform.OS !== 'web' && leavingForeground && this.socketStatus === 'connected') {
+                      this.nativeSocketKeptWhileAway = true;
+                  }
+                  if (!this.nativeSocketKeptWhileAway) {
+                      this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity());
+                  }
                   if (nextAppState === 'inactive') {
                       this.scheduleNativeInactiveCheckpoint();
                   } else {
@@ -1918,17 +1931,7 @@ class Sync {
                       this.isForeground = false;
                       this.pauseController.pause();
                       this.flushBackgroundSyncCheckpointsNow();
-                      const teardownConnectivity = () => {
-                          this.markNativeCryptoWorkerBackgroundQuiescent();
-                          setServerReachabilityNetworkAllowed(false);
-                          try {
-                              this.disconnectSocketIntentionally({ visibilityPause: true });
-                          } catch {
-                              // ignore
-                          }
-                          fireAndForget(stopServerReachabilitySupervisors(), { tag });
-                      };
-                      this.userRequestLeaseOwner.deferRoutineTeardown(teardownConnectivity);
+                      this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity(tag));
                   };
                   const pauseForWebHardBoundary = (tag: string) => {
                       this.isForeground = false;
@@ -2100,6 +2103,18 @@ class Sync {
           apiSocket.connect();
       }
 
+      /** Routine (visibility) teardown: the socket and reachability stop; Machine presence and Account mode are kept. */
+      private readonly teardownRoutineConnectivity = (tag = 'Sync.stopServerReachabilitySupervisors'): void => {
+          this.markNativeCryptoWorkerBackgroundQuiescent();
+          setServerReachabilityNetworkAllowed(false);
+          try {
+              this.disconnectSocketIntentionally({ visibilityPause: true });
+          } catch {
+              // ignore
+          }
+          fireAndForget(stopServerReachabilitySupervisors(), { tag });
+      };
+
       private disconnectSocketIntentionally(options?: Readonly<{ preserveHttpRequests?: boolean; visibilityPause?: boolean }>): void {
           this.postSubscriptionChangesCatchUpPending = false;
           this.socketStatus = 'disconnected';
@@ -2107,6 +2122,8 @@ class Sync {
       }
 
       private resumeAfterForegroundTransition(tag: string): void {
+          // The full resume reads the changes feed itself.
+          this.changesCatchUpOwedWhileAway = false;
           const resume = this.resumeSync('app-foreground');
           fireAndForget(resume, { tag });
           try {
@@ -8301,7 +8318,10 @@ class Sync {
 
       private requestChangesCatchUp = (): void => {
           if (isEmbedWindowContext() && !this.embedSessionScope) return;
-          if (!this.isForeground) return;
+          if (!this.isForeground) {
+              this.changesCatchUpOwedWhileAway = true;
+              return;
+          }
           const activeResume = this.resumeInFlight;
           if (!activeResume) {
               fireAndForget(this.resumeSync('changes-catch-up'), { tag: 'Sync.resumeSync.changes-catch-up' });
@@ -12863,6 +12883,12 @@ class Sync {
 		                  return;
 		              }
 		              if (status === 'disconnected' || status === 'error') {
+                          if (this.nativeSocketKeptWhileAway) {
+                              // The socket kept through a native pause is gone: tear down now, so nothing
+                              // reconnects in the background; the return to the foreground resumes fully.
+                              this.nativeSocketKeptWhileAway = false;
+                              this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity());
+                          }
                           markAccountSettingsHeadUnverified();
                           if (!this.embedSessionScope && !isEmbedWindowContext()) this.publishActiveSessionListObservation('offline');
 		                  if (this.lastSocketDisconnectedAtMs == null) {
