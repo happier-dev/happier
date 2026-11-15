@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectProviderSessionFailureCause, projectSessionRuntimeFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,
@@ -171,16 +171,12 @@ function readProviderFailureFields(
   ].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
   const parsed = raw ? parseProviderError(raw) : null;
   const parsedError = isRecord(parsed?.error) ? parsed.error : null;
-  const errorInfoReasons = Array.isArray(parsedError?.details)
-    ? parsedError.details.flatMap(detail => isRecord(detail)
-      && detail['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' ? [detail.reason] : [])
-    : [];
-  const nativeStatus = parsedError?.code;
+  const vendorFacts = readProviderErrorDiagnosticFacts(parsed);
   const nestedError = isRecord(record.error) ? record.error : null;
   const nestedData = isRecord(record.data) ? record.data : null;
   return Object.freeze({
     code: [
-      ...errorInfoReasons,
+      vendorFacts.code,
       parsedError?.code,
       parsed?.code,
       record.code,
@@ -202,8 +198,7 @@ function readProviderFailureFields(
     ].map(sanitizeText).find((value): value is string => value !== null) ?? null,
     parsed,
     httpStatus: (raw ? readLeadingHttpStatus(raw) : null)
-      ?? (typeof nativeStatus === 'number' && Number.isInteger(nativeStatus)
-        && nativeStatus >= 100 && nativeStatus <= 599 ? nativeStatus : null),
+      ?? vendorFacts.httpStatus ?? null,
   });
 }
 
@@ -214,11 +209,13 @@ function projectDecodedProviderFailureCause(
 ) {
   if (!fields.code) return undefined;
   // Project the decoded code/status, never the provider body or prompt echo.
-  return projectSessionRuntimeFailureCause({
+  const evidence = {
     ...record,
     code: fields.code,
     ...(fields.httpStatus === null ? {} : { status: fields.httpStatus }),
-  }, phase, 'agent.turn');
+  };
+  return projectProviderSessionFailureCause(evidence, phase, fields)
+    ?? projectSessionRuntimeFailureCause(evidence, phase, 'agent.turn');
 }
 
 export function readPiProviderFailureDiagnostic(

@@ -1,3 +1,4 @@
+import { projectProviderSessionFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
   SessionRuntimeTeamCredentialDenialDetailsV1,
   SessionRuntimeTemporaryThrottleDetailsV1,
@@ -549,7 +550,9 @@ export function classifyPrimarySessionRuntimeIssue(
   const typedDiagnostic = diagnostic?.success ? diagnostic.data : null;
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
   const structuredInputFailure = readStructuredInputPreparationFailure(input.error);
-  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(readSessionRuntimeFailureCause(typedDiagnostic ?? input.error, input.startupPhase)
+  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse((typedDiagnostic
+    ? projectProviderSessionFailureCause(typedDiagnostic, input.startupPhase ?? 'turn', { code: typedDiagnostic.code })
+    : readSessionRuntimeFailureCause(input.error, input.startupPhase))
     ?? (structuredInputFailure?.preparationCause ? {
       phase: 'turn_start', failureReason: 'unknown', preparationCause: structuredInputFailure.preparationCause,
     } : undefined));
@@ -590,9 +593,9 @@ export function classifyPrimarySessionRuntimeIssue(
   const unclassifiedFailureCause = !failureCause.success
     || failureCause.data.failureReason === 'unknown'
     || failureCause.data.failureReason === 'unclassified_provider_error';
-  // Native adapters decode codes; authentication semantics stay with this classifier.
-  const diagnosticAuthenticationFailure = typedDiagnostic !== null && unclassifiedFailureCause
-    && classifyProviderOutputFailure(typedDiagnostic.code).authenticationError;
+  // The shared projection owns semantics; publication consumes its typed result.
+  const diagnosticAuthenticationFailure = failureCause.success
+    && failureCause.data.failureReason === 'authentication_required';
   const brokerCode = errorCode.kind === 'string'
     ? ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(errorCode.value) : null;
   const brokerStartupCode = brokerCode?.success && declaredSource === 'team_credential' ? brokerCode.data : null;
@@ -727,9 +730,9 @@ export function classifyPrimarySessionRuntimeIssue(
       ...(failureCause.success ? failureCause.data : {}),
       failureReason: nativeConstructionFailure.failureReason,
       ...(nativeFailureMessage === undefined ? {} : { providerErrorMessage: nativeFailureMessage }) } }
-      : (input.cause === 'status_error' || diagnosticAuthenticationFailure) && source === 'auth_error'
+      : input.cause === 'status_error' && source === 'auth_error'
         && unclassifiedFailureCause ? {
-      failureCause: { ...(input.cause === 'status_error' ? readNativeStartupFailureDetail(input.error) : { providerErrorCode: typedDiagnostic?.code }),
+      failureCause: { ...readNativeStartupFailureDetail(input.error),
         ...(failureCause.success ? failureCause.data : {}),
         phase: 'authentication', failureReason: 'authentication_required' },
     } : failureCause.success ? { failureCause: {

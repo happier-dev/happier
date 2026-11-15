@@ -1,3 +1,5 @@
+import { classifyProviderOutputFailure } from '../../providers/outputFailure.js';
+export { classifyProviderOutputFailure, type ProviderOutputFailureClassification } from '../../providers/outputFailure.js';
 import { isPluginErrorData } from '../../plugins/errors.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
@@ -458,6 +460,44 @@ export function projectSessionRuntimeFailureCause(
   if (error === undefined) return undefined;
   return readSessionRuntimeFailureCause(error, phase)
     ?? readSessionRuntimeFailureCause({ failureCause: projectActionFailureCauseV1(error, actionPhase, { allowUnknownErrorCode: false }) }, phase);
+}
+
+/** Decode vendor codes without carrying provider prose into public causes. */
+export function readProviderErrorDiagnosticFacts(value: unknown): Readonly<{ code?: string; httpStatus?: number }> {
+  const error = readDataField(value, 'error') ?? value;
+  const details = readDataField(error, 'details');
+  const reasons = Array.isArray(details) ? details.flatMap(detail =>
+    readDataField(detail, '@type') === 'type.googleapis.com/google.rpc.ErrorInfo'
+      ? [readDataField(detail, 'reason')] : []) : [];
+  const code = [...reasons, readDataField(error, 'code')].find((candidate): candidate is string =>
+    typeof candidate === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]*$/u.test(candidate));
+  const status = readDataField(error, 'code');
+  return {
+    ...(code === undefined ? {} : { code }),
+    ...(typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599
+      ? { httpStatus: status } : {}),
+  };
+}
+
+/** Shared vendor-code projection for native adapters; known typed refusals remain authoritative. */
+export function projectProviderSessionFailureCause(
+  error: unknown,
+  phase: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'],
+  facts: Readonly<{ code?: string | null; httpStatus?: number | null; authenticationEvidence?: string }>,
+): SessionRuntimeIssueV1['failureCause'] {
+  const retained = readSessionRuntimeFailureCause(error, phase);
+  if (retained && retained.failureReason !== 'unknown' && retained.failureReason !== 'unclassified_provider_error') return retained;
+  const attestationDenied = facts.code === 'client_attestation_denied';
+  const codeAuthenticationFailure = Boolean(facts.code && classifyProviderOutputFailure(facts.code).authenticationError);
+  if (attestationDenied || codeAuthenticationFailure || facts.httpStatus === 401 || facts.httpStatus === 403
+    || classifyProviderOutputFailure(facts.authenticationEvidence ?? '').authenticationError) {
+    return { ...retained, phase: attestationDenied ? phase : 'authentication',
+      failureReason: attestationDenied ? 'permission_denied' : 'authentication_required',
+      ...(attestationDenied ? { code: 'client_attestation_denied' as const } : {}),
+      ...(codeAuthenticationFailure && facts.code ? { providerErrorCode: facts.code } : {}),
+      ...(facts.httpStatus == null ? {} : { httpStatus: facts.httpStatus }) };
+  }
+  return retained;
 }
 
 /** The source distinguishes native Agent sign-in refusals from Provider endpoint credentials. */

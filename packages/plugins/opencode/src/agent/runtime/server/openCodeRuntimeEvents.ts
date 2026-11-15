@@ -1,4 +1,4 @@
-import { readSessionRuntimeFailureCause, projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause, projectProviderSessionFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { asRecord, normalizeString } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import { isOpenCodeServerAuthFailure } from './openCodeServerClient.js';
@@ -89,27 +89,24 @@ export function buildOpenCodeProviderErrorIssue(params: Readonly<{
   }
   const response = asRecord(body);
   const responseError = asRecord(response?.error);
-  const attestationDenied = [record?.code, record?.type, data?.code, response?.code,
-    responseError?.code, responseError?.type].some(code => code === 'client_attestation_denied');
+  const vendorFacts = readProviderErrorDiagnosticFacts(response);
   const message = formatOpenCodeServerPromptErrorMessage(params.error);
-  const authEvidence = [record?.name, data?.name, record?.code, data?.code, data?.message, message]
-    .map(normalizeString).join('\n');
-  const authFailure = attestationDenied || isOpenCodeServerAuthFailure(params.error)
-    || httpStatus === 401 || httpStatus === 403 || record?.name === 'ProviderAuthError'
-    || /\b(401|403|unauthori[sz]ed|forbidden|auth|authentication|credential|token refresh failed)\b/iu.test(authEvidence);
+  const nativeAuthEvidence = isOpenCodeServerAuthFailure(params.error) || record?.name === 'ProviderAuthError'
+    ? 'Authentication failed' : '';
+  const failureCause = safeOpenCodeFailureCause(projectProviderSessionFailureCause(params.error, params.phase ?? 'turn', {
+    code: vendorFacts.code ?? normalizeString(record?.code ?? data?.code ?? response?.code ?? responseError?.type),
+    httpStatus: httpStatus ?? vendorFacts.httpStatus,
+    authenticationEvidence: [nativeAuthEvidence, record?.name, data?.name, data?.message, message]
+      .map(normalizeString).join('\n'),
+  }) ?? projectSessionRuntimeFailureCause(params.error, params.phase ?? 'turn', 'agent.turn'));
+  const authFailure = failureCause?.failureReason === 'authentication_required'
+    || failureCause?.code === 'client_attestation_denied';
   // Provider attribution retains the native wire evidence contract; generic host HTTP errors are separate.
   const nativeHttpStatus = typeof record?.type === 'string' ? record.status
     : record?.name === 'APIError' ? data?.statusCode : undefined;
   const nativeProviderFailure = params.providerId && typeof nativeHttpStatus === 'number'
     && Number.isInteger(nativeHttpStatus) && nativeHttpStatus >= 100 && nativeHttpStatus <= 599
     ? { providerId: params.providerId, httpStatus: nativeHttpStatus } : null;
-  const retainedCause = readSessionRuntimeFailureCause(params.error, params.phase ?? 'turn');
-  const failureCause = safeOpenCodeFailureCause(retainedCause ?? (authFailure ? {
-    phase: params.phase ?? 'turn',
-    code: attestationDenied ? 'client_attestation_denied' : 'opencode_authentication_failed',
-    failureReason: attestationDenied ? 'permission_denied' : 'authentication_required',
-    ...(httpStatus === null ? {} : { httpStatus }),
-  } : projectSessionRuntimeFailureCause(params.error, params.phase ?? 'turn', 'agent.turn')));
   return buildOpenCodeRuntimeIssue({
     code: params.code,
     source: authFailure ? 'auth_error' : 'agent_session_error',

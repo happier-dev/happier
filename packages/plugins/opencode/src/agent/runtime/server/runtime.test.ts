@@ -2100,7 +2100,7 @@ describe('createOpenCodeServerRuntime', () => {
             agentId: 'opencode',
             code: 'opencode_prompt_submission_failed',
             source: 'auth_error',
-            failureCause: { phase: 'turn_start', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required' },
             sanitizedPreview: expect.stringContaining('Unauthorized'),
           }),
         }),
@@ -2114,7 +2114,7 @@ describe('createOpenCodeServerRuntime', () => {
           agentId: 'opencode',
           code: 'opencode_prompt_submission_failed',
           source: 'auth_error',
-            failureCause: { phase: 'turn_start', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required' },
           sanitizedPreview: expect.stringContaining('Unauthorized'),
         }),
       }),
@@ -4679,14 +4679,19 @@ describe('createOpenCodeServerRuntime', () => {
 
   it.each([
     {
+      label: 'Gemini HTTP 400 invalid key',
+      error: { name: 'APIError', data: { statusCode: 400, message: 'API key not valid', responseBody: JSON.stringify({ error: { code: 400, message: 'Do not echo private provider prose', details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID' }] } }) } },
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required', providerErrorCode: 'API_KEY_INVALID', httpStatus: 400 },
+    },
+    {
       label: 'credential refresh refusal',
       error: { name: 'ProviderAuthError', data: { message: 'Token refresh failed: 401 Authorization: Bearer sk-live-secret' } },
-      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required' },
     },
     {
       label: 'loaded Muse authentication failure without response evidence',
       error: { name: 'ProviderAuthError', data: { providerID: 'meta', message: 'Authentication failed' } },
-      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required' },
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required' },
     },
     {
       label: 'explicit attestation refusal',
@@ -4696,12 +4701,12 @@ describe('createOpenCodeServerRuntime', () => {
     {
       label: 'forbidden response without attestation evidence',
       error: { name: 'APIError', data: { statusCode: 403, message: 'Authentication failed', responseBody: JSON.stringify({ error: { code: 'permission_error' } }) } },
-      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required', httpStatus: 403 },
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required', httpStatus: 403 },
     },
     {
       label: 'invalid credential without attestation evidence',
       error: { name: 'APIError', data: { statusCode: 401, message: 'Authentication failed', responseBody: JSON.stringify({ error: { code: 'invalid_api_key' } }) } },
-      failureCause: { phase: 'turn', code: 'opencode_authentication_failed', failureReason: 'authentication_required', httpStatus: 401 },
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required', httpStatus: 401 },
     },
   ])('fails and confirms provider acceptance from an immediate assistant error prompt response: $label', async ({ error, failureCause }) => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();

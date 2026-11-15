@@ -131,6 +131,12 @@ the Agent plugin before host classification. The host consumes their typed sourc
 and sanitized failure cause. The shared unstructured-output classifier recognizes
 explicit HTTP/authentication failures; mentioning a vendor environment variable
 alone does not establish an authentication failure.
+In 0.3 development, Pi and OpenCode decode vendor error facts through
+`readProviderErrorDiagnosticFacts` and classify turn refusals through Protocol's
+`projectProviderSessionFailureCause`. Google `ErrorInfo.reason=API_KEY_INVALID`
+remains an authentication refusal even with HTTP 400. Known typed refusals take
+precedence; provider prose is never copied into this typed cause. The host consumes
+the projected reason when choosing the public issue source.
 
 Native Codex user messages share one ingress parser for attached-client events and
 external history. Text annotations, skill/file references, and image/audio URL,
