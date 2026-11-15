@@ -166,6 +166,9 @@ function commit(
   state: HappierListMultiSelectionState,
   next: Omit<HappierListMultiSelectionState, 'version'>,
 ): HappierListMultiSelectionState {
+  // Visible order and focus can change without changing what bulk actions act
+  // on. Preserve that independently subscribed fact across those publications.
+  const selectedKeys = setsEqual(state.selectedKeys, next.selectedKeys) ? state.selectedKeys : next.selectedKeys;
   const same = state.isSelectionMode === next.isSelectionMode
     && state.scopeKey === next.scopeKey
     && state.anchorKey === next.anchorKey
@@ -174,10 +177,11 @@ function commit(
     && (state.entityKeysByOccurrenceKey === next.entityKeysByOccurrenceKey
       || next.visibleOrderedKeys.every((key) => readEntityKey(key, state.entityKeysByOccurrenceKey) === readEntityKey(key, next.entityKeysByOccurrenceKey)))
     && setsEqual(state.eligibleKeys, next.eligibleKeys)
-    && setsEqual(state.selectedKeys, next.selectedKeys);
+    && state.selectedKeys === selectedKeys;
   if (same) return state;
   return {
     ...next,
+    selectedKeys,
     version: state.version + 1,
   };
 }

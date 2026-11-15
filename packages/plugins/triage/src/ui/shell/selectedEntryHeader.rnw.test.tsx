@@ -493,6 +493,7 @@ describe('the selected entry once the window stops holding it', () => {
         });
         const result = resultPage(0);
         let listReads = 0;
+        let contextPublications = 0;
         const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
         const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
         const admittedSurface = createSurfaceContextFixture({
@@ -528,7 +529,8 @@ describe('the selected entry once the window stops holding it', () => {
                         return { kind: 'observed', entryRef: row.entryRef, observation: row.observation } as unknown as JsonValue;
                     }
                     return executeAction(action);
-                }, replacePageLocation: ({ subPath }) => subPath },
+                }, replacePageLocation: ({ subPath }) => subPath,
+                publishCurrentUiContext: () => { contextPublications++; } },
             });
         });
         mounted.push(shell);
@@ -568,10 +570,12 @@ describe('the selected entry once the window stops holding it', () => {
                 input.dispatchEvent(new InputEvent('input', { bubbles: true }));
             }); };
             const readsBeforeQuery = listReads;
+            contextPublications = 0;
             renderProbe.reset();
             const descriptorAdmissions = vi.spyOn(triageProtocol, 'admitTriageSourceDescriptorV1');
             try {
                 await editQuery('Task');
+                expect(contextPublications).toBe(1);
                 // Query-dependent row destinations change, but the virtualizer renders only mounted rows.
                 const visibleRows = document.querySelectorAll('[data-testid^="triage-entry-row:"]').length;
                 expect(visibleRows).toBeGreaterThan(0);
@@ -579,8 +583,12 @@ describe('the selected entry once the window stops holding it', () => {
                 expect(renderProbe.collect().components.CollectionRow?.renders ?? 0).toBeLessThanOrEqual(visibleRows);
                 expect(descriptorAdmissions).not.toHaveBeenCalled();
             } finally { descriptorAdmissions.mockRestore(); }
+            contextPublications = 0;
+            renderProbe.reset();
             await editQuery('001');
             expect(store.getSnapshot().window?.rows).toHaveLength(1);
+            expect(contextPublications).toBe(1);
+            expect(renderProbe.collect().components.CollectionRow?.renders ?? 0).toBeLessThanOrEqual(1);
             const row = store.getRow(triageEntryRowKey(refs[0]!))!;
             const observation = row.observations[0]!;
             if (observation.outcome.kind !== 'present') throw new Error('Expected Task');
@@ -592,7 +600,9 @@ describe('the selected entry once the window stops holding it', () => {
             const clearAdmissions = vi.spyOn(triageProtocol, 'admitTriageSourceDescriptorV1');
             try {
                 renderProbe.reset();
+                contextPublications = 0;
                 await editQuery('');
+                expect(contextPublications).toBe(1);
                 const visibleRows = document.querySelectorAll('[data-testid^="triage-entry-row:"]').length;
                 expect(renderProbe.collect().components.CollectionRow?.renders ?? 0).toBeLessThanOrEqual(visibleRows);
                 expect(clearAdmissions).not.toHaveBeenCalled();

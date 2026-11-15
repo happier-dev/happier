@@ -784,8 +784,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       settledRoute.current = { subPath: preflight.subPath, state: next };
     }
     readerChangedLens.current = true;
+    // Admit the reader's lens and reducer edit in the same input turn. An effect
+    // would first render/publish the predecessor rows under the new query.
+    window.setLens(readTriageWindowLensV1(next));
     dispatch(action);
-  }, [reduceSurface, surface]);
+  }, [reduceSurface, surface, window.setLens]);
 
   /**
    * Saved-view selection is durable preference, so its complete route settles
@@ -1929,7 +1932,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     subscribe: (listener: () => void) => window.readOwner!.subscribe(change => {
       // This layout subscriber can run before the shell's external-store subscriber.
       listPublication.synchronize(window.readOwner!.getSnapshot(), change);
-      listener();
+      // Structure/metadata already schedule the shell's layout publication.
+      // Only row-local changes bypass that render and need a direct publication.
+      if (!change.structureChanged && !change.metadataChanged) listener();
     }),
     read: () => {
       const rows = window.readOwner!.getSnapshot().window?.rows ?? EMPTY_WINDOW_ROWS;

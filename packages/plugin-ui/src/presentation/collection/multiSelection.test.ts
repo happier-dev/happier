@@ -20,6 +20,29 @@ function selectedKeys(state: HappierListMultiSelectionState): string[] {
 }
 
 describe('reduceHappierListMultiSelection', () => {
+  it('keeps selected-key subscribers quiet through search and publishes actual selection changes', () => {
+    const keys = Array.from({ length: 200 }, (_, index) => `task:${index}`);
+    const store = createHappierListMultiSelectionStore({ scopeKey: 'tasks', visibleOrderedKeys: keys });
+    let previous = store.getSnapshot().selectedKeys;
+    let selectionPublications = 0;
+    store.subscribe(() => {
+      const current = store.getSnapshot().selectedKeys;
+      if (current !== previous) selectionPublications++;
+      previous = current;
+    });
+    store.setVisibleRows({ visibleOrderedKeys: keys.slice(0, 1), eligibleKeys: keys });
+    expect(store.getSnapshot().visibleOrderedKeys).toEqual([keys[0]]);
+    expect(selectionPublications).toBe(0);
+    store.toggle(keys[0]!);
+    expect(selectionPublications).toBe(1);
+    store.setVisibleRows({ visibleOrderedKeys: keys, eligibleKeys: keys });
+    expect(selectionPublications).toBe(1);
+    expect([...store.getSnapshot().selectedKeys]).toEqual([keys[0]]);
+    store.setVisibleRows({ visibleOrderedKeys: keys.slice(1), eligibleKeys: keys.slice(1) });
+    expect(selectionPublications).toBe(2);
+    expect(store.getSnapshot().count).toBe(0);
+  });
+
   it('ranges across occurrences and selects each entity once while focusing only the target copy', () => {
     const store = createHappierListMultiSelectionStore({
       scopeKey: 'mirrors',
