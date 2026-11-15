@@ -1822,6 +1822,8 @@ function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string
 function readReviewedMachineSetupHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): Readonly<{ machineId?: string }> | null {
     if (isMachineSetupCombinedRunHttpPurpose(verified, proof)) return {};
+    // The reviewed Setup's admitted connector grants; the route keeps proof and target access.
+    if (isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) return {};
     if (proof.method.toUpperCase() === 'GET' && proof.body === undefined) {
         if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
         const scope = verified.binding.deploymentPreparationAdmission;

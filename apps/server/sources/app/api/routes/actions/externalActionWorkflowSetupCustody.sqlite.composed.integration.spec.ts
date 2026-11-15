@@ -33,6 +33,13 @@ import { startWorkflowSharedMachineServer } from '@/testkit/workflowSharedMachin
 import { inTx } from '@/storage/inTx';
 import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { readCurrentMachineWorkflowOriginInTx } from '@/app/auth/deploymentWorkflowOrigin';
+import { encodeExternalActionResolvedTargetV1, encodeReviewedActionChildHttpProofV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, machineSecretGrantSubjectKey, MachineConnectorSecretGrantInputV1Schema,
+    type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
+import { createCloudflareConnectorSetupSteps } from '@happier-dev/cli-common/machineSetup';
 
 let server: Awaited<ReturnType<typeof startWorkflowSharedMachineServer>>;
 beforeAll(async () => { server = await startWorkflowSharedMachineServer(); }, 120_000);
@@ -414,4 +421,83 @@ it.each(['cold', 'retained'] as const)('routes the installed Workflow preview Cr
     expect(deliveredBindings).toEqual([{ inputMatches: true, accountId: server.accountId,
         machineId: target.id, workflowActionOrigin: { runId, requestId },
         authenticationKind: 'terminal' }]);
+}, 120_000);
+
+it('lets a reviewed Setup child set and remove only its admitted connector grant through real Home', async () => {
+    const [, receiver] = server.machines;
+    const actionId = 'machines.setup.apply';
+    const parentRequestId = randomUUID();
+    const runId = deriveMachineSetupCombinedRunIdV1({ homeId: server.homeId, accountId: server.accountId, requestId: parentRequestId });
+    const subject = { v: 1 as const, kind: 'connectorToken' as const, machineId: receiver.id, installationId: receiver.installationId,
+        provider: { kind: 'builtin' as const, id: 'cloudflareNamed' }, connectorId: randomUUID() };
+    const selection = { ref: { pluginId: 'happier.machine.recipes', recipeId: 'cloudflare-connector', revision: '1' }, inputs: {} };
+    const steps = createCloudflareConnectorSetupSteps({ tunnelId: randomUUID(), grantRef: machineSecretGrantSubjectKey(subject) });
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: server.homeId, machineId: receiver.id, targets: [{
+        homeId: server.homeId, machineId: receiver.id, desiredRevision: 0,
+        recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: createMachineSetupEffectPlan({
+            basis: { kind: 'setup', machineId: receiver.id, desiredRevision: 0, selection }, steps,
+            nativeFacts: steps.map(step => ({ stepId: step.id, status: 'drifted', facts: {} })) }) }],
+        sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection }] } }] }] });
+    const target = { kind: 'machine' as const, machineId: receiver.id };
+    const mint = (body: unknown) => fetch(`${server.baseUrl}${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`, {
+        method: 'POST', headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const parentResponse = await mint({ v: 1, machineId: receiver.id,
+        envelope: ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: parentRequestId, target, input }) });
+    expect(parentResponse.status).toBe(200);
+    const parent = ExternalActionExecutionAuthorizationV1Schema.parse(await parentResponse.json());
+    const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(db, server.accountId);
+    if (!accountCurrentness) throw new Error('account_currentness_unavailable');
+    const snapshot = await server.materialize({ version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
+        document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] }, receiver.id);
+    await admitWorkflowRun({ accountId: server.accountId, machineId: receiver.id, runId, accountCurrentness, origin: { kind: 'direct' },
+        acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: server.accountId, runId }, acceptedSnapshot: snapshot })) });
+    await server.claim(receiver.id);
+    const requestId = `${runId}/${randomUUID()}/0`;
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input });
+    const origin = { runId, requestId };
+    const childResponse = await mint({ v: 1, machineId: receiver.id, envelope, workflowActionOrigin: origin, executionAuthorization: parent,
+        installationProof: signMachineInstallationProof({ privateKey: receiver.keys.secretKey, payload: { version: 1,
+            accountId: server.accountId, machineId: receiver.id, installationId: receiver.installationId,
+            externalActionOrigin: { homeId: server.homeId, actionId, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) });
+    expect(childResponse.status).toBe(200);
+    const child = ExternalActionExecutionAuthorizationV1Schema.parse(await childResponse.json());
+    expect(child.binding).toMatchObject({ machineId: receiver.id, admittedMachineRole: 'manage', deploymentPreparationAdmission: {
+        operation: 'setup', connectorGrants: [{ machineId: receiver.id, grantRef: machineSecretGrantSubjectKey(subject) }] } });
+    // The Setup executor signs the grant with its admitted reviewed child annotation.
+    const reviewedChild = { actionId, role: 'machines.setup.apply', inputDigest: computeActionInputApprovalDigestV1(actionId, input) };
+    const send = async (destination: typeof subject, operation: 'set' | 'remove') => {
+        const common = { serverId: server.homeId, hostMachineId: receiver.id, hostInstallationId: receiver.installationId, subject: destination };
+        const body: MachineConnectorSecretGrantBodyV1 = operation === 'set'
+            ? { ...common, operation, grant: { ...destination, sealedContent: 'target-installation-ciphertext' } } : { ...common, operation };
+        const payload = MachineConnectorSecretGrantInputV1Schema.parse({ ...body, proof: signMachineInstallationProof({
+            privateKey: receiver.keys.secretKey, payload: { version: 1, accountId: server.accountId, machineId: receiver.id,
+                installationId: receiver.installationId,
+                deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } } }) });
+        const path = `/v1/deployments/machines/${receiver.id}/connector-secret-grant`;
+        const response = await fetch(`${server.baseUrl}${path}`, { method: 'POST', body: JSON.stringify(payload), headers: {
+            'content-type': 'application/json',
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: child.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+            [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: child.token,
+                installationId: receiver.installationId, requestId: child.binding.requestId, target, effectActionId: actionId,
+                method: 'POST', path, body: payload, reviewedChild, privateKey: receiver.keys.secretKey }),
+        } });
+        return { status: response.status, body: await response.text() };
+    };
+    const count = () => db.machineSecretGrant.count({ where: { machineId: receiver.id, environmentId: null } });
+    const before = await count();
+    // A grant the reviewed Setup did not admit stays refused.
+    const unreviewed = await send({ ...subject, connectorId: randomUUID() }, 'set');
+    expect(unreviewed.status, unreviewed.body).toBe(401);
+    expect(await count()).toBe(before);
+    const written = await send(subject, 'set');
+    expect(written.status, written.body).toBe(200);
+    expect(await count()).toBe(before + 1);
+    const removed = await send(subject, 'remove');
+    expect(removed.status, removed.body).toBe(200);
+    expect(await count()).toBe(before);
 }, 120_000);
