@@ -31,6 +31,7 @@ import { createCapabilitiesService } from '@/capabilities/service';
 import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveAccountConfiguredAcpLaunch } from '@/agent/runtime/registry/engineRegistry/accountConfiguredAcp';
 
 const record = { v: 1, definitions: [{ id: 'row-review', name: 'row-review', title: 'Row Review', launch: { kind: 'command' as const, command: 'review-agent', args: ['acp'] },
    env: {}, capabilities: { supportsLoadSession: true, supportsModes: 'yes', supportsModels: 'yes',
@@ -566,6 +567,46 @@ describe('ACP Action inventory row authority', () => {
       .toMatchObject({ ok: false, errorCode: 'acp_backend_not_found' });
     expect(writes).toMatchObject([{ expectedRevision: 4 }, { expectedRevision: 5, content: { t: 'plain', v: { v: 1, definitions: [] } } }]);
     expect(requests).not.toContain('POST /v2/account/settings');
+  });
+
+  it('starts a newly saved configured definition from the current row when the runner retained a ready older catalog', async () => {
+    const { deps, credentials, operationContext, incumbent } = await createInventory();
+    await deps.readAccountAcpCatalog({});
+    const snapshot = operationContext.readSnapshot();
+    if (!snapshot) throw new Error('Requester snapshot retired');
+    const runnerOperation = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+      serverHttpBaseUrl: operationContext.serverHttpBaseUrl, isCurrent: async () => true });
+    const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
+      savedSecretOperationContext: operationContext, sessionId: 'requester-session', mode: 'plain', ctx: null }));
+    const backend = { ...record.definitions[0], id: 'new-configured-definition', name: 'new-configured-definition',
+      title: 'New configured definition' };
+    const save = (definition: typeof backend) => executor.execute('agents.acp.backends.upsert', { backend: definition }, {
+      surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'agents.acp.backends.upsert' },
+    });
+    expect(await save(backend)).toMatchObject({ ok: true, result: { backend, revision: 5 } });
+    expect(runnerOperation.readSnapshot()?.acpCatalog).toMatchObject({ status: 'ready', revision: 4 });
+    const firstLaunch = await resolveAccountConfiguredAcpLaunch(backend.id, runnerOperation);
+    expect(firstLaunch).toMatchObject({
+      configuredBackend: { backendId: backend.id, title: backend.title, launch: backend.launch },
+    });
+    await resolveAccountConfiguredAcpLaunch(backend.id, runnerOperation);
+    expect(await firstLaunch.resolveHostLaunch({ cwd: process.cwd() })).toMatchObject({
+      command: backend.launch.command, args: backend.launch.args,
+    });
+    const updated = { ...backend, title: 'Updated configured definition',
+      launch: { ...backend.launch, args: [...backend.launch.args, '--updated'] } };
+    expect(await save(updated)).toMatchObject({ ok: true, result: { backend: updated, revision: 6 } });
+    const updatedLaunch = await resolveAccountConfiguredAcpLaunch(backend.id, runnerOperation);
+    expect(updatedLaunch).toMatchObject({
+      configuredBackend: { backendId: backend.id, title: updated.title, launch: updated.launch },
+    });
+    expect(await firstLaunch.resolveHostLaunch({ cwd: process.cwd() })).toMatchObject({
+      command: backend.launch.command, args: backend.launch.args,
+    });
+    expect(await updatedLaunch.resolveHostLaunch({ cwd: process.cwd() })).toMatchObject({
+      command: updated.launch.command, args: updated.launch.args,
+    });
+    expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
   });
 
   it('returns its own acknowledged revision through the public Action when a later writer advances the row during cleanup', async () => {

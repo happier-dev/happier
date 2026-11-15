@@ -19,7 +19,7 @@ import type { EngineAdapterResolution } from '../engineRegistryTypes';
 import type { StoredCredentials } from '@/persistence';
 import { setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, commitActiveAcpCatalog,
   getActiveAccountSettingsSnapshotLifetimeToken, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
@@ -54,6 +54,12 @@ const CUSTOM_ACP_ID = 'custom-acp';
 let observedMaterialStatus: 'ready' | 'access_removed' = 'ready';
 const runtimeCleanups: Array<() => Promise<void>> = [];
 let launchFixture: Awaited<ReturnType<typeof createNativeAgentLaunchPreparationFixture>>;
+let homeCatalog: AcpCatalogSnapshotV1 | undefined;
+
+function publishConfiguredCatalog(input: Parameters<typeof commitActiveAcpCatalog>[0]) {
+  homeCatalog = input.catalog;
+  return commitActiveAcpCatalog(input);
+}
 
 async function createContributedRuntimeFixture(definitionId = BACKEND_ID, savedSecretOperationContext?: ResolveEngineRegistryParams['savedSecretOperationContext']) {
   const fixture = await createCustomAcpAdmittedRuntimeFixture();
@@ -258,12 +264,13 @@ function setConfiguredAcpAccountSettings(scriptPath: string): void {
       storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'acp-secret-resource', mode: 'plain',
         content: { v: 1, name: 'ACP token', kind: 'token', value: 'plain-runtime-secret' } }) }],
   });
+  homeCatalog = getActiveAccountSettingsSnapshot()?.acpCatalog;
 }
 
 function setConfiguredNativeDefaults(defaultMode = 'review', defaultModel = 'registry-model') {
   const active = getActiveAccountSettingsSnapshot()!;
   if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
-  commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+  publishConfiguredCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
     catalog: { ...active.acpCatalog, revision: 5, record: { ...active.acpCatalog.record,
       definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, defaultMode, defaultModel })),
     } } });
@@ -299,6 +306,7 @@ describe('Account-configured ACP composed Session journey', () => {
     mocks.readStoredCredentials.mockResolvedValue(createCredentials());
     launchFixture = await createNativeAgentLaunchPreparationFixture();
     resetActiveAccountSettingsSnapshotForTests();
+    homeCatalog = undefined;
     observedMaterialStatus = 'ready';
     // Genuine Home transport boundaries; admission, hydration, and resource
     // materialization remain real throughout the composed launch.
@@ -310,6 +318,14 @@ describe('Account-configured ACP composed Session journey', () => {
       })), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }));
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (String(url).endsWith(ACP_CATALOG_ROWS_ROUTE_V1)) {
+        if (homeCatalog?.status !== 'ready') throw new Error('Missing Home catalog fixture');
+        return { status: 200, data: { status: 'present', revision: homeCatalog.revision,
+          content: { t: 'plain', v: homeCatalog.record } } };
+      }
       if (!String(url).endsWith('/v1/account/saved-secrets/resources/materials')) return launchFixture.homeGet(url, config);
       const ref = formatSharedSavedSecretRefV1('acp-secret-resource');
       return { status: 200, data: SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
@@ -338,7 +354,7 @@ describe('Account-configured ACP composed Session journey', () => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
       const active = getActiveAccountSettingsSnapshot()!;
       if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
-      commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+      publishConfiguredCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
         catalog: { ...active.acpCatalog, revision: 5, record: { ...active.acpCatalog.record,
           definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, env: {
             ...definition.env, CONFIGURED_ACP_EXPANDED: { t: 'literal' as const, v: '${ACP_SESSION_BASE}' },
@@ -394,6 +410,7 @@ describe('Account-configured ACP composed Session journey', () => {
         acpCatalog: { ...active.acpCatalog, record: { v: 1 as const, definitions: active.acpCatalog.record.definitions.map(definition => ({
           ...definition, env: {}, launch: { kind: 'npm' as const, package: '@fixture/agent', version: '1.2.3', args: [] },
         })) } } };
+      homeCatalog = snapshot.acpCatalog;
       const context = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
         serverHttpBaseUrl: resolveServerHttpBaseUrl(), isCurrent: async () => true,
       });
@@ -494,7 +511,7 @@ describe('Account-configured ACP composed Session journey', () => {
       const active = getActiveAccountSettingsSnapshot()!;
       if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
       const firstDefinition = active.acpCatalog.record.definitions[0]!;
-      commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+      publishConfiguredCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
         catalog: { ...active.acpCatalog, revision: 5, record: { v: 1, definitions: [firstDefinition,
           { ...firstDefinition, id: 'second-definition', name: 'second-definition', launch: { kind: 'command', command: process.execPath, args: [secondScript] },
             env: { CONFIGURED_ACP_LITERAL: { t: 'literal', v: 'second-environment' } } },
@@ -554,7 +571,7 @@ describe('Account-configured ACP composed Session journey', () => {
     const changedScript = writeConfiguredAcpAgentScript(dir, 'changed-acp.mjs');
     const active = getActiveAccountSettingsSnapshot()!;
     if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
-    commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+    publishConfiguredCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
       catalog: { status: 'ready', revision: 5, record: { ...active.acpCatalog.record,
         definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition,
           launch: { kind: 'command', command: process.execPath, args: [changedScript] },
@@ -598,7 +615,7 @@ describe('Account-configured ACP composed Session journey', () => {
     expect(await readDetachedResumeSupport()).toBe(true);
     const active = getActiveAccountSettingsSnapshot()!;
     if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
-    commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+    publishConfiguredCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
       catalog: { status: 'ready', revision: 5, record: { ...active.acpCatalog.record,
         definitions: active.acpCatalog.record.definitions.map(definition => ({
           ...definition, capabilities: { ...definition.capabilities, supportsLoadSession: false },
@@ -672,11 +689,11 @@ describe('Account-configured ACP composed Session journey', () => {
     if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
     const record = active.acpCatalog.record;
     const scope = { scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
-    commitActiveAcpCatalog({ ...scope, catalog: { status: 'ready', revision: 5, record: { v: 1, definitions: [] } } });
+    publishConfiguredCatalog({ ...scope, catalog: { status: 'ready', revision: 5, record: { v: 1, definitions: [] } } });
     const params = await createContributedRegistryParams();
     const registry = await resolveCliEngineRegistry(params);
     await expect(registry.resolveForBackendId(params.backendId)).rejects.toMatchObject({ code: 'ACP_CATALOG_UNAVAILABLE', reason: 'definition-not-found' });
-    commitActiveAcpCatalog({ ...scope, catalog: { status: 'ready', revision: 6, record } });
+    publishConfiguredCatalog({ ...scope, catalog: { status: 'ready', revision: 6, record } });
     expect(await registry.resolveForBackendId(params.backendId)).toMatchObject({ backendId: params.backendId, provenance: 'first_party' });
   });
 

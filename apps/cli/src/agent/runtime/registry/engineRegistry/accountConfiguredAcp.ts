@@ -49,13 +49,17 @@ export async function resolveAccountConfiguredAcpLaunch(
     ? runWithServerHttpBaseUrl(savedSecretOperationContext.serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(credentials))
     : resolveAccountSettingsScopeKey(credentials));
   if (!credentials || credentialScope !== scopeKey) throw new AcpCatalogUnavailableError('credentials-unavailable');
-  if (accountSnapshot.acpCatalog?.status !== 'ready') await refreshActiveAcpCatalog({ credentials, operationContext: savedSecretOperationContext });
+  // The runner's ready projection may predate a definition saved after its
+  // Account snapshot was captured. Select launch data from the owning row.
+  await refreshActiveAcpCatalog({ credentials, operationContext: savedSecretOperationContext });
   await assertAccountCurrent();
   accountSnapshot = readSnapshot()!;
   if (accountSnapshot.source === 'none') throw new AcpCatalogUnavailableError('account-settings-unavailable');
   const catalog = requireReadyAcpCatalog(accountSnapshot.acpCatalog);
   const configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(accountSnapshot.settings, definitionId, catalog);
   if (!configuredBackend) throw new AcpCatalogUnavailableError('definition-not-found');
+  // This launch retains its selected definition; later catalog reads configure
+  // the next launch without withdrawing this one's captured configuration.
   const runtimeDefinition: AgentAcpRuntimeDefinition = Object.freeze(configuredAcpRuntimeConfiguration(configuredBackend));
   const configurationDefaults = configuredBackend.defaultMode || configuredBackend.defaultModel ? Object.freeze({
     ...(configuredBackend.defaultMode ? { mode: configuredBackend.defaultMode } : {}),
@@ -81,7 +85,6 @@ export async function resolveAccountConfiguredAcpLaunch(
   }>);
   const resolveHostLaunch: PublicAcpHostLaunchResolver = async (request) => {
     await assertAccountCurrent();
-    if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
     if (configuredBackend.launch.kind !== 'command') {
       const admission = savedSecretOperationContext?.machineAdmission;
       if (savedSecretOperationContext
@@ -112,8 +115,7 @@ export async function resolveAccountConfiguredAcpLaunch(
       }
     }
     await assertAccountCurrent();
-    const launchSnapshot = readSnapshot();
-    if (launchSnapshot?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
+    const launchSnapshot = readSnapshot()!;
     const processEnv = buildScopedProcessEnv({
       baseEnv: sessionProcessEnvironment(),
       explicitEnv: request.launchEnvironment?.values,
@@ -134,13 +136,11 @@ export async function resolveAccountConfiguredAcpLaunch(
       settings: launchSnapshot.settings, machineId: (await readSettings()).machineId ?? '',
     });
     await assertAccountCurrent();
-    if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
     const launchDefinition = normalizeConfiguredAcpDefinition({
       backend: configuredBackend, launch: resolved, launchEnv,
     });
     const launch = await resolveAcpRuntimeLaunch({ definition: launchDefinition, cwd: request.cwd, processEnv });
     await assertAccountCurrent();
-    if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
     return Object.freeze({
       command: launch.command, args: Object.freeze([...launch.args]), env: Object.freeze({ ...launch.env }),
       unsetEnv: Object.freeze([]),
@@ -148,7 +148,6 @@ export async function resolveAccountConfiguredAcpLaunch(
     });
   };
   await assertAccountCurrent();
-  if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
   return Object.freeze({ ...selection, definitionId, configuredBackend, runtimeDefinition, configurationDefaults, sessionCapabilities, sessionProjection, resolveHostLaunch });
 }
 
