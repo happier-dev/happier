@@ -77,7 +77,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                     }}
                 >
                     <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} style={{ marginRight: theme.space.s6 }} />
-                    <Text style={{ ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.warning.foreground,  }}>
+                    <Text style={{ ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.warning.textForeground }}>
                         {t('sessionInfo.cliVersionOutdated')}
                     </Text>
                     <Icon name="x" size={14} color={theme.colors.state.warning.foreground} style={{ marginLeft: theme.space.s8 }} />

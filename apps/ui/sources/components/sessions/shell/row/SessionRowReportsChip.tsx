@@ -46,7 +46,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     needsYou: {
         ...Typography.tabular(),
         ...Typography.variant('micro', 'semiBold'),
-        color: theme.colors.state.warning.foreground,
+        // Text takes the warning text role; the fill amber stays on the dot beside it.
+        color: theme.colors.state.warning.textForeground,
     },
     total: {
         ...Typography.tabular(),
