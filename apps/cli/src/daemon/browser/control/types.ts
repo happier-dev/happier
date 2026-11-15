@@ -85,6 +85,8 @@ export type BrowserDaemonControlAdapter = Readonly<{
   getCommandAccessFailure?(command: BrowserCommandAccessTarget, scope?: BrowserCommandScope): Extract<BrowserCommandDispatchResultV1, { status: 'failed' }> | undefined;
   subscribeViewLifecycle?(listener: (event: BrowserDaemonControlViewIdentity) => void): () => void;
   supportsOpenView(command: Extract<BrowserCommandV1, { kind: 'openView' }>): boolean;
+  /** Replace the physical profile while retaining the selected logical view. */
+  replaceProfile?(command: Extract<BrowserCommandV1, { kind: 'openView' }>, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1>;
   dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1> | BrowserCommandDispatchResultV1;
 }>;
 
@@ -92,6 +94,7 @@ export type BrowserDaemonControlBroker = Readonly<{
   registerAdapter(adapter: BrowserDaemonControlAdapter): () => void;
   ownsView(input: BrowserDaemonControlViewIdentity): boolean;
   dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1>;
+  replaceProfile(command: Extract<BrowserCommandV1, { kind: 'openView' }>, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1>;
   hasExecutableAdapters(): boolean;
   listViews(browserSessionId: string, scope?: BrowserCommandScope): readonly BrowserDaemonViewV1[];
   getCommandAccessFailure(command: BrowserCommandAccessTarget, scope?: BrowserCommandScope): Extract<BrowserCommandDispatchResultV1, { status: 'failed' }> | undefined;

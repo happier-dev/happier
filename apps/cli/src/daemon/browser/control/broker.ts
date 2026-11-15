@@ -121,6 +121,14 @@ export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
   return {
     registerAdapter,
     dispatchCommand,
+    async replaceProfile(command, scope) {
+      const adapter = [...adapters].find(candidate => candidate.ownsView(command));
+      if (!adapter) return browserCommandDispatchFailure({ commandId: command.commandId,
+        code: 'view_not_found', message: 'No registered Browser daemon adapter owns this view.' });
+      if (!adapter.replaceProfile) return browserCommandDispatchFailure({ commandId: command.commandId,
+        code: 'unsupported_command', message: 'This Browser runtime cannot replace profiles.' });
+      return normalizeAdapterResult(adapter, command, await adapter.replaceProfile(command, scope));
+    },
     ownsView: (view) => [...adapters].some(adapter => adapter.ownsView(view)),
     hasExecutableAdapters: () => adapters.size > 0,
     listViews,

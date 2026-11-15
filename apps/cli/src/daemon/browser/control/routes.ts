@@ -22,6 +22,7 @@ export type BrowserDaemonControlRoutes = Readonly<{
     Readonly<{ ok: true; source: MachineLiveStreamRegisteredCaptureSource }> | Readonly<{ ok: false; reasonCode: string }>;
   getCommandAccessFailure?(target: Parameters<BrowserDaemonControlBroker['getCommandAccessFailure']>[0], context?: Parameters<typeof browserCommandScope>[0]): ReturnType<BrowserDaemonControlBroker['getCommandAccessFailure']>;
   dispatchCommand(command: unknown, context?: NonNullable<Parameters<typeof browserCommandScope>[0]> & Pick<ActionExecutorContext, 'authority'>): Promise<BrowserCommandDispatchResultV1>;
+  replaceProfile(command: Extract<BrowserCommandV1, { kind: 'openView' }>, context?: Parameters<typeof browserCommandScope>[0]): Promise<BrowserCommandDispatchResultV1>;
   listViews(browserSessionId: string, context?: Parameters<typeof browserCommandScope>[0]): readonly BrowserDaemonViewV1[];
   importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
   importPasskeys?: ImportPasskeys;
@@ -37,7 +38,7 @@ function readCommandId(input: unknown): string {
 }
 
 export function createBrowserDaemonControlRoutes(input: Readonly<{
-  broker: Pick<BrowserDaemonControlBroker, 'dispatchCommand'> & Partial<Pick<BrowserDaemonControlBroker, 'listViews' | 'getCommandAccessFailure'>>;
+  broker: Pick<BrowserDaemonControlBroker, 'dispatchCommand'> & Partial<Pick<BrowserDaemonControlBroker, 'listViews' | 'getCommandAccessFailure' | 'replaceProfile'>>;
   captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>;
   automation?: () => BrowserAutomationDaemonService | null;
   importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
@@ -67,6 +68,11 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
     ...(input.profiles ? { profiles: input.profiles } : {}),
     listViews(browserSessionId, context) {
       return projectBrowserDaemonViews(input.broker.listViews?.(browserSessionId, browserCommandScope(context)) ?? [], input.captureRegistry);
+    },
+    async replaceProfile(command, context) {
+      return input.broker.replaceProfile?.(command, browserCommandScope(context))
+        ?? browserCommandDispatchFailure({ commandId: command.commandId, code: 'unsupported_command',
+          message: 'This Browser runtime cannot replace profiles.' });
     },
     async dispatchCommand(rawCommand, context) {
       const command = BrowserCommandV1Schema.safeParse(rawCommand);

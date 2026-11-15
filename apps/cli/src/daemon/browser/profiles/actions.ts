@@ -1,14 +1,14 @@
-import type { PublicActionInputById, PublicActionOutputById } from '@happier-dev/protocol/actions/actionSpecs';
+import type { PublicActionInputById, PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import type { BROWSER_PROFILE_ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import type { BrowserProfileStore } from './store';
 import { BrowserOpenViewCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
-import type { ActionExecutorContext, BrowserEventV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { BrowserDaemonControlRoutes } from '../control/routes';
 import { browserCommandDispatchFailure } from '../control/types';
 
 type ProfileAction = typeof BROWSER_PROFILE_ACTION_IDS[number];
 type ProfileRequest = PublicActionInputById[ProfileAction];
-type ProfileResult = PublicActionOutputById[ProfileAction];
+type ProfileResult = PublicActionResultById[ProfileAction];
 
 /** Saved-profile Actions delegate persistence and running-browser cleanup to the existing store. */
 export async function executeBrowserProfileAction(
@@ -50,15 +50,7 @@ export async function executeBrowserProfileAction(
       }
       open = { ...open, target: currentView.target };
     }
-    const events: BrowserEventV1[] = [];
-    for (const view of views) {
-      const closed = await control.dispatchCommand({ kind: 'closeView', browserSessionId: open.browserSessionId,
-        viewId: view.viewId, commandId: `${open.commandId}:close:${view.viewId}` }, context);
-      if (closed.status !== 'dispatched') return closed;
-      events.push(...closed.events);
-    }
-    const opened = await control.dispatchCommand(open, context);
-    return opened.status === 'dispatched' ? { ...opened, events: [...events, ...opened.events] } : opened;
+    return control.replaceProfile(open, context);
   }
   const result = await store.purgeForExplicitRequest({ profileIds: [request.profileId] });
   return result.purgedProfileIds.includes(request.profileId)

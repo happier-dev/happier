@@ -5,6 +5,7 @@ import type {
     BrowserCommandV1,
     BrowserCommandDispatchResultV1,
     BrowserEventV1,
+    BrowserDaemonViewV1,
     BrowserSidecarErrorCodeV1,
 } from '@happier-dev/protocol';
 
@@ -87,6 +88,9 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             stop: () => Promise<void>; closing: boolean; pendingCommands: number;
             profileId: string; extensionDirectories: readonly string[]; presentation: 'headless' | 'window' };
         const sessions = new Map<string, SessionLaunch>();
+        // A profile restart replaces a physical page, not the selected workspace view.
+        // Keep that view discoverable until the finite replacement operation settles.
+        const profileReplacements = new Map<string, { view: BrowserDaemonViewV1; closedEvent?: BrowserEventV1 }>();
         const eventListeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const viewListeners = new Set<BrowserSidecarViewLifecycleSubscriber>();
         const browserEventListeners = new Set<(event: BrowserEventV1) => void>();
@@ -246,7 +250,14 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                         ...(notification.sessionId ? { sessionId: JSON.stringify([sessionId, notification.sessionId]) } : {}),
                     }));
                     result.contextCapture?.subscribeViewLifecycle?.((event) => emit(viewListeners, event));
-                    result.contextCapture?.subscribeBrowserEvents?.((event) => emit(browserEventListeners, event));
+                    result.contextCapture?.subscribeBrowserEvents?.((event) => {
+                        const replacement = profileReplacements.get(event.browserSessionId);
+                        if (event.kind === 'viewClosed' && event.viewId === replacement?.view.viewId) {
+                            replacement.closedEvent = event;
+                            return;
+                        }
+                        emit(browserEventListeners, event);
+                    });
                     result.contextCapture?.interactions?.subscribe((view) => emit(interactionListeners, view));
                 }
                 return result;
@@ -419,12 +430,44 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 listViews: (browserSessionId, scope) => {
                     if (!canAccessSessionProfile(browserSessionId, scope)) return [];
                     const session = sessions.get(browserSessionId);
-                    if (session?.closing) return [];
                     const created = sessionCreatedEvent(browserSessionId);
                     // Discovery materializes the daemon's real Session/profile binding,
                     // including views opened by an agent before any UI was mounted.
-                    return (session?.result?.adapter.listViews?.(browserSessionId) ?? []).map(view => created
+                    const views = (!session?.closing ? session?.result?.adapter.listViews?.(browserSessionId) ?? [] : []).map(view => created
                         ? { ...view, events: [created, ...view.events] } : view);
+                    const replacement = profileReplacements.get(browserSessionId);
+                    return replacement && !views.some(view => view.viewId === replacement.view.viewId)
+                        ? [...views, replacement.view] : views;
+                },
+                async replaceProfile(command, scope) {
+                    const denied = getCommandAccessFailure(command, scope);
+                    if (denied) return denied;
+                    const views = sessions.get(command.browserSessionId)?.result?.adapter.listViews?.(command.browserSessionId, scope) ?? [];
+                    const view = views.find(view => view.viewId === command.viewId);
+                    if (!view) return browserCommandDispatchFailure({ commandId: command.commandId, code: 'view_not_found',
+                        message: 'The Browser page is no longer available.' });
+                    const replacement = { view, closedEvent: undefined as BrowserEventV1 | undefined };
+                    profileReplacements.set(command.browserSessionId, replacement);
+                    let replaced = false;
+                    try {
+                        const events: BrowserEventV1[] = [];
+                        for (const current of views) {
+                            const closed = await dispatchSessionCommand({ kind: 'closeView', browserSessionId: command.browserSessionId,
+                                commandId: `${command.commandId}:close:${current.viewId}` }, scope,
+                            result => result.adapter.dispatchCommand({ kind: 'closeView', browserSessionId: command.browserSessionId,
+                                viewId: current.viewId, commandId: `${command.commandId}:close:${current.viewId}` }, scope));
+                            if (closed.status !== 'dispatched') return closed;
+                            events.push(...closed.events.filter(event => event.kind !== 'viewClosed' || event.viewId !== command.viewId));
+                        }
+                        const opened = await dispatchSessionCommand(command, scope, result => result.adapter.dispatchCommand(command, scope));
+                        replaced = opened.status === 'dispatched';
+                        return opened.status === 'dispatched' ? { ...opened, events: [...events, ...opened.events] } : opened;
+                    } finally {
+                        profileReplacements.delete(command.browserSessionId);
+                        if (!replaced && replacement.closedEvent) emit(browserEventListeners, replacement.closedEvent);
+                        emit(viewListeners, { type: resolvePageHandle(command) ? 'bound' : 'unbound',
+                            browserSessionId: command.browserSessionId, viewId: command.viewId });
+                    }
                 },
                 supportsOpenView: (command) => !disposal && command.target.kind === 'externalUrl',
                 ownsView: (view) => {
