@@ -174,6 +174,7 @@ export async function createWorkflowDiscussionRoundFixture(conditionalShape?: Co
   const cost = { requests: 0, pages: 0, historyPages: 0, envelopes: 0, bytes: 0 };
   let miswire = false;
   let miswireChildren = false;
+  let storageFailure: ((operation: Parameters<WorkflowAccountRunActionDeps['storage']['execute']>[0]) => void) | undefined;
   const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account-1',
     // This fixture creates settled records without launching native inputs.
     // Supply that execution-boundary fact explicitly; absent correspondence
@@ -188,6 +189,7 @@ export async function createWorkflowDiscussionRoundFixture(conditionalShape?: Co
     definitions: { get: async () => { throw new Error('No mutable definition read'); } },
     normalizeAbsolutePath: directory => directory.startsWith('/') ? directory : null,
     storage: { execute: async operation => {
+      storageFailure?.(operation);
       cost.requests += 1;
       if (operation.operation === 'get') return snapshot;
       if (operation.operation === 'invocations.get') return { invocation: { ...row(String(operation.invocationId)), parentRevision: run.revision } };
@@ -295,6 +297,7 @@ export async function createWorkflowDiscussionRoundFixture(conditionalShape?: Co
     return result.invocation.id;
   };
   return { run, cost, executor, context, rounds, recover, retry, inspect, requestRetry, move, row, seal, root, deps, address,
+    failStorage: (fail: NonNullable<typeof storageFailure>) => { storageFailure = fail; },
     interrupt: () => { run.state = 'interrupted'; },
     currentRoot: () => currentRoot,
     retainOriginalCheckpointRoot: () => {

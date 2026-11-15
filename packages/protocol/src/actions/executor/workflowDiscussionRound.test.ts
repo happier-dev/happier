@@ -8,6 +8,31 @@ const runId = '11111111-1111-4111-8111-111111111111';
 const participantCount = process.env.HAPPIER_WORKFLOW_SCALE_MEASUREMENT === '1' ? 500 : 24;
 
 describe('Discussion round projection demand', () => {
+  it.each(['frame', 'descendants'] as const)('preserves a typed storage refusal while reading %s', async stage => {
+    const f = await fixture('projector-in-if');
+    const round = f.rounds[2]!;
+    f.failStorage(operation => {
+      if (stage === 'frame' ? operation.operation === 'get'
+        : operation.operation === 'invocations.list' && operation.parentRecordIds?.includes(round.collection)) {
+        throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
+      }
+    });
+    await expect(f.executor.execute('workflow.discussion.round.project',
+      { collections: ['speakers'], preparationBlockId: 'context' }, f.context(round.complete)))
+      .resolves.toMatchObject({ ok: false, errorCode: 'run_access_denied',
+        failureCause: { errorCode: 'run_access_denied' } });
+  });
+
+  it('preserves a Session read failure instead of claiming the admitted review scope is missing', async () => {
+    const f = await fixture('projector-in-if', 2, 'review');
+    const executor = createActionExecutor({ ...f.deps,
+      resolveSessionReference: async () => { throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' }); },
+      reviewCommentAction: async () => { throw new Error('review_must_not_dispatch'); },
+    } as unknown as ActionExecutorDeps);
+    await expect(executor.execute('reviews.comments.list', { sessionId: f.address.sessionId }, f.context(f.rounds[2]!.complete)))
+      .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable', failureCause: { errorCode: 'target_unavailable' } });
+  });
+
   it('carries one host-admitted Workflow Session scope through review dispatch and refreshes it for the next Action', async () => {
     const f = await fixture('projector-in-if', 2, 'review');
     let sessionReads = 0;

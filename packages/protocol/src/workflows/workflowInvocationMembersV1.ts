@@ -94,19 +94,19 @@ export async function readWorkflowInvocationMembersV1<T>(params: Readonly<{
       const index = params.indexOf(row);
       const members = index.parentRecordId === null ? undefined : slots.get(index.parentRecordId);
       if (!members || (params.memberOrdinal !== undefined && index.memberOrdinal !== params.memberOrdinal)) {
-        throw new Error('workflow_member_selection_invalid');
+        throw Object.assign(new Error('workflow_member_selection_invalid'), { code: 'content_unavailable' });
       }
       const previous = members.get(index.memberOrdinal);
       if (!previous || BigInt(index.attempt) > BigInt(params.indexOf(previous).attempt)) members.set(index.memberOrdinal, row);
     }
     const next = await Promise.all(pending.map(async state => {
-      if (state.seen.has(state.id)) throw new Error('workflow_member_ancestry_invalid');
+      if (state.seen.has(state.id)) throw Object.assign(new Error('workflow_member_ancestry_invalid'), { code: 'content_unavailable' });
       state.seen.add(state.id);
       for (const [ordinal, row] of slots.get(state.id)!) if (!state.members.has(ordinal)) state.members.set(ordinal, row);
       // An exact selected slot needs no older history or parent content.
       if (params.memberOrdinal !== undefined && state.members.has(params.memberOrdinal)) return undefined;
       const parent = await params.readParent(state.id);
-      if (!parent || parent.index.id !== state.id) throw new Error('workflow_parent_invocation_missing');
+      if (!parent || parent.index.id !== state.id) throw Object.assign(new Error('workflow_parent_invocation_missing'), { code: 'content_unavailable' });
       return parent.progress.previousAttemptRecordId ? { ...state, id: parent.progress.previousAttemptRecordId } : undefined;
     }));
     pending = next.filter(state => state !== undefined);

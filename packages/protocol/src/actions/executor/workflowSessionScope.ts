@@ -1,3 +1,4 @@
+import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowRunGetResultV1Schema, WorkflowInvocationListResultV1Schema, type WorkflowInvocationListRequestV1 } from '../../workflows/actionsV1.js';
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '../../workflows/workflowInvocationStructureV1.js';
 import { readWorkflowActionInvocationV1, type WorkflowSessionScopeV1 } from '../../workflows/workflowSessionScopeV1.js';
@@ -18,7 +19,11 @@ type WorkflowActionInvocationContextV1 = Readonly<{
   leaf: WorkflowMaterializedLeafV1;
 }>;
 
-/** Opens the exact accepted frame; neither Action operands nor sibling targets supply authority. */
+const invalidScope = Object.assign(new Error('workflow_scope_content_unavailable'), { code: 'content_unavailable' });
+
+/** Opens the exact accepted frame; neither Action operands nor sibling targets supply authority.
+ * Missing/misbound facts return null; read failures propagate to the Action failure owner.
+ */
 export async function readActionWorkflowInvocationContextV1(
   actionId: ActionId, context: ActionExecutorContext,
   deps: Pick<ActionExecutorDeps, 'workflowAction' | 'resolveSessionReference' | 'resolveServerProfileScopeId'>,
@@ -49,9 +54,9 @@ export async function readActionWorkflowInvocationContextV1(
           actionId: 'workflow.run.invocations.list', input: { runId: caller.runId, includeContent: true,
             ...selection, ...(cursor ? { cursor } : {}) } }));
         const details = page.invocationDetails;
-        if (!details || details.length !== page.invocations.length) throw new Error('workflow_scope_content_unavailable');
+        if (!details || details.length !== page.invocations.length) throw invalidScope;
         const indices = new Map(page.invocations.map(index => [index.id, index]));
-        if (indices.size !== page.invocations.length) throw new Error('workflow_scope_content_unavailable');
+        if (indices.size !== page.invocations.length) throw invalidScope;
         for (const detail of details) {
           const index = indices.get(detail.index.id);
           if (!index || index.runId !== caller.runId || !sameStrictJsonValue(index, detail.index)
@@ -61,14 +66,14 @@ export async function readActionWorkflowInvocationContextV1(
             || (selection.parentRecordId !== undefined && index.parentRecordId !== selection.parentRecordId)
             || (parents !== undefined && (index.parentRecordId === null || !parents.has(index.parentRecordId)))
             || (selection.memberOrdinal !== undefined && index.memberOrdinal !== selection.memberOrdinal)) {
-            throw new Error('workflow_scope_content_unavailable');
+            throw invalidScope;
           }
           ids.add(index.id);
           rows.set(index.id, detail);
           selected.push(detail);
         }
         cursor = page.nextCursor;
-        if (cursor && cursors.has(cursor)) throw new Error('workflow_scope_content_unavailable');
+        if (cursor && cursors.has(cursor)) throw invalidScope;
         if (cursor) cursors.add(cursor);
       } while (cursor);
       return selected;
@@ -115,9 +120,9 @@ export async function readActionWorkflowInvocationContextV1(
       && leaf.blockId === structure.leaf.id && leaf.kind === 'action' && leaf.actionId === actionId);
     if (!leaf) return null;
     return { opened, readInvocation: read, readMembers, readChildHistory, invocation, structure, leaf };
-  } catch {
-    context.signal?.throwIfAborted();
-    return null;
+  } catch (error) {
+    if (error === invalidScope || error instanceof z.core.$ZodError) return null;
+    throw error;
   }
 }
 
@@ -129,25 +134,21 @@ export async function resolveActionWorkflowSessionScopeV1(
   const binding = await readActionWorkflowInvocationContextV1(actionId, context, deps);
   if (!binding) return null;
   const { opened, invocation, structure, leaf } = binding;
-  try {
-    const sessions: WorkflowSessionScopeV1['sessions'] = [];
-    const sameHome = (left: string, right: string | null | undefined) => areServerProfileIdentifiersEquivalent(left, right,
-      identifier => identifier === context.serverId && context.serverIdentityId ? context.serverIdentityId
-        : identifier === context.serverIdentityId ? context.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
-    for (const binding of leaf.sessionAuthorityBindings ?? []) {
-      const value = structure.inputs[binding.inputName];
-      if (value === undefined && structure.definition.inputs.some(field => field.name === binding.inputName && !field.required)) continue;
-      const admitted = binding.targets.find(target => sameStrictJsonValue(target.address, value));
-      if (!admitted || !sameHome(admitted.address.serverId, context.serverId) || !deps.resolveSessionReference) return null;
-      const current = await deps.resolveSessionReference({ context, actionId, sessionId: admitted.address.sessionId,
-        ...(context.signal ? { signal: context.signal } : {}) });
-      context.signal?.throwIfAborted();
-      if (current.kind !== 'unique' || current.address.sessionId !== admitted.address.sessionId
-        || !sameHome(current.address.serverId, admitted.address.serverId)) return null;
-      if (!sessions.some(address => sameStrictJsonValue(address, admitted.address))) sessions.push(admitted.address);
-    }
-    return { actionRequestId: context.actionRequestId!, invocationId: invocation.index.id, sessions };
-  } catch {
-    return null;
+  const sessions: WorkflowSessionScopeV1['sessions'] = [];
+  const sameHome = (left: string, right: string | null | undefined) => areServerProfileIdentifiersEquivalent(left, right,
+    identifier => identifier === context.serverId && context.serverIdentityId ? context.serverIdentityId
+      : identifier === context.serverIdentityId ? context.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
+  for (const binding of leaf.sessionAuthorityBindings ?? []) {
+    const value = structure.inputs[binding.inputName];
+    if (value === undefined && structure.definition.inputs.some(field => field.name === binding.inputName && !field.required)) continue;
+    const admitted = binding.targets.find(target => sameStrictJsonValue(target.address, value));
+    if (!admitted || !sameHome(admitted.address.serverId, context.serverId) || !deps.resolveSessionReference) return null;
+    const current = await deps.resolveSessionReference({ context, actionId, sessionId: admitted.address.sessionId,
+      ...(context.signal ? { signal: context.signal } : {}) });
+    context.signal?.throwIfAborted();
+    if (current.kind !== 'unique' || current.address.sessionId !== admitted.address.sessionId
+      || !sameHome(current.address.serverId, admitted.address.serverId)) return null;
+    if (!sessions.some(address => sameStrictJsonValue(address, admitted.address))) sessions.push(admitted.address);
   }
+  return { actionRequestId: context.actionRequestId!, invocationId: invocation.index.id, sessions };
 }

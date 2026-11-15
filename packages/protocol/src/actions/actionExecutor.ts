@@ -2676,7 +2676,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const selectorGoalMutation = (ctx.sessionTargetsV1 !== undefined || options?.sessionTargetLeaf === true)
       && (actionId === 'session.goal.set' || actionId === 'session.goal.clear');
     if (ctx.actionCaller?.kind === 'workflowRun' && workflowSessionScope === undefined) {
-      workflowSessionScope = await resolveActionWorkflowSessionScopeV1(actionId, ctx, deps);
+      try {
+        workflowSessionScope = await resolveActionWorkflowSessionScopeV1(actionId, ctx, deps);
+      } catch (error) {
+        if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        return { ok: false, ...normalizeActionExecutorThrownError(error) };
+      }
     }
     // Preparation admitted these exact Session operands; later stamping never
     // moves a sessionId, so its dispatch spends that one decision.
