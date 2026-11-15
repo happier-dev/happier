@@ -100,6 +100,97 @@ describe('createElevenLabsSdkConnection', () => {
     }
   });
 
+  it.each([
+    { closeCode: 3000, closeReason: 'The AI agent you are trying to reach is not available.', code: 'voice_provider_agent_unavailable' },
+    { closeCode: 3000, closeReason: 'private-provider-close-reason', code: 'voice_service_unavailable' },
+    { closeCode: 1013, closeReason: 'The AI agent you are trying to reach is not available.', code: 'voice_service_unavailable' },
+  ])('retains post-connect socket close $closeCode as $code through the real SDK', async ({ closeCode, closeReason, code }) => {
+    let socket: EventTarget | undefined;
+    class ProviderSocket extends EventTarget {
+      constructor() { super(); socket = this; queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
+      send(data: string) {
+        if (JSON.parse(data).type === 'conversation_initiation_client_data') {
+          queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+            type: 'conversation_initiation_metadata', conversation_initiation_metadata_event: {
+              conversation_id: 'post-connect-close', agent_output_audio_format: 'pcm_16000',
+            },
+          }) })));
+        }
+      }
+      close() {}
+    }
+    // Only the vendor socket is replaced; SDK close callbacks, handle, host
+    // connection and canonical provider-error projection stay real.
+    vi.stubGlobal('WebSocket', ProviderSocket);
+    const runtime = createElevenLabsVoiceProviderRuntime({ loadConversationSdk: () => import('@elevenlabs/client') });
+    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection,
+      handle: createElevenLabsConversationHandle({ tools: [], loadConversationSdk: () => import('@elevenlabs/client') }),
+      startConfig: { textOnly: true, signedUrl: 'wss://fixture.invalid' }, duckGain: 0.18 });
+    const abort = new AbortController();
+    try {
+      await connection.connect(abort.signal);
+      expect(connection.state()).toBe('open');
+      socket!.dispatchEvent(Object.assign(new Event('close'), { code: closeCode, reason: closeReason }));
+      let failure: unknown;
+      for await (const control of connection.controlEvents(abort.signal)) {
+        const events = runtime.protocol.decodeControl(control);
+        failure = events.find(event => event.type === 'provider_error');
+        if (failure) break;
+      }
+      expect(failure).toMatchObject({ type: 'provider_error', terminal: true, code, failureCause: {
+        phase: 'elevenlabs.disconnect.error.close', nativeErrorCode: String(closeCode),
+        ...(code === 'voice_provider_agent_unavailable' ? { nativeErrorReason: 'agent_unavailable' } : {}),
+      } });
+      if (code === 'voice_service_unavailable') expect(failure).not.toHaveProperty('failureCause.nativeErrorReason');
+      expect(JSON.stringify(failure)).not.toContain(closeReason);
+    } finally {
+      abort.abort();
+      await connection.close({ code: 'user_stop' });
+      await runtime.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    { callback: 'error', closeCode: 3000, closeReason: 'The AI agent you are trying to reach is not available.', code: 'voice_provider_agent_unavailable' },
+    { callback: 'error', closeCode: 3000, closeReason: 'private-provider-close-reason', code: 'voice_service_unavailable' },
+    { callback: 'disconnect', closeCode: 3000, closeReason: 'The AI agent you are trying to reach is not available.', code: 'voice_provider_agent_unavailable' },
+    { callback: 'disconnect', closeCode: 3000, closeReason: 'private-provider-close-reason', code: 'voice_service_unavailable' },
+  ])('retains post-connect SDK $callback close details as $code without copying private prose', async ({ callback, closeCode, closeReason, code }) => {
+    let callbacks: Partial<Callbacks> = {};
+    // The vendor SDK callback is the system boundary. Preserve the real
+    // conversation handle, adapter and host connection beneath it.
+    const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: async () => ({
+      Conversation: { startSession: async (options: Partial<Callbacks>) => {
+        callbacks = options;
+        return { getId: () => 'post-connect-error', endSession: async () => {}, setMicMuted() {}, setVolume() {} };
+      } },
+    }) as unknown as Pick<typeof import('@elevenlabs/client'), 'Conversation'> });
+    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle, startConfig: {}, duckGain: 0.18 });
+    try {
+      await connection.connect(new AbortController().signal);
+      if (callback === 'error') {
+        callbacks.onError?.('private-sdk-error', Object.assign(new Error('private-sdk-exception'), { closeCode, closeReason }));
+      } else {
+        callbacks.onDisconnect?.({ reason: 'agent', closeCode, closeReason,
+          context: { type: 'close', reason: 'agent disconnected' } });
+      }
+      const controls = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
+      const failure = (await controls.next()).value;
+      expect(failure).toMatchObject({ type: 'elevenlabs.session_error', code, failureCause: {
+        phase: callback === 'error' ? 'elevenlabs.sdk.error' : 'elevenlabs.disconnect.agent.close',
+        errorClass: callback === 'error' ? 'Error' : 'UnknownThrownValue', nativeErrorCode: String(closeCode),
+        ...(code === 'voice_provider_agent_unavailable' ? { nativeErrorReason: 'agent_unavailable' } : {}),
+      } });
+      if (code === 'voice_service_unavailable') {
+        if (callback === 'error') expect(failure).not.toHaveProperty('failureCause.nativeErrorReason');
+        else expect(failure).toHaveProperty('failureCause.nativeErrorReason', 'agent_disconnected');
+      }
+      expect(JSON.stringify(failure)).not.toContain(closeReason);
+      expect(JSON.stringify(failure)).not.toContain('private-sdk');
+    } finally { await connection.close({ code: 'user_stop' }); }
+  });
+
   it('recovers from real SDK late tool-result delivery failure with a fresh Retry and no replay', async () => {
     const { createVoiceConversationController } = await import(/* @vite-ignore */ new URL(
       '../../../../../../../apps/ui/sources/voice/runtime/controller/VoiceConversationController.ts', import.meta.url,

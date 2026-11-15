@@ -151,9 +151,14 @@ export function createElevenLabsSdkConnection(input: Readonly<{
                 contextType === 'close' || contextType === 'connection_state_changed'
                   || contextType === 'end_call' || contextType === 'max_duration_exceeded'
                   ? `.${contextType}` : ''}`;
-              reportSessionFailure(undefined, phase, readNumericNativeCode(
+              const nativeErrorCode = readNumericNativeCode(
                 details && details.reason !== 'user' ? details.closeCode ?? context?.code ?? context?.reason : undefined,
-              ), readSdkDisconnectReason(context?.reason));
+              );
+              const unavailable = isUnavailableAgentError(nativeErrorCode,
+                details && details.reason !== 'user' ? details.closeReason ?? context?.reason : undefined);
+              reportSessionFailure(undefined, phase, nativeErrorCode,
+                unavailable ? 'agent_unavailable' : readSdkDisconnectReason(context?.reason),
+                unavailable ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable');
               return;
             }
             case 'message':
@@ -178,13 +183,14 @@ export function createElevenLabsSdkConnection(input: Readonly<{
             case 'error': {
               if (isRecoverableClientToolError(event.context)) return;
               const context = readRecord(event.context);
-              const nativeErrorCode = readNumericNativeCode(context.code);
+              const nativeErrorCode = readNumericNativeCode(context.closeCode ?? context.code);
+              const unavailableClose = isUnavailableAgentError(nativeErrorCode, context.closeReason);
               // SDK 1.18.0 exposes the server category separately from its
               // prefixed message. Keep only this known, content-free category.
-              const nativeErrorReason = context.errorType === 'call_initialization_error'
-                ? 'call_initialization_error' : undefined;
-              const unavailable = nativeErrorReason === 'call_initialization_error'
-                && isUnavailableAgentError(nativeErrorCode, event.error);
+              const nativeErrorReason = unavailableClose ? 'agent_unavailable'
+                : context.errorType === 'call_initialization_error' ? 'call_initialization_error' : undefined;
+              const unavailable = unavailableClose || (nativeErrorReason === 'call_initialization_error'
+                && isUnavailableAgentError(nativeErrorCode, event.error));
               reportSessionFailure(event.context, 'elevenlabs.sdk.error', nativeErrorCode, nativeErrorReason,
                 unavailable ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable');
               return;
