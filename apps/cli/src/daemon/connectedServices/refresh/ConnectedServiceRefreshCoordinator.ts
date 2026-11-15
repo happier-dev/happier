@@ -1106,7 +1106,6 @@ export class ConnectedServiceRefreshCoordinator {
     return await runConnectedServiceRefreshTick({
       now: this.params.now,
       refreshWindowMs: this.params.refreshWindowMs,
-      healthProbeIntervalMs: this.healthProbeIntervalMs,
       runtimeRegistry: this.runtimeRegistry,
       qualifiedConnectedAccountRuntime: this.params.qualifiedConnectedAccountRuntime,
       isAccountRuntimeCurrent: this.params.isAccountRuntimeCurrent,

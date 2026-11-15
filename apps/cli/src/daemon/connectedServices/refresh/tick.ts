@@ -25,7 +25,6 @@ export function qualifiedAccountKey(account: QualifiedConnectedAccountRef): stri
 export async function runConnectedServiceRefreshTick(input: Readonly<{
   now(): number;
   refreshWindowMs: number;
-  healthProbeIntervalMs: number;
   runtimeRegistry: Pick<ConnectedServiceRuntimeRegistry, 'listRefreshTargets'>;
   qualifiedConnectedAccountRuntime?: QualifiedConnectedAccountRefreshRuntime;
   isAccountRuntimeCurrent?: (signal?: AbortSignal) => Promise<boolean>;
@@ -110,10 +109,9 @@ export async function runConnectedServiceRefreshTick(input: Readonly<{
       } else {
         const result = await input.maybeRefreshBinding(binding, now, signal);
         const retryAt = input.credentialHealthReprobeState.get(key)?.nextProbeAt;
-        let nextProbeAt = retryAt
-          ?? (qualifiedHealth ? Infinity : input.qualifiedConnectedAccountRuntime && input.isOperationAvailable(binding, 'credential_health')
-            // Slow Home reads must not consume the next observation's interval.
-            ? input.now() + input.healthProbeIntervalMs : undefined);
+        // Health is learned at the next use (ruling 2026-11-12 "refresh on next failure"); only a
+        // failed observation's recovery delay or the credential's own expiry window re-arms a wake.
+        let nextProbeAt = retryAt ?? (qualifiedHealth ? Infinity : undefined);
         const expiryDeadline = result.diagnostic.expiresAt === null ? null
           : result.diagnostic.expiresAt - input.refreshWindowMs;
         if (retryAt === undefined && expiryDeadline !== null && expiryDeadline > now) {
