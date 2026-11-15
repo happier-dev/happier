@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, join, posix, resolve, isAbsolute, sep } from 'node:path';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
 export { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
@@ -21,8 +23,23 @@ export async function stagedRealPath(root: string, path: string) {
 
 /** Source materialization owns this operation scratch. Only its credential-free
  * child is mounted. Exec disposal owns cancellation and Docker --rm reaps it.
+ * A failed build keeps its code-only cause and private diagnostic; the host's
+ * deployment exception owner projects the remedy.
  */
 export async function runCloudflareBuild<T>(input: CloudflareBuildInput, context: CloudflareBuildContext,
+  product: 'pages' | 'workers', program: string, readOutput: (scratchRoot: string) => Promise<T>): Promise<T> {
+  try {
+    return await buildInContainer(input, context, product, program, readOutput);
+  } catch (error) {
+    context.signal.throwIfAborted();
+    if (isPluginError(error)) throw error;
+    const phase = 'deployment.cloudflare.build';
+    throw withActionFailureDiagnostic(new PluginError({ code: 'deployment_failed', retryable: false, details: { phase: 'build' },
+      failureCause: projectActionFailureCauseV1(error, phase) }), { phase, causeKind: 'native_failure', error });
+  }
+}
+
+async function buildInContainer<T>(input: CloudflareBuildInput, context: CloudflareBuildContext,
   product: 'pages' | 'workers', program: string, readOutput: (scratchRoot: string) => Promise<T>): Promise<T> {
   context.signal.throwIfAborted();
   const tool = await context.exec.systemTools.resolve({ toolId: 'docker', purpose: `Prepare the reviewed Cloudflare ${product} build`,

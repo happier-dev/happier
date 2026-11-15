@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { isPluginError, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import { cloudflareContainerToolchain, runCloudflareBuild, stagedRealPath,
   type CloudflareBuildInput, type CloudflareBuildContext } from './cloudflareBuild.js';
 import { isObject } from '../connectedAccounts/probe.js';
@@ -16,10 +15,8 @@ type PreparedWorkerBuild = Readonly<{ body: Uint8Array; contentType: string; for
  * --keep-vars preserves the provider variables owned by the env-sync Actions.
  * The credential-free container never invokes a provider mutation.
  */
-export async function prepareWorkerBuild(input: WorkerBuildInput, context: CloudflareBuildContext): Promise<
-  PreparedWorkerBuild | DeploymentTargetRoleFailureV1> {
-  try {
-    return await runCloudflareBuild(input, context, 'workers', `
+export async function prepareWorkerBuild(input: WorkerBuildInput, context: CloudflareBuildContext): Promise<PreparedWorkerBuild> {
+  return runCloudflareBuild(input, context, 'workers', `
 ${cloudflareContainerToolchain(['mime@3.0.0'])}
 import { writeFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
@@ -28,6 +25,12 @@ const dependencies = require('wrangler/package.json').devDependencies;
 run('npm', ['install', '--prefix', tools, '--no-audit', '--no-fund',
   ...['@cloudflare/deploy-helpers', '@cloudflare/workers-utils'].map(name => name + '@' + dependencies[name])]);
 const helpers = await import(join(tools, 'node_modules/@cloudflare/deploy-helpers/dist/index.mjs'));
+// deploy-helpers reads its logger from the consumer-initialized context (buildAssetManifest logs
+// through it); this credential-free build needs no helper logging or API fetchers.
+const { initDeployHelpersContext } = await import(join(tools, 'node_modules/@cloudflare/deploy-helpers/dist/context.mjs'));
+const quiet = () => {};
+initDeployHelpersContext({ logger: { loggerLevel: 'none', debug: quiet, info: quiet, log: quiet, warn: quiet, error: quiet,
+  once: { debug: quiet, info: quiet, log: quiet, warn: quiet, error: quiet } } });
 const workerUtils = await import(join(tools, 'node_modules/@cloudflare/workers-utils/dist/index.mjs'));
 const mime = require('mime');
 installProjectDependencies();
@@ -63,40 +66,35 @@ if (preview) {
 }
 writeFileSync('/workspace/worker.prepared.json', JSON.stringify(prepared));
 `, async scratchRoot => {
-      const body = await readFile(await stagedRealPath(scratchRoot, 'worker.bundle'), { signal: context.signal });
-      const firstLine = body.subarray(0, body.indexOf('\r\n')).toString('ascii');
-      if (!firstLine.startsWith('--')) throw new Error('Worker multipart output is unavailable');
-      const contentType = `multipart/form-data; boundary=${firstLine.slice(2)}`;
-      const form = await new Response(Uint8Array.from(body).buffer, { headers: { 'content-type': contentType } }).formData();
-      const rawMetadata = form.get('metadata');
-      const metadata: unknown = typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : null;
-      const preparedBytes = await readFile(await stagedRealPath(scratchRoot, 'worker.prepared.json'), { signal: context.signal });
-      const prepared: unknown = JSON.parse(preparedBytes.toString('utf8'));
-      if (!isObject(prepared)) throw new Error('Worker preparation output is unavailable');
-      let assets: PreparedWorkerBuild['assets'];
-      if (prepared.assets !== undefined) {
-        if (!Array.isArray(prepared.assets) || !isObject(prepared.assetConfig)) throw new Error('Worker asset manifest is unavailable');
-        const files: WorkerAsset[] = [];
-        for (const asset of prepared.assets) {
-          if (!isObject(asset) || typeof asset.path !== 'string' || typeof asset.url !== 'string' || !asset.url.startsWith('/')
-            || typeof asset.hash !== 'string' || !asset.hash || typeof asset.size !== 'number' || !Number.isSafeInteger(asset.size) || asset.size < 0
-            || typeof asset.contentType !== 'string') throw new Error('Worker asset output is unavailable');
-          files.push({ ...asset, path: await stagedRealPath(scratchRoot, asset.path), url: asset.url,
-            hash: asset.hash, size: asset.size, contentType: asset.contentType });
-        }
-        assets = { files, config: prepared.assetConfig };
+    const body = await readFile(await stagedRealPath(scratchRoot, 'worker.bundle'), { signal: context.signal });
+    const firstLine = body.subarray(0, body.indexOf('\r\n')).toString('ascii');
+    if (!firstLine.startsWith('--')) throw new Error('Worker multipart output is unavailable');
+    const contentType = `multipart/form-data; boundary=${firstLine.slice(2)}`;
+    const form = await new Response(Uint8Array.from(body).buffer, { headers: { 'content-type': contentType } }).formData();
+    const rawMetadata = form.get('metadata');
+    const metadata: unknown = typeof rawMetadata === 'string' ? JSON.parse(rawMetadata) : null;
+    const preparedBytes = await readFile(await stagedRealPath(scratchRoot, 'worker.prepared.json'), { signal: context.signal });
+    const prepared: unknown = JSON.parse(preparedBytes.toString('utf8'));
+    if (!isObject(prepared)) throw new Error('Worker preparation output is unavailable');
+    let assets: PreparedWorkerBuild['assets'];
+    if (prepared.assets !== undefined) {
+      if (!Array.isArray(prepared.assets) || !isObject(prepared.assetConfig)) throw new Error('Worker asset manifest is unavailable');
+      const files: WorkerAsset[] = [];
+      for (const asset of prepared.assets) {
+        if (!isObject(asset) || typeof asset.path !== 'string' || typeof asset.url !== 'string' || !asset.url.startsWith('/')
+          || typeof asset.hash !== 'string' || !asset.hash || typeof asset.size !== 'number' || !Number.isSafeInteger(asset.size) || asset.size < 0
+          || typeof asset.contentType !== 'string') throw new Error('Worker asset output is unavailable');
+        files.push({ ...asset, path: await stagedRealPath(scratchRoot, asset.path), url: asset.url,
+          hash: asset.hash, size: asset.size, contentType: asset.contentType });
       }
-      if (!isObject(metadata) || (typeof metadata.main_module !== 'string' || !(form.get(metadata.main_module) instanceof Blob)) && !assets) {
-        throw new Error('Worker executable module output is unavailable');
-      }
-      if (input.preview && !isObject(prepared.preview)) throw new Error('Worker Preview configuration output is unavailable');
-      return { body, contentType, form, metadata, ...(assets ? { assets } : {}),
-        ...(isObject(prepared.preview) ? { preview: prepared.preview } : {}),
-        outputManifestFingerprint: `sha256:${createHash('sha256').update(body).update(preparedBytes).digest('hex')}` };
-    });
-  } catch (error) {
-    context.signal.throwIfAborted();
-    if (isPluginError(error)) throw error;
-    return { v: 1, code: 'deployment_content_unavailable', phase: 'build', retryable: false };
-  }
+      assets = { files, config: prepared.assetConfig };
+    }
+    if (!isObject(metadata) || (typeof metadata.main_module !== 'string' || !(form.get(metadata.main_module) instanceof Blob)) && !assets) {
+      throw new Error('Worker executable module output is unavailable');
+    }
+    if (input.preview && !isObject(prepared.preview)) throw new Error('Worker Preview configuration output is unavailable');
+    return { body, contentType, form, metadata, ...(assets ? { assets } : {}),
+      ...(isObject(prepared.preview) ? { preview: prepared.preview } : {}),
+      outputManifestFingerprint: `sha256:${createHash('sha256').update(body).update(preparedBytes).digest('hex')}` };
+  });
 }

@@ -154,7 +154,8 @@ it('builds the configured monorepo application while keeping approved sibling pa
 it.each(['buildFailure', 'cancel'] as const)('sends zero provider requests after %s and disposes the foreground build', async mode => {
   const h = await fixture(mode);
   try {
-    await expect(h.invoke()).rejects.toMatchObject({ code: mode === 'cancel' ? 'plugin_action_aborted' : 'deployment_content_unavailable' });
+    await expect(h.invoke()).rejects.toMatchObject(mode === 'cancel' ? { code: 'plugin_action_aborted' } : { code: 'deployment_failed',
+      data: { details: { phase: 'build' }, failureCause: { phase: 'deployment.cloudflare.build', errorClass: 'Error' } } });
     expect(h.requests).toEqual([]);
     expect(h.disposeProcess).toHaveBeenCalledOnce();
   } finally { await h.dispose(); }

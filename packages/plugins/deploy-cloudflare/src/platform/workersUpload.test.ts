@@ -148,7 +148,9 @@ it('observes the canonical version UUID after the legacy script upload returns a
 it.each(['buildFailure', 'cancel', 'uncompiled'] as const)('settles %s before any provider write and disposes the foreground process', async mode => {
   const h = await fixture(mode);
   try {
-    await expect(h.invoke()).rejects.toMatchObject({ code: mode === 'cancel' ? 'plugin_action_aborted' : 'deployment_content_unavailable' });
+    // Captured #162 (COR6 ui-67): a failed build read as deployment_content_unavailable with an UnknownThrownValue cause.
+    await expect(h.invoke()).rejects.toMatchObject(mode === 'cancel' ? { code: 'plugin_action_aborted' } : { code: 'deployment_failed',
+      data: { details: { phase: 'build' }, failureCause: { phase: 'deployment.cloudflare.build', errorClass: 'Error' } } });
     expect(h.requests).toEqual([]);
     expect(h.disposeProcess).toHaveBeenCalledOnce();
   } finally { await h.dispose(); }

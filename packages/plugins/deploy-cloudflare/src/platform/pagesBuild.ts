@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { isPluginError, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION, cloudflareContainerToolchain,
   runCloudflareBuild, stagedRealPath, type CloudflareBuildContext } from './cloudflareBuild.js';
 export { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareBuild.js';
@@ -78,46 +77,39 @@ await writeFile('/workspace/metadata.json', JSON.stringify({ outputDirectory: ou
 `;
 }
 
-export async function preparePagesBuild(input: PagesBuildInput, context: PagesBuildContext): Promise<PreparedPagesBuild | DeploymentTargetRoleFailureV1> {
-  context.signal.throwIfAborted();
-  try {
-    return await runCloudflareBuild(input, context, 'pages', containerProgram(input), async scratchRoot => {
-      const metadata: unknown = JSON.parse(await readFile(await stagedRealPath(scratchRoot, 'metadata.json'), 'utf8'));
-      if (typeof metadata !== 'object' || metadata === null || !('outputDirectory' in metadata) || typeof metadata.outputDirectory !== 'string'
-        || !('assets' in metadata) || !Array.isArray(metadata.assets) || !('multipartFiles' in metadata) || !Array.isArray(metadata.multipartFiles)) {
-        throw new Error('Pages build metadata is unavailable');
+export async function preparePagesBuild(input: PagesBuildInput, context: PagesBuildContext): Promise<PreparedPagesBuild> {
+  return runCloudflareBuild(input, context, 'pages', containerProgram(input), async scratchRoot => {
+    const metadata: unknown = JSON.parse(await readFile(await stagedRealPath(scratchRoot, 'metadata.json'), 'utf8'));
+    if (typeof metadata !== 'object' || metadata === null || !('outputDirectory' in metadata) || typeof metadata.outputDirectory !== 'string'
+      || !('assets' in metadata) || !Array.isArray(metadata.assets) || !('multipartFiles' in metadata) || !Array.isArray(metadata.multipartFiles)) {
+      throw new Error('Pages build metadata is unavailable');
+    }
+    const assets: PreparedPagesBuild['assets'][number][] = [];
+    const projectRoot = await stagedRealPath(scratchRoot, 'project');
+    const outputPath = await stagedRealPath(projectRoot, metadata.outputDirectory);
+    for (const asset of metadata.assets as unknown[]) {
+      if (typeof asset !== 'object' || asset === null || !('path' in asset) || typeof asset.path !== 'string'
+        || !('hash' in asset) || typeof asset.hash !== 'string' || !('contentType' in asset) || typeof asset.contentType !== 'string') throw new Error('Invalid Pages asset');
+      await stagedRealPath(outputPath, asset.path);
+      assets.push({ path: asset.path, hash: asset.hash, contentType: asset.contentType });
+    }
+    const multipartFiles: PreparedPagesBuild['multipartFiles'][number][] = [];
+    for (const file of metadata.multipartFiles as unknown[]) {
+      if (typeof file !== 'object' || file === null || !('name' in file) || typeof file.name !== 'string'
+        || !('path' in file) || typeof file.path !== 'string') throw new Error('Invalid Pages multipart file');
+      const contentType = 'contentType' in file ? file.contentType : undefined;
+      if (contentType !== undefined && typeof contentType !== 'string') throw new Error('Invalid Pages multipart content type');
+      multipartFiles.push({ name: file.name, path: await stagedRealPath(scratchRoot, file.path),
+        ...(contentType === undefined ? {} : { contentType }) });
+    }
+    const multipartFields: Record<string, string> = {};
+    if ('multipartFields' in metadata && typeof metadata.multipartFields === 'object' && metadata.multipartFields !== null) {
+      for (const [name, value] of Object.entries(metadata.multipartFields)) {
+        if (typeof value !== 'string') throw new Error('Invalid Pages multipart field');
+        multipartFields[name] = value;
       }
-      const assets: PreparedPagesBuild['assets'][number][] = [];
-      const projectRoot = await stagedRealPath(scratchRoot, 'project');
-      const outputPath = await stagedRealPath(projectRoot, metadata.outputDirectory);
-      for (const asset of metadata.assets as unknown[]) {
-        if (typeof asset !== 'object' || asset === null || !('path' in asset) || typeof asset.path !== 'string'
-          || !('hash' in asset) || typeof asset.hash !== 'string' || !('contentType' in asset) || typeof asset.contentType !== 'string') throw new Error('Invalid Pages asset');
-        await stagedRealPath(outputPath, asset.path);
-        assets.push({ path: asset.path, hash: asset.hash, contentType: asset.contentType });
-      }
-      const multipartFiles: PreparedPagesBuild['multipartFiles'][number][] = [];
-      for (const file of metadata.multipartFiles as unknown[]) {
-        if (typeof file !== 'object' || file === null || !('name' in file) || typeof file.name !== 'string'
-          || !('path' in file) || typeof file.path !== 'string') throw new Error('Invalid Pages multipart file');
-        const contentType = 'contentType' in file ? file.contentType : undefined;
-        if (contentType !== undefined && typeof contentType !== 'string') throw new Error('Invalid Pages multipart content type');
-        multipartFiles.push({ name: file.name, path: await stagedRealPath(scratchRoot, file.path),
-          ...(contentType === undefined ? {} : { contentType }) });
-      }
-      const multipartFields: Record<string, string> = {};
-      if ('multipartFields' in metadata && typeof metadata.multipartFields === 'object' && metadata.multipartFields !== null) {
-        for (const [name, value] of Object.entries(metadata.multipartFields)) {
-          if (typeof value !== 'string') throw new Error('Invalid Pages multipart field');
-          multipartFields[name] = value;
-        }
-      }
-      return { outputPath, assets, multipartFiles, multipartFields, provenance: { image: CLOUDFLARE_BUILD_IMAGE,
-        wranglerVersion: CLOUDFLARE_WRANGLER_VERSION, ...(input.buildCommand ? { buildCommand: input.buildCommand } : {}), outputDirectory: metadata.outputDirectory } };
-    });
-  } catch (error) {
-    context.signal.throwIfAborted();
-    if (isPluginError(error)) throw error;
-    return { v: 1, code: 'deployment_content_unavailable', phase: 'build', retryable: false };
-  }
+    }
+    return { outputPath, assets, multipartFiles, multipartFields, provenance: { image: CLOUDFLARE_BUILD_IMAGE,
+      wranglerVersion: CLOUDFLARE_WRANGLER_VERSION, ...(input.buildCommand ? { buildCommand: input.buildCommand } : {}), outputDirectory: metadata.outputDirectory } };
+  });
 }

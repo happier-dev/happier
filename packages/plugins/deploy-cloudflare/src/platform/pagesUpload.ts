@@ -24,7 +24,6 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
     buildCommand: native.pages.buildCommand,
     ...(native.pages.buildOutputDirectory !== undefined ? { outputDirectory: native.pages.buildOutputDirectory || '.' } : {}),
   }, { exec: context.services.exec, signal: context.signal });
-  if ('code' in prepared) return pagesResult(prepared);
   context.signal.throwIfAborted();
   const token = await request(io, input.providerIdentity.providerAccountId,
     `/pages/projects/${encodeURIComponent(native.projectName)}/upload-token`, 'send');

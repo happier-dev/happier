@@ -35,9 +35,6 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
     deploymentId: input.deploymentId }, { signal: context.signal });
   const prepared = await prepareWorkerBuild({ rootPath: source.rootPath, actionOperationId: input.actionOperationId,
     scriptName: input.providerEnvironment.scriptName, preview: preview !== null }, { exec: context.services.exec, signal: context.signal });
-  if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase },
-    failureCause: projectActionFailureCauseV1(prepared, `deployment.cloudflare.${prepared.phase}`) }),
-    { phase: `deployment.cloudflare.${prepared.phase}`, causeKind: 'native_failure', error: prepared });
   const accountId = input.providerIdentity.providerAccountId;
   const scriptName = input.providerEnvironment.scriptName;
   const previewRoot = preview ? `/workers/workers/${encodeURIComponent(scriptName)}/previews/${encodeURIComponent(preview.previewId)}` : null;

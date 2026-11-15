@@ -121,8 +121,9 @@ it('stages sibling monorepo source while building in the configured application 
 it('does not return uploadable output after a failed container or malformed result', async () => {
   for (const options of [{ exitCode: 1 }, { corruptMetadata: true }]) {
     const h = boundary(options);
-    expect(await preparePagesBuild({ rootPath: await source(), actionOperationId: 'pages-failed' }, { exec: h.exec, signal: new AbortController().signal }))
-      .toMatchObject({ code: 'deployment_content_unavailable', phase: 'build', retryable: false });
+    await expect(preparePagesBuild({ rootPath: await source(), actionOperationId: 'pages-failed' }, { exec: h.exec, signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: 'deployment_failed', retryable: false,
+        data: { details: { phase: 'build' }, failureCause: { phase: 'deployment.cloudflare.build', errorClass: 'Error' } } });
     expect(h.dispose).toHaveBeenCalledOnce();
   }
 });
@@ -140,8 +141,8 @@ it('refuses container-produced paths that would read host bytes outside the stag
     .toHaveProperty('assets');
   for (const options of [{ escapeAsset: true }, { escapeMultipart: true }, { escapeMetadata: true }]) {
     const h = boundary(options);
-    const result = await preparePagesBuild({ rootPath: await source(), actionOperationId: 'pages-escape' }, { exec: h.exec, signal: new AbortController().signal });
-    expect(result).toMatchObject({ code: 'deployment_content_unavailable', phase: 'build' });
+    await expect(preparePagesBuild({ rootPath: await source(), actionOperationId: 'pages-escape' }, { exec: h.exec, signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: 'deployment_failed', data: { details: { phase: 'build' } } });
     expect(h.dispose).toHaveBeenCalledOnce();
   }
 });
