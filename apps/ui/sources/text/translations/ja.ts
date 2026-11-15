@@ -8576,6 +8576,10 @@ localTailscale: {
             queued_offline: { title: '手動再開待ちのメッセージ', body: 'このセッションを再開するまでキューに残ります。' },
             actions: { retry: '再試行', resume: '再開', process_when_online: 'オンライン時に処理', chooseAccount: '別のアカウントを選ぶ', keepQueued: 'キューに残す', autoResumeOptions: '自動再開オプション' },
         },
+	    permissionUnreachable: {
+	      status: "許可が必要 · マシンがオフライン",
+	      detail: "リクエストはこのセッションを実行しているマシンで待機しています。マシンが戻ったらここで回答してください。",
+	    },
 	    accountSignedOut: {
         status: 'サインアウトしています',
         detail: 'ここで作業を続けるには、もう一度サインインしてください。',

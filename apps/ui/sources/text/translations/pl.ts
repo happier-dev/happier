@@ -8106,6 +8106,10 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
             queued_offline: { title: 'Wiadomość czeka na ręczne wznowienie', body: 'Pozostanie w kolejce, dopóki nie wznowisz tej sesji.' },
             actions: { retry: 'Spróbuj ponownie', resume: 'Wznów', process_when_online: 'Przetwórz po powrocie online', chooseAccount: 'Wybierz inne konto', keepQueued: 'Pozostaw w kolejce', autoResumeOptions: 'Opcje automatycznego wznawiania' },
         },
+	    permissionUnreachable: {
+	      status: "Wymagane uprawnienie · maszyna offline",
+	      detail: "Prośba czeka na maszynie, na której działa ta sesja. Odpowiedz tutaj, gdy wróci.",
+	    },
 	    accountSignedOut: {
         status: 'Wylogowano cię',
         detail: 'Zaloguj się ponownie, aby dalej tu pracować.',

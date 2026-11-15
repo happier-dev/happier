@@ -310,7 +310,7 @@ import { type ServerCredentialAccountScopeBinding } from "@/sync/domains/scope/u
 import { presentExternalSessionOperationShell } from "@/components/sessions/shell/../external/progress/externalSessionOperationShellPresentation";
 import { readExternalSessionOperationPresentationFromMetadata } from "@/components/sessions/shell/../transcript/items/externalSessionOperationMetadata";
 import { resolveSessionViewRuntimeDisplayState } from "@/components/sessions/shell/view/resolveSessionViewRuntimeDisplayState";
-import { resolveSessionViewConnectionStatus, type SessionViewPendingQueueAction, type SessionViewPendingQueueLine, type SessionViewProviderBindingLine } from "@/components/sessions/shell/view/resolveSessionViewConnectionStatus";
+import { resolvePermissionRequestWait, resolveSessionViewConnectionStatus, type SessionViewPendingQueueAction, type SessionViewPendingQueueLine, type SessionViewProviderBindingLine } from "@/components/sessions/shell/view/resolveSessionViewConnectionStatus";
 import { isPendingMessageForRecipient } from "@/sync/domains/pending/pendingMessageRecipient";
 import { resolveSessionGuardComposerState } from "@/components/sessions/shell/view/resolveSessionGuardComposerState";
 import { readSessionListGuardState } from "@/sync/domains/session/listing/sessionListRenderable";
@@ -5310,7 +5310,16 @@ export function useSessionComposerController({
                     ? t(queuedAreNextTurnUpdates ? 'session.pendingMessages.updatesWaiting' : 'session.pendingMessages.indicator', { count: mainPendingCount }) : null,
             },
             usageLimitRecoveryCardShown: visibleUsageLimitRecoveryPresentation !== null,
-            permissionPromptShown: pendingPermissionRequests.length > 0,
+            // One decision for the approval card and this line (an unknown reachability never claims "offline").
+            permissionRequest: resolvePermissionRequestWait({
+                statusSaysPermission: sessionStatus.state === 'permission_required',
+                presentedRequestCount: pendingPermissionRequests.length,
+                machineReachable: machineReachability === 'unknown' || isMachineReachable,
+            }),
+            permissionUnreachableLine: {
+                text: t('session.permissionUnreachable.status'),
+                detail: t('session.permissionUnreachable.detail'),
+            },
             // The same owner SessionView renders its "Couldn't start" notice from.
             startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
             launchOutcomeShown,
@@ -5334,6 +5343,7 @@ export function useSessionComposerController({
             isSessionActive,
             isResumable,
             isMachineReachable,
+            machineReachability,
             hasWriteAccess,
             canOpenSession,
             sessionMachineAccessRemoved,

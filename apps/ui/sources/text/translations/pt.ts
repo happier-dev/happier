@@ -8376,6 +8376,10 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
             queued_offline: { title: 'Mensagem aguardando retomada manual', body: 'Ela ficará na fila até você retomar esta sessão.' },
             actions: { retry: 'Tentar novamente', resume: 'Retomar', process_when_online: 'Processar quando online', chooseAccount: 'Escolher outra conta', keepQueued: 'Manter na fila', autoResumeOptions: 'Opções de retomada automática' },
         },
+	    permissionUnreachable: {
+	      status: "Permissão necessária · máquina offline",
+	      detail: "O pedido espera na máquina que executa esta sessão. Responda aqui quando ela voltar.",
+	    },
 	    accountSignedOut: {
         status: 'Você saiu da conta',
         detail: 'Entre novamente para continuar trabalhando aqui.',

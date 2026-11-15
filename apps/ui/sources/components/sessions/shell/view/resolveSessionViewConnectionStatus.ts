@@ -55,6 +55,26 @@ export type SessionViewProviderBindingLine = Readonly<{
     color: string;
 }>;
 
+/**
+ * Whether a permission request waits on the person, decided once from the Session's status and the
+ * requests this client can present: `card` (the approval card shows it), `unreachable` (the status says
+ * one waits but no card can show it while the machine is offline) or `none` (nothing to answer).
+ * The composer's card and this line both read it, so they never disagree.
+ */
+export type PermissionRequestWait = 'card' | 'unreachable' | 'none';
+
+export function resolvePermissionRequestWait(input: Readonly<{
+    /** The presented Session state is `permission_required` (`presentSessionAwarenessV1`). */
+    statusSaysPermission: boolean;
+    /** Permission requests the transcript source can present as a card. */
+    presentedRequestCount: number;
+    /** The machine running the Session answers now. */
+    machineReachable: boolean;
+}>): PermissionRequestWait {
+    if (input.presentedRequestCount > 0) return 'card';
+    return input.statusSaysPermission && !input.machineReachable ? 'unreachable' : 'none';
+}
+
 export function resolveSessionViewConnectionStatus(input: Readonly<{
     connectedServicesRestartState: SessionConnectedServicesAuthSwitchRestartState;
     /**
@@ -88,8 +108,10 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     pendingQueue?: Readonly<{ line: SessionViewPendingQueueLine | null; countText: string | null }> | null;
     /** The usage-limit recovery card is on screen and already states the limit and its recovery. */
     usageLimitRecoveryCardShown?: boolean;
-    /** The composer shows the pending approval card, which already says that permission is needed. */
-    permissionPromptShown?: boolean;
+    /** Whether a permission request waits (`resolvePermissionRequestWait`); its card or this line says it, once. */
+    permissionRequest?: PermissionRequestWait;
+    /** The line when a request waits on a machine that is offline: what it is and why it can't be answered here. */
+    permissionUnreachableLine?: Readonly<{ text: string; detail: string }>;
     /** The Session's "Couldn't start" notice is on screen with its cause and its Retry. */
     startFailureNoticeShown?: boolean;
     /** A new Session's first message states its launch outcome (starting, failed or unresolved). */
@@ -161,10 +183,17 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
             ...(binding.action ? { providerBindingAction: binding.action } : {}),
         };
     }
+    // A request that waits on an offline machine has no card: the line says so and why, with the attention ink.
+    if (input.sessionStatusState === 'permission_required' && input.permissionRequest === 'unreachable'
+        && input.permissionUnreachableLine && !restartActive && !input.sessionStatusResuming) {
+        return { text: input.permissionUnreachableLine.text, detail: input.permissionUnreachableLine.detail,
+            color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false };
+    }
     // The recovery card above the composer is the one place the usage limit is said while it shows,
-    // and the approval card the one place a permission request is.
+    // and the approval card the one place a permission request is; with no request waiting, none is said.
     if (((input.sessionStatusState === 'usage_limited' && input.usageLimitRecoveryCardShown === true)
-        || (input.sessionStatusState === 'permission_required' && input.permissionPromptShown === true))
+        || (input.sessionStatusState === 'permission_required'
+            && (input.permissionRequest === 'card' || input.permissionRequest === 'none')))
         && !restartActive && !input.sessionStatusResuming) {
         return queueCountText
             ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }

@@ -7957,6 +7957,10 @@ export const zhHans: TranslationStructure = {
             queued_offline: { title: '消息等待手动恢复', body: '在你恢复此会话之前，消息会一直留在队列中。' },
             actions: { retry: '重试', resume: '恢复', process_when_online: '在线后处理', chooseAccount: '选择其他账户', keepQueued: '保留在队列中', autoResumeOptions: '自动恢复选项' },
         },
+	    permissionUnreachable: {
+	      status: "需要权限 · 机器离线",
+	      detail: "请求正在运行此会话的机器上等待。机器恢复后在这里回复。",
+	    },
 	    accountSignedOut: {
         status: '你已退出登录',
         detail: '请重新登录以继续在这里工作。',

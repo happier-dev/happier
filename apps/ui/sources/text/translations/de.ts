@@ -8283,6 +8283,10 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             queued_offline: { title: 'Nachricht wartet auf manuelles Fortsetzen', body: 'Sie bleibt eingereiht, bis du diese Session fortsetzt.' },
             actions: { retry: 'Erneut versuchen', resume: 'Fortsetzen', process_when_online: 'Verarbeiten, sobald online', chooseAccount: 'Anderes Konto wählen', keepQueued: 'In Warteschlange lassen', autoResumeOptions: 'Optionen für automatisches Fortsetzen' },
         },
+        permissionUnreachable: {
+          status: "Berechtigung nötig · Rechner offline",
+          detail: "Die Anfrage wartet auf dem Rechner, der diese Sitzung ausführt. Beantworte sie hier, sobald er wieder da ist.",
+        },
         accountSignedOut: {
             status: 'Du bist abgemeldet',
             detail: 'Melde dich erneut an, um hier weiterzuarbeiten.',

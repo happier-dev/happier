@@ -7574,6 +7574,10 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             queued_offline: { title: 'Missatge pendent de represa manual', body: 'Continuarà en cua fins que reprenguis aquesta sessió.' },
             actions: { retry: 'Torna-ho a provar', resume: 'Reprèn', process_when_online: 'Processa quan estigui en línia', chooseAccount: 'Tria un altre compte', keepQueued: 'Mantén en cua', autoResumeOptions: 'Opcions de represa automàtica' },
         },
+	        permissionUnreachable: {
+	          status: "Cal permís · màquina fora de línia",
+	          detail: "La sol·licitud espera a la màquina que executa aquesta sessió. Respon-la aquí quan torni.",
+	        },
 	        accountSignedOut: {
             status: 'Has tancat la sessió',
             detail: 'Torna a iniciar la sessió per continuar treballant aquí.',

@@ -8270,6 +8270,10 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
             queued_offline: { title: 'Mensaje pendiente de reanudación manual', body: 'Seguirá en cola hasta que reanudes esta sesión.' },
             actions: { retry: 'Reintentar', resume: 'Reanudar', process_when_online: 'Procesar cuando esté en línea', chooseAccount: 'Elegir otra cuenta', keepQueued: 'Mantener en cola', autoResumeOptions: 'Opciones de reanudación automática' },
         },
+	    permissionUnreachable: {
+	      status: "Permiso necesario · máquina sin conexión",
+	      detail: "La solicitud espera en la máquina que ejecuta esta sesión. Respóndela aquí cuando vuelva.",
+	    },
 	    accountSignedOut: {
         status: 'Has cerrado sesión',
         detail: 'Vuelve a iniciar sesión para seguir trabajando aquí.',

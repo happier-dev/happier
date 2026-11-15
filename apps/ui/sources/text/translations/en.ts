@@ -9735,6 +9735,10 @@ const enSession = {
       autoResumeOptions: 'Auto-resume options',
     },
   },
+  permissionUnreachable: {
+    status: "Permission required · machine offline",
+    detail: "The request waits on the machine running this session. Answer it here once the machine is back.",
+  },
   accountSignedOut: {
     status: 'You\'re signed out',
     detail: 'Sign in again to keep working here.',

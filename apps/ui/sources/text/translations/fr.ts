@@ -8110,6 +8110,10 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
             queued_offline: { title: 'Message en attente d’une reprise manuelle', body: 'Il restera en attente jusqu’à ce que tu reprennes cette session.' },
             actions: { retry: 'Réessayer', resume: 'Reprendre', process_when_online: 'Traiter une fois en ligne', chooseAccount: 'Choisir un autre compte', keepQueued: 'Garder en attente', autoResumeOptions: 'Options de reprise automatique' },
         },
+	    permissionUnreachable: {
+	      status: "Autorisation requise · machine hors ligne",
+	      detail: "La demande attend sur la machine qui exécute cette session. Répondez-y ici dès qu’elle est de retour.",
+	    },
 	    accountSignedOut: {
         status: 'Vous êtes déconnecté',
         detail: 'Reconnectez-vous pour continuer à travailler ici.',

@@ -8495,6 +8495,10 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
             queued_offline: { title: 'Messaggio in attesa di ripresa manuale', body: 'Resterà in coda finché non riprenderai questa sessione.' },
             actions: { retry: 'Riprova', resume: 'Riprendi', process_when_online: 'Elabora quando online', chooseAccount: 'Scegli un altro account', keepQueued: 'Mantieni in coda', autoResumeOptions: 'Opzioni di ripresa automatica' },
         },
+	    permissionUnreachable: {
+	      status: "Autorizzazione richiesta · macchina offline",
+	      detail: "La richiesta attende sulla macchina che esegue questa sessione. Rispondi qui quando torna disponibile.",
+	    },
 	    accountSignedOut: {
         status: 'Sei disconnesso',
         detail: 'Accedi di nuovo per continuare a lavorare qui.',

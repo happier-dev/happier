@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSessionViewConnectionStatus } from './resolveSessionViewConnectionStatus';
+import { resolvePermissionRequestWait, resolveSessionViewConnectionStatus } from './resolveSessionViewConnectionStatus';
 import { canResumeOrContinueSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
@@ -433,12 +433,25 @@ describe('resolveSessionViewConnectionStatus', () => {
             .toBe('Usage limit reached');
     });
 
-    it('leaves a permission request to its approval card while that card is shown', () => {
-        const asking = { ...baseInput, sessionStatusState: 'permission_required', sessionStatusText: 'Permission required' } as const;
-        expect(resolveSessionViewConnectionStatus({ ...asking, permissionPromptShown: true })).toBeNull();
-        expect(resolveSessionViewConnectionStatus({ ...asking, permissionPromptShown: true,
+    it('says a waiting permission request once: its card, a reason when it cannot be answered here, nothing when none waits', () => {
+        const asking = { ...baseInput, sessionStatusState: 'permission_required', sessionStatusText: 'Permission required',
+            permissionUnreachableLine: { text: 'Permission required · machine offline', detail: 'answer it when the machine is back' } } as const;
+        // The approval card says it: the line yields (only a queue count remains).
+        const card = resolvePermissionRequestWait({ statusSaysPermission: true, presentedRequestCount: 1, machineReachable: false });
+        expect(card).toBe('card');
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionRequest: card })).toBeNull();
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionRequest: card,
             pendingQueue: { line: null, countText: '1 queued' } })?.text).toBe('1 queued');
-        expect(resolveSessionViewConnectionStatus({ ...asking, permissionPromptShown: false })?.text).toBe('Permission required');
+        // Status says a request waits, no card can show it and the machine is offline: the line gives the reason.
+        const unreachable = resolvePermissionRequestWait({ statusSaysPermission: true, presentedRequestCount: 0, machineReachable: false });
+        expect(unreachable).toBe('unreachable');
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionRequest: unreachable })).toMatchObject({
+            text: 'Permission required · machine offline', detail: 'answer it when the machine is back' });
+        // Reachable and nothing pending: no request waits, so no permission line.
+        const none = resolvePermissionRequestWait({ statusSaysPermission: true, presentedRequestCount: 0, machineReachable: true });
+        expect(none).toBe('none');
+        expect(resolveSessionViewConnectionStatus({ ...asking, permissionRequest: none })).toBeNull();
+        expect(resolvePermissionRequestWait({ statusSaysPermission: false, presentedRequestCount: 0, machineReachable: false })).toBe('none');
     });
 
     it('offers no second Resume on the status line while the usage-limit card shows', () => {
