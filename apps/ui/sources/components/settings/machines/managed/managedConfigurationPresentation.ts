@@ -265,17 +265,20 @@ function managedSummaryDimensions(facts: ManagedConfigurationFactsV1, localized:
 }
 
 /**
- * A preset's line in the machine picker's New machine group (lab m-pick): the summary's reviewed size and place
- * when the preset carries them, then the Keep it rule the preset sets now. A preset that follows the defaults says
- * no rule of its own, so a rule captured at review never stands in for the current one.
+ * A preset's line in the machine picker's New machine group (lab m-pick): the provider it creates on (its declared
+ * title, as its mark and receipt read it), the summary's reviewed size and place when the preset carries them, then
+ * the Keep it rule the preset sets now. A preset that follows the defaults says no rule of its own, so a rule
+ * captured at review never stands in for the current one.
  */
 export function describeManagedPresetOffer(preset: Readonly<{
     reviewedFacts?: ManagedConfigurationFactsV1; retention?: MachineRetentionOverrideV1['retention']; wakeOnAcceptedMessage?: boolean;
+    /** The provider's declared title; `null` while it is read. */
+    providerTitle?: string | null;
 }>, localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | undefined {
     const dimensions = preset.reviewedFacts ? managedSummaryDimensions(preset.reviewedFacts, localized) : [];
     const keep = preset.retention
         ? describeRetentionPolicy({ retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage === true }) : null;
-    return [...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;
+    return [...(preset.providerTitle ? [preset.providerTitle] : []), ...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;
 }
 
 /**

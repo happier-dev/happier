@@ -38,6 +38,16 @@ describe('a preset offered as a new machine in the picker (lab m-pick)', () => {
         expect(describeManagedPresetOffer({ reviewedFacts: { ...reviewedFacts, nativeFacts }, retention: stopUnused, wakeOnAcceptedMessage: true }))
             .toBe(['CX32', 'Falkenstein', describeRetentionPolicy({ retention: stopUnused, wakeOnAcceptedMessage: true })].join(' · '));
     });
+    it('leads with the provider it creates on, then its size and place, then its Keep it rule (DESIGN-2 row 9)', () => {
+        expect(describeManagedPresetOffer({ providerTitle: 'Hetzner', reviewedFacts: { ...reviewedFacts, nativeFacts }, retention: stopUnused,
+            wakeOnAcceptedMessage: true }))
+            .toBe(['Hetzner', 'CX32', 'Falkenstein', describeRetentionPolicy({ retention: stopUnused, wakeOnAcceptedMessage: true })].join(' · '));
+        // A local preset with no reviewed size still says what it makes, never only "Always on".
+        expect(describeManagedPresetOffer({ providerTitle: 'Lima', retention: { kind: 'until-delete' } }))
+            .toBe(['Lima', t('managedRetention.untilDelete')].join(' · '));
+        // A provider whose title can't be read yet says nothing in its place.
+        expect(describeManagedPresetOffer({ providerTitle: null, retention: { kind: 'until-delete' } })).toBe(t('managedRetention.untilDelete'));
+    });
     it('says only its Keep it rule when nothing reviewed describes its size', () => {
         expect(describeManagedPresetOffer({ retention: { kind: 'until-delete' } })).toBe(t('managedRetention.untilDelete'));
     });

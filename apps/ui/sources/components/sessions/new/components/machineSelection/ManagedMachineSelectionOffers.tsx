@@ -12,7 +12,7 @@ import { resolveManagedWakeAvailability } from '@/sync/domains/pending/managedWa
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
-import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
+import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark, ManagedPresetOfferLine } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
 import { MachineProvisionerPicker, type ManagedProvisionerSelection } from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
@@ -126,6 +126,7 @@ export function useManagedMachineSelectionOffers(input: Readonly<{
                 : t('managedMachines.controller.requiredUnnamed'),
         markFor: preset => <ManagedPresetMark serverId={serverId} accountScope={binding.scope} preset={preset} size={MANAGED_PROVISIONER_MARK_SIZE.rail} />,
         // A local machine runs on the machine that manages it; a pool-backed preset names none (the pool picks one).
+        lineFor: (preset, extra) => <ManagedPresetOfferLine serverId={serverId} accountScope={binding.scope} preset={preset} extra={extra} />,
         costFor: preset => <ManagedPresetCost serverId={serverId} accountScope={binding.scope} preset={preset}
             runsOn={preset.controllerPoolId || !preset.controller ? undefined : names[preset.controller.machineId] ?? preset.controller.machineId} />,
         onConfigure: configure,

@@ -2,9 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { useItemSubtitleTextStyle } from '@/components/ui/lists/ItemSubtitleText';
 import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { presentManagedPresetCost, type ManagedConfigurationReceiptInput } from './managedConfigurationPresentation';
+import { describeManagedPresetOffer, presentManagedPresetCost, type ManagedConfigurationReceiptInput } from './managedConfigurationPresentation';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -350,6 +351,24 @@ export function ManagedPresetCost(props: Readonly<{
             {cost.detail ? <Text variant="meta" numberOfLines={1} style={presetCostStyles.detail}>{cost.detail}</Text> : null}
         </View>
     );
+}
+
+/**
+ * A preset offer's line in the machine picker (lab m-pick, "Hetzner · CX32 · until you delete it"): the provider its
+ * launch names, through the mark's own identity read (no other fetch), then what the preset says of itself
+ * (`describeManagedPresetOffer`). It keeps the row's subtitle role; `extra` ends the line ("created when it runs").
+ */
+export function ManagedPresetOfferLine(props: Readonly<{
+    serverId: string;
+    accountScope?: ServerAccountScope | null;
+    preset: ManagedPresetMarkSource & Parameters<typeof describeManagedPresetOffer>[0];
+    extra?: string;
+}>) {
+    const { creation, presentation } = useManagedPresetMarkPresentation(props);
+    const rowSubtitleStyle = useItemSubtitleTextStyle();
+    const line = [describeManagedPresetOffer({ ...props.preset, providerTitle: creation ? presentation.title : null }), props.extra]
+        .filter(Boolean).join(' · ');
+    return line ? <Text numberOfLines={1} style={rowSubtitleStyle}>{line}</Text> : null;
 }
 
 /** The glyph a setup-only preset stands under (lab `setup/over` Tools row): what it sets up, not who makes it. */

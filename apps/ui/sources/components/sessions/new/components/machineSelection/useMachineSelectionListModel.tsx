@@ -763,6 +763,9 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     subtitle: offer.unavailableText ?? (purpose === 'finite'
                         ? [offer.subtitle, t('managedMachines.picker.createdOnRun')].filter(Boolean).join(' · ')
                         : offer.subtitle),
+                    // The drawn line names the provider first (lab m-pick); an unavailable offer says only why.
+                    ...(offer.unavailableText === undefined && offer.subtitleLine ? { subtitleContent: offer.subtitleLine(
+                        purpose === 'finite' ? t('managedMachines.picker.createdOnRun') : undefined) } : {}),
                     // A preset carries its provider's mark; "One-off machine…" reads as making a new one.
                     icon: offer.mark ?? <Icon name={offer.kind === 'one-off' ? 'plus-circle' : 'stack'} size={24} color={theme.colors.text.secondary} />,
                     ...(offer.cost ? { rightAccessory: offer.cost } : {}),

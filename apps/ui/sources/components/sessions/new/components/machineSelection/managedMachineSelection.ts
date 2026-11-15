@@ -28,8 +28,10 @@ export type ManagedMachineSelectionOffer = Readonly<{
     /** A saved preset, or the one-off configuration entry. */
     kind?: 'preset' | 'one-off';
     title: string;
-    /** What it makes and its Keep it rule (lab m-pick: "CX32 · Falkenstein · Until I delete it"). */
+    /** What it makes and its Keep it rule (lab m-pick: "CX32 · Falkenstein · Until I delete it"); the searchable text. */
     subtitle?: string;
+    /** The drawn line, led by its provider (lab m-pick: "Hetzner · CX32 · …"); `extra` ends it. */
+    subtitleLine?: (extra?: string) => ReactNode;
     /** A preset's provider mark; the one-off entry has none. */
     mark?: ReactNode;
     /** The right-hand cost column ("No bill · Runs on devbox", a returned price); nothing when unpriced. */
@@ -103,6 +105,7 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
     describeUnavailable?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
     markFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
     costFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
+    lineFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1, extra?: string) => ReactNode;
     onConfigure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
     return [...params.presets.filter((preset): preset is OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1 =>
@@ -118,6 +121,7 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
             ...(unavailableText === undefined ? {} : { disabled: true, unavailableText }),
             ...(params.markFor ? { mark: params.markFor(preset) } : {}),
             ...(params.costFor ? { cost: params.costFor(preset) } : {}),
+            ...(params.lineFor ? { subtitleLine: (extra?: string) => params.lineFor!(preset, extra) } : {}),
             onSelect: () => params.onConfigure(preset),
         };
     }), {
