@@ -1200,7 +1200,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const opaqueMachine = hydrator.structural(retained.machine);
                 const recoveryOptions = isManagedOpaquePresetMachineV1(opaqueMachine)
                     ? withManagedOpaquePresetReview(recoveryBaseOptions, { machine: retained.machine, opaqueMachine,
-                        parent: { actionId: action, input: request ?? inspection! }, requestId: retained.requestId,
+                        // Custody binds to the signed root this Inspect or retry runs
+                        // under; Home's retained row request stays the currentness key.
+                        parent: { actionId: action, input: request ?? inspection! }, requestId: options.requestId,
                     }) : recoveryBaseOptions;
                 const recoveryClient = createManagedMachineControllerClient(input, recoveryOptions, action, hydrator);
                 if (action === 'machines.managed.bootstrap.retry') {

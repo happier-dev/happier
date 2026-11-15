@@ -1931,6 +1931,38 @@ describe('opaque managed preset admission', () => {
             mode: carrier.admission.machine.preset.contentEncryptionMode, content: report.presetContent,
             recipients: carrier.admission.presetContent.recipients, accountId: 'owner', accountKey: carrier.custodianKey });
         expect(opened?.nativeResult).toMatchObject({ kind: 'bound', resource: { value: privateCrabboxResource } });
+
+        // A later custodian Inspect is its own signed request. Home's retained
+        // context still names the creation request; the opened inspect child
+        // must bind custody to the Inspect root it actually runs under.
+        if (!report) throw new Error('Missing sealed bound report');
+        const inspectRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...originAuthorization(homeId, 'team-inspect-request'),
+            binding: { ...originAuthorization(homeId, 'team-inspect-request').binding, actionId: 'machines.managed.inspect',
+                custodianAccountId: 'owner', accountEncryptionMode: 'e2ee' } });
+        const inspectAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: inspectRoot,
+            serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+            target: inspectRoot.binding.target, installationId: controller.installationId, privateKey: signing.secretKey,
+            rootAdmitted: true, isCurrent: async () => true });
+        if (!inspectAuthorization) throw new Error('Inspect root authority was not established');
+        const retainedContent = { ...carrier.admission.presetContent, content: report.presetContent };
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            const path = String(url);
+            if (path.endsWith(managedMachineActionEndpointPathV1('machines.managed.get'))) {
+                return { status: 200, data: { machine: retained, presetContent: projectManagedMachinePresetForRecipientV1({
+                    content: retainedContent.content, recipients: retainedContent.recipients, recipientAccountId: 'owner' }) } };
+            }
+            if (path.endsWith('/controller/context')) {
+                return { status: 200, data: { machine: retained, presetContent: retainedContent, requestId: 'team-e2ee-request' } };
+            }
+            return { status: 200, data: { machine: retained } };
+        });
+        nativeEffectRoles.length = 0;
+        const inspected = await acquisition.execute('machines.managed.inspect', { homeId, managedId: retained.id }, { requestId: 'team-inspect-request',
+            context: { runtimeAccountId: 'owner', defaultSessionMachineId: controller.machineId, actionRequestId: 'team-inspect-request',
+                surface: 'cli', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+                externalActionExecutionAuthorization: inspectAuthorization, externalActionTarget: inspectRoot.binding.target },
+        }).catch((error: unknown) => error);
+        expect(nativeEffectRoles, JSON.stringify({ code: (inspected as { code?: unknown } | undefined)?.code })).toContain('inspect');
     });
     it.each([
         { controllerSource: 'explicit', ingress: 'account' },
