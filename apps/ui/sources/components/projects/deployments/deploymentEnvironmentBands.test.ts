@@ -62,3 +62,22 @@ describe('deploymentEnvironmentBands (Services → Apps, lab envList)', () => {
     expect(api).not.toHaveProperty('tone');
   });
 });
+
+describe('deploymentEnvironmentRowLine (Services → Apps line 2, lab envRow)', () => {
+  it('says what was deployed and who asked, never how it runs, where columns stand beside it', async () => {
+    const { deploymentEnvironmentRowLine } = await import('./DeploymentEnvironmentRows');
+    const row = { deploymentTitle: 'fix(invoices): round VAT per line', runtimeKind: 'Compose', runsOn: 'hetzner-fsn1',
+      detail: '2h', steps: null, stepCaption: null };
+    expect(deploymentEnvironmentRowLine(row, 'Ana', { columns: true, hereMachine: false })).toBe('fix(invoices): round VAT per line · Ana');
+    expect(deploymentEnvironmentRowLine({ ...row, deploymentTitle: null }, null, { columns: true, hereMachine: false })).toBeNull();
+  });
+
+  it('folds the columns into a phone line, most important first: the step at work, what was deployed, who, where, when', async () => {
+    const { deploymentEnvironmentRowLine } = await import('./DeploymentEnvironmentRows');
+    const row = { deploymentTitle: 'docs: faster search', runtimeKind: 'Compose', runsOn: 'vps-ams', detail: '5h',
+      steps: null, stepCaption: null };
+    expect(deploymentEnvironmentRowLine(row, 'Jon', { columns: false, hereMachine: false })).toBe('docs: faster search · Jon · vps-ams · 5h');
+    expect(deploymentEnvironmentRowLine({ ...row, steps: [] as never, stepCaption: 'Build · 31s' }, null,
+      { columns: false, hereMachine: true })).toBe('Build · 31s · docs: faster search');
+  });
+});

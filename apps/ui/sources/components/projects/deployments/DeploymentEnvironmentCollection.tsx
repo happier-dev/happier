@@ -239,6 +239,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       runtimeKind: compose,
       /** The address it serves at (the collection's resolved live address); null when none or not known. */
       liveAddress: liveAddress ?? null,
+      /** Who asked for the latest deploy (its receipt's requester), for the row's who-and-what line. */
+      requestedByAccountId: currentDeployment?.requestedByAccountId ?? null,
       // What was deployed last (its receipt's title), else what is live; never one that only repeats the row's name.
       deploymentTitle: [currentDeployment?.title, liveVersionTitle]
         .find((candidate): candidate is string => !!candidate && !isSameDeploymentName(candidate, title)) ?? null,

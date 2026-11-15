@@ -7,6 +7,7 @@ import {
   useHappierCollection,
   type CollectionAnatomy,
   type CollectionField,
+  type CollectionGroupAction,
   type HappierCollectionModel,
 } from '@happier-dev/plugin-ui';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
@@ -18,7 +19,9 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
 import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
@@ -142,6 +145,23 @@ export function DeploymentEnvironmentRows(
     onOpenChange: open,
   });
   const hereMachine = props.hereMachine === true;
+  // Who asked for each latest deploy, through the people owner the Environment's timeline uses ("by you", a name).
+  const accountId = props.lifetime?.scope.accountId ?? null;
+  const otherIds = React.useMemo(() => [...new Set(rows.flatMap((row) => row.requestedByAccountId && row.requestedByAccountId !== accountId
+    ? [row.requestedByAccountId] : []))], [accountId, rows]);
+  const people = useDiscussionParticipantProfiles({ scope: props.lifetime?.scope ?? NO_SCOPE, roster: null, accountIds: otherIds,
+    enabled: props.lifetime !== null && otherIds.length > 0, accountLifetime: props.lifetime });
+  const authorOf = React.useCallback((row: Row): string | null => {
+    if (!row.requestedByAccountId) return null;
+    if (row.requestedByAccountId === accountId) return t('projects.deployments.byYou');
+    const actor = people.accounts.get(row.requestedByAccountId);
+    return actor && props.lifetime ? resolveAccountActorPresentation(actor, props.lifetime.scope).name : null;
+  }, [accountId, people.accounts, props.lifetime]);
+  // The Address column stands only when an address is known on this page, sized to the longest one it shows.
+  const addressWidth = React.useMemo(() => {
+    const longest = Math.max(0, ...rows.map((row) => row.liveAddress ? formatDeploymentLiveAddress(row.liveAddress).length : 0));
+    return longest === 0 ? null : Math.min(ADDRESS_MAX_PX, Math.max(ADDRESS_MIN_PX, Math.round(longest * MONO_META_CHAR_PX)));
+  }, [rows]);
   const anatomy = React.useMemo<CollectionAnatomy<Row>>(() => {
     const meta = {
       ...Typography.variant('meta'),
@@ -174,18 +194,18 @@ export function DeploymentEnvironmentRows(
           ),
       },
       // Where it answers (the collection's resolved live address), drawn as its host; the first column to give way.
-      {
+      ...(addressWidth === null ? [] : [{
         key: 'address',
         title: t('projects.deployments.services.columnAddress'),
-        minWidth: 160,
+        minWidth: addressWidth,
         priority: 2,
         listColumn: true,
-        render: (row) => row.liveAddress ? (
+        render: (row: Row) => row.liveAddress ? (
           <Text style={{ ...meta, ...Typography.mono() }} numberOfLines={1}>
             {formatDeploymentLiveAddress(row.liveAddress)}
           </Text>
         ) : null,
-      },
+      }]),
       ...(hereMachine
         ? []
         : [
@@ -218,19 +238,9 @@ export function DeploymentEnvironmentRows(
       ),
       title: (row) =>
         row.titleQualifier ? `${row.title} · ${row.titleQualifier}` : row.title,
-      // Line 2 says what was deployed (the deploy's own title), else how it runs. Where the columns are not drawn (a phone) it also
-      // carries the step at work, the age and where it runs, most important first.
+      // Line 2 (lab envRow): what was deployed and who asked; a phone folds the columns in (deploymentEnvironmentRowLine).
       byline: (row, layout) => {
-        const columns = layout?.fieldColumns === true;
-        const facts = columns
-          ? [row.deploymentTitle ?? row.runtimeKind]
-          : [
-              row.steps ? row.stepCaption : null,
-              row.deploymentTitle,
-              hereMachine ? null : row.runsOn,
-              row.steps ? null : row.detail,
-            ];
-        const line = facts.filter(Boolean).join(' · ');
+        const line = deploymentEnvironmentRowLine(row, authorOf(row), { columns: layout?.fieldColumns === true, hereMachine });
         return line ? (
           <Text style={meta} numberOfLines={1}>
             {line}
@@ -256,7 +266,7 @@ export function DeploymentEnvironmentRows(
         title: t('projects.deployments.services.columnEnvironment'),
       },
     };
-  }, [hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
+  }, [addressWidth, authorOf, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
   return (
     <ServicesPageList<Row>
       testID={props.testID}
@@ -265,6 +275,29 @@ export function DeploymentEnvironmentRows(
       accessibilityLabel={props.accessibilityLabel}
     />
   );
+}
+
+const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: '' });
+/** The Address column's bounds: a mono host at meta size (MONO_META_CHAR_PX each), never narrower than its title. */
+const ADDRESS_MIN_PX = 96;
+const ADDRESS_MAX_PX = 240;
+const MONO_META_CHAR_PX = 7.4;
+
+type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'detail' | 'steps' | 'stepCaption'>;
+
+/**
+ * An Environment row's second line (lab envRow): what was deployed and who asked for it. Where the columns are not
+ * drawn (a phone) it folds them in, most important first: the step at work, what, who, where, when. How it runs
+ * ("Compose") is never the line; nothing known draws no line.
+ */
+export function deploymentEnvironmentRowLine(row: LineRow, author: string | null,
+  layout: Readonly<{ columns: boolean; hereMachine: boolean }>): string | null {
+  const facts = layout.columns
+    ? [row.deploymentTitle, author]
+    : [row.steps ? row.stepCaption : null, row.deploymentTitle, author, layout.hereMachine ? null : row.runsOn,
+        row.steps ? null : row.detail];
+  const line = facts.filter(Boolean).join(' · ');
+  return line === '' ? null : line;
 }
 
 /** Every band of a Services list stands on its one sheet, under the one bar that names the columns (lab envList). */
@@ -280,6 +313,8 @@ export function ServicesPageList<Item>(props: Readonly<{
   model: HappierCollectionModel<Item>;
   anatomy: CollectionAnatomy<Item>;
   accessibilityLabel: string;
+  /** A band's one action (Watched: Retry a Machine whose services couldn't be read). */
+  groupAction?: (groupKey: string) => CollectionGroupAction | null;
 }>) {
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
@@ -296,6 +331,7 @@ export function ServicesPageList<Item>(props: Readonly<{
             minListWidth={0}
             minDetailWidth={0}
             preferredListRatio={1}
+            {...(props.groupAction ? { groupAction: props.groupAction } : {})}
           />
         </CoreCollectionScope>
       </ItemGroup>
