@@ -2668,6 +2668,9 @@ const enAutomations = {
       chooseWatcher: 'Choose an observation watcher',
       noEligibleWatchers:
         'No current watcher is available for this Event source.',
+      eventCatalogNeedsMachine: 'Choose a machine to see the events its plugins offer.',
+      noEventSourcesOnMachine: ({ machine }: { machine: string }) => `No plugin on ${machine} offers events.`,
+      addFromStore: 'Add from Store',
       watcherCannotObserve: 'This installation can’t watch this Event.',
       fixUnavailableWatchers: 'Fix unavailable watchers',
       observationTransport: 'HOW EVENTS ARRIVE',

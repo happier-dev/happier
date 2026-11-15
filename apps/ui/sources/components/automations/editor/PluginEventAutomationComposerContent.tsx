@@ -16,6 +16,8 @@ import { resolvePluginExecutionOriginReasonDetail as originReasonDetail } from '
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { Text } from '@/components/ui/text/Text';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -218,6 +220,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
         collapseAllPickers,
     });
     const selectedEvent = props.model.selectedEvent;
+    const catalogMachineLabel = useServerScopedMachineLabel(props.model.catalogServerId, props.model.catalogMachineId);
     const selectedWatcher = props.model.selectedWatcherOrigin;
     const observationPlacementTitle = props.model.observationTransport === 'durablePush'
         ? t('automations.detail.event.observationPlacementTitle')
@@ -396,13 +399,38 @@ export function PluginEventAutomationComposerContent(props: Props) {
         <View testID="automation-event-composer" style={styles.section}>
                 <View style={styles.eventFields}>
                     {props.model.eventCatalogStatus !== 'ready' ? (
-                        <Text style={styles.unavailableText}>
+                        <Text testID="automation-event-catalog-status" style={styles.unavailableText}>
                             {props.model.eventCatalogStatus === 'idle'
-                                ? chooseObservationPlacement
+                                // Only a saved push endpoint waits on placement; anything else waits on a Machine.
+                                ? props.model.observationTransport === 'durablePush'
+                                    ? chooseObservationPlacement
+                                    : t('automations.form.trigger.eventCatalogNeedsMachine')
                                 : t(props.model.eventCatalogStatus === 'loading'
                                     ? 'automations.form.trigger.eventCatalogLoading'
                                     : 'automations.form.trigger.eventCatalogUnavailable')}
                         </Text>
+                    ) : props.model.eligibleEvents.length === 0 && !selectedEvent ? (
+                        // The Machine's catalog is the owner's answer: name it and offer that Machine's Store, not an empty picker.
+                        <View testID="automation-event-catalog-empty" style={styles.watcherRemedies}>
+                            <Text style={styles.unavailableText}>
+                                {catalogMachineLabel
+                                    ? t('automations.form.trigger.noEventSourcesOnMachine', { machine: catalogMachineLabel })
+                                    : t('automations.form.trigger.noEligibleEvents')}
+                            </Text>
+                            <View style={styles.watcherRemedyActions}>
+                                <RoundButton
+                                    testID="automation-event-add-from-store"
+                                    size="mini"
+                                    display="secondary"
+                                    title={t('automations.form.trigger.addFromStore')}
+                                    trailing={<Icon name="caret-right" size={12} color={theme.colors.text.secondary} />}
+                                    onPress={() => router.push(buildPluginsHomeRoute('app', {
+                                        machine: props.model.catalogMachineId && props.model.catalogServerId
+                                            ? { serverId: props.model.catalogServerId, machineId: props.model.catalogMachineId } : null,
+                                    }) as never)}
+                                />
+                            </View>
+                        </View>
                     ) : (
                         <>
                             <Text style={styles.fieldLabel}>{t('automations.form.trigger.eventSource')}</Text>

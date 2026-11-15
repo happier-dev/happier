@@ -207,6 +207,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         onEditSeedApplied: props.onEditSeedApplied,
         initialEventRef: props.initialEventRef,
         initialSetupSeed: props.initialSetupSeed,
+        defaultWatcherMachineId: props.authoringMachineId,
         guidedPreset: props.guidedPreset,
     });
     const completedGuidedDraft = React.useRef<PluginEventAutomationComposerModel['createDraft']>(null);
@@ -216,8 +217,8 @@ export function PluginEventAutomationEditor(props: Readonly<{
         void completePluginEventAutomationEditor(model, props.onComplete);
     }, [model, props.guidedPreset, props.onComplete]);
     React.useEffect(() => {
-        // A new Event loads its catalog only after explicit watcher selection.
-        // Saved endpoint placement still belongs to the existing endpoint reader.
+        // A new Event reads the authoring Machine's catalog and follows the selected watcher's Machine
+        // (the composer pre-selects one there). Saved endpoint placement still belongs to the existing endpoint reader.
         const selectedMachineId = currentObservation === null
             ? model.selectedWatcherOrigin ? getPluginMachineExecutionOriginRef(model.selectedWatcherOrigin).machineId : null
             : model.seededObservationMachineId;

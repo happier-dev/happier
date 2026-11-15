@@ -112,6 +112,9 @@ export type PluginEventAutomationPluginPresentation = Readonly<{
 export type PluginEventAutomationComposerModel = Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     eventCatalogStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
+    /** The Machine whose catalog this is, so an empty catalog can name it and offer that Machine's Store. */
+    catalogMachineId?: string | null;
+    catalogServerId?: string | null;
     selectedEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null;
     /** Qualified intent only; never an admitted Event descriptor. */
     pendingEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
@@ -275,6 +278,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     onEditSeedApplied?: (trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>, seed: PluginEventAutomationEditSeed) => void;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** The surface's Machine (a workflow's Runs on): a new Event watches from its installation unless the person picks another. */
+    defaultWatcherMachineId?: string | null;
     /** The guided caller has already bound every setup operand. */
     guidedPreset?: boolean;
 }>): PluginEventAutomationComposerModel {
@@ -680,18 +685,22 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         return true;
     }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, selectableWatchers]);
 
-    const appliedWatcherSeed = React.useRef(false);
+    // A new Event watches from the seeded monitoring Machine for its own Event, else from the surface's Machine.
+    // The one current installation there is chosen for the person; any other watcher stays one pick away.
+    const defaultWatcherMachineId = params.defaultWatcherMachineId ?? null;
     React.useEffect(() => {
         const seed = params.initialSetupSeed;
         const eventRef = selectedEvent?.event.identity ?? initialEventRef;
-        if (!seed?.monitoringMachineId || !eventRef || initialEditSeed || appliedWatcherSeed.current || selectedWatcherOrigin
-            || !arePluginContributionIdentitiesEqual(seed.eventRef, eventRef)) return;
+        if (!eventRef || initialEditSeed || selectedWatcherOrigin) return;
+        const preferredMachineId = seed?.monitoringMachineId && arePluginContributionIdentitiesEqual(seed.eventRef, eventRef)
+            ? seed.monitoringMachineId : defaultWatcherMachineId;
+        if (!preferredMachineId) return;
         const machineId = (candidate: PluginExecutionOriginCandidateV1) =>
             getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId;
-        const candidates = selectableWatchers.filter(candidate => machineId(candidate) === seed.monitoringMachineId);
-        if (candidates.length !== 1) return;
-        if (selectWatcher(candidates[0]!)) appliedWatcherSeed.current = true;
-    }, [initialEditSeed, initialEventRef, params.initialSetupSeed, selectedEvent, selectedWatcherOrigin, selectWatcher, selectableWatchers]);
+        const candidates = selectableWatchers.filter(candidate => machineId(candidate) === preferredMachineId);
+        if (candidates.length === 1) selectWatcher(candidates[0]!);
+    }, [defaultWatcherMachineId, initialEditSeed, initialEventRef, params.initialSetupSeed, selectedEvent, selectedWatcherOrigin,
+        selectWatcher, selectableWatchers]);
 
     const resolveExecutionOrigin = React.useCallback(() => {
         const event = selectedEventRef.current;
@@ -1109,6 +1118,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     return React.useMemo(() => ({
         eligibleEvents,
         eventCatalogStatus,
+        catalogMachineId: params.machineId,
+        catalogServerId: params.serverId,
         selectedEvent,
         pendingEventRef: !selectedEvent && !initialEditSeed && initialEventPluginId && initialEventLocalId
             && accountLifetime?.isCurrent() === true
@@ -1163,6 +1174,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         refreshWebhookEndpoint,
         eligibleEvents,
         eventCatalogStatus,
+        params.machineId,
+        params.serverId,
         filterClauses,
         filter.valid,
         getPluginPresentation,

@@ -739,4 +739,75 @@ it.each([
     }
 });
 
+// WF-EVENT-TRIGGER-1115: the workflow editor's Runs on Machine is the new Event's watcher, and a catalog that cannot offer
+// an Event says why with a way forward instead of an empty picker.
+it.each([
+    { catalog: 'events' },
+    { catalog: 'empty' },
+    { catalog: 'noMachine' },
+] as const)('authors a new Event from the Runs on Machine (catalog=$catalog)', async ({ catalog }) => {
+    const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
+    const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
+    const { t } = await import('@/text');
+    const accountId = `event-runs-on-${catalog}`;
+    const serverIdentityId = `srv_event_runs_on_${catalog}`;
+    const http = createHomeHubArtifactHttpBoundary(accountId);
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://event-runs-on-${catalog}.test`,
+        serverIdentityId, accountId, request: async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            return http.request(input, init);
+        } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected Runs on Account');
+    const { event, fresh, projection, inputs, machineId, pluginId } = healthSetupFixture(connection.serverId, serverIdentityId);
+    const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
+        members: [{ machineId, serverId: connection.serverId, serverIdentityId,
+            projection: inputs.pluginUiProjection, phase: 'current', interactionEnabled: true }] });
+    const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
+        id => id === pluginId ? sourceFacts : null);
+    rpc.respond = request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        ? { protocolVersion: 1, projection, automationEligibleEvents: catalog === 'events' ? [event] : [] } : undefined;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        storage.getState().applyMachines([createMachineFixture({ ...fresh.machineTarget.machine, presenceProtocolVersion: 1,
+            metadata: { host: 'Runs on studio', platform: 'linux', happyCliVersion: '0.3.0',
+                happyHomeDir: '/home/runs-on', homeDir: '/home/runs-on' } })], true, { sourceServerId: connection.serverId });
+        observeMachinePresenceForTest(lifetime.scope, [machineId]);
+        screen = await renderScreen(<TriggerPluginEventRows testID="runs-on-trigger" when={{ kind: 'pluginEvent', value: null }}
+            onChange={() => {}} machineId={catalog === 'noMachine' ? null : machineId} serverId={connection.serverId} editing />);
+        const model = () => screen!.findByType(InlinePluginEventEditor).props.model;
+        if (catalog === 'noMachine') {
+            // No Machine means no catalog to read: the editor names the missing choice rather than an unreachable picker.
+            expect(model().eventCatalogStatus).toBe('idle');
+            expect(screen.getTextContent()).toContain(t('automations.form.trigger.eventCatalogNeedsMachine'));
+            expect(screen.findAllHostsByTestId('automation-event-picker')).toHaveLength(0);
+            return;
+        }
+        await waitForHomeGovernance(() => expect(model().eventCatalogStatus).toBe('ready'));
+        if (catalog === 'empty') {
+            expect(screen.getTextContent()).toContain(t('automations.form.trigger.noEventSourcesOnMachine', { machine: 'Runs on studio' }));
+            expect(screen.findAllHostsByTestId('automation-event-picker')).toHaveLength(0);
+            expect(screen.findAllHostsByTestId('automation-event-add-from-store')).not.toHaveLength(0);
+            return;
+        }
+        await act(async () => { model().selectEvent(event); });
+        // The person never opened the watcher picker: the Runs on Machine's installation is already chosen.
+        await waitForHomeGovernance(() => expect(model().selectedWatcherOrigin, JSON.stringify({
+            watcherCandidates: model().watcherCandidates, watcherFailures: model().watcherFailures,
+        })).toMatchObject({ sourceRef: { machineId } }));
+    } finally {
+        await screen?.unmount();
+        disposeProjection();
+        clearDaemonMergedProjectionCacheForTests();
+        connection.dispose();
+    }
+});
+
 });
