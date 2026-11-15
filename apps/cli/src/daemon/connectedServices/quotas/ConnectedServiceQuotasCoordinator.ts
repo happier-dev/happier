@@ -5,8 +5,6 @@ import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/
 import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
 import type { ScheduledQualifiedAccountHealth } from '../refresh/ConnectedServiceRefreshCoordinator';
-import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
-import type { AccountSettings } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import { matchesCurrentQuotaObservationCredential } from './proof/quotaProbeFreshProof';
 import { invokeQuota } from './invokeQuota';
@@ -860,7 +858,6 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly qualifiedHealth: Pick<ConnectedServiceRefreshCoordinator,
     'prepareScheduledQualifiedHealth' | 'retainScheduledQualifiedHealthAccounts'>
     & Partial<Pick<ConnectedServiceRefreshCoordinator, 'refreshQualifiedConnectedAccountCredentialForRequestAuth'>> | null;
-  private readonly accountSettingsProvider: (() => AccountSettings | null | undefined) | undefined;
   private readonly runtimeAccountIdentities: RuntimeAccountIdentityIndex;
   private readonly failureStateByBindingKey = new Map<string, FailureState>();
   private readonly qualifiedQuotaScheduleByKey = new Map<string, Readonly<{
@@ -944,11 +941,9 @@ export class ConnectedServiceQuotasCoordinator {
     qualifiedHealth?: Pick<ConnectedServiceRefreshCoordinator,
       'prepareScheduledQualifiedHealth' | 'retainScheduledQualifiedHealthAccounts'>
       & Partial<Pick<ConnectedServiceRefreshCoordinator, 'refreshQualifiedConnectedAccountCredentialForRequestAuth'>> | null;
-    accountSettingsProvider?: () => AccountSettings | null | undefined;
   }>) {
     this.api = params.api;
     this.qualifiedHealth = params.qualifiedHealth ?? null;
-    this.accountSettingsProvider = params.accountSettingsProvider;
     this.credentials = params.credentials;
     this.now = params.now;
     this.randomBytes = params.randomBytes;
@@ -4341,12 +4336,7 @@ export class ConnectedServiceQuotasCoordinator {
     }
 
     const switchEvaluationTargets: ActiveGroupQuotaSwitchTarget[] = [];
-    const settings = this.accountSettingsProvider?.();
-    const preferences = settings?.usageQuotaNotificationsV1 ?? null;
-    // Unknown Settings preserve existing observation behavior. Only a known
-    // opt-out with no live group consumer may stop freshness-driven acquisition.
-    const usageNoticeDemand = preferences === null || (['pace', 'depletion', 'almost_out', 'reset', 'ending', 'unused', 'credit_expiry'] as const)
-      .some(kind => isUsageQuotaNotificationEnabled(preferences, kind));
+    const poolSessionRunning = input.qualifiedGroupTargets.length > 0;
     const currentKeys = new Set(profiles.map(profile => `qualified:${qualifiedAccountQuotaKey(profile.ref)}`));
     for (const key of this.qualifiedQuotaScheduleByKey.keys()) {
       if (!currentKeys.has(key)) this.qualifiedQuotaScheduleByKey.delete(key);
@@ -4376,8 +4366,9 @@ export class ConnectedServiceQuotasCoordinator {
       }
       const key =
         `qualified:${qualifiedAccountQuotaKey(profile.ref)}`;
-      const refreshWhenStale = usageNoticeDemand
-        || (groupContextsByAccountKey.get(qualifiedAccountQuotaKey(profile.ref))?.length ?? 0) > 0;
+      // Ruling 2026-11-04 (5): staleness re-reads only while a pool Session runs on this Machine.
+      // Reset deadlines, explicit refresh requests and limit signals still observe the Account.
+      const refreshWhenStale = poolSessionRunning;
       const basis = JSON.stringify([profile.credentialRevision, profile.configurationRevision,
         profile.authenticationModeId, profile.status, profile.kind, profile.expiresAt,
         profile.providerIdentity?.accountId, profile.providerIdentity?.organizationId,

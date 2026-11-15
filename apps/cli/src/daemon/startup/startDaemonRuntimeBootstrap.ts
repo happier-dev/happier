@@ -923,10 +923,6 @@ export async function startDaemonConnectedServiceRuntime(
           params.logger.debug('[DAEMON RUN] Connected-service usage notification failed (non-fatal)', error);
         });
       },
-      accountSettingsProvider: () => {
-        const snapshot = readAccountSettingsSnapshot();
-        return snapshot?.source === 'none' ? null : snapshot?.settings;
-      },
       // K2 (cmpn4hhdi fix): the proactive quota pre-turn switch coordinator is built by
       // startDaemonSessionControlRuntime (where the FSM/deferral/hot-apply primitives live)
       // and injected here. It routes the proactive usage-limit switch through the FSM

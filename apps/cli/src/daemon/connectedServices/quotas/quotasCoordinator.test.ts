@@ -2676,7 +2676,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
     const quotaDiagnostics: unknown[] = [];
     const acceptedSnapshots: ProviderAccountUsageSnapshotV1[] = [];
-    let demandSettings = accountSettingsParse({ usageQuotaNotificationsV1: recoveryMode === 'deadline_notice' ? { pace: true } : {} });
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
       credentials,
@@ -2687,8 +2686,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       accountUsageStore,
       qualifiedConnectedAccountRuntime,
       onAccountUsageSnapshotAccepted: async event => { acceptedSnapshots.push(event.snapshot); },
-      ...(['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'quota_error'].includes(recoveryMode)
-        ? { accountSettingsProvider: () => recoveryMode === 'deadline_unknown' ? null : demandSettings } : {}),
       recordDiagnostic: (event) => { quotaDiagnostics.push(event); },
       quotaPersistenceMinFreshnessMs: 60_000,
       fetchTimeoutMs: recoveryMode === 'quota_timeout_configured' ? 1_000
@@ -2706,13 +2703,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     try {
-      if (recoveryMode === 'deadline_active') coordinator.registerSpawnTarget({ pid: 123, sessionId: 'active-group',
+      // A running pool Session on this Machine is the only background-polling demand (ruling 2026-11-04 (5)).
+      const registerRunningPoolSession = (target: Pick<typeof coordinator, 'registerSpawnTarget'>) => target.registerSpawnTarget({
+        pid: 123, sessionId: 'active-group',
         connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
           [serviceKey]: { source: 'connected', selection: 'group', groupId: 'group-1' },
         } }, connectedServiceSelectionsEnv: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
           kind: 'group', serviceId: serviceKey, groupId: 'group-1', activeProfileId: profile.ref.accountId,
           fallbackProfileId: profile.ref.accountId, generation: 4,
         }]) } });
+      if (recoveryMode === 'deadline_active' || recoveryMode === 'deadline_fresh'
+        || recoveryMode.startsWith('persistence_unchanged_')) registerRunningPoolSession(coordinator);
       if (recoveryMode === 'usage_notice_requester') {
         const { startDaemonConnectedServiceRuntime } = await import('../../startup/startDaemonRuntimeBootstrap');
         const { createRequesterSessionControlRuntimeFixture } = await import('../../testkit/requesterSessionControlRuntimeFixture');
@@ -2797,6 +2798,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             });
             await runtime.connectedServiceQuotasLoopHandle?.stop();
             if (!runtime.connectedServiceQuotasCoordinator) throw new Error('Missing real quota coordinator');
+            registerRunningPoolSession(runtime.connectedServiceQuotasCoordinator);
             await runtime.connectedServiceQuotasCoordinator.tickOnce();
             expect(writes.filter(row => row.url.endsWith('/artifacts'))).toEqual([]);
             vi.setSystemTime(600_000);
@@ -2998,8 +3000,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         return;
       }
       if (['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active'].includes(recoveryMode)) {
-        expect(schedule).toEqual({ nextAutomaticRunAfterMs: recoveryMode === 'deadline_idle' ? 3_600_000 : 60_000 });
-        if (recoveryMode !== 'deadline_idle') {
+        // Ruling 2026-11-04 (5): background quota polling only while a pool Session runs on this
+        // Machine; usage-notice preferences (set or unknown) no longer create an idle cadence.
+        const polling = recoveryMode === 'deadline_active';
+        expect(schedule).toEqual({ nextAutomaticRunAfterMs: polling ? 60_000 : 3_600_000 });
+        if (polling) {
           // A polled reading stays current until its scheduled replacement is a whole refresh late,
           // so pool surfaces do not call it old while the next read is still on time.
           const write = usageWrites().at(-1);
@@ -3013,7 +3018,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         const initialUsageReads = readQuota.mock.calls.length;
         now += 61_000;
         await coordinator.tickOnce();
-        if (recoveryMode === 'deadline_idle') {
+        if (!polling) {
           expect(readCredential).toHaveBeenCalledTimes(initialCredentialReads);
           expect(readQuota).toHaveBeenCalledTimes(initialUsageReads);
         } else {
@@ -3195,7 +3200,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }
         if (recoveryMode === 'quota_error') {
           const credentialReads = readCredential.mock.calls.length;
-          demandSettings = accountSettingsParse({ usageQuotaNotificationsV1: { pace: true } });
           coordinator.invalidateInventory();
           expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 120_000 });
           expect(readCredential).toHaveBeenCalledTimes(credentialReads);
