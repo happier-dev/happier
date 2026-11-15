@@ -128,7 +128,8 @@ function readRunMachine(ref: BoardItemRefV1, summary: WorkflowRunSummaryV1, fact
     return { machine, managedMachine, context: { machineReachable: reachability === 'unknown' ? undefined : reachability === 'reachable',
         machineName: machine ? getMachineDisplayName(machine) : null,
         machineStatus: resolveManagedMachineWorkStatus({ machineId: summary.machineId, revokedAt: machine?.revokedAt,
-            online: reachability === 'unknown' ? null : reachability === 'reachable', managedMachine }) } };
+            online: reachability === 'unknown' ? null : reachability === 'reachable', managedMachine,
+            nativeState: machine?.managedInputRuntime?.state }) } };
 }
 
 /**
@@ -304,6 +305,7 @@ function readBoardWorkStatus(member: BoardMember, facts: BoardCardFacts): WorkSt
                     ? t('boards.card.machine.needYou', { count: counts.needsYou }) : t('boards.card.machine.online'),
                 online, needsYouCount: counts.needsYou, runningSessionCount: counts.running,
                 machineId: machine.id, revokedAt: machine.revokedAt, managedMachine: facts.managedMachine?.(member.ref),
+                nativeState: machine.managedInputRuntime?.state,
                 workSummary: facts.machineWorkSummary?.(member.ref),
             } });
         }

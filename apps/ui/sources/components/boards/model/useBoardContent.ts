@@ -582,9 +582,9 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
         }
         return [...byKey.values()];
     }, [members, runRows, homes.activeServerId]);
-    // Run and Machine cards consume the same Home-owned managed inventory.
-    const managedHomes = React.useMemo(() => [...new Set(machineMembers
-        .map(member => member.ref.qualifiedId.serverId))], [machineMembers]);
+    const managedHomes = React.useMemo(() => [...new Set(members
+        .filter(member => member.available && member.ref.kind === 'machine')
+        .map(member => member.ref.qualifiedId.serverId))], [members]);
     const { machinesByEnrolledMachineIdByServerId, bindings: machineScopeBindings } = useManagedMachineInventory(managedHomes);
     const reachabilityRevision = useMachineReachabilityRevision(machineMembers.length > 0);
     const machineGroups = React.useMemo(() => {

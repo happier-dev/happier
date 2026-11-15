@@ -441,6 +441,15 @@ describe('board cards', () => {
         expect(project(runMembers, runFacts)[0]?.status).toMatchObject({ bucket: 'idle', word: 'managedPower.asleep' });
         expect(project(runMembers, { ...runFacts, managedMachine: () => starting })[0]?.status)
             .toMatchObject({ bucket: 'working', word: 'managedWake.starting' });
+        for (const managedMachine of [undefined, () => null]) {
+            const publicGuest = { ...guest, managedInputRuntime: { nativeReady: false, wakeState: 'asleep' as const, state: 'asleep' as const } };
+            const publicFacts: BoardCardFacts = { ...runFacts, managedMachine, machine: () => publicGuest };
+            expect(project([...members, ...runMembers], publicFacts).map(card => card.status))
+                .toMatchObject([{ bucket: 'idle', word: 'managedPower.asleep' }, { bucket: 'idle', word: 'managedPower.asleep' }]);
+            const publicStarting = { ...publicGuest, managedInputRuntime: { nativeReady: false, wakeState: 'starting' as const, state: 'starting' as const } };
+            expect(project([...members, ...runMembers], { ...publicFacts, machine: () => publicStarting }).map(card => card.status))
+                .toMatchObject([{ bucket: 'working', word: 'managedWake.starting' }, { bucket: 'working', word: 'managedWake.starting' }]);
+        }
     });
     it('names why an online Machine needs the person in its state word, not its presence', () => {
         const ref = { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'mbp' } } as const;

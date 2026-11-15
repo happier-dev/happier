@@ -2,7 +2,6 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { applyWorkBoardIntentV1, buildWorkBoardItemKeyV1, createWorkBoardV1} from '@happier-dev/protocol/boards/workBoardV1';
 import { encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -76,32 +75,25 @@ function runPageCursor(input: unknown) {
 
 describe('Board shared Run filter membership', () => {
     it('reads managed state for a run-only Board and refreshes its retained card on observed Start', async () => {
-        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
         const serverId = homes.activeServerId!;
         expect(getServerProfileById(serverId)?.serverIdentityId).toBe('srv_managed_board_home');
-        let managed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_managed_board_home', custodianAccountId: 'account-a',
-            launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
-            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
-            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
-            resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: { id: 'retained-native' } },
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } });
-        const read = { select: () => ({ body: { machines: [managed] } }) };
-        harness.home.answer(serverId, managedMachineActionEndpointPathV1('machines.managed.list'), read);
-        const guest = createMachineFixture({ id: 'guest', active: false, activeAt: 0 });
+        const guest = createMachineFixture({ id: 'guest', active: false, activeAt: 0,
+            managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep' } });
         const run = createWorkflowRunSummaryFixture({ id: 'managed-run', state: 'running', machineId: guest.id });
-        storage.setState({ workflowRunsById: { [workflowRunStoreKey(run.id)]: workflowRunRowFromSummary(run) },
-            machineListByServerId: { [serverId]: [guest] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        storage.setState({ workflowRunsById: { [workflowRunStoreKey(run.id)]: workflowRunRowFromSummary(run) } });
+        storage.getState().applyMachines([guest], true, { sourceServerId: serverId, sourceAccountId: 'account-a' });
         const ref = { kind: 'workflow_run' as const, qualifiedId: { serverId, id: run.id } };
         const membership = { members: [{ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }], complete: true };
         const hook = await renderHook(() => useBoardCards(membership, homes));
         try {
             await waitForHomeGovernance(() => expect(hook.getCurrent()[0]?.status).toMatchObject({ bucket: 'idle', word: t('managedPower.asleep') }));
-            managed = { ...managed, submittedNativeEffect: { intent: 'start', intentRevision: 2, requestId: 'start', controller: managed.controller! } };
-            await act(async () => publishHomeAccountChange(serverId));
+            await act(async () => storage.getState().applyMachines([{ ...guest,
+                managedInputRuntime: { nativeReady: false, wakeState: 'starting', state: 'starting' },
+            }], true, { sourceServerId: serverId, sourceAccountId: 'account-a' }));
             await waitForHomeGovernance(() => expect(hook.getCurrent()[0]?.status)
-                .toMatchObject({ bucket: 'working', word: t('managedWake.starting', { machine: managed.launch.name }) }));
+                .toMatchObject({ bucket: 'working', state: 'starting' }));
+            expect(harness.home.requestsFor(managedMachineActionEndpointPathV1('machines.managed.list'))).toHaveLength(0);
         } finally { await hook.unmount(); }
     });
     it.each([true, false])('hides private picked Session cards on sharing push without removing Board membership (enabled=%s)', async (enabled) => {
