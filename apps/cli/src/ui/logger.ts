@@ -489,7 +489,8 @@ export class Logger {
       const stats = statSync(this.logFilePath)
       if (!stats.isFile()) return { kind: 'unavailable' }
       const fileSize = Math.max(0, Math.trunc(stats.size))
-      const logId = `${this.pluginLogOccurrenceId}:${stats.dev}:${stats.ino}`
+      // An in-place tail trim keeps the inode; its generation makes earlier cursors reset.
+      const logId = `${this.pluginLogOccurrenceId}:${stats.dev}:${stats.ino}:${this.fileAppender.trimGeneration}`
       const cursorReset = requestedCursor > fileSize || (query.logId !== undefined && query.logId !== logId)
       const startOffset = cursorReset ? 0 : requestedCursor
       if (startOffset === fileSize) {
