@@ -3388,6 +3388,63 @@ describe('reachable preset detail', () => {
     await viewer.unmount();
   });
 
+  it.each(['memberCreate', 'limit', 'controller'] as const)('persists the latest %s choice after an in-flight preset save', async field => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, [
+      createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId }),
+      createMachineFixture({ id: 'builder', installationId: 'builder-installation' }),
+    ]);
+    const initial = { ...preset, owner: { kind: 'team', teamId: 'team-1' }, teamAcquireDelegated: false } as const;
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(initial) },
+    });
+    const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+    harness.answer(serverId, bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' }).path, {
+      body: teamSummaryFixture({ name: 'Platform', capabilities: teamCapabilitiesFixture({ manageSettings: true }) }),
+    });
+    // Delay only the HTTP boundary; the mounted editor and revisioned Action path remain real.
+    let release!: () => void;
+    const respondAfter = new Promise<void>(resolve => { release = resolve; });
+    onTestFinished(() => release());
+    const firstPatch = field === 'memberCreate' ? { teamAcquireDelegated: true }
+      : field === 'limit' ? { simultaneousLimit: { maximum: 3 } }
+        : { controller: { machineId: 'builder', installationId: 'builder-installation' }, controllerPoolId: null };
+    const secondPatch = field === 'memberCreate' ? { teamAcquireDelegated: false }
+      : field === 'limit' ? { simultaneousLimit: { maximum: 4 } }
+        : { controller: preset.controller, controllerPoolId: null };
+    const firstSaved = createPlainManagedMachinePresetFixture({ ...initial, ...firstPatch, controllerPoolId: undefined, revision: initial.revision + 1 });
+    const finalSaved = createPlainManagedMachinePresetFixture({ ...initial, ...secondPatch, controllerPoolId: undefined, revision: initial.revision + 2 });
+    let persisted = createPlainManagedMachinePresetFixture(initial);
+    harness.answer(serverId, '/v1/machines/presets/update', { select: async input => {
+      const request = ManagedMachinePresetUpdateInputV1Schema.parse(input);
+      if (request.expectedRevision !== persisted.revision) return { body: { kind: 'conflict', preset: persisted } };
+      if (persisted.revision === initial.revision) { await respondAfter; persisted = firstSaved; }
+      else persisted = finalSaved;
+      return { body: { kind: 'saved', preset: persisted } };
+    } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
+    const model = () => screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
+    await waitForHomeGovernance(() => expect(model().memberCreate?.readOnly).toBe(false));
+    const change = (second: boolean) => field === 'memberCreate' ? model().memberCreate!.onChange(!second)
+      : field === 'limit' ? model().limit!.row.onChange!(second ? '4' : '3')
+        : model().controller!.row.onChange!(second ? preset.controller.machineId : 'builder');
+    await act(async () => { change(false); });
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
+    await act(async () => { change(true); });
+    expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1);
+    await act(async () => { release(); });
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update').map(row => row.input)).toEqual([
+      { homeId: preset.homeId, id: preset.id, expectedRevision: initial.revision, patch: firstPatch },
+      { homeId: preset.homeId, id: preset.id, expectedRevision: firstSaved.revision, patch: secondPatch },
+    ]));
+    expect(persisted).toEqual(finalSaved);
+    await waitForHomeGovernance(() => expect(field === 'memberCreate' ? model().memberCreate!.value
+      : field === 'limit' ? model().limit!.row.value : model().controller!.row.value)
+      .toBe(field === 'memberCreate' ? false : field === 'limit' ? '4' : preset.controller.machineId));
+    await screen.unmount();
+  });
+
   it('offers no member-creation control on a personal preset', async () => {
     const serverId = await seed();
     const screen = await renderSettingsView(

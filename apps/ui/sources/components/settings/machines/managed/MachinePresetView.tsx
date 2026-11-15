@@ -90,6 +90,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const machines = useMachineListForServer(props.serverId);
     const presenceNowMs = useMachinePresenceNowMs(machines ?? []);
     const [mutating, setMutating] = React.useState(false);
+    type EditPatch = Parameters<typeof detail.update>[0];
+    const [pendingEdit, setPendingEdit] = React.useState<EditPatch | null>(null);
+    const [savingEdit, setSavingEdit] = React.useState<EditPatch | null>(null);
     const [mutationError, setMutationError] = React.useState<string | null>(null);
     const busy = mutating || approval.approvalPending;
     const teamDenied = preset?.owner.kind === 'team' && (teamState?.team.capabilities.viewTeam === false
@@ -121,7 +124,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         navigate(buildManagedMachineConfigurationRoute({ serverId: props.serverId, provisioner: contribution, presetId: visibleCreation.id,
             ...(edit ? { presetOnly: true } : {}) }));
     };
-    const runMutation = async (mutation: () => ReturnType<typeof detail.archiveOrRestore>) => {
+    const runMutation = React.useCallback(async (mutation: () => ReturnType<typeof detail.archiveOrRestore>) => {
         if (!canManage || busy) return;
         setMutating(true);
         setMutationError(null);
@@ -130,9 +133,19 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             if (result.kind === 'failed') setMutationError(result.code);
         } catch { setMutationError('request_failed'); }
         finally { setMutating(false); }
-    };
+    }, [canManage, busy]);
     const archiveOrRestore = () => runMutation(detail.archiveOrRestore);
-    const edit = (patch: Parameters<typeof detail.update>[0]) => fireAndForget(runMutation(() => detail.update(patch)), { tag: 'MachinePresetView.edit' });
+    const edit = (patch: EditPatch) => {
+        if (canManage) setPendingEdit(current => ({ ...current, ...patch }));
+    };
+    React.useEffect(() => {
+        if (!pendingEdit || busy || !canManage) return;
+        setPendingEdit(null);
+        setSavingEdit(pendingEdit);
+        // Drain after rendering the saved revision, so the next Action reviews that revision.
+        fireAndForget(runMutation(() => detail.update(pendingEdit)).finally(() => setSavingEdit(null)), { tag: 'MachinePresetView.edit' });
+    }, [pendingEdit, busy, canManage, detail.update, runMutation]);
+    const desiredEdit = { ...savingEdit, ...pendingEdit };
     const approvalNotice = approval.approvalId ? <AttentionBanner testID="machine-preset.approval" tone="neutral"
         title={t('approvals.title')} description={t('approvals.status.open')}
         action={{ label: t('approvals.details'), onPress: () => navigate(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}`) }} /> : null;
@@ -152,7 +165,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         : knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const controllerSentenceName = pooled ? poolName ? t('machinePresets.controllerPoolIn', { pool: poolName }) : t('machinePresets.controllerPoolInUnnamed')
         : controller ? getMachineSentenceName(controller, controllerName) : controllerName;
-    const memberCreateOn = visiblePreset.teamAcquireDelegated === true;
+    const memberCreateOn = (desiredEdit.teamAcquireDelegated ?? visiblePreset.teamAcquireDelegated) === true;
+    const desiredLimit = desiredEdit.simultaneousLimit === undefined ? visiblePreset.simultaneousLimit : desiredEdit.simultaneousLimit;
+    const desiredController = desiredEdit.controller ?? visibleCreation?.controller;
     const presenceLabel = (machine: NonNullable<typeof controller>) => {
         const presence = resolveMachinePickerPresence(machine, presenceNowMs, catalog.binding?.isCurrent() ? catalog.binding.scope : null);
         return presence.status === 'online' ? t('status.online') : presence.status === 'offline' ? t('status.offline') : t('common.unknown');
@@ -247,13 +262,13 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         meta: [{ key: 'home', text: homeName }, { key: 'owner', text: visiblePreset.owner.kind === 'account' ? t('machinePresets.ownerPersonal') : ownerTitle }],
         audience,
         ...(teamState ? { memberCreate: { description: memberCreateHelp,
-            title: t('machinePresets.memberCreateRow'), value: memberCreateOn, disabled: !canManage || busy, readOnly: !canManage,
+            title: t('machinePresets.memberCreateRow'), value: memberCreateOn, disabled: !canManage || approval.approvalPending, readOnly: !canManage,
             subtitle: !canManage ? t('machinePresets.memberCreateManagersOnly', { team: teamState.team.name })
                 : memberCreateOn ? t('machinePresets.memberCreateWithdraw') : undefined,
             onChange: (next: boolean) => edit({ teamAcquireDelegated: next }) } } : {}),
         // A local machine runs on its controller and bills nobody, so the billing caveat only speaks for a cloud one.
         limit: { ...(presentation.billing?.location === 'local' ? {} : { description: t('machinePresets.limitHelp') }), row: canManage
-            ? managedPresetLimitRow({ limit: visiblePreset.simultaneousLimit?.maximum, disabled: busy,
+            ? managedPresetLimitRow({ limit: desiredLimit?.maximum, disabled: approval.approvalPending,
                 onChange: next => edit({ simultaneousLimit: next ? { maximum: next } : null }) })
             : { title: visiblePreset.simultaneousLimit
                 ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
@@ -266,11 +281,11 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 ...(controller ? { subtitle: presenceLabel(controller) } : {}),
                 choices: controllerChoices.map(machine => ({ id: machine.id, title: getMachineDisplayName(machine, machines ?? undefined) ?? machine.id,
                     subtitle: presenceLabel(machine) })),
-                value: visibleCreation.controller?.machineId, disabled: busy,
+                value: desiredController?.machineId, disabled: approval.approvalPending,
                 onChange: id => {
                     const machine = controllerChoices.find(candidate => candidate.id === id);
-                    if (!machine?.installationId || id === visibleCreation.controller?.machineId
-                        && machine.installationId === visibleCreation.controller?.installationId) return;
+                    if (!machine?.installationId || id === desiredController?.machineId
+                        && machine.installationId === desiredController?.installationId) return;
                     edit({ controller: { machineId: machine.id, installationId: machine.installationId }, controllerPoolId: null });
                 },
             } : { title: controllerName } },
