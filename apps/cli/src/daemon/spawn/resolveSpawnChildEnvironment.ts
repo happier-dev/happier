@@ -350,6 +350,8 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       processEnv: params.processEnv,
       ...(params.pluginRuntimeRegistry ? { catalogSnapshot: params.pluginRuntimeRegistry.contributes } : {}),
       ...(signal ? { signal } : {}),
+      readAdmittedAgentCli: () => params.memberAgentCliLaunch && resolvedAgentId && agentCliLaunchSpec
+        ? { agentId: resolvedAgentId, launch: agentCliLaunchSpec } : undefined,
       installablesRegistry: () => resolveSpawnHookInstallablesRegistry(
         params.happyHomeDir,
         params.pluginRuntimeRegistry
@@ -558,9 +560,10 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   const preliminaryIsolation = params.providerBindingPrerequisitesOnly ? params.agentIsolation?.read() : undefined;
   const memberLaunchPending = preliminaryIsolation
     && resolveMachineAgentExecutionPlacementV1({ policy: preliminaryIsolation, platform: process.platform }) === 'member';
-  if (resolvedAgentId && !memberLaunchPending && !params.memberAgentCliLaunch) {
+  if (resolvedAgentId && !memberLaunchPending) {
     // Admission precedes prerequisite hooks: dependency setup cannot substitute
-    // for the Agent executable or start a download for a missing Agent.
+    // for the Agent executable or start a download for a missing Agent. A
+    // member's admission runs as that member, and the hooks reuse it.
     const agentCliValidation = await validateAgentCliLaunch(resolvedAgentId, {
       ...params.processEnv,
       ...extraEnv,

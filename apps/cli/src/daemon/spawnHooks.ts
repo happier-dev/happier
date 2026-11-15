@@ -25,7 +25,7 @@ import {
   resolveAgentCliRuntimeSpecForLookupId,
   type AgentCliResolutionOptions,
 } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
-import { buildAgentCliLaunchSpecFromResolution } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
+import { buildAgentCliLaunchSpecFromResolution, type AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
@@ -74,15 +74,28 @@ function toDaemonToolSource(source: 'override' | 'system' | 'managed'): Extract<
   return source;
 }
 
+/** The spawn's one executable admission for its own Agent, when it was made as the separated member. */
+export type DaemonSpawnAdmittedAgentCliV1 = Readonly<{ agentId: string; launch: AgentCliLaunchSpec }>;
+
 function resolveProviderCliTool(input: Readonly<{
   toolId: string;
   processEnv: ProcessEnvInput;
   catalogSnapshot?: AgentCliResolutionOptions['catalogSnapshot'];
+  admittedAgentCli?: DaemonSpawnAdmittedAgentCliV1;
 }>): Extract<DaemonResolvedToolV1, { ok: true }> | null {
   try {
     const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(input.toolId, {
       catalogSnapshot: input.catalogSnapshot,
     });
+    // A member's Agent lives in the member's private home: reuse the member
+    // admission instead of looking it up on the daemon's own PATH.
+    const admitted = input.admittedAgentCli;
+    if (admitted && resolveAgentCliRuntimeSpecForLookupId(admitted.agentId, {
+      catalogSnapshot: input.catalogSnapshot,
+    }).id === runtimeSpec.id) {
+      return { ok: true, command: admitted.launch.command, args: [...admitted.launch.args],
+        source: toDaemonToolSource(admitted.launch.source) };
+    }
     const resolved = resolveAgentCliCommandForRuntime(runtimeSpec, { processEnv: input.processEnv });
     if (!resolved) return null;
     const launch = buildAgentCliLaunchSpecFromResolution(resolved, { processEnv: input.processEnv });
@@ -141,6 +154,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
   signal?: AbortSignal;
   installablesRegistry?: InstallablesRegistrySource;
   catalogSnapshot?: AgentCliResolutionOptions['catalogSnapshot'];
+  readAdmittedAgentCli?: () => DaemonSpawnAdmittedAgentCliV1 | undefined;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }>): DaemonSpawnToolResolutionContextV1 {
@@ -172,6 +186,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
         toolId: input.toolId,
         processEnv: params.processEnv,
         catalogSnapshot: params.catalogSnapshot,
+        admittedAgentCli: params.readAdmittedAgentCli?.(),
       });
       if (providerCliTool) {
         diagnostics.info({
