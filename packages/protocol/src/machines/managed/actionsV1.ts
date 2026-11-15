@@ -371,10 +371,18 @@ export const MachineSetupResolveResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ sources: MachineSetupResolvedSourceV1Schema, creation: z.optional(MachineSetupCreationOriginV1Schema) }),
   z.strictObject({ purpose: z.literal('creationOrigin'), creation: z.optional(MachineSetupCreationOriginV1Schema) }),
 ]));
-export const MachineSetupReportInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineSetupPresetApplyInputV1Schema, {
+export const MachineSetupReportInputV1Schema = lazyZodSchema(() => z.union([
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineSetupPresetApplyInputV1Schema, {
   managedId: id(), state: z.enum(['running', 'succeeded', 'failed']),
   operation: z.strictObject({ operationId: id() }), errorCode: z.optional(z.string().check(z.minLength(1))),
-})));
+  })),
+  z.strictObject({ homeId: id(), managedId: id(), presetId: id(), presetRevision: revision(),
+    target: z.strictObject({ kind: z.literal('bound'), controller: ManagedControllerV1Schema }),
+    state: z.enum(['running', 'succeeded', 'failed']), operation: z.strictObject({ operationId: id() }),
+    errorCode: z.optional(id()), sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
+    presetContent: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+  }),
+]));
 export type MachineSetupReportInputV1 = z.infer<typeof MachineSetupReportInputV1Schema>;
 
 // Classic roots are the actual public Action-spec consumer seam. Internal
@@ -610,11 +618,15 @@ export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union(
   z.omit(ManagedAcquireInputV1Schema._zod.def.options[1], { agentStart: true }),
 ]));
 export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject({ input: ManagedAdmissionComputeInputV1Schema, requestId: id(), continuationPresent: mini.boolean(),
+  /** Installed controller attestation after its admitted local placement decision. */
+  acquisitionMode: z.optional(z.literal('resource-bound')),
+  reuseIdle: z.optional(z.literal(true)),
   requestEnvelopeDigest: z.optional(ExternalActionManagedContinuationV1Schema.shape.acquireRequestEnvelopeDigest),
   /** Native-qualified defaults are separate from the unchanged signed requester input. */
   presetPolicy: z.optional(MachineRetentionPolicyV1Schema),
   originalActionEnvelope: z.optional(ExternalActionRequestEnvelopeSchema),
-}));
+}).check(z.refine(value => value.reuseIdle !== true || value.acquisitionMode === 'resource-bound',
+  { message: 'Idle reuse requires local resource-bound admission.' })));
 /**
  * An opaque preset admission carries only the structural allocation row.  The
  * private launch/setup snapshot is opened by the installed custodian daemon

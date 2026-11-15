@@ -1623,25 +1623,43 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { id: machineId })));
 }
 
-/** Resolve the read transport and keep membership discovery inside its admitted Home and Environment. */
-export async function readDeploymentPreparationHttpReadPurpose(
-    tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
+/** Parse a declared transport; this candidate does not establish operand custody. */
+export function readDeclaredDeploymentPreparationHttpRead(
+    binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
     isHttpOperation: (actionId: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1) => boolean,
-): Promise<Readonly<{ actionId: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1;
-    environmentId?: string; deploymentId?: string }> | null> {
+): Readonly<{ actionId: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1;
+    operands: object; environmentId?: string; deploymentId?: string }> | null {
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return null;
     const actionId = readDeclaredPreparationScope(binding, undefined, effectActionId)?.httpReads.find(isHttpOperation);
     if (!actionId) return null;
     const read = getActionSpec(actionId).inputSchema.safeParse(proof.routeInput);
     if (!read.success || !read.data || typeof read.data !== 'object' || !('serverId' in read.data)
         || read.data.serverId !== binding.serverIdentityId) return null;
-    if (await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read.data,
-            undefined, undefined, actionId) !== true) return null;
-    return { actionId,
+    return { actionId, operands: read.data,
         ...('environmentId' in read.data && typeof read.data.environmentId === 'string' ? { environmentId: read.data.environmentId } : {}),
         ...('deploymentId' in read.data && typeof read.data.deploymentId === 'string' ? { deploymentId: read.data.deploymentId } : {}) };
+}
 
+/** Resolve operand custody once, consuming the accepted job's exact identities when available. */
+export async function readDeploymentPreparationHttpReadPurpose(
+    tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+    isHttpOperation: Parameters<typeof readDeclaredDeploymentPreparationHttpRead>[3],
+    acceptedReceipt?: Pick<NonNullable<Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>>, 'id' | 'environmentId'>,
+): Promise<Readonly<{ actionId: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1;
+    environmentId?: string; deploymentId?: string }> | null> {
+    const read = readDeclaredDeploymentPreparationHttpRead(binding, effectActionId, proof, isHttpOperation);
+    if (!read) return null;
+    const acceptedOperand = acceptedReceipt !== undefined
+        && (read.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && read.environmentId === acceptedReceipt.environmentId
+                && !('backupPolicy' in read.operands)
+            || read.actionId === deploymentActionIds.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && read.deploymentId === acceptedReceipt.id
+                && (read.environmentId === undefined || read.environmentId === acceptedReceipt.environmentId));
+    if (!acceptedOperand && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read.operands,
+            undefined, undefined, read.actionId) !== true) return null;
+    const { operands: _operands, ...purpose } = read;
+    return purpose;
 }
 
 export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,

@@ -1,4 +1,6 @@
 import { MACHINE_REBOOT_ACTION_IDS } from '../rebootActionIdsV1.js';
+/** Bound Setup continues the exact admitted acquisition or its explicit Retry. */
+export const MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1 = ['machines.managed.acquire', 'machines.managed.bootstrap.retry'] as const;
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../../actions/externalActionApi.js';
@@ -102,9 +104,10 @@ export function isMachineSetupOperationActionIdV1(actionId: string): actionId is
 }
 
 export const MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 = 'machines.managed.bootstrap.retry';
+export const MANAGED_ACQUIRE_ACTION_ID_V1 = 'machines.managed.acquire';
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
-  'machines.managed.acquire', 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.references.get',
+  MANAGED_ACQUIRE_ACTION_ID_V1, 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.references.get',
   'machines.managed.inspect', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
   'machines.managed.credentials.install',
   'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,

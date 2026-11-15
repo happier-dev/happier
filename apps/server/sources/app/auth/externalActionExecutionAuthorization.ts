@@ -1,6 +1,8 @@
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
@@ -36,7 +38,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeploymentDomainPreparationHttpPurpose,
     readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentBackupConfigureHttpPurpose,
     isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
-    readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
+    readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
     isDeploymentCandidatePublicationHttpPurposeInTx,
     isDeploymentCandidatePublicationEffect,
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
@@ -111,7 +113,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
-import { MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import { ManagedMachineError, hasBoundManagedLifecycle, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine,
@@ -1312,8 +1314,6 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         isCurrentnessRead: () => isAccountEncryptionCurrentnessHttpRead(proof),
         readArtifactId: () => readArtifactGetHttpPurpose(proof),
     });
-    const preparationRead = deploymentReferenceRead === null ? await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
-        actionId => isAccountActionHttpOperation(actionId, proof)) : null;
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
@@ -1368,14 +1368,16 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
-        reviewedSetupRead, candidatePublication, preparationRead, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
+        reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
 
 type VerifiedSignedChildRequest = VerifiedExternalActionExecutionRequest & Readonly<{
     /** Private request-local result; resource adapters keep consuming the existing public projection. */
-    signedChildPurpose: Awaited<ReturnType<typeof readSignedChildPurpose>>;
+    signedChildPurpose: Awaited<ReturnType<typeof readSignedChildPurpose>> & Readonly<{
+        preparationRead: Awaited<ReturnType<typeof readDeploymentPreparationHttpReadPurpose>>;
+    }>;
 }>;
 
 /** One exact signed finite material purpose, before consuming the accepted receipt. */
@@ -1482,7 +1484,11 @@ async function verifyCommon(
                     custodianAccountId: verified.binding.custodianAccountId };
             }
         }
-        const signedChildPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof);
+        const childPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof);
+        const preparationRead = childPurpose.deploymentReferenceRead === null
+            ? await readDeploymentPreparationHttpReadPurpose(db, verified.binding, effectActionId.data, proof,
+                actionId => isAccountActionHttpOperation(actionId, proof)) : null;
+        const signedChildPurpose = { ...childPurpose, preparationRead };
         return { ...verified, effectActionId: effectActionId.data, deploymentChildRouting: routing,
             deploymentChildSigner: signer, signedChildPurpose };
     }
@@ -1498,11 +1504,11 @@ async function verifyCommon(
     })) return refuse('resolved_target');
     if (!await hasCurrentOriginalSessionActionTargetInTx(db, binding, target)) return refuse('original_target');
     if (binding.actionId === 'session.pending.resetStart.set' && !binding.pendingResetStartAdmission) return refuse('pending_reset_admission');
-    const signedChildPurpose = await readSignedChildPurpose(binding, effectActionId.data, target, proof);
+    const childPurpose = await readSignedChildPurpose(binding, effectActionId.data, target, proof);
     const { createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild,
-        reviewedSetupRead, nativeTransition, domainPurpose } = signedChildPurpose;
-    if (!signedChildPurpose.effectFamilyAdmitted) return refuse('effect_family');
-    if (signedChildPurpose.deploymentReferenceRead === false) return refuse('verification_purpose');
+        reviewedSetupRead, nativeTransition, domainPurpose } = childPurpose;
+    if (!childPurpose.effectFamilyAdmitted) return refuse('effect_family');
+    if (childPurpose.deploymentReferenceRead === false) return refuse('verification_purpose');
     if (binding.serverIdentityId !== await initializeServerIdentityCache()) return refuse('server_identity');
     const currentnessBody = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.safeParse(proof.body);
     const machineNpmProfilePurpose = currentnessBody.success ? currentnessBody.data.nativePurpose : undefined;
@@ -1647,23 +1653,30 @@ async function verifyCommon(
             ? { interruptedSettlement: true as const } : {}),
     } : undefined;
 
-    const acceptedPreparationRead = signedChildPurpose.preparationRead;
-    if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
-        && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
-        && !acceptedPreparationRead) return refuse('deployment_metadata_environment');
+    // This transport candidate only selects the active-job constraint. It is
+    // never returned as custody before the preparation owner binds its operands.
+    const declaredPreparationRead = childPurpose.deploymentReferenceRead === null
+        ? readDeclaredDeploymentPreparationHttpRead(binding, effectActionId.data, proof,
+            actionId => isAccountActionHttpOperation(actionId, proof)) : null;
     const acceptedDeployment = (deploymentContinuation
         || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
         && verifySignature(machine.installationPublicKey)
         && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
             // A declared read spends the job principal only while its job runs.
             ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
-                : acceptedPreparationRead || signedChildPurpose.deploymentWorkspaceRead || signedChildPurpose.deploymentReferenceRead
+                : declaredPreparationRead || childPurpose.deploymentWorkspaceRead || childPurpose.deploymentReferenceRead
                     || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
                     ? { state: { in: deploymentInProgressStates() } } : {}),
-            // The shared preparation owner already bound the read operands.
-            // This lookup proves the original job is active, including when
-            // that job reads a pinned source in a different Environment.
+            // Prove the original job is active without constraining a pinned
+            // source read to the destination Environment or current receipt.
         });
+    const acceptedPreparationRead = childPurpose.deploymentReferenceRead === null
+        ? await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId.data, proof,
+            actionId => isAccountActionHttpOperation(actionId, proof), acceptedDeployment || undefined) : null;
+    const signedChildPurpose = { ...childPurpose, preparationRead: acceptedPreparationRead };
+    if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
+        && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
+        && !acceptedPreparationRead) return refuse('deployment_metadata_environment');
     if (platformMaterial && !acceptedDeployment) return refuse('deployment_child_http');
     if (domainContinuation?.kind === 'secret-facts') {
         const input = domainContinuation.input;
@@ -1840,7 +1853,7 @@ function readReviewedMachineSetupHttpPurpose(verified: VerifiedExternalActionExe
         : verified.effectActionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
             && proof.path === '/v1/machines/setup/report' ? MachineSetupReportInputV1Schema.safeParse(proof.body) : null;
     return input?.success === true && input.data.homeId === verified.binding.serverIdentityId
-        && input.data.machineId === verified.binding.machineId ? {} : null;
+        && 'machineId' in input.data && input.data.machineId === verified.binding.machineId ? {} : null;
 }
 
 /** Canonical Artifact detail/header reads retain the Artifact owner's per-record access checks. */
@@ -2804,6 +2817,14 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    if (root === MACHINE_ISOLATION_SET_ACTION_ID_V1) {
+        const preset = MachinePresetActionInputSchemasV1['machines.presets.get'].safeParse(proof.body);
+        // The receiving installed host opens only its configured references.
+        // Preset transport still owns requester Account and content access.
+        return verified.effectActionId === root && preset.success
+            && preset.data.homeId === verified.binding.serverIdentityId
+            && isAccountActionHttpOperation('machines.presets.get', proof);
+    }
     if (isTeamGroupUpdateActionIdV1(root)) {
         if (verified.effectActionId !== root) return false;
         if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
@@ -3705,6 +3726,15 @@ export async function verifyExternalActionDomainExecutionRequest(
         const setupPurpose = method === 'POST' && (managedRoot.data === 'machines.setup.apply'
             && ['/v1/machines/setup/resolve', '/v1/machines/setup/report'].includes(path)
             || managedRoot.data === 'machines.setup.plan' && path === '/v1/machines/setup/resolve');
+        const boundSetup = method === 'POST' && path === '/v1/machines/setup/report'
+            && MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1.some(action => action === managedRoot.data)
+            ? MachineSetupReportInputV1Schema.safeParse(proof.body) : undefined;
+        // Acquisition/recovery above already bound this report to its exact
+        // retained resource. Only that root's controller installation can run Setup.
+        const boundSetupPurpose = boundSetup?.success === true && 'target' in boundSetup.data
+            && boundSetup.data.homeId === verified.binding.serverIdentityId
+            && boundSetup.data.target.controller.machineId === verified.binding.machineId
+            && boundSetup.data.target.controller.installationId === verified.binding.installationId;
         // Combined Setup uses one finite purpose for Run storage and selected
         // receiver installation publications, including plans without apps.
         const setupWorkflowPurpose = isMachineSetupCombinedActionIdV1(managedRoot.data)
@@ -3722,7 +3752,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             verified.binding, verified.effectActionId, proof);
         const guestPath = method === 'GET' ? /^\/v1\/machines\/([^/]+)$/u.exec(path) : null;
         const guestPurpose = guestPath && await readCurrentManagedGuestActivityInTx(db, verified.binding, guestPath[1]);
-        if (!controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose
+        if (!controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose && !boundSetupPurpose
             && !setupHostReviewPurpose && !setupWorkflowPurpose && !setupAppReadPurpose && !connectorGrantReadPurpose) return refuse('managed_machine_purpose');
         if (guestPurpose) managedGuestActivity = guestPurpose;
     } else if (rootMachineAction.success || effectMachineAction.success) {
