@@ -92,6 +92,11 @@ export interface ItemGroupProps {
     style?: StyleProp<ViewStyle>;
     headerStyle?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
+    /**
+     * `label`: the quiet label over a group of choices in a dialog (lab f1src "Your code", "Start something new"):
+     * secondary ink at the meta role, not a section heading. Page sections keep the heading.
+     */
+    titleRole?: 'heading' | 'label';
     containerStyle?: StyleProp<ViewStyle>;
     constrainToContentWidth?: boolean;
     /** Clips edge-to-edge child surfaces to the rounded inner card boundary. */
@@ -231,6 +236,10 @@ const stylesheet = StyleSheet.create((theme) => {
             borderBottomLeftRadius: 0,
             borderBottomRightRadius: 0,
             borderBottomWidth: 0,
+        },
+        pageTitleLabel: {
+            ...Typography.variant('meta'),
+            color: theme.colors.text.secondary,
         },
         pageTitle: {
             ...Typography.default('bold'),
@@ -637,6 +646,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         style,
         headerStyle,
         titleStyle,
+        titleRole,
         containerStyle,
         constrainToContentWidth = true,
         selectableItemCountOverride,
@@ -760,7 +770,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         actionLayout={actionLayout}
                         insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + (sidePaneFlat ? 0 : PAGE_LIST_METRICS.headingOpticalInsetPx)}
                         renderText={(input) => input.role === 'sectionTitle'
-                            ? <Text accessibilityRole="header" style={[styles.pageTitle, titleStyle]}>{input.text}</Text>
+                            ? <Text accessibilityRole="header" style={[titleRole === 'label' ? styles.pageTitleLabel : styles.pageTitle, titleStyle]}>{input.text}</Text>
                             : renderPageDescription(input.text)}
                         // App callers pass React Native layout styles; the shared header keeps its own anatomy under them.
                         style={[inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}

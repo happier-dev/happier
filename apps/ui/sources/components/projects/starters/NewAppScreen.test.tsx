@@ -141,6 +141,21 @@ it('shows the catalog loading state until its first registry response arrives', 
   }
 });
 
+it('searches starters with the same field as Your code (lab f1src: one search)', async () => {
+  const fixture = await starterHome('https://new-app-starter-search.test');
+  try {
+    const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:expo-blank')).toBeTruthy());
+    expect(screen.findByTestId('newApp.starter:static-website')).toBeTruthy();
+    await act(async () => { screen.changeTextByTestId('newApp.code.address', 'expo'); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:static-website')).toBeNull());
+    expect(screen.findByTestId('newApp.starter:expo-blank')).toBeTruthy();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('makes an unavailable starter supplier visible instead of an empty gallery', async () => {
   const fixture = await starterHome('https://new-app-starter-failure.test', Promise.resolve(new Response('Unavailable', { status: 503 })));
   try {

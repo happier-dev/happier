@@ -84,8 +84,11 @@ const STEPS: readonly Step[] = ['start', 'describe', 'create'];
 type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}`;
 /** The lab's From the catalog row: three apps, the rest one press away in the Store. */
 const CATALOG_TILES = 3;
-/** A catalog tile says what the app is in its listing's own first sentence (lab: two whole lines); the listing has the rest. */
-const leadSentence = (text: string) => /^.+?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text.trim();
+/** A catalog tile says what the app is in its listing's own lead clause (lab: a short line); the listing has the rest. */
+const leadSentence = (text: string) => {
+  const clause = /^.+?(?:[.!?](?=\s|$)|(?=[:;]\s)|(?=\s[—–-]\s))/.exec(text.trim())?.[0] ?? text.trim();
+  return clause.replace(/[.!?]$/, '');
+};
 const catalogDoor = (item: RegistryCatalogItemSummary): Door => `catalog:${JSON.stringify([item.sourceId, item.itemId])}`;
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
@@ -150,7 +153,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     [knownMachines, presenceNowMs, reachabilityRevision, scope],
   );
   const thisComputerMachineId = useThisComputerMachineId();
-  const starterCatalog = useRegistryItems({ kind: 'starter' }, true);
+  // The step's one search (lab f1src): Your code narrows its repositories, starters and the catalog ask their
+  // registry read with the same query (the Store's search owner).
+  const [query, setQuery] = React.useState('');
+  const search = query.trim();
+  const starterCatalog = useRegistryItems(search ? { kind: 'starter', query: search } : { kind: 'starter' }, true);
   const starters = starterCatalog.items;
 
   const [step, setStep] = React.useState<Step>('start');
@@ -171,14 +178,17 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setPastedRepository(null);
     }
   }, []);
+  // The chosen starter stays chosen while a search hides its tile.
+  const [pickedStarter, setPickedStarter] = React.useState<RegistryCatalogItemSummary | null>(null);
   const chooseStarter = React.useCallback((next: string | null) => {
     setStarterId(next);
+    setPickedStarter(next ? starters.find((candidate) => candidate.itemId === next) ?? null : null);
     if (next) {
       setCodeSourceId(null);
       setDoor(null);
       setPastedRepository(null);
     }
-  }, []);
+  }, [starters]);
   const chooseDoor = React.useCallback((next: Door | null) => {
     setDoor(next);
     if (next) {
@@ -194,7 +204,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     setDoor(null);
   }, []);
   // The catalog's first apps, read only while the person is choosing a way in.
-  const appCatalog = useRegistryItems({ kind: 'app' }, step === 'start');
+  const appCatalog = useRegistryItems(search ? { kind: 'app', query: search } : { kind: 'app' }, step === 'start');
   const catalogApps = React.useMemo(() => appCatalog.items.slice(0, CATALOG_TILES), [appCatalog.items]);
   const openStoreListing = useOpenStoreListing();
   const builtTiles = React.useMemo((): Array<SelectionTile<Door>> => [
@@ -224,7 +234,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const submittedInput = React.useRef<StarterCreateInput | null>(null);
 
   const starter =
-    starters.find((candidate) => candidate.itemId === starterId) ?? null;
+    starters.find((candidate) => candidate.itemId === starterId)
+    ?? (pickedStarter?.itemId === starterId ? pickedStarter : null);
   const effectiveMachineId =
     machineId ??
     (machines.some((candidate) => candidate.id === thisComputerMachineId)
@@ -571,13 +582,15 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           <View>
             <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
               chosenRepository={pastedRepository} onChooseRepository={choosePastedRepository}
+              query={query} onQueryChange={setQuery}
               insetStyle={dialog ? styles.dialogInset : null} />
           </View>
         ) : null}
         {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
             ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
         <View>
-        <ItemGroup surface="none" title={t('newApp.startNew')} description={t('newApp.startNewDescription')}>
+        {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0 ? null : (
+        <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label">
         <View style={dialog ? styles.dialogInset : null}>
         {(starterCatalog.loading || !starterCatalog.hasValue) && !starterCatalog.error && starters.length === 0 ? (
           <SurfaceStateCard testID="newApp.loading" kind="loading" layout="inline" title={t('common.loading')} />
@@ -615,7 +628,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             action={{ label: t('common.retry'), onPress: starterCatalog.refresh }}
           />
         ) : null}
-        {starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
+        {!search && starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
           <SurfaceStateCard kind="empty" layout="inline" title={t('capabilities.store.emptyTitle')} />
         ) : null}
             {starters.length > 0 ? (
@@ -632,11 +645,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             ) : null}
           </View>
         </ItemGroup>
+        )}
         </View>
         {/* Lab f1src Already built and From the catalog: an app that already exists runs without a repository. */}
         {scope ? (
           <View>
-            <ItemGroup testID="newApp.built" surface="none" title={t('newApp.alreadyBuilt')}>
+            <ItemGroup testID="newApp.built" surface="none" title={t('newApp.alreadyBuilt')} titleRole="label">
               <View style={dialog ? styles.dialogInset : null}>
                 <SelectionTiles
                   density="compact"
@@ -653,6 +667,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               testID="newApp.catalog"
               surface="none"
               title={t('newApp.fromCatalog')}
+              titleRole="label"
               action={<TextLinkButton testID="newApp.fromCatalog" size="meta" label={t('newApp.browseCatalog')} onPress={browseCatalog} />}
             >
               {catalogTiles.length > 0 ? (
@@ -660,7 +675,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                   <SelectionTiles
                     density="compact"
                     maximumColumns={3}
-                    subtitleLines={2}
+                    subtitleLines={3}
                     accessibilityLabel={t('newApp.fromCatalog')}
                     value={door}
                     onChange={chooseDoor}

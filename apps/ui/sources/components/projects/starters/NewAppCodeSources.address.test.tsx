@@ -43,6 +43,12 @@ afterEach(async () => {
   await homes.reset();
 });
 
+// The step owns the one search (NewAppScreen); this host holds it the same way.
+function SearchHost(props: Omit<React.ComponentProps<typeof NewAppCodeSources>, 'query' | 'onQueryChange'>) {
+  const [query, setQuery] = React.useState('');
+  return <NewAppCodeSources {...props} query={query} onQueryChange={setQuery} />;
+}
+
 const github = {
   id: 'happier.scm.forge.github/github',
   kind: 'github' as const,
@@ -132,7 +138,7 @@ it.each([
   const onChooseRepository = vi.fn();
   const scope = { serverId, accountId: 'account-owner' };
   const screen = await renderAccountScreen(
-    <NewAppCodeSources
+    <SearchHost
       scope={scope}
       value={null}
       onChange={onChange}
@@ -208,7 +214,7 @@ it('narrows Your code to the repositories a search names, without asking any Mac
   });
   const scope = { serverId, accountId: 'account-owner' };
   const screen = await renderAccountScreen(
-    <NewAppCodeSources
+    <SearchHost
       scope={scope}
       value={null}
       onChange={vi.fn()}

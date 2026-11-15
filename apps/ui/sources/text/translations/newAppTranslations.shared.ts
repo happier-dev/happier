@@ -7,7 +7,6 @@ type Copy = Readonly<{
   steps: Readonly<{ start: string; describe: string; create: string }>;
   startTitle: string;
   startDescription: string;
-  startNewDescription: string;
   yourCode: string;
   startNew: string;
   codeSubtitle: (p: Readonly<{ repository: string; provider: string }>) => string;
@@ -97,8 +96,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Deploy an app',
     startDescription:
       'Your code or something that already exists. Nothing is created until you review it.',
-    startNewDescription:
-      'Pick the closest starting point. Your agent shapes it from there, so nothing here is final.',
     startPick: 'Pick one to continue',
     yourCode: 'Your code',
     startNew: 'Start something new',
@@ -112,7 +109,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Browse the catalog',
     askAgent: 'Or ask an agent to set it up',
     askAgentPrompt: 'Help me deploy an app with Happier. Ask me what it is and where its code lives, then get it ready and walk me through deploying it.',
-    codeSearchPlaceholder: 'Search, or paste a GitHub or GitLab link',
+    codeSearchPlaceholder: 'Search the catalog, or paste a GitHub or GitLab link',
     pastedSubtitle: ({ provider }) => `${provider} · opens as a Project first`,
     codeNoMatch: 'No repository here by that name. Paste its link to open it.',
     fromCatalog: 'From the catalog',
@@ -176,8 +173,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Desplega una app',
     startDescription:
       'El teu codi o alguna cosa que ja existeix. No es crea res fins que ho revisis.',
-    startNewDescription:
-      'Tria el punt de partida més proper. L’agent ho adapta a partir d’aquí, així que res no és definitiu.',
     startPick: 'Tria’n un per continuar',
     yourCode: 'El teu codi',
     startNew: 'Comença una cosa nova',
@@ -191,7 +186,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Explora el catàleg',
     askAgent: 'O demana a un agent que ho configuri',
     askAgentPrompt: 'Ajuda’m a desplegar una app amb Happier. Pregunta’m què és i on és el codi, prepara-la i guia’m en el desplegament.',
-    codeSearchPlaceholder: 'Cerca o enganxa un enllaç de GitHub o GitLab',
+    codeSearchPlaceholder: 'Cerca al catàleg o enganxa un enllaç de GitHub o GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · primer s’obre com a projecte`,
     codeNoMatch: 'Cap repositori amb aquest nom. Enganxa’n l’enllaç per obrir-lo.',
     fromCatalog: 'Del catàleg',
@@ -255,8 +250,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'App bereitstellen',
     startDescription:
       'Dein Code oder etwas, das es schon gibt. Nichts wird erstellt, bevor du es geprüft hast.',
-    startNewDescription:
-      'Wähle den passendsten Ausgangspunkt. Dein Agent formt es von dort aus, nichts hier ist endgültig.',
     startPick: 'Wähle eins, um fortzufahren',
     yourCode: 'Dein Code',
     startNew: 'Etwas Neues beginnen',
@@ -270,7 +263,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Katalog durchsuchen',
     askAgent: 'Oder einen Agenten einrichten lassen',
     askAgentPrompt: 'Hilf mir, eine App mit Happier bereitzustellen. Frag mich, was sie ist und wo ihr Code liegt, bereite sie vor und führe mich durch das Deployment.',
-    codeSearchPlaceholder: 'Suchen oder GitHub-/GitLab-Link einfügen',
+    codeSearchPlaceholder: 'Katalog durchsuchen oder GitHub-/GitLab-Link einfügen',
     pastedSubtitle: ({ provider }) => `${provider} · wird zuerst als Projekt geöffnet`,
     codeNoMatch: 'Kein Repository mit diesem Namen. Füge seinen Link ein, um es zu öffnen.',
     fromCatalog: 'Aus dem Katalog',
@@ -334,8 +327,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Desplegar una app',
     startDescription:
       'Tu código o algo que ya existe. No se crea nada hasta que lo revises.',
-    startNewDescription:
-      'Elige el punto de partida más parecido. Tu agente lo adapta desde ahí, así que nada es definitivo.',
     startPick: 'Elige uno para continuar',
     yourCode: 'Tu código',
     startNew: 'Empezar algo nuevo',
@@ -349,7 +340,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Explorar el catálogo',
     askAgent: 'O pide a un agente que lo configure',
     askAgentPrompt: 'Ayúdame a desplegar una app con Happier. Pregúntame qué es y dónde está su código, prepárala y guíame en el despliegue.',
-    codeSearchPlaceholder: 'Busca o pega un enlace de GitHub o GitLab',
+    codeSearchPlaceholder: 'Busca en el catálogo o pega un enlace de GitHub o GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · primero se abre como proyecto`,
     codeNoMatch: 'Ningún repositorio con ese nombre. Pega su enlace para abrirlo.',
     fromCatalog: 'Del catálogo',
@@ -413,8 +404,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Déployer une app',
     startDescription:
       'Votre code ou quelque chose qui existe déjà. Rien n’est créé avant votre vérification.',
-    startNewDescription:
-      'Choisissez le point de départ le plus proche. Votre agent l’adapte ensuite, rien n’est définitif.',
     startPick: 'Choisissez-en un pour continuer',
     yourCode: 'Votre code',
     startNew: 'Commencer quelque chose de nouveau',
@@ -428,7 +417,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Parcourir le catalogue',
     askAgent: 'Ou demandez à un agent de s’en charger',
     askAgentPrompt: 'Aide-moi à déployer une app avec Happier. Demande-moi ce qu’elle est et où se trouve son code, prépare-la et guide-moi pour le déploiement.',
-    codeSearchPlaceholder: 'Cherchez ou collez un lien GitHub ou GitLab',
+    codeSearchPlaceholder: 'Cherchez dans le catalogue ou collez un lien GitHub ou GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · s’ouvre d’abord comme projet`,
     codeNoMatch: 'Aucun dépôt de ce nom ici. Collez son lien pour l’ouvrir.',
     fromCatalog: 'Depuis le catalogue',
@@ -492,8 +481,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Distribuisci un’app',
     startDescription:
       'Il tuo codice o qualcosa che esiste già. Non viene creato nulla finché non lo controlli.',
-    startNewDescription:
-      'Scegli il punto di partenza più vicino. Il tuo agente lo adatta da lì, quindi niente è definitivo.',
     startPick: 'Scegline uno per continuare',
     yourCode: 'Il tuo codice',
     startNew: 'Inizia qualcosa di nuovo',
@@ -507,7 +494,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Sfoglia il catalogo',
     askAgent: 'Oppure chiedi a un agente di configurarla',
     askAgentPrompt: 'Aiutami a distribuire un’app con Happier. Chiedimi cos’è e dove si trova il codice, preparala e guidami nel deploy.',
-    codeSearchPlaceholder: 'Cerca o incolla un link GitHub o GitLab',
+    codeSearchPlaceholder: 'Cerca nel catalogo o incolla un link GitHub o GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · si apre prima come progetto`,
     codeNoMatch: 'Nessun repository con questo nome. Incolla il suo link per aprirlo.',
     fromCatalog: 'Dal catalogo',
@@ -571,8 +558,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'アプリをデプロイ',
     startDescription:
       '自分のコード、またはすでにあるもの。確認するまで何も作成されません。',
-    startNewDescription:
-      'いちばん近い出発点を選んでください。そこからエージェントが形にするので、ここで決めたことは変えられます。',
     startPick: '続けるには1つ選んでください',
     yourCode: '自分のコード',
     startNew: '新しく始める',
@@ -586,7 +571,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'カタログを見る',
     askAgent: 'またはエージェントに任せる',
     askAgentPrompt: 'Happier でアプリをデプロイするのを手伝ってください。どんなアプリでコードがどこにあるかを聞いて、準備し、デプロイまで案内してください。',
-    codeSearchPlaceholder: '検索、または GitHub / GitLab のリンク',
+    codeSearchPlaceholder: 'カタログを検索、または GitHub / GitLab のリンク',
     pastedSubtitle: ({ provider }) => `${provider} · まずプロジェクトとして開きます`,
     codeNoMatch: 'その名前のリポジトリはありません。リンクを貼り付けて開いてください。',
     fromCatalog: 'カタログから',
@@ -650,8 +635,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Wdróż aplikację',
     startDescription:
       'Twój kod lub coś, co już istnieje. Nic nie powstanie, dopóki tego nie sprawdzisz.',
-    startNewDescription:
-      'Wybierz najbliższy punkt wyjścia. Agent dopracuje go dalej, więc nic tu nie jest ostateczne.',
     startPick: 'Wybierz jeden, aby kontynuować',
     yourCode: 'Twój kod',
     startNew: 'Zacznij coś nowego',
@@ -665,7 +648,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Przeglądaj katalog',
     askAgent: 'Albo poproś agenta o konfigurację',
     askAgentPrompt: 'Pomóż mi wdrożyć aplikację w Happier. Zapytaj, czym jest i gdzie jest jej kod, przygotuj ją i przeprowadź mnie przez wdrożenie.',
-    codeSearchPlaceholder: 'Szukaj lub wklej link GitHub albo GitLab',
+    codeSearchPlaceholder: 'Szukaj w katalogu lub wklej link GitHub albo GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · najpierw otworzy się jako projekt`,
     codeNoMatch: 'Brak repozytorium o tej nazwie. Wklej jego link, aby je otworzyć.',
     fromCatalog: 'Z katalogu',
@@ -729,8 +712,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Implantar um app',
     startDescription:
       'Seu código ou algo que já existe. Nada é criado até você revisar.',
-    startNewDescription:
-      'Escolha o ponto de partida mais próximo. Seu agente adapta a partir daí, então nada aqui é definitivo.',
     startPick: 'Escolha um para continuar',
     yourCode: 'Seu código',
     startNew: 'Começar algo novo',
@@ -744,7 +725,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Explorar o catálogo',
     askAgent: 'Ou peça a um agente para configurar',
     askAgentPrompt: 'Ajude-me a implantar um app com o Happier. Pergunte o que ele é e onde está o código, prepare-o e me guie na implantação.',
-    codeSearchPlaceholder: 'Pesquise ou cole um link do GitHub ou GitLab',
+    codeSearchPlaceholder: 'Pesquise no catálogo ou cole um link do GitHub ou GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · abre primeiro como projeto`,
     codeNoMatch: 'Nenhum repositório com esse nome. Cole o link para abri-lo.',
     fromCatalog: 'Do catálogo',
@@ -808,8 +789,6 @@ export const newAppTranslations: Readonly<
     startTitle: 'Развернуть приложение',
     startDescription:
       'Ваш код или то, что уже есть. Ничего не создаётся, пока вы не проверите.',
-    startNewDescription:
-      'Выберите самую близкую основу. Агент доработает её дальше, так что здесь ничего не окончательно.',
     startPick: 'Выберите вариант, чтобы продолжить',
     yourCode: 'Ваш код',
     startNew: 'Начать новое',
@@ -823,7 +802,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: 'Открыть каталог',
     askAgent: 'Или поручите это агенту',
     askAgentPrompt: 'Помоги развернуть приложение в Happier. Спроси, что это за приложение и где его код, подготовь его и проведи меня через развёртывание.',
-    codeSearchPlaceholder: 'Поиск или ссылка GitHub / GitLab',
+    codeSearchPlaceholder: 'Поиск в каталоге или ссылка GitHub / GitLab',
     pastedSubtitle: ({ provider }) => `${provider} · сначала откроется как проект`,
     codeNoMatch: 'Репозитория с таким именем нет. Вставьте ссылку, чтобы открыть его.',
     fromCatalog: 'Из каталога',
@@ -887,8 +866,6 @@ export const newAppTranslations: Readonly<
     startTitle: '部署应用',
     startDescription:
       '你的代码，或已有的东西。在你确认之前不会创建任何内容。',
-    startNewDescription:
-      '选择最接近的起点。之后由你的智能体继续塑造，这里的选择都不是最终的。',
     startPick: '选择一个以继续',
     yourCode: '你的代码',
     startNew: '开始新项目',
@@ -902,7 +879,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: '浏览目录',
     askAgent: '或者让代理来设置',
     askAgentPrompt: '帮我用 Happier 部署一个应用。先问我它是什么、代码在哪里，然后把它准备好，并带我完成部署。',
-    codeSearchPlaceholder: '搜索，或粘贴 GitHub / GitLab 链接',
+    codeSearchPlaceholder: '搜索目录，或粘贴 GitHub / GitLab 链接',
     pastedSubtitle: ({ provider }) => `${provider} · 先作为项目打开`,
     codeNoMatch: '这里没有这个名字的仓库。粘贴它的链接来打开。',
     fromCatalog: '从目录中选择',
@@ -962,8 +939,6 @@ export const newAppTranslations: Readonly<
     startTitle: '部署應用程式',
     startDescription:
       '你的程式碼，或已有的東西。在你確認之前不會建立任何內容。',
-    startNewDescription:
-      '選擇最接近的起點。之後由你的代理程式繼續塑造，這裡的選擇都不是最終的。',
     startPick: '選擇一個以繼續',
     yourCode: '你的程式碼',
     startNew: '開始新專案',
@@ -977,7 +952,7 @@ export const newAppTranslations: Readonly<
     browseCatalog: '瀏覽目錄',
     askAgent: '或者讓代理程式來設定',
     askAgentPrompt: '幫我用 Happier 部署一個應用程式。先問我它是什麼、程式碼在哪裡，然後把它準備好，並帶我完成部署。',
-    codeSearchPlaceholder: '搜尋，或貼上 GitHub / GitLab 連結',
+    codeSearchPlaceholder: '搜尋目錄，或貼上 GitHub / GitLab 連結',
     pastedSubtitle: ({ provider }) => `${provider} · 先以專案開啟`,
     codeNoMatch: '這裡沒有這個名稱的儲存庫。貼上它的連結來開啟。',
     fromCatalog: '從目錄中選擇',

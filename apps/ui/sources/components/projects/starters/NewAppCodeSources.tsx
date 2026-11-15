@@ -44,6 +44,9 @@ export function NewAppCodeSources(
     /** A pasted repository that is not a Project here yet; null when a Project or nothing is chosen. */
     chosenRepository: ProjectSourceRepositorySelectorV1 | null;
     onChooseRepository: (selector: ProjectSourceRepositorySelectorV1) => void;
+    /** The step's one search (owned by the host): narrows these repositories, the starters and the catalog alike. */
+    query: string;
+    onQueryChange: (query: string) => void;
     /** Two per line in the dialog (owner 11-14); one on a phone (rows rule). */
     columns: 1 | 2;
     /** Lines the section up with the gallery beneath it inside the dialog card. */
@@ -51,13 +54,13 @@ export function NewAppCodeSources(
   }>,
 ): React.ReactNode {
   const { theme } = useUnistyles();
-  const { state } = useProjectSources(props.scope);
+  const { state } = useProjectSources(props.scope, { repositoryFacts: true });
   const rows = state.rows ?? NO_ROWS;
   const withCode = React.useMemo(
     () => rows.filter((row) => row.repository !== undefined),
     [rows],
   );
-  const [query, setQuery] = React.useState('');
+  const { query, onQueryChange: setQuery } = props;
   const address = useProjectSourceAddress(props.scope, (selector) => {
     const identity = identityOf(selector);
     const project = withCode.find((row) => sameScmHostingRepositoryIdentity(identityOf(row.repository!), identity));
@@ -107,8 +110,10 @@ export function NewAppCodeSources(
     [pasted, shown],
   );
   return (
-    <ItemGroup testID="newApp.code" title={t('newApp.yourCode')} surface="none">
-      <View style={[styles.column, props.insetStyle]}>
+    <>
+      {/* The search leads the step (lab f1src), on the same edge as the sections' tiles beneath it. */}
+      <ItemGroup testID="newApp.search" header="none" surface="none">
+      <View style={[styles.field, props.insetStyle]}>
         <FieldTextInput
           testID="newApp.code.address"
           value={query}
@@ -126,6 +131,11 @@ export function NewAppCodeSources(
           leading={<Icon name="magnifying-glass" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
           error={refusal}
         />
+      </View>
+      </ItemGroup>
+      {tiles.length > 0 || (needle && withCode.length > 0) ? (
+    <ItemGroup testID="newApp.code" title={t('newApp.yourCode')} titleRole="label" surface="none">
+      <View style={[styles.column, props.insetStyle]}>
         {tiles.length > 0 ? (
           <SelectionTiles
             testIdPrefix="newApp.code"
@@ -146,9 +156,12 @@ export function NewAppCodeSources(
         ) : null}
       </View>
     </ItemGroup>
+      ) : null}
+    </>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   column: { gap: theme.space.s8 },
+  field: { paddingTop: theme.space.s8 },
 }));
