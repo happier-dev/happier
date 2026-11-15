@@ -247,6 +247,11 @@ Set effect on its exact Machine installation. It is a read within that admission
 not another independently authorized Action. Home admits the retained creation's
 exact guest and controller scope; the receiver verifies the signed child input
 and consumes that admission without reading private enrollment policy from Home.
+In current 0.3 development, a managed creation child restores its declared parent
+review from the installation-sealed invocation. The controller custodian may differ
+from the requester; the receiver consumes their admitted bindings without another
+published Machine custody lookup. Undeclared child policy still uses ordinary
+guest approval, with the requester's existing replay credential custody.
 Enrollment copies the ready preview's metadata version into Set, including a new Machine's
 version zero. Stale versions settle as a conflict before approval.
 

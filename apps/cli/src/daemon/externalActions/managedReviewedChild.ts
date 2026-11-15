@@ -10,8 +10,6 @@ import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/s
 import { ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { projectServiceMoveOriginalAccountChildren, readProjectServiceMoveReviewedStopInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 
@@ -59,18 +57,10 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
   const controller = resolveManagedAcquireReviewV1(acquired.data).controller;
   if (acquired.data.selection.homeId !== binding.serverIdentityId
     || !sameStrictJsonValue(controller, continuation.controller)) return null;
-  const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
-  if (!requester) return null;
-  // A SOURCE packet alone cannot assert consent for another Account. The
-  // original Account's private invocation already has that Account's custody.
-  if (!input.requesterOwnedReview) {
-    const continuationController = continuation.controller;
-    if (!continuationController) return null;
-    const controllerRow = await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () =>
-      readPublishedMachineRow(continuationController.machineId, requester.credentials, { signal: context.signal })).catch(() => null);
-    if (controllerRow?.id !== continuationController.machineId
-      || controllerRow.access?.custodian.accountId !== binding.accountId) return null;
-  }
+  if (!readRequesterAccountActionContext(context.externalActionExecutionAuthorization)) return null;
+  // Home admitted this creation's exact controller and guest; the opened codec
+  // binds their signed continuation and original requester. Controller custody
+  // may belong to a Team while the enrolled guest belongs to that requester.
   const declaration = getActionSpec('machines.managed.acquire').hostReviewedChildren;
   const children = typeof declaration === 'function' ? declaration(acquired.data) : declaration ?? [];
   return invokeReviewedChild({ input, parent, parentInput: acquired.data, children, role: input.actionId });
