@@ -14886,6 +14886,7 @@ const voiceReadinessTranslations = { fr: defineVoiceReadinessTranslation({
       cantCheck: 'Pas encore vérifié',
       machineUnreachable: 'Machine injoignable',
       sessionUnavailable: 'Session indisponible',
+      audioBlocked: 'Audio bloqué',
     },
     actions: {
       select_provider: 'Choisir un provider',

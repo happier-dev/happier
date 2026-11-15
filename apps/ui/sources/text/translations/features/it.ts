@@ -14840,6 +14840,7 @@ const voiceReadinessTranslations = { it: defineVoiceReadinessTranslation({
       cantCheck: 'Non ancora verificato',
       machineUnreachable: 'Macchina non raggiungibile',
       sessionUnavailable: 'Sessione non disponibile',
+      audioBlocked: 'Audio bloccato',
     },
     actions: {
       select_provider: 'Scegli un provider',

@@ -14817,6 +14817,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
       cantCheck: '尚未檢查',
       machineUnreachable: '無法連線機器',
       sessionUnavailable: '工作階段無法使用',
+      audioBlocked: '音訊遭封鎖',
     },
     actions: {
       select_provider: '選擇提供者',

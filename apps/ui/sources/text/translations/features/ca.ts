@@ -14861,6 +14861,7 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
       cantCheck: 'Encara sense comprovar',
       machineUnreachable: 'Màquina inaccessible',
       sessionUnavailable: 'Sessió no disponible',
+      audioBlocked: 'Àudio bloquejat',
     },
     actions: {
       select_provider: 'Triar un proveïdor',

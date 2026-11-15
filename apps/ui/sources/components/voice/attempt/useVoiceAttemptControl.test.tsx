@@ -2435,6 +2435,20 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
     },
   );
 
+  it('names a browser audio block in a short word and keeps Retry as the gesture that starts audio', async () => {
+    const hook = await renderControl({
+      adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle', canStop: false,
+      errorCode: 'service_temporarily_unavailable', errorMessage: 'audio_user_gesture_required',
+      errorPresentation: 'error', errorRecoveryAction: 'retry',
+    });
+    expect(hook.getCurrent()).toMatchObject({
+      surfaceState: 'error', statusWord: t('voice.readiness.short.audioBlocked'),
+      captionLabel: t('settingsVoice.local.machineErrors.audio_user_gesture_required'),
+    });
+    expect(hook.getCurrent().statusWord).not.toBe(t('common.error'));
+    await hook.unmount();
+  });
+
   it('names the unreachable Machine in the top bar in a short word, the reason once in the caption', async () => {
     const hook = await renderControl({
       adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle', canStop: false,

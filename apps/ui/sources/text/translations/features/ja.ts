@@ -14823,6 +14823,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
       cantCheck: 'まだ確認していません',
       machineUnreachable: 'マシンに接続できません',
       sessionUnavailable: 'セッションを利用できません',
+      audioBlocked: '音声がブロックされています',
     },
     actions: {
       select_provider: 'プロバイダーを選択',

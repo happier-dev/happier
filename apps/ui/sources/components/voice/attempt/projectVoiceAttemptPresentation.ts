@@ -68,6 +68,8 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
         // A short word for the bar and the hero; the full reason reads once, as the caption.
         : failureKind === 'execution_machine_unavailable' ? t('voice.readiness.short.machineUnreachable')
         : failureKind === 'session_unavailable' ? t('voice.readiness.short.sessionUnavailable')
+        : failureKind === 'service_temporarily_unavailable' && input.errorMessage === 'audio_user_gesture_required'
+            ? t('voice.readiness.short.audioBlocked')
         : failureKind === 'provider_error' && statusPresentation.labelKey === 'voiceAssistant.connectionError'
             ? t(statusPresentation.labelKey) : null;
     return {

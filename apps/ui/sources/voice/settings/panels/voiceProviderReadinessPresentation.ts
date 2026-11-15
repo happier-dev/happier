@@ -66,7 +66,7 @@ export function resolveVoiceProviderReadinessPresentation(
       && (readiness.code === 'agent_signed_out' || readiness.code.startsWith('runtime_'))
       ? t('voiceSurface.setUpAgent', { agent: readiness.selectedAgent.title }) : readiness.recoveryAction === 'none'
       ? null
-      : translate(readiness.recoveryAction === 'enable_voice_agent' ? 'settingsVoice.pages.conversations.turnOnVoiceAgent'
+      : translate(readiness.recoveryAction === 'enable_voice_agent' ? 'voice.readiness.actions.open_features'
         : readiness.recoveryAction === 'retry' ? 'common.retry' : `voice.readiness.actions.${readiness.recoveryAction}`),
     short: translate(`voice.readiness.short.${readiness.selectedAgent?.needsSignIn ? 'needsSetup' : resolveVoiceReadinessShort(readiness.code)}`),
   };

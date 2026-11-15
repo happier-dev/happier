@@ -46,6 +46,17 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
     });
   });
 
+  it('names a real translated action when the Voice agent is off in Features', () => {
+    const presentation = resolveVoiceProviderReadinessPresentation({
+      status: 'needs_setup',
+      code: 'feature_policy_disabled',
+      reasonKey: 'voice.readiness.feature_policy_disabled',
+      recoveryAction: 'enable_voice_agent',
+    }, tLoose);
+    expect(presentation.action).toBe(tLoose('voice.readiness.actions.open_features'));
+    expect(presentation.action).not.toMatch(/^settingsVoice\./);
+  });
+
   it('does not add readiness noise to a ready provider', () => {
     expect(resolveVoiceProviderReadinessPresentation({
       status: 'ready',
