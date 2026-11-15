@@ -46,6 +46,8 @@ afterEach(() => { vi.restoreAllMocks(); reloadConfiguration(); });
 type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
+  providerConnectionId?: string;
+  modelSelection?: 'native' | 'provider';
 }>;
 
 describe('foreground CLI runner authority scope', () => {
@@ -55,6 +57,8 @@ describe('foreground CLI runner authority scope', () => {
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
     { prior: undefined, definitionId: 'definition-a', missingCli: false },
     { prior: undefined, definitionId: 'definition-b', missingCli: false },
+    { prior: undefined, definitionId: undefined, missingCli: false, modelSelection: 'native' },
+    { prior: undefined, definitionId: undefined, missingCli: false, modelSelection: 'provider', providerConnectionId: 'fixture-connection' },
     { prior: undefined, definitionId: undefined, missingCli: true },
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: true },
     { prior: undefined, definitionId: 'profile-choice', missingCli: false, profileRouting: true },
@@ -63,7 +67,7 @@ describe('foreground CLI runner authority scope', () => {
     ...(['pi', 'ohmypi'] as const).flatMap(fileStoreAgent => ['first', 'second'].map(hostedScope => ({
       prior: undefined, definitionId: undefined, missingCli: false, fileStoreAgent, hostedScope,
     }))),
-  ])('exposes foreground admission through the CLI sink and restores prior paths (%o)', async ({ prior, definitionId, missingCli, profileRouting, disabled, explicitProfile, fileStoreAgent, hostedScope }) => {
+  ])('exposes foreground admission through the CLI sink and restores prior paths (%o)', async ({ prior, definitionId, missingCli, profileRouting, disabled, explicitProfile, fileStoreAgent, hostedScope, providerConnectionId, modelSelection }) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-foreground-cli-authority-'));
     const fileStorePlugin = fileStoreAgent === 'pi' ? PI_PLUGIN : OH_MY_PI_PLUGIN;
     const fileStoreTestkit = fileStoreAgent ? await createPluginTestkit({
@@ -90,6 +94,7 @@ describe('foreground CLI runner authority scope', () => {
     let releaseObserved = false;
     let sessionCreatePermissionMode: unknown = null;
     let admittedProfileId: unknown = null;
+    let admittedModelSelection: unknown = null;
     let optionsEnvironment: Readonly<Record<string, string | undefined>> | null = null;
     let fileStoreEnvironment: unknown;
     const directory = join(home, hostedScope ?? 'workspace');
@@ -133,6 +138,7 @@ describe('foreground CLI runner authority scope', () => {
         if (path === FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH) {
           const admission = ForegroundAgentRuntimeAdmissionRequestV1Schema.parse(JSON.parse(text));
           admittedProfileId = admission.profileId;
+          admittedModelSelection = admission.selection;
           if (missingCli) return respond(200, { ok: false, error: SessionSpawnLaunchErrorV1Schema.parse({
             kind: 'launch_error', code: 'agent_cli_missing', message: AGENT_CLI_MISSING_PREVIEW,
           }) });
@@ -240,7 +246,7 @@ describe('foreground CLI runner authority scope', () => {
         expect(process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]);
         throw new Error('foreground-command-exit');
       }) as never);
-      const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: agentTarget ? ['--model', 'fixture-native-model'] : [], rawArgv: [], terminalRuntime: null },
+      const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: agentTarget || modelSelection ? ['--model', 'fixture-native-model', ...(providerConnectionId ? ['--provider-connection', providerConnectionId] : [])] : [], rawArgv: [], terminalRuntime: null },
         backendIdForSessionRuntime: agentId, runtimeAuthorityAgentId: agentId,
         ...(fileStoreAgent ? { agentIdForAccountSettings: agentId } : {}),
         ...(agentTarget ? { resolveExtraOptions: () => ({ agentTarget,
@@ -286,6 +292,14 @@ describe('foreground CLI runner authority scope', () => {
       if (profileRouting) {
         expect(admittedProfileId).toBe(profile.id);
         expect(sessionCreatePermissionMode).toBe('read-only');
+      }
+      if (modelSelection) {
+        const expectedRef = { agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: agentId, sourceKind: 'built_in' }),
+          providerConnectionId: providerConnectionId ?? null, modelId: 'fixture-native-model' };
+        expect(admittedModelSelection).toMatchObject({
+          ref: expectedRef,
+        });
+        expect(sessionCreateModelSelection).toMatchObject(expectedRef);
       }
       if (agentTarget && !profileRouting) {
         expect(sessionCreateModelSelection).toMatchObject({

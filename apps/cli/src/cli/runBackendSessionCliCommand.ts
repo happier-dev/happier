@@ -409,9 +409,6 @@ Provider CLI Options:
         legacyModelUpdatedAt: resolved.modelUpdatedAt,
         fallbackSelection: preferredProfileModelSelection,
       });
-      const hasForegroundProviderSelection =
-        modelSelection?.ref.providerConnectionId !== null
-        && modelSelection?.ref.providerConnectionId !== undefined;
       let directConnectedServices =
         params.context.directSessionLaunch?.connectedServices ?? null;
       const shouldResolveCliConnectedServices =
@@ -508,7 +505,7 @@ Provider CLI Options:
                     accountSettingsContext.settingsVersion,
                 }
               : {}),
-            ...(hasForegroundProviderSelection && modelSelection
+            ...(modelSelection
               ? { selection: modelSelection }
               : {}),
             // Captured in this closure, so an admission retry re-sends the SAME
