@@ -7,10 +7,25 @@ import {
     type HappierSurfaceFinishRole,
 } from '@happier-dev/plugin-ui/presentation';
 
+import { Platform } from 'react-native';
+
 import { shadowLevelStyle, type ShadowElevationToken, type ShadowLevels } from '@/shadowElevation';
+import { parseThemeColor } from '@/theme/parseThemeColor';
 import type { RaisedEdgeColors } from '@/theme/raisedEdge';
 
 import { resolveThemeSurfaceChromeStyle, type ThemeSurfaceChromeStyle } from './resolveThemeHairlineBorderStyle';
+
+const ANDROID_UNLIFTED = { elevation: 0 } as const;
+
+/**
+ * Android paints an `elevation` shadow through a translucent fill: the surface reads as a grey band around its
+ * own colour. A surface whose fill is translucent there stands unlifted (QA-NATIVE F8/Voice); an opaque one,
+ * and every surface on iOS and web, keeps its lift. Append the result after the surface's lift.
+ */
+export function resolveAndroidTranslucentUnlift(backgroundColor: unknown): typeof ANDROID_UNLIFTED | null {
+    if (Platform.OS !== 'android' || typeof backgroundColor !== 'string') return null;
+    return backgroundColor === 'transparent' || (parseThemeColor(backgroundColor)?.alpha() ?? 1) < 1 ? ANDROID_UNLIFTED : null;
+}
 
 type RaisedEdgeTheme = Readonly<{ dark: boolean; colors: Readonly<{ edge: RaisedEdgeColors }> }>;
 type RaisedControlTheme = Readonly<{ dark: boolean; colors: Readonly<{ edge: RaisedEdgeColors; shadowLevels: ShadowLevels }> }>;

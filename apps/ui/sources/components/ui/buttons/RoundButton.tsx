@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-import { resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveAndroidTranslucentUnlift, resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle } from '@happier-dev/plugin-ui/presentation';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { type HappierHitReach } from '@happier-dev/plugin-ui/environment';
@@ -451,6 +451,7 @@ export const RoundButton = React.memo((props: {
                         props.joinedEdge === 'end' ? styles.joinedEnd : props.joinedEdge === 'start' ? styles.joinedStart : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                         happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })),
+                        resolveAndroidTranslucentUnlift(typeof pillBackgroundColor === 'string' ? paintColor(pillBackgroundColor, undefined, paintRole) : pillBackgroundColor),
                         Platform.OS === 'web' && !display.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' }), !theme.dark) : null,
                         ownFillOnPicture && Platform.OS === 'web' ? glassThemeInkWebStyle(theme.colors.text) as ViewStyle : null,
                         pressFeedback.animatedStyle,
