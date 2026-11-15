@@ -2980,11 +2980,6 @@ describe('voice tool handlers', () => {
 
   it.each(['session_stop', 'action_execute'] as const)(
     'carries the daemon Stop refusal through the real Voice front door (%s)', async toolName => {
-      // Admit the Stop effect through its real Settings policy; the default
-      // Voice approval request does not contact the daemon.
-      account.replaceSettings(settingsParse({ ...account.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
-        v: 1, actions: {}, approvalWaivedSurfaces: { 'session.stop': ['voice'] },
-      }) }));
       const previous = daemonRpc.getMockImplementation();
       daemonRpc.mockImplementation(async request => {
         if (request.method === RPC_METHODS.STOP_SESSION) {

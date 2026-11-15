@@ -51,61 +51,6 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
-  it.each(['person-on', 'person-off', 'agent'] as const)(
-    'confirms current Session Stop before effect (%s)', async origin => {
-      const serverId = await home.addHome({ name: 'Stop review', serverUrl: 'https://stop-review.test',
-        accountId: 'alice', currentAccount: true });
-      const features = createRootLayoutFeaturesResponse();
-      tryWriteServerEnabledBitInPlace(features, 'voice', true);
-      home.answer(serverId, '/v1/features', { body: features });
-      home.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: {
-        t: 'plain', v: { actionsSettingsV1: { v: 1 },
-          voice: { ...settingsDefaults.voice, canApproveRequests: origin !== 'person-off' } },
-      } } });
-      const session = createSessionFixture({ id: 'stop-target', serverId, active: true });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.getState().applySessions([session]);
-      home.answer(serverId, 'POST /v2/sessions/read-batch', { body: { results: [{ sessionId: session.id,
-        detail: { status: 200, body: { session: createPlainV2SessionRecordFixture({ id: session.id, active: true, metadata: session.metadata }) } },
-      }] } });
-      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
-      setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'stop-review-call',
-        status: 'connected', mode: 'listening', canStop: true });
-      let readBack = false;
-      const controller = new AbortController();
-      const mutations = () => home.requests.filter(request => request.method !== 'GET'
-        && !request.path.endsWith('/read-batch') && !request.path.startsWith('/v1/artifacts'));
-      const handlers = createVoiceToolHandlers({ resolveSessionId: () => session.id, currentServerId: serverId,
-        playHostText: async () => {
-          readBack = true;
-          expect(mutations()).toEqual([]);
-          return { status: 'cancelled' as const };
-        } });
-      let noteApproval!: () => void;
-      const approvalCreated = new Promise<void>(resolve => { noteApproval = resolve; });
-      home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
-      const pending = handlers.action_execute!({ actionId: 'session.stop', input: { sessionId: { selector: 'self' } } }, {
-        serverId, effectId: 'stop-review', turnOrigin: origin === 'agent' ? 'synthetic' : 'person',
-        signal: controller.signal }).then(value => JSON.parse(value));
-      try {
-        const outcome = await Promise.race([pending.then(value => ({ kind: 'settled', value })),
-          approvalCreated.then(() => ({ kind: 'approval' }))]);
-        if (origin === 'person-on') {
-          expect(readBack).toBe(true);
-          expect(outcome).toMatchObject({ kind: 'settled', value: { ok: false, errorCode: 'cancelled' } });
-          expect(home.artifacts(serverId).list()).toEqual([]);
-        } else {
-          expect(outcome).toEqual({ kind: 'approval' });
-          expect(readBack).toBe(false);
-          expect(home.artifacts(serverId).list()).toHaveLength(1);
-        }
-        expect(mutations()).toEqual([]);
-      } finally {
-        controller.abort();
-        await pending.catch(() => undefined);
-        resetVoiceSessionStoreForTests();
-      }
-    });
   it('applies the person’s waiting-sound toggle without a consequential read-back', async () => {
     const serverId = await home.addHome({ name: 'Waiting sound', serverUrl: 'https://waiting-sound.test',
       accountId: 'alice', currentAccount: true });

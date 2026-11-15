@@ -15,6 +15,7 @@ import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLab
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import type { VoiceAgentHandle } from '@/voice/agent/types';
 
 type NativePermissionDecision = 'approved' | 'denied' | 'abort';
 
@@ -34,13 +35,17 @@ type NativePermissionPrompt = { address: SessionAddress; request: SessionPending
 export function createNativeVoicePermissionInput(params: Readonly<{
   controlSessionId: string;
   signal: AbortSignal;
+  readVoiceAgentHandle: () => VoiceAgentHandle | undefined;
   isConversationTurnPending: () => boolean;
   readOut: (text: string, listen: boolean, isCurrent: () => boolean, onReady: () => void) => Promise<void>;
   commitTranscript: (text: string, localId: string) => Promise<void>;
   onResponding: () => void;
   onResponseSettled: (result: Readonly<{ ok: true; decision: NativePermissionDecision }> | Readonly<{ ok: false; error: unknown }>) => Promise<void>;
 }>): NativeVoicePermissionInput {
-  const execute = createFrontDoorActionExecute();
+  const execute = createFrontDoorActionExecute(undefined, {
+    readAdmittedVoiceInvocation: () => params.readVoiceAgentHandle()?.actionInvocation,
+  });
+  const readCanApproveRequests = () => params.readVoiceAgentHandle()?.actionInvocation?.authority === 'present_user';
   let disposed = false;
   let prompt: NativePermissionPrompt | null = null;
   let promptAtTurnStart: NativePermissionPrompt | null = null;
@@ -75,7 +80,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
     const request = selected.request;
     const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs,
       resolveVoiceSessionLabel(selected.address, prefs, { fallbackLabel: '' }), { nativeChoices: request.nativeChoices });
-    await readPrompt(selected, `${summary} ${prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired')}`,
+    await readPrompt(selected, `${summary} ${readCanApproveRequests() ? question() : t('voice.readiness.permissionTapRequired')}`,
       true);
   };
   const observe = (): void => {
@@ -171,11 +176,10 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           }
           if (text.trim()) await params.commitTranscript(text, randomUUID());
           if (disposed || params.signal.aborted || prompt !== selected) return true;
-          const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings,
-            sessionAddress: selected.address, sessionId: selected.address.sessionId, isCurrentAttemptTarget: true });
-          if (!prefs.voiceCanApproveRequests || !decision) {
+          const canApproveRequests = readCanApproveRequests();
+          if (!canApproveRequests || !decision) {
             await readPrompt(selected,
-              prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired'), true);
+              canApproveRequests ? question() : t('voice.readiness.permissionTapRequired'), true);
             return true;
           }
           const request = selected.request;
@@ -195,7 +199,8 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           const responding = execute.confirmed('session.permission.respond', {
             sessionId: selected.address.sessionId, requestId: selected.request.id,
             ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), ...response,
-          }, { surface: 'voice', serverId: selected.address.serverId, signal: params.signal });
+          }, { surface: 'voice', serverId: selected.address.serverId, signal: params.signal,
+            expectedAccountId: params.readVoiceAgentHandle()?.accountLifetime.scope.accountId });
           // The native turn can finish before the permission RPC acknowledges.
           // Report the Action's settled decision to the turn lifecycle owner.
           responseSettlement = responding.then(result => result.ok ? appliedDecision : null, () => null);

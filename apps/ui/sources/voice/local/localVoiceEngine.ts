@@ -926,6 +926,7 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
   activeNativePermissionInput = createNativeVoicePermissionInput({
     controlSessionId: sessionId,
     signal: admission.captureAbortController.signal,
+    readVoiceAgentHandle: () => voiceAgentSessions.readVoiceAgentHandle(sessionId),
     isConversationTurnPending: () => activeTurnAbortSessionId === sessionId,
     readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
     commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),

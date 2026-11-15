@@ -8076,10 +8076,8 @@ In 0.3 development source, `session.turn.cancel` requests cancellation of the
 current turn through the existing `abort` RPC. It keeps the Session process
 available; `session.stop` requests process shutdown. Both the composer Stop
 button and Agent/MCP/CLI requests enter the canonical Action executor.
-Session Stop is consequential in 0.3 development: automation asks by default;
-the person's Voice request receives a spoken read-back when
-`voice.canApproveRequests` is on, or an inline decision when it is off.
-Current-turn cancellation keeps its safe default.
+Session Stop is non-consequential and direct by default on UI, Voice and automation
+surfaces; the person can configure Ask through the existing Action settings.
 An embed's Send grant includes current-turn cancellation, and an abort-only
 grant does not authorize sending messages or stopping the Session process.
 Permission decisions continue through `session.permission.respond` and retain
@@ -8287,6 +8285,9 @@ The Voice binding supplies its exact synthetic carrier address to the Session
 send owner, which refuses that address after target resolution, including selectors.
 An ordinary Session bound through native Session Voice remains a valid target.
 The existing spoken confirmation owner binds any required read-back to the exact operation.
+Native permission prompts and replies consume the Voice Run's admitted invocation
+authority and Account binding, just like tool Actions. A preference change takes
+effect at the next Run admission, rather than re-deciding that authority mid-Run.
 The shared Action catalog documents the approval-list tool alongside request
 reads and decisions. Settings discovery publishes page ids derived from the
 canonical setting declarations; omit `pageId` to find all displayed settings

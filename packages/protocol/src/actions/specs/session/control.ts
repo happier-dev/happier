@@ -31,7 +31,6 @@ export const SessionTurnCancelInputSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 function createSessionLifetimeControlActionSpecs() {
-  const stopSummary = 'Stop a running session; default explicit Stop holds it until Resume.';
   return Object.freeze([
   {
     id: 'session.compact', executionPlacement: 'session', approval: { result: 'none' },
@@ -94,13 +93,10 @@ function createSessionLifetimeControlActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.stop', executionPlacement: 'session', approval: {result: 'none'},
-    approvalPresentation: { summary: () => stopSummary },
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Stop session',
     description: 'Stop the specified session. Explicit Stop holds automatic wake until Resume or a new message send; lifecycle control only frees the runner.',
-    // Process shutdown interrupts work and holds automatic wake. All surfaces
-    // consume this consequence through shared approval/in-flow confirmation.
-    safety: 'danger',
+    safety: 'safe',
     sideEffectClass: 'write',
     placements: [],
     bindings: { voiceClientToolName: 'session_stop', mcpToolName: 'session_stop', rpcMethod: 'stop-session' },
@@ -116,7 +112,7 @@ function createSessionLifetimeControlActionSpecs() {
       rpc: true,
       },
     inputHints: {
-      description: stopSummary,
+      description: 'Stop a running session; default explicit Stop holds it until Resume.',
       title: 'Stop a session',
       fields: [
         { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text', required: true },

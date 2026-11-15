@@ -74,6 +74,8 @@ describe('native Voice permission input', () => {
       lifecycle.setConfiguredProviderId('local_conversation');
       await lifecycle.toggle({ serverId: localVoiceHomeId, sessionId: 's1' });
       const controlSessionId = lifecycle.getSnapshot().sessionId!;
+      const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
+      await voiceAgentSessions.ensureRunning(controlSessionId);
       const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId });
       expect(binding?.transcriptMode).toBe('native_session');
       const requestSessionId = binding!.conversationSessionId;
@@ -109,6 +111,7 @@ describe('native Voice permission input', () => {
       const settled = vi.fn<Parameters<typeof createNativeVoicePermissionInput>[0]['onResponseSettled']>(async () => {});
       const readOut = vi.fn<Parameters<typeof createNativeVoicePermissionInput>[0]['readOut']>(async (_text, _listen, isCurrent, onReady) => { if (isCurrent()) onReady(); });
       const input = createNativeVoicePermissionInput({ controlSessionId,
+        readVoiceAgentHandle: () => voiceAgentSessions.readVoiceAgentHandle(controlSessionId),
         signal: new AbortController().signal, isConversationTurnPending: () => false,
         readOut, commitTranscript: async () => {}, onResponding() {}, onResponseSettled: settled,
       });
@@ -144,6 +147,8 @@ describe('native Voice permission input', () => {
   );
 
   it.each([
+    { label: 'Run admitted ON then preference OFF', enabled: true, preferenceAfterAdmission: false, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'Run admitted OFF then preference ON', enabled: false, preferenceAfterAdmission: true, answer: 'Yes.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'RUN120 command preview with argument sharing off', enabled: true, answer: 'YES ALLOW THE COMMAND', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run120: true },
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
     { label: 'Codex offered Yes after carrier settlement', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true },
@@ -199,7 +204,7 @@ describe('native Voice permission input', () => {
     { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, run120, readyOnly, resultPrivacyOff, stoppedReady, ordinaryQuestion, continuedQuestion, typedQuestion }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, preferenceAfterAdmission, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, run120, readyOnly, resultPrivacyOff, stoppedReady, ordinaryQuestion, continuedQuestion, typedQuestion }) => {
     const offeredChoices = run120 ? run120Choices : run111 ? run111Choices : nativeStop ? run107Choices : codexChoices;
     const storage = await getStorage();
     const state = storage.getState();
@@ -387,6 +392,15 @@ describe('native Voice permission input', () => {
       if (carrierSettled) {
         waiting.resolve();
         await submitted;
+      }
+      if (preferenceAfterAdmission !== undefined) {
+        const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
+        expect(voiceAgentSessions.readVoiceAgentHandle(binding.controlSessionId)?.actionInvocation?.authority)
+          .toBe(enabled ? 'present_user' : 'account_automation');
+        const current = storage.getState();
+        storage.__setState({ settings: { ...current.settings, voice: {
+          ...current.settings.voice, canApproveRequests: preferenceAfterAdmission,
+        } } });
       }
       if (retarget) {
         const { createSessionFixture } = await import('@/dev/testkit');

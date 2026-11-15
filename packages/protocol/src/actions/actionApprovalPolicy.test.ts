@@ -576,9 +576,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }
       }
     }
-    // Voice irreversible-confirmation ruling (2026-10-30): Stop has consequences;
-    // automation still asks, while the present person's host can confirm in flow.
-    expect(isApprovalRequiredByActionsSettings('session.stop', EMPTY_SETTINGS, { surface: 'agent' })).toBe(true);
+    expect(isApprovalRequiredByActionsSettings('session.stop', EMPTY_SETTINGS, { surface: 'agent' })).toBe(false);
     expect(isApprovalRequiredByActionsSettings('session.archive', EMPTY_SETTINGS, { surface: 'agent' })).toBe(false);
   });
 
