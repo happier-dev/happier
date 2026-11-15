@@ -26,8 +26,9 @@ test('source guest payload defaults to the current native target without a confi
   }
 });
 
-test('guest payload and daemon retain the same captured source after live edits and guest-only changes invalidate reuse',
-  { skip: process.platform === 'win32' ? 'compiler-process fixture uses POSIX executable scripts' : false }, async t => {
+const compilerFixtureOptions = { skip: process.platform === 'win32' ? 'compiler-process fixture uses POSIX executable scripts' : false };
+
+async function createGuestPayloadFixture(t) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-guest-payload-', registerCleanup: false });
   t.after(async () => { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); });
   const repoDir = fixture.path('repo');
@@ -110,37 +111,58 @@ test('guest payload and daemon retain the same captured source after live edits 
   const env = { ...process.env, ...native?.env, PATH: `${bin}${process.platform === 'win32' ? ';' : ':'}${native?.env.PATH ?? process.env.PATH}`,
     HAPPIER_BUN_PATH: join(bin, 'bun'), HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '' };
   const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
-  let producerPassed = false;
-  await t.test('canonical full payload identity includes native support bytes while code stays fixed', async identityTest => {
-    identityTest.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 4) });
-    const loader = await createCliSourceLoader('source-guest-payload-identity');
-    identityTest.after(() => loader.unregister());
-    const { buildCliBinaryArtifactPayload } = await loader.import(
-      '../../../../packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts', import.meta.url);
-    const custody = fixture.path('prebuilt-custody');
-    const proxy = fixture.path('prebuilt-proxy');
-    await writeFile(custody, 'native support one');
-    await writeFile(proxy, 'native proxy fixture');
-    const payloadDir = fixture.path('identity-payload');
-    const producerOptions = { repoRoot: repoDir, payloadDir, target,
-      processCustodyRuntimeExecutablePath: custody, cliProxyApiManagedRuntimeExecutablePath: proxy,
-      commandProbe: () => true,
-      runCommand: (command, args, options) => runCapture(command, args, { ...options, env: { ...env, ...options?.env } }),
-      compileBinary: async ({ outfile }) => { await writeFile(outfile, 'fixed compiler executable'); } };
-    const first = await buildCliBinaryArtifactPayload(producerOptions);
-    assert.match(first.identity ?? '', /^[a-f0-9]{64}$/, 'the complete payload exposes its canonical byte identity');
-    const codeIdentity = cliDistBuildManifest.readCliDistBuildManifest(join(payloadDir, 'package-dist/index.mjs')).manifest.fingerprint;
-    const repeated = await buildCliBinaryArtifactPayload(producerOptions);
-    assert.equal(repeated.identity, first.identity, 'fixed compiler bytes and metadata produce the same payload identity');
-    await writeFile(custody, 'native support two');
-    const changed = await buildCliBinaryArtifactPayload(producerOptions);
-    assert.equal(cliDistBuildManifest.readCliDistBuildManifest(join(payloadDir, 'package-dist/index.mjs')).manifest.fingerprint,
-      codeIdentity, 'support-only changes leave the authored CLI graph unchanged');
-    assert.notEqual(changed.identity, first.identity, 'payload identity must include changed native support bytes');
-    producerPassed = true;
-  });
-  // A producer failure must be repaired before exercising its Stack consumer.
-  if (!producerPassed) return;
+  return { fixture, repoDir, cliDir, sourceCommon, native, env, target };
+}
+
+test('guest payload retains host and target holders and includes native support in its identity', compilerFixtureOptions, async t => {
+  const { fixture, repoDir, cliDir, env, target } = await createGuestPayloadFixture(t);
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 4) });
+  const loader = await createCliSourceLoader('source-guest-payload-identity');
+  t.after(() => loader.unregister());
+  const { buildCliBinaryArtifactPayload } = await loader.import(
+    '../../../../packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts', import.meta.url);
+  const custody = fixture.path('prebuilt-custody');
+  const proxy = fixture.path('prebuilt-proxy');
+  await writeFile(custody, 'native support one');
+  await writeFile(proxy, 'native proxy fixture');
+  const payloadDir = fixture.path('identity-payload');
+  const producerOptions = { repoRoot: repoDir, payloadDir, target,
+    processCustodyRuntimeExecutablePath: custody, cliProxyApiManagedRuntimeExecutablePath: proxy,
+    commandProbe: () => true,
+    runCommand: (command, args, options) => runCapture(command, args, { ...options, env: { ...env, ...options?.env, PATH: env.PATH } }),
+    compileBinary: async ({ outfile }) => { await writeFile(outfile, 'fixed compiler executable'); } };
+  // Native compiler outputs are fixture bytes; the real package declaration,
+  // payload staging and target finalization must keep the required holders.
+  const iroh = join(repoDir, 'packages/iroh-native');
+  const irohManifest = JSON.parse(await readFile(new URL('../../../../packages/iroh-native/package.json', import.meta.url), 'utf8'));
+  await mkdir(join(iroh, 'native/targets'), { recursive: true });
+  await writeFile(join(iroh, 'package.json'), JSON.stringify({ ...irohManifest, dependencies: {} }));
+  const hostManifest = JSON.parse(await readFile(join(cliDir, 'package.json'), 'utf8'));
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({ ...hostManifest,
+    bundledDependencies: [...hostManifest.bundledDependencies, irohManifest.name],
+    dependencies: { ...hostManifest.dependencies, [irohManifest.name]: 'workspace:*' } }));
+  const platform = target.os === 'windows' ? 'win32' : target.os;
+  const holder = `happier-session-holder.${platform}-${target.arch}${target.exeExt}`;
+  const nativeFiles = [holder, `happier-iroh-native-lifecycle.${platform}-${target.arch}.node`,
+    ...['x64', 'arm64'].map(arch => `targets/happier-session-holder.linux-${arch}-musl`)];
+  for (const name of nativeFiles) await writeFile(join(iroh, 'native', name), `compiler output: ${name}`);
+  const first = await buildCliBinaryArtifactPayload(producerOptions);
+  for (const name of nativeFiles) assert.equal(await readFile(join(payloadDir,
+    'node_modules/@happier-dev/iroh-native/native', name), 'utf8'), `compiler output: ${name}`);
+  assert.match(first.identity ?? '', /^[a-f0-9]{64}$/, 'the complete payload exposes its canonical byte identity');
+  const codeIdentity = cliDistBuildManifest.readCliDistBuildManifest(join(payloadDir, 'package-dist/index.mjs')).manifest.fingerprint;
+  const repeated = await buildCliBinaryArtifactPayload(producerOptions);
+  assert.equal(repeated.identity, first.identity, 'fixed compiler bytes and metadata produce the same payload identity');
+  await writeFile(custody, 'native support two');
+  const changed = await buildCliBinaryArtifactPayload(producerOptions);
+  assert.equal(cliDistBuildManifest.readCliDistBuildManifest(join(payloadDir, 'package-dist/index.mjs')).manifest.fingerprint,
+    codeIdentity, 'support-only changes leave the authored CLI graph unchanged');
+  assert.notEqual(changed.identity, first.identity, 'payload identity must include changed native support bytes');
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify(hostManifest));
+});
+
+test('guest payload and daemon retain the same captured source after live edits and guest-only changes invalidate reuse', compilerFixtureOptions, async t => {
+  const { fixture, repoDir, cliDir, sourceCommon, native, env, target } = await createGuestPayloadFixture(t);
   const pluginRoot = join(repoDir, 'packages/plugins/fixture-ui');
   await mkdir(join(pluginRoot, 'src'), { recursive: true });
   const cliManifest = JSON.parse(await readFile(join(cliDir, 'package.json'), 'utf8'));

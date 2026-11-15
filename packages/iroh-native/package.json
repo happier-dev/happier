@@ -30,6 +30,8 @@
   "files": [
     "dist",
     "native/*.node",
+    "native/happier-session-holder.*",
+    "native/targets/happier-session-holder.*",
     "ios/HappierIrohNativeModule.swift",
     "ios/HappierIrohNative.podspec",
     "android/build.gradle",
