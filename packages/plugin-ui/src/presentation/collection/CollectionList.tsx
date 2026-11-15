@@ -1,7 +1,8 @@
 import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { useHappierSearchDisclosure } from './searchDisclosure.js';
 import { Platform, View, type ViewStyle } from 'react-native';
 
-import { useHappierPageSection } from '../layout/PageSection.js';
+import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { resolveHappierTitleRowInsetPx, resolveHappierTitleRowTitleLiftPx } from '../layout/shellTitleRow.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
@@ -432,6 +433,47 @@ export const HappierListRowOpenContext = createContext(false);
 export const HappierListRowPrecedesSelectedContext = createContext(false);
 
 /**
+ * Whether another row of the same section follows this one, provided by the owner that knows the order (the public
+ * List, a column's rows, the Sessions list). `null`: no owner says, so the row draws no rule.
+ */
+export const HappierListRowFollowedContext = createContext<boolean | null>(null);
+
+/**
+ * The one rule between list and column rows, at every width (owner 2026-11-15): an inset hairline under a row that
+ * another row of its section follows, so none sits above a section title or after a section's last row. A selected
+ * row's fill parts it from its neighbours, so neither the line under it nor the one above it is drawn, and a hovered
+ * row hides its own.
+ */
+export function resolveHappierListRowRuleShown(input: Readonly<{
+  followed: boolean | null;
+  selected: boolean;
+  precedesSelected: boolean;
+  hovered?: boolean;
+}>): boolean {
+  return input.followed === true && !input.selected && !input.precedesSelected && input.hovered !== true;
+}
+
+/** Where a column row's text starts from the row's leading edge: the content inset, a tree indent, the glyph column. */
+export function resolveHappierCollectionRowTextStartPx(input: Readonly<{ indentPx?: number; glyph: boolean }>): number {
+  return HAPPIER_COLLECTION_LIST_METRICS.contentInset + (input.indentPx ?? 0)
+    + (input.glyph ? HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox + HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap : 0);
+}
+
+/**
+ * The rule itself: an overlay at the row's foot from its text column to its trailing edge, in the row divider ink.
+ * It takes no layout, so a row keeps the height its list plans with.
+ */
+export function HappierListRowRule(props: Readonly<{ startPx: number; color: string }>): ReactElement {
+  return (
+    <View
+      pointerEvents="none"
+      testID="happier-list-row-rule"
+      style={{ position: 'absolute', start: props.startPx, end: 0, bottom: 0, height: happierPageRowDividerWidth(), backgroundColor: props.color }}
+    />
+  );
+}
+
+/**
  * Set by a card that draws its own selection ring around the row (a Collection grid card). The row then
  * keeps its selection semantics but paints no inset fill: the same fact drawn twice reads as a box in a box.
  */
@@ -601,19 +643,13 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
     accessoryWidthRef.current = event.nativeEvent.layout.width;
   }, []);
   const accessoryInRow = hasAccessory && showHeader && accessoryFits;
-  const [searchOpened, setSearchOpened] = useState(false);
   const search = props.search ?? null;
   const searchCollapses = search !== null && search.collapsible === true && showHeader && host.SearchToggle !== undefined;
-  const searchOpen = !searchCollapses || searchOpened || (search?.value.length ?? 0) > 0;
   const onSearchChange = search?.onChangeText;
-  const onToggleSearch = useCallback(() => {
-    if (searchOpen) {
-      onSearchChange?.('');
-      setSearchOpened(false);
-    } else {
-      setSearchOpened(true);
-    }
-  }, [onSearchChange, searchOpen]);
+  const clearSearch = useCallback(() => onSearchChange?.(''), [onSearchChange]);
+  // The one search-behind-a-magnifier rule, shared with every main screen's head.
+  const searchDisclosure = useHappierSearchDisclosure(search?.value ?? '', searchCollapses ? clearSearch : undefined);
+  const searchOpen = !searchCollapses || searchDisclosure.open;
   const SearchToggle = host.SearchToggle;
   const surfaceStyle = host.useSurfaceStyle ? host.useSurfaceStyle() : host.surfaceStyle;
   return (
@@ -633,7 +669,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
           {(searchCollapses && SearchToggle && search) || props.headerAction != null ? (
             <View style={headerTrailingStyle}>
               {searchCollapses && SearchToggle && search ? (
-                <SearchToggle open={searchOpen} onPress={onToggleSearch} accessibilityLabel={search.placeholder}
+                <SearchToggle open={searchOpen} onPress={searchDisclosure.toggle} accessibilityLabel={search.placeholder}
                   {...(search.testID === undefined ? {} : { testID: `${search.testID}:toggle` })} />
               ) : null}
               {props.headerAction != null ? <View style={headerActionStyle}>{props.headerAction}</View> : null}
@@ -667,7 +703,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
           {...(props.search.trailing == null ? {} : { trailing: props.search.trailing })}
           {...(props.search.anchorRef === undefined ? {} : { anchorRef: props.search.anchorRef })}
           {...(props.search.testID === undefined ? {} : { testID: props.search.testID })}
-          {...(searchCollapses && searchOpened ? { autoFocus: true } : {})}
+          {...(searchCollapses && searchDisclosure.focusOnOpen ? { autoFocus: true } : {})}
         />
       ) : null}
       {showFilters ? <View style={showHeader || (props.search && searchOpen) || props.strip ? tools.filters : tools.untitledFilters}>{props.filters!.content}</View> : null}

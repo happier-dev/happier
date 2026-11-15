@@ -4,8 +4,10 @@ import { NavigationContext } from '@react-navigation/native';
 import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Platform, View } from 'react-native';
-import { Stack, usePathname } from '@/components/appShell/workspace/destinationRoute';
+import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
+import { PhoneMainTabLine } from '@/components/navigation/shell/PhoneMainTabLine';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { useDestinationFocus, useDestinationRouter, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
@@ -388,16 +390,26 @@ export function PluginPageContent(props: Readonly<{
         phoneTitleChrome,
     ]);
     // A rail page's own route is a main screen: the tab bar is its way around, so its bar carries no Back (owner 11-10).
-    const mainScreen = useIsAppDestinationRootPath(usePathname());
+    // The page's own place (its location's root, not where its search or lens moved the location) is what is a rail
+    // destination; a detail it pushed (a back step) is a page over it, with its bar and Back.
+    const pageBackStep = React.useSyncExternalStore(locationOwner.subscribe, locationOwner.hasBackStep, locationOwner.hasBackStep);
+    const mainScreen = useIsAppDestinationRootPath(props.routePathFor('', null)) && !pageBackStep;
     // The page's controls (a Machine picker, its actions) carry their own chrome: no iOS shared item glass under them.
     const headerOptions = React.useMemo(() => ({ headerTitle, ...(mainScreen ? { headerBackVisible: false } : {}),
         ...ownChromeHeaderRight(() => routeActions) }), [headerTitle, mainScreen, routeActions]);
     // A phone's top-level collection page (an app page whose header is its Collection toolbar) leads with its name as
     // its large title under the navigation row, as the Inbox tab does (lab `merged-list` 390, `phone-P4`); the bar then
     // carries Back and the page's controls only. Wide layouts keep the name in the toolbar row.
-    const largeTitle = props.appChrome === true && page?.headerStyle === 'toolbar' && phoneTitleChrome;
-    const pageHeaderOptions = React.useMemo(() => largeTitle ? { ...headerOptions, headerTitle: '' } : headerOptions,
-        [headerOptions, largeTitle]);
+    // A phone main screen hides its bar, so the bar's own "shows the title" fact no longer says it is a phone: the device does.
+    const phone = useDeviceType() === 'phone';
+    const toolbarPage = props.appChrome === true && page?.headerStyle === 'toolbar';
+    const mainScreenHead = toolbarPage && phone && mainScreen && pageIsLive;
+    const largeTitle = toolbarPage && (phoneTitleChrome || mainScreenHead);
+    // On a main screen it is that screen's whole head, as every phone main screen's (`MainScreenHeader`): the Home line,
+    // then the title with the Machine, the magnifier and + on its line, and no bar above.
+    const pageHeaderOptions = React.useMemo(() => !largeTitle ? headerOptions
+        : mainScreenHead ? { ...headerOptions, headerTitle: '', headerShown: false } : { ...headerOptions, headerTitle: '' },
+    [headerOptions, largeTitle, mainScreenHead]);
     const renderPage = (body: React.ReactNode) => <PluginPagePresentation pluginId={props.pluginId} localId={props.localId}
         accountScope={accountLifetime?.scope ?? null} visible={isVisible}
         demandProjection={props.subPath !== null && (page ? !page.disabledReason && isPluginSurfaceMachineBound({
@@ -445,6 +457,8 @@ export function PluginPageContent(props: Readonly<{
         // it): the plugin owns its scrolling, so its host keeps what that chrome covers within reach.
         // A pinned footer inside it (a pushed detail's actions) then clears that chrome once, not again (D17).
         <RetainedPanelSurface isActive={isVisible}>
+                {/* The Home line stands on the screen's own edge, as on every main screen, not on the page's inset. */}
+                {mainScreenHead ? <PhoneMainTabLine /> : null}
                 <FloatingChromeClearedFrame testID="plugin-app-page-host" style={pageContentFrameStyle}>
                     <HappierColumnEdgeContext.Provider value={PLUGIN_PAGE_COLUMN_EDGE_PX}>
                     <PagePinnedBarGutterContext.Provider value={pageContentFrameStyle.paddingHorizontal}>

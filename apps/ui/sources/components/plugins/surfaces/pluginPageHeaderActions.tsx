@@ -15,6 +15,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { usePluginSurfaceInteractionAvailable } from '@/components/plugins/shared/pluginSurfaceInteractionAvailability';
 import type { PluginAccountHostedArtifactPublicationResult } from '@/sync/domains/plugins/availability/accountHostedArtifactPublication';
 import { PaneMainHideButton } from '@/components/appShell/panes/mainColumn/PaneMainColumnControls';
+import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
 import { t } from '@/text';
 import { splitHappierPagePrimaryOperation } from '@happier-dev/plugin-ui/presentation';
 
@@ -52,6 +53,14 @@ function lentRows(items: readonly PluginPageLentItem[], onSelect: (id: string) =
 export function renderPluginNavigationActions(actions: React.ReactNode, placement: PageActionsPlacement = 'navigation',
   more?: PluginPageLentMenu) {
   return <PluginPageHeaderActions actions={actions} placement={placement} more={more ?? null} />;
+}
+
+/**
+ * The host's `renderSearchToggle` for a plugin page's large title: the magnifier every main screen's title line draws
+ * (`MainScreenHeader`), so a plugin collection page's head is the same control, not a look-alike.
+ */
+export function renderPluginSearchToggle(toggle: React.ComponentProps<typeof CollectionSearchToggle>) {
+  return <CollectionSearchToggle {...toggle} />;
 }
 
 type PluginArtifactHostingStatus = Readonly<{

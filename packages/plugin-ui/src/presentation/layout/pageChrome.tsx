@@ -71,6 +71,21 @@ export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
    * (it carries `title`) leads with it above its toolbar.
    */
   largeTitle?: boolean;
+  /**
+   * The host's magnifier, for a page whose large title keeps its search behind it (a phone main screen, as core's
+   * `MainScreenHeader`): the same control every main screen's title line draws. Absent, the search stays open.
+   */
+  renderSearchToggle?: (toggle: HappierPageSearchToggle) => ReactNode;
+}>;
+
+/** What the host's magnifier draws and does (`useHappierSearchDisclosure`). */
+export type HappierPageSearchToggle = Readonly<{
+  open: boolean;
+  onPress: () => void;
+  accessibilityLabel: string;
+  testID?: string;
+  /** Receives the control, so closing the field hands focus back to it. */
+  controlRef?: (instance: Readonly<{ focus?: () => void }> | null) => void;
 }>;
 
 const HappierPageChromeContext = createContext<HappierPageChromeInternal | null>(null);

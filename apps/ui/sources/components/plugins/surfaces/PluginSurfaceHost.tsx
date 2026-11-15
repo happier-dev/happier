@@ -222,7 +222,7 @@ import { usePluginPageBackStepArmed } from '@/components/plugins/shared/PluginPa
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
 import { useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
 import { DefaultBackButton } from '@/components/navigation/Header';
-import { PluginArtifactHostingStatusProvider, renderPluginNavigationActions } from './pluginPageHeaderActions';
+import { PluginArtifactHostingStatusProvider, renderPluginNavigationActions, renderPluginSearchToggle } from './pluginPageHeaderActions';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import {
     createPluginSurfaceComposerMountContext,
@@ -1275,7 +1275,8 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         navigationBackSpendsStep,
         ...(publishChromeBack === undefined ? {} : { publishBack: publishChromeBack }),
         ...(setChromeTitle === undefined ? {} : { publishTitle: setChromeTitle }),
-        ...(largeTitle ? { largeTitle } : {}),
+        // The large title's line keeps the page's search behind the magnifier every main screen draws.
+        ...(largeTitle ? { largeTitle, renderSearchToggle: renderPluginSearchToggle } : {}),
     }), [BackControl, chromeShowsTitle, columnMaxWidthPx, largeTitle, navigationBackSpendsStep, publishChromeBack, publishPageTitle, setChromeTitle]);
     // The page's app details pane, when this mount sits in a page that has one: a plugin `DetailsPane` (and a
     // `Collection` opening its items) renders there.

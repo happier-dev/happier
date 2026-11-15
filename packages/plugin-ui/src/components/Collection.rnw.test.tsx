@@ -521,8 +521,7 @@ function mount(
     openKey?: string | null;
     pane?: ReturnType<typeof createPaneHost>;
     scrollTracker?: PluginUiScrollActivityTracker;
-    pageChrome?: Readonly<{ showsTitle: boolean; largeTitle?: boolean; columnMaxWidthPx?: number; renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode;
-      publishBack?: (press: (() => void) | null) => void; publishTitle?: (title: string | undefined) => void }>;
+    pageChrome?: import('../presentation/layout/pageChrome.js').HappierPageChromeInternal;
     hostApiOverrides?: Parameters<typeof createHostApiStub>[1];
   }> &
     HarnessOptions = {},
@@ -6443,6 +6442,70 @@ describe("the search in the caller's header row", () => {
     unnamed.measure(390);
     expect(unnamed.container.querySelector('[role="heading"]')).toBeNull();
     unnamed.unmount();
+  });
+
+  it("gives a phone main screen's large title its Machine, magnifier and + and keeps the search behind the magnifier", async () => {
+    // Owner 11-15 (PRs & Issues on an iPhone): the head every phone main screen has (core's `MainScreenHeader`).
+    let value = '';
+    const changes: string[] = [];
+    const searchFor = () => ({ label: 'Search PRs & Issues', value, testID: 'search',
+      onValueChange: (next: string) => { changes.push(next); value = next; } });
+    const pageChrome = {
+      showsTitle: true,
+      largeTitle: true,
+      renderNavigationActions: (actions: React.ReactNode, placement?: 'navigation' | 'page') => (
+        <View testID={`route-actions:${placement ?? 'navigation'}`}><Text>Machine</Text>{actions}</View>
+      ),
+      renderSearchToggle: (toggle: Readonly<{ open: boolean; onPress: () => void; accessibilityLabel: string;
+        testID?: string; controlRef?: (instance: { focus?: () => void } | null) => void }>) => (
+        <button type="button" data-testid="magnifier" aria-pressed={toggle.open} aria-label={toggle.accessibilityLabel}
+          ref={(node) => toggle.controlRef?.(node)} onClick={toggle.onPress} />
+      ),
+    };
+    const header: CollectionProps<Entry>['header'] = (slots) => (
+      <CollectionToolbar slots={slots} testID="toolbar" lens={<Text testID="lens">Mine</Text>}
+        primary={{ label: 'New task', testID: 'new-task', onPress: () => undefined }} />
+    );
+    const view = mount({ title: 'PRs & Issues', search: searchFor(), header, pageChrome });
+    view.measure(390);
+    const titleLine = () => view.query('collection:large-title')!;
+    // The title line carries the route's controls (the Machine), the magnifier and the page's +; the navigation bar
+    // and the toolbar draw none of them.
+    expect(titleLine().querySelector('[data-testid="route-actions:page"]')).toBeTruthy();
+    expect(titleLine().querySelector('[data-testid="magnifier"]')).toBeTruthy();
+    expect(titleLine().querySelector('[data-testid="new-task"]')).toBeTruthy();
+    expect(view.query('route-actions:navigation')).toBeNull();
+    expect(view.query('toolbar')!.querySelector('[data-testid="new-task"]')).toBeNull();
+    expect(view.queryAll('new-task')).toHaveLength(1);
+    // The lens stays under the title.
+    expect(view.query('lens')).toBeTruthy();
+
+    // Closed until the magnifier is pressed; then it opens focused.
+    expect(view.query('search')).toBeNull();
+    await act(async () => { view.query('magnifier')!.click(); });
+    const field = () => { const node = view.query('search'); return node === null ? null : node.matches('input') ? node : node.querySelector('input'); };
+    expect(field()).toBeTruthy();
+    expect(document.activeElement).toBe(field());
+
+    // A query keeps it open.
+    value = 'fix';
+    await act(async () => { view.update({ search: searchFor() }); });
+    expect(field()).toBeTruthy();
+
+    // The magnifier again clears the query, folds the field away and hands focus back to the magnifier.
+    await act(async () => { view.query('magnifier')!.click(); });
+    expect(changes.at(-1)).toBe('');
+    await act(async () => { view.update({ search: searchFor() }); });
+    expect(field()).toBeNull();
+    expect(document.activeElement).toBe(view.query('magnifier'));
+
+    // A query restored with the page keeps the field open without taking focus.
+    view.unmount();
+    value = 'restored';
+    const restored = mount({ title: 'PRs & Issues', search: searchFor(), header, pageChrome });
+    restored.measure(390);
+    expect(restored.query('search')).toBeTruthy();
+    restored.unmount();
   });
 
   it('hands the selection control to a header render, so the list pane draws no row of its own for it', () => {

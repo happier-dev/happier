@@ -6,6 +6,17 @@ export * from './index.public.js';
 // Host-only: the page count line a core main screen's head draws under its band; plugins reach the same owner
 // through `PageHeader`'s `count` (one drawing, one formatting rule).
 export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender } from './layout/PageCountLine.js';
+// Host-only: the one rule between list and column rows, for core rows (column rows, Sessions) that draw it themselves;
+// plugin rows draw it through `List.Item`.
+export {
+  HappierListRowFollowedContext,
+  HappierListRowPrecedesSelectedContext,
+  HappierListRowRule,
+  resolveHappierCollectionRowTextStartPx,
+  resolveHappierListRowRuleShown,
+} from './collection/CollectionList.js';
+// Host-only: the one search-behind-a-magnifier rule a core main screen's head shares with a plugin collection page.
+export { useHappierSearchDisclosure, type HappierSearchDisclosure } from './collection/searchDisclosure.js';
 // Host-only: how a shrink-wrapping container (a popover, a capture window) places a sized state.
 export { HappierSurfaceStateFit } from './state/InfoState.js';
 // Host-only: a tab bar shows the pressed tab before its owner builds the new surface (P03-TAB-SWITCH). Core bars and

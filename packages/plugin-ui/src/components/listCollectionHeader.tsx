@@ -63,6 +63,8 @@ export function useListCollectionSearch(
   rootRef: RefObject<unknown>,
   /** The toolbar folded (a phone, a list beside a pane): tokens say only what tells them apart. */
   compact = false,
+  /** Escape also folds the field away (a search behind a magnifier, `useHappierSearchDisclosure`). */
+  onEscape?: () => void,
 ) {
   const [uncontrolledQuery, setUncontrolledQuery] = useState(search?.defaultValue ?? '');
   const query = search?.value ?? uncontrolledQuery;
@@ -126,7 +128,7 @@ export function useListCollectionSearch(
   const tokens = search?.tokens ?? [];
   const control = search === undefined ? null : <ListCollectionSearchField
     appearance="search" label={search.label} placeholder={search.placeholder ?? search.label} value={displayed}
-    onChangeText={change} onCompositionChange={composition} onEscape={clear}
+    onChangeText={change} onCompositionChange={composition} onEscape={onEscape === undefined ? clear : () => { onEscape(); return true; }}
     autoCapitalize="none" autoCorrect={false} selection={selection} onSelectionChange={setSelection}
     controlRef={controlRef} leading={<Icon name="search" size="small" tone="muted" />} theme={theme} testID={search.testID}
     // The shortcut is a hardware-keyboard fact; touch platforms have no `/` to press.
@@ -136,7 +138,7 @@ export function useListCollectionSearch(
   />;
   const tokenLine = tokens.length === 0 ? null : <SearchTokenLine tokens={tokens} compact={compact}
     {...(search?.testID === undefined ? {} : { testID: `${search.testID}:tokens` })} />;
-  return { query, control, tokenLine };
+  return { query, control, tokenLine, clear, focus: () => target.focus() };
 }
 
 /**

@@ -34,7 +34,10 @@ import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } fr
 import { useHappierPageSection } from '../presentation/layout/PageSection.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
-import { CollectionToolbarCompactContext, CollectionToolbarOverflowContext, type CollectionToolbarFitReport } from './CollectionToolbar.js';
+import {
+  CollectionTitleLineLendContext, CollectionTitleLineLent, CollectionToolbarCompactContext, CollectionToolbarOverflowContext,
+  createCollectionTitleLineLend, type CollectionToolbarFitReport,
+} from './CollectionToolbar.js';
 import { HAPPIER_RADIUS_V1 } from '../environment/radius.js';
 import { HAPPIER_SPACE_STEPS } from '../environment/spacing.js';
 import { HappierStatusDot } from '../presentation/status/StatusDot.js';
@@ -75,6 +78,7 @@ import {
   type HappierCollectionTransitionPlan,
 } from '../presentation/collection/collectionTable.js';
 import { HappierDisclosure } from '../presentation/collection/Disclosure.js';
+import { useHappierSearchDisclosure } from '../presentation/collection/searchDisclosure.js';
 import { useResizableListDetailGeometry, type HappierCollectionRailSizingProps } from '../presentation/collection/useResizableListDetailGeometry.js';
 import { HappierResizeHandle } from '../presentation/layout/resize/HappierResizeHandle.js';
 import { useCollectionRailLabels, useCollectionRailSizing } from './collectionRailSizing.js';
@@ -2695,15 +2699,34 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   }), []);
   const compactToolbar = size === null ? pageChrome?.showsTitle === true || pageChrome?.largeTitle === true
     : size.width < HAPPIER_PAGE_METRICS.toolbarFoldBelowWidthPx || (toolbarRowPx !== null && toolbarRowPx < toolbarNeedPx);
-  const search = useListCollectionSearch(props.search, rootRef, compactToolbar);
   // A phone's top-level collection page leads with its name as the large title, above the toolbar (lab `merged-list`
   // 390, as core's Inbox, `phone-P4`): the host's navigation row then carries no title of its own.
   const largeTitle = props.title !== undefined && pageChrome?.largeTitle === true ? props.title : null;
+  // That title's line is a phone main screen's head (core's `MainScreenHeader`, owner 11-15): the route's controls (the
+  // Machine), the host's magnifier with the search folded behind it, and the toolbar's ⋯ and + stand on it.
+  const renderSearchToggle = largeTitle !== null && props.search !== undefined ? pageChrome?.renderSearchToggle : undefined;
+  const dismissSearchRef = useRef<() => void>(() => undefined);
+  const dismissSearch = useCallback(() => dismissSearchRef.current(), []);
+  const search = useListCollectionSearch(props.search, rootRef, compactToolbar, renderSearchToggle === undefined ? undefined : dismissSearch);
+  const searchDisclosure = useHappierSearchDisclosure(search.query, renderSearchToggle === undefined ? undefined : search.clear);
+  dismissSearchRef.current = searchDisclosure.close;
+  const searchShown = renderSearchToggle === undefined || searchDisclosure.open;
+  const focusSearch = search.focus;
+  const focusSearchOnOpen = searchDisclosure.focusOnOpen;
+  useEffect(() => {
+    if (focusSearchOnOpen) focusSearch();
+    // Only an explicit open focuses; the field's focus owner is the same one across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSearchOnOpen]);
+  const lendsTitleLine = largeTitle !== null && typeof props.header === 'function';
+  const collapsesSearch = renderSearchToggle !== undefined;
+  const titleLineLend = useMemo(() => lendsTitleLine ? createCollectionTitleLineLend(collapsesSearch) : null,
+    [collapsesSearch, lendsTitleLine]);
   const header = typeof props.header === 'function' ? props.header({
     title: props.title === undefined || pageChrome?.showsTitle === true || largeTitle !== null ? null : (
       <HappierText variant="heading" tone="neutral" accessibilityRole="header" numberOfLines={1}>{props.title}</HappierText>
     ),
-    search: search.control === null ? null : (
+    search: search.control === null || !searchShown ? null : (
       <View style={[headerSearchStyle, props.search?.width === 'fill' ? fillSearchStyle
         // Phone-narrow it grows into the row beside the toolbar's round buttons, from the same readable basis, so a
         // caller's own wrapping row still gives it a line of its own.
@@ -2717,7 +2740,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
             width: HAPPIER_PAGE_METRICS.toolbarSearchMinWidthPx * accessibility.textScale, maxWidth: HEADER_SEARCH_WIDTH * accessibility.textScale }]}>{search.control}</View>
     ),
     selection: selectionMode,
-    pageActions: pageChrome?.renderNavigationActions?.(null) ?? null,
+    // Under a large title the route's controls stand on the title's line instead.
+    pageActions: largeTitle !== null ? null : pageChrome?.renderNavigationActions?.(null) ?? null,
   }) : props.header;
   const close = model.actions.close;
   const hasOpen = openKey !== null;
@@ -3036,10 +3060,21 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const headerOverList = props.headerPlacement === 'list' && !pageScroll;
   // The narrowings in force stand on one quiet line under whatever header placed the search (lab `spfield` B).
   const headerTokenLine = headerPlacesSearch ? search.tokenLine : null;
+  const searchToggle = renderSearchToggle === undefined || props.search === undefined ? null : renderSearchToggle({
+    open: searchDisclosure.open,
+    onPress: searchDisclosure.toggle,
+    accessibilityLabel: props.search.placeholder ?? props.search.label,
+    ...(props.search.testID === undefined ? {} : { testID: `${props.search.testID}:toggle` }),
+    controlRef: searchDisclosure.toggleRef,
+  });
+  const routeActions = largeTitle === null ? null
+    : pageChrome?.renderNavigationActions?.(titleLineLend === null ? null : <CollectionTitleLineLent lend={titleLineLend} />, 'page') ?? null;
+  const largeTitleActions = searchToggle === null && routeActions === null ? undefined : <>{searchToggle}{routeActions}</>;
   const toolbarHeader = header == null ? header : (
     <PageColumn maxWidthPx={pageColumnMaxWidthPx}>
       <CollectionToolbarCompactContext.Provider value={compactToolbar}>
         <CollectionToolbarOverflowContext.Provider value={toolbarFit}>
+        <CollectionTitleLineLendContext.Provider value={titleLineLend}>
           {/* The header's pieces (the toolbar, a banner the page puts under it, a stale-data line) stand apart. A
               Collection that is the page (it carries the page's name) opens with the pane header's top space, as the
               host's identity row does while the page loads, so the toolbar never sits on the pane's edge. */}
@@ -3047,12 +3082,14 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               the same element whether or not the large title leads it, so a focused search survives the host handing
               the page its large title at a phone width (QB80). */}
           {largeTitle === null ? null : (
-            <HappierPageHeader title={largeTitle} largeTitle
+            <HappierPageHeader title={largeTitle} largeTitle actionsLayout="hang"
+              actions={largeTitleActions}
               testID={props.testID === undefined ? undefined : `${props.testID}:large-title`} />
           )}
           <View style={largeTitle !== null || (props.title === undefined && props.pageRoot !== true) ? headerStackStyle : pageHeaderStackStyle}>
             {header}{headerTokenLine}
           </View>
+        </CollectionTitleLineLendContext.Provider>
         </CollectionToolbarOverflowContext.Provider>
       </CollectionToolbarCompactContext.Provider>
     </PageColumn>

@@ -2,8 +2,10 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentRef,
   type ReactElement,
   type ReactNode,
@@ -59,6 +61,45 @@ export type CollectionToolbarFitReport = Readonly<{
   shrank: () => void;
 }>;
 export const CollectionToolbarOverflowContext = createContext<CollectionToolbarFitReport | null>(null);
+
+/**
+ * A phone main screen's large title takes the folded toolbar's page actions (⋯ and +) onto its own line, beside the
+ * Machine and the magnifier, as core's `MainScreenHeader` draws them. The toolbar lends what it would have drawn on
+ * its search line; the title line draws whatever was lent last. `collapsesSearch`: the search sits behind the title
+ * line's magnifier, so its filters open from the field once it is open, never from a round button beside it.
+ *
+ * @internal Provided only by `Collection`.
+ */
+export type CollectionTitleLineLend = Readonly<{
+  collapsesSearch: boolean;
+  set: (actions: ReactNode) => void;
+  subscribe: (listener: () => void) => () => void;
+  read: () => ReactNode;
+}>;
+export const CollectionTitleLineLendContext = createContext<CollectionTitleLineLend | null>(null);
+
+export function createCollectionTitleLineLend(collapsesSearch: boolean): CollectionTitleLineLend {
+  let lent: ReactNode = null;
+  const listeners = new Set<() => void>();
+  return {
+    collapsesSearch,
+    set: (actions) => {
+      if (actions === lent) return;
+      lent = actions;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    read: () => lent,
+  };
+}
+
+/** The title line's place for what the toolbar lent it. */
+export function CollectionTitleLineLent(props: Readonly<{ lend: CollectionTitleLineLend }>): ReactNode {
+  return useSyncExternalStore(props.lend.subscribe, props.lend.read, props.lend.read);
+}
 
 /** The list's freshness, said in words. A `muted` tone is the healthy, quiet state. */
 export type CollectionToolbarFreshness = Readonly<{
@@ -158,11 +199,24 @@ export function CollectionToolbar(props: CollectionToolbarProps): ReactElement {
   const provided = useContext(CollectionToolbarCompactContext);
   const chrome = useHappierPageChromeInternal();
   const compact = provided ?? chrome?.showsTitle === true;
+  const lend = useContext(CollectionTitleLineLendContext);
+  const lending = compact && lend !== null;
+  // Folded under a large title, ⋯ and + stand on the title line, drawn there as core's title-line controls are: plain.
+  const lent = !lending ? null : (
+    <>
+      {props.refine === undefined || lend.collapsesSearch || props.slots?.search != null ? null
+        : <FilterFunnel refine={props.refine} inField={false} />}
+      <MoreMenu {...props} folded plain />
+      {props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded plain />}
+    </>
+  );
+  useLayoutEffect(() => { lend?.set(lent); });
+  useLayoutEffect(() => () => lend?.set(null), [lend]);
   // One component and one tree for both widths: the search stays one element at one place (the first row's `search`
   // child), so a person typing keeps focus and caret while the window crosses the breakpoint. Two component types
   // here remounted the field on every fold (QA-COLLECTION r159).
   const wide = useWideToolbar(props, !compact);
-  const folded = useCompactToolbar(props, compact);
+  const folded = useCompactToolbar(props, compact, lending);
   const search = props.slots?.search == null ? null
     : <SearchWithFunnel key="search" search={props.slots.search} refine={props.refine} folded={compact} />;
   return compact ? folded(search) : wide(search);
@@ -330,7 +384,7 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
 }
 
 /** The folded toolbar's state; its render takes the search element so the field keeps its place at every width. */
-function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (search: ReactNode) => ReactElement {
+function useCompactToolbar(props: CollectionToolbarProps, active: boolean, lending: boolean): (search: ReactNode) => ReactElement {
   const { slots, freshness, refine } = props;
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
@@ -379,7 +433,8 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
     const filters = refine === undefined || search !== null ? null : <FilterFunnel refine={refine} inField={false} />;
     // MoreMenu draws nothing without items or folded choices; an empty wrapper would add a gap of its own.
     const hasMore = props.refresh !== undefined || (props.more?.items.length ?? 0) > 0 || refine?.foldedChoices !== undefined;
-    const buttons = filters === null && !hasMore && props.primary === undefined ? null : (
+    // Lent to the large title's line, they are drawn there rather than here.
+    const buttons = lending || (filters === null && !hasMore && props.primary === undefined) ? null : (
       <>
         {filters}
         <MoreMenu {...props} folded />
@@ -455,24 +510,27 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean): (sea
   };
 }
 
-function PrimaryControl(props: Readonly<{ primary: NonNullable<CollectionToolbarProps['primary']>; folded: boolean }>): ReactElement {
+function PrimaryControl(props: Readonly<{ primary: NonNullable<CollectionToolbarProps['primary']>; folded: boolean; plain?: boolean }>): ReactElement {
   const { primary, folded } = props;
+  const plain = props.plain === true;
   const [open, setOpen] = useState(false);
   const testID = primary.testID === undefined ? {} : { testID: primary.testID };
   if (primary.menu !== undefined) {
     return (
       <Menu open={open} onOpenChange={setOpen} placement="bottom" trigger={primary.label} triggerIcon="add"
-        triggerAppearance={folded ? 'well' : 'primary'} triggerAccessibilityLabel={primary.label}
+        triggerAppearance={plain ? 'text' : folded ? 'well' : 'primary'} triggerAccessibilityLabel={primary.label}
         items={primary.menu.items} onSelect={primary.menu.onSelect} {...testID} />
     );
   }
-  return folded
+  return plain
+    ? <IconButton icon={<Icon name="add" />} accessibilityLabel={primary.label} onPress={primary.onPress} {...testID} />
+    : folded
     ? <IconButton icon={<Icon name="add" />} appearance="well" accessibilityLabel={primary.label} onPress={primary.onPress} {...testID} />
     : <Button title={primary.label} variant="primary" icon={<Icon name="add" size="small" />} onPress={primary.onPress} {...testID} />;
 }
 
 function MoreMenu(
-  props: CollectionToolbarProps & Readonly<{ folded: boolean }>,
+  props: CollectionToolbarProps & Readonly<{ folded: boolean; plain?: boolean }>,
 ): ReactElement | null {
   const [open, setOpen] = useState(false);
   const { more, refresh, freshness, folded } = props;
@@ -504,7 +562,7 @@ function MoreMenu(
       triggerIcon="more"
       // Secondary ink: on the same glass as "+", the primary is told apart by its full ink, not by a fill.
       triggerTextTone="secondary"
-      {...(folded ? { triggerAppearance: 'well' as const } : {})}
+      {...(folded && props.plain !== true ? { triggerAppearance: 'well' as const } : {})}
       triggerAccessibilityLabel={label}
       items={items}
       {...(choices === undefined ? {} : { groups: choices.groups, radioGroups: choices.radioGroups, showGroupLabels: true })}

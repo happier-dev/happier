@@ -7,6 +7,8 @@ import {
   formatHappierPageCount,
   HappierPageCountLine,
   type HappierPageCountLineTextRender,
+  type HappierSearchDisclosure,
+  useHappierSearchDisclosure,
 } from '@happier-dev/plugin-ui/presentation';
 
 import {
@@ -188,40 +190,14 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
 });
 
 /**
- * The magnifier's field: closed until pressed; a query keeps it open. The magnifier again, the field's close or Escape
- * clears the query, folds the field away and hands focus back to the magnifier. Only an explicit open focuses, so a
- * retained query restoring the page does not steal focus.
+ * The magnifier's field: the one search-behind-a-magnifier rule (`useHappierSearchDisclosure`), shared with a plugin
+ * collection page's large title. Only an explicit open focuses, so a retained query restoring the page does not steal
+ * focus.
  */
-export function useMainScreenSearch(search: MainScreenSearch | null): Readonly<{
-  open: boolean;
-  focusOnOpen: boolean;
-  toggle: () => void;
-  close: () => void;
-  onKeyPress: (event: Readonly<{ nativeEvent?: Readonly<{ key?: string }> }>) => void;
-  toggleRef: (instance: Readonly<{ focus?: () => void }> | null) => void;
-}> {
-  const [opened, setOpened] = React.useState(false);
-  const value = search?.value ?? '';
+export function useMainScreenSearch(search: MainScreenSearch | null): HappierSearchDisclosure {
   const onChangeText = search?.onChangeText;
-  const open = opened || value.length > 0;
-  const toggleInstance = React.useRef<Readonly<{ focus?: () => void }> | null>(null);
-  const toggleRef = React.useCallback((instance: Readonly<{ focus?: () => void }> | null) => {
-    toggleInstance.current = instance;
-  }, []);
-  const close = React.useCallback(() => {
-    onChangeText?.('');
-    setOpened(false);
-    // The field that held focus is gone: hand focus back to the control that opened it.
-    toggleInstance.current?.focus?.();
-  }, [onChangeText]);
-  const toggle = React.useCallback(() => {
-    if (open) close();
-    else setOpened(true);
-  }, [close, open]);
-  const onKeyPress = React.useCallback((event: Readonly<{ nativeEvent?: Readonly<{ key?: string }> }>) => {
-    if (event.nativeEvent?.key === 'Escape') close();
-  }, [close]);
-  return { open, focusOnOpen: opened && value.length === 0, toggle, close, onKeyPress, toggleRef };
+  const clear = React.useCallback(() => onChangeText?.(''), [onChangeText]);
+  return useHappierSearchDisclosure(search?.value ?? '', onChangeText === undefined ? undefined : clear);
 }
 
 const MAIN_SCREEN_BAR = Object.freeze({ headerShown: false });
