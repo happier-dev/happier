@@ -128,6 +128,10 @@ export function useBrowserExtensionsInventory(input: Readonly<{
           if (!response.ok) return { machineId, reason: { kind: 'action' as const, code: response.errorCode } };
           const parsed = BrowserExtensionsListResultV1Schema.safeParse(response.result);
           if (!parsed.success) return { machineId, reason: { kind: 'invalid_response' as const } };
+          // A Machine-wide list from a Machine with no managed browser is an answer: it holds no extensions. Only a
+          // profile's own list needs that browser (its section offers to open it), so there it stays a typed refusal.
+          if (parsed.data.status === 'unavailable' && parsed.data.code === 'managed_browser_required'
+            && input.profileId === undefined) return [];
           if (parsed.data.status === 'unavailable') return { machineId, reason: { kind: 'browser' as const, value: parsed.data } };
           const extensions = parsed.data.entries.map((native): InstalledBrowserExtensionRow => ({ kind: 'browserExtension', subject: 'extension',
             key: serverAccountScopedResourceKey(scope, 'browserExtension', machineId, native.profileId, native.extension.id), scope, machineId, native }));

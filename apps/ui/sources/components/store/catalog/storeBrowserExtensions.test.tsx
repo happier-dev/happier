@@ -33,7 +33,7 @@ it('retains finite list loading, profile-qualified entries, typed unavailable an
   const path = '/v1/actions/browser.extensions.list';
   homes.answer(serverId, path, { select: async body => {
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-    expect(envelope.input).toEqual({ machineId });
+    expect(envelope.input).toMatchObject({ machineId });
     await pending.promise;
     if (gate) await gate;
     return { body: { v: 1, actionId: 'browser.extensions.list', requestId: envelope.requestId, execution: { ok: true, result: value } } };
@@ -66,14 +66,22 @@ it('retains finite list loading, profile-qualified entries, typed unavailable an
     expect(hook.getCurrent().rows).toHaveLength(2);
     gate = null;
     await act(async () => refreshed.resolve());
-    await vi.waitFor(() => expect(hook.getCurrent().coverage).toMatchObject({ unavailable: [{
-      machineId, reason: { kind: 'browser', value: { status: 'unavailable', code: 'managed_browser_required' } },
-    }] }));
-    expect(hook.getCurrent().rows).toEqual([]);
+    // QA-DEPLOY-1114 #41 (UI refinements 03:05Z): a Machine with no managed browser answered its list: it holds no
+    // extensions. Store read that as "Couldn't load these right now" on every Account without a managed browser.
+    await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ rows: [], coverage: 'available' }));
+    // A profile's own list still says it needs the managed browser (the profile section offers to open it).
+    const profileHook = await renderHook(() => useBrowserExtensionsInventory({ scope: account.accountLifetime.scope,
+      machineIds: [machineId], profileId: 'work', presented: true }));
+    try {
+      await vi.waitFor(() => expect(profileHook.getCurrent().coverage).toMatchObject({ unavailable: [{
+        machineId, reason: { kind: 'browser', value: { status: 'unavailable', code: 'managed_browser_required' } },
+      }] }));
+    } finally { await profileHook.unmount(); }
     value = { status: 'ready', entries: [] };
     await act(async () => hook.getCurrent().refresh());
     await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ rows: [], coverage: 'available' }));
-    expect(homes.requestsFor(path)).toHaveLength(3);
+    // Three Machine-wide lists and the profile's own list.
+    expect(homes.requestsFor(path)).toHaveLength(4);
   } finally { await hook.unmount(); account.dispose(); }
 });
 
