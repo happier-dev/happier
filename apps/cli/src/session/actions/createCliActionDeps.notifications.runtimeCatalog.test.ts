@@ -102,6 +102,14 @@ describe('CLI Notify me host composition', () => {
           : { badgeCount: 0 } }));
   });
 
+  it('reports an explicit Notify failure when every attempted delivery fails', async () => {
+    boundary.send.mockResolvedValue([{ status: 'error', message: 'PRIVATE_PROVIDER_BODY', details: { error: 'DeviceNotRegistered' } }]);
+    const result = await host().notificationsNotifyMe?.({ message: 'PRIVATE_MESSAGE', channels: ['builtin:expo_push'] }, { surface: 'cli' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'notification_delivery_unavailable',
+      details: { attemptedChannels: 1, deliveredChannels: 0 } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+  });
+
   it.each(['ordinary', 'native-confirmed'] as const)('tests one configured webhook with its real signature, reports refusal, and retries only when invoked again (%s)', async admission => {
     const observed: { body: Buffer; signature: string | undefined }[] = [];
     const receiver = createServer(async (request, response) => {

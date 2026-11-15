@@ -494,11 +494,16 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                     ...(data === undefined ? {} : { data }),
                     ...(destination === undefined ? {} : { destination }),
                 }), signal);
-                return result !== NOTIFICATION_SENDER_RETIRED
-                    && !signal.aborted
-                    && await isSenderBindingCurrent(available.binding)
-                    && readSenderResult(result, deliveryId, request.channelId).status === 'accepted';
-            } catch {
+                if (result === NOTIFICATION_SENDER_RETIRED || signal.aborted
+                    || !await isSenderBindingCurrent(available.binding)) return false;
+                const delivery = readSenderResult(result, deliveryId, request.channelId);
+                if (delivery.status !== 'accepted') {
+                    throw new PluginError({ code: delivery.code,
+                        ...(delivery.status === 'failed' ? { retryable: delivery.retryable } : {}) });
+                }
+                return true;
+            } catch (error) {
+                if (isPluginError(error)) throw error;
                 return false;
             }
         },

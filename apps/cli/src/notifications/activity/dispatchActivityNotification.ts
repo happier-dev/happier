@@ -3,7 +3,8 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { deriveSessionFollowOriginalOccurrenceKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionErrorCodeV1, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { guardStopWarningNotificationIdV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
@@ -265,7 +266,7 @@ function notificationFailureCause(error: unknown) {
   const classification = classifyServerEndpointError(error);
   return { errorClass: diagnostic.errorClass,
     errorCode: error instanceof NotificationChannelCatalogUnavailableError || error instanceof SavedSecretResolutionError
-      ? error.code : diagnostic.errorCode ?? classification.kind,
+      ? error.code : (isPluginError(error) ? readActionErrorCodeV1(error) : diagnostic.errorCode) ?? classification.kind,
     retryable: classification.retryable,
     ...(classification.statusCode === undefined ? {} : { httpStatus: classification.statusCode }) };
 }

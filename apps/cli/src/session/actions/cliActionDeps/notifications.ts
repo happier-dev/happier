@@ -179,7 +179,7 @@ export function createCliNotificationActionDeps(
       try {
       const { PushNotificationClient } = await import("@/api/pushNotifications");
       const { dispatchActivityNotificationAsync } = await import("@/notifications/activity/dispatchActivityNotification");
-      return await dispatchActivityNotificationAsync({
+      const delivery = await dispatchActivityNotificationAsync({
         ...await readNotificationContext(context.signal),
         expoPushSender: new PushNotificationClient(params.credentials.token,
           params.savedSecretOperationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl,
@@ -191,6 +191,12 @@ export function createCliNotificationActionDeps(
           ...(input.open ? { open: input.open } : {}),
           ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}) },
       });
+      if (delivery.attemptedChannels > 0 && delivery.deliveredChannels === 0) {
+        return { ok: false, errorCode: 'notification_delivery_unavailable',
+          error: 'No notification destination confirmed delivery. Check your notification destinations and their configuration.',
+          details: delivery };
+      }
+      return delivery;
       } catch (error) { return notificationFailure(error); }
     },
   };

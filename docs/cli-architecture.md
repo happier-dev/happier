@@ -2278,8 +2278,11 @@ For the same requester on a separate-users Machine, the handoff's Session import
 and its working-directory creation run as the member. When the TARGET admits
 PREPARE_TARGET_V3, it prepares `prepareMemberSessionHandoffImport`
 (`apps/cli/src/session/handoff/agentBundle/memberImport.ts`). That decision uses
-the same capture predicate. The job then launches `happier handoff-import-effect`
-through the existing exec launch owner, with the member's HOME. The child loads
+the same capture predicate. The job runs a `session_import` effect in the one
+member Workspace effect child (`happier workspace-effect`, the child Project
+Open, Sync and Can use SCM reads use), with the member folder as its working
+directory and the member's HOME. All of these effects launch and talk to that
+child through `workspaces/activation/workspaceEffectProcess.ts`. The child loads
 only the admitted Agent plugin, creates the contained cwd, runs the Agent's
 `importBundle` and returns its native result, which the host projects once. A
 target outside the member's folder gets the checkout owner's
@@ -5710,6 +5713,13 @@ plugin notifications owner. The standalone CLI does not initialize that daemon
 runtime; reaching its plugin channels, and credentialless Agent/MCP delivery,
 still depend on the shared Account-placement relay. Missing Account credentials
 fail closed rather than borrowing ambient authority.
+
+An explicit Notify action returns `notification_delivery_unavailable` with a
+readable failure when it attempts delivery but no channel accepts it. Policy
+suppression and an already-delivered request replay still return zero attempts.
+The Activity file receipt retains a plugin sender's typed failure code so missing
+configuration can be distinguished from a provider refusal without logging
+notification content or credentials.
 
 An Action-backed command must not own a second description of the input the
 Action already defines. The ownership boundary is:

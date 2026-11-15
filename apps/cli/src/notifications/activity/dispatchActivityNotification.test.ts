@@ -319,6 +319,24 @@ describe('dispatchActivityNotificationAsync', () => {
     expect(JSON.stringify(outcomes)).not.toContain('PRIVATE_');
   });
 
+  it.each(['notification_configuration_missing', 'notification_http_503'])('retains a plugin sender failure code (%s) in the dispatch outcome', async code => {
+    const retryable = code === 'notification_http_503';
+    const pluginNotifications = createStablePluginNotificationsOwner({ categories: [],
+      channels: [{ provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.delivery',
+        definition: { id: 'receipt', kind: 'plugin', title: 'Delivery', defaultEnabled: true } }],
+      activateChannel: async () => {}, readChannel: () => ({ occurrenceId: 'current', isCurrent: () => true,
+        send: async request => ({ deliveryId: request.deliveryId, channelId: request.channelId,
+          status: 'failed', code, retryable }) }),
+    });
+    expect(await dispatchActivityNotificationAsync({ settings: accountSettingsParse({}), pluginNotifications,
+      channels: ['acme.delivery/receipt'], event: { topic: 'notify_me', message: 'PRIVATE_BODY' },
+    })).toEqual({ attemptedChannels: 1, deliveredChannels: 0 });
+    const outcomes = vi.mocked(logger.infoFile).mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome');
+    expect(outcomes[0]?.[1]).toMatchObject({ channels: [{ channelId: 'acme.delivery/receipt', status: 'failed',
+      cause: { errorCode: code, retryable } }] });
+    expect(JSON.stringify(outcomes)).not.toContain('PRIVATE_');
+  });
+
   it('records one typed outcome when channel preparation refuses before outward delivery', async () => {
     await expect(dispatchActivityNotificationAsync({ settings: accountSettingsParse({}), pluginNotifications: null,
       notificationChannelCatalog: { status: 'loading' }, event: { topic: 'notify_me', message: 'PRIVATE_BODY' },
