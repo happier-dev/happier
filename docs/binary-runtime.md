@@ -2107,7 +2107,9 @@ PTY terminal modules and native source directories. The development CLI no longe
 ships ps-list or its fastlist executables: Linux process observations use the TS
 procfs census, while macOS and Windows use `process-census` in the existing native
 process-custody helper. A missing helper makes the native census unavailable; it
-does not fall back to shell process listings. The helper returns typed census rows
+does not fall back to shell process listings. Native helper execution failures
+write recognized OS error codes and numeric exit codes to the diagnostic file;
+exception messages, paths, arguments and stderr remain excluded. The helper returns typed census rows
 with start-generation, OS-principal, CPU and explicitly named memory evidence;
 the TS census decoder is the shared reader boundary. Raw own-principal commands,
 paths and owner markers remain daemon-private until the ownership projection

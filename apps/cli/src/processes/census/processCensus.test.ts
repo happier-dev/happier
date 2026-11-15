@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseLinuxProcStartTimeMs } from '@happier-dev/cli-common/processInstance';
 import { readFile, readdir, readlink } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import * as filesystem from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
@@ -469,11 +470,21 @@ describe('process census', () => {
         } finally { diagnostics.mockRestore(); }
     });
 
-    it.each(['darwin', 'win32'] as const)('reports requested native executions while a missing helper performs no enumeration on %s', async platform => {
+    it.each([
+        { platform: 'darwin', code: 'ENOENT', safeCode: 'ENOENT' },
+        { platform: 'win32', code: 'ENOENT', safeCode: 'ENOENT' },
+        { platform: 'win32', code: 1, safeCode: 1 },
+        { platform: 'win32', code: 'private-native-error', safeCode: undefined },
+    ] as const)('reports native execution failures safely on $platform ($code)', async ({ platform, code, safeCode }) => {
         const diagnostics = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+        logger.flushSync();
+        const before = existsSync(logger.getLogPath()) ? readFileSync(logger.getLogPath(), 'utf8') : '';
         let now = 1000;
         let executions = 0;
-        const execFile = async () => { executions++; throw new Error('private-native-error'); };
+        // Genuine native execution boundary; all exception text and incidental fields stay private.
+        const execFile = async () => { executions++; throw Object.assign(new Error('private-native-error'), {
+            code, path: '/private-native-error/helper', stderr: 'private-native-error', spawnargs: ['private-native-error'],
+        }); };
         try {
             const captures = () => diagnostics.mock.calls.filter(([message]) => message === '[process-census] Observation phase settled');
             const missing = createProcessCensusReader({ platform, selfPid: 42, helperExecutablePath: null, execFile });
@@ -493,6 +504,13 @@ describe('process census', () => {
             expect(executions).toBe(3);
             expect(captures()).toHaveLength(3);
             expect(JSON.stringify(captures())).not.toContain('private-native-error');
+            logger.flushSync();
+            const diagnostic = (existsSync(logger.getLogPath()) ? readFileSync(logger.getLogPath(), 'utf8') : '').slice(before.length);
+            expect(diagnostic).toContain('[process-custody] Native sampling failed');
+            expect(diagnostic).toMatch(/"command":\s*"process-census"/);
+            if (safeCode !== undefined) expect(diagnostic).toMatch(new RegExp(`"errorCode":\\s*${JSON.stringify(safeCode)}`));
+            else expect(diagnostic).not.toContain('errorCode');
+            expect(diagnostic).not.toContain('private-native-error');
         } finally { diagnostics.mockRestore(); }
     });
 

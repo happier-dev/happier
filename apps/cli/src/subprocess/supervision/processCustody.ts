@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { constants, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
@@ -177,8 +177,16 @@ export function createProcessCustodySamplingInvoker(options: Readonly<{
             if (result.stdoutTruncated) throw new Error('Native sampling output was truncated');
             if (input.command === 'vitals-sample') nextVitalsAttempt = 0;
             return { state: 'ready', stdout: String(result.stdout) };
-        } catch {
+        } catch (error) {
             if (input.command === 'vitals-sample') nextVitalsAttempt = (Math.floor(input.sampledAt / 60_000) + 1) * 60_000;
+            const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+            // Keep native execution codes only, never exception text, paths, argv or stderr.
+            const errorCode = (typeof code === 'number' && Number.isSafeInteger(code))
+                || (typeof code === 'string' && Object.hasOwn(constants.errno, code)) ? code : undefined;
+            const { logger } = await import('@/ui/logger');
+            logger.infoFile('[process-custody] Native sampling failed', {
+                command: input.command, ...(errorCode !== undefined ? { errorCode } : {}),
+            });
             return { state: 'unavailable', reason: 'helper_failing' };
         }
     };
