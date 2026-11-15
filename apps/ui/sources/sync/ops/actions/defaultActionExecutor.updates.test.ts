@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { UpdatesSnapshotResultSchema } from '@happier-dev/protocol/actions/updatesActionFamily';
 import { act } from 'react-test-renderer';
-import { createMachineFixture, flushHookEffects, renderHook } from '@/dev/testkit';
+import { createMachineFixture, createPlainMachineRowFixture, flushHookEffects, renderHook } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { UpdateItem } from '@/updates/items/updateItem';
 import type { UpdatesGroup } from '@/updates/buildMachineUpdateGroups';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { createUiApprovalRequest, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 vi.mock('@/modal', async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -107,9 +107,11 @@ describe('Updates Actions through current UI update owners', () => {
                 channel: 'stable', installSource: 'managed', updateCommand: 'happier self update', canUpdateRemotely: true,
                 lastUpdate: null },
         } });
-        storage.setState(state => ({ profileScope: scope, profile: { ...state.profile, id: scope.accountId },
-            machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] },
-            machineListStatusByServerId: { [scope.serverId]: 'idle' } }));
+        const row = { ...createPlainMachineRowFixture({ id: machine.id, accountId: scope.accountId, machine }),
+            installationId: `${machine.id}-installation` };
+        homes.answer(scope.serverId, '/v1/machines', { body: [row] });
+        homes.answer(scope.serverId, `GET /v1/machines/${machine.id}`, { body: { machine: row } });
+        await publishMachineInventoryForTest(scope, [machine]);
         let releasePoll!: () => void;
         const pendingPoll = new Promise<void>(resolve => { releasePoll = resolve; });
         let enterPoll!: () => void;
@@ -134,13 +136,10 @@ describe('Updates Actions through current UI update owners', () => {
             const item = (await readSnapshot()).groups.find(group => group.groupId === 'machine:studio')?.items
                 .find(row => row.itemId === 'studio:happier-cli');
             expect(item).toMatchObject({ state: 'available', batchEligible: true, subject: { kind: 'happier-cli' } });
-            const admitted = await executor.execute('updates.batch.start', {
-                groupId: 'machine:studio', itemIds: [item!.itemId],
-            }, context);
-            if (!admitted.ok) throw new Error(admitted.errorCode);
-            const approval = ActionApprovalRequestCreatedResultSchema.parse(admitted.result);
+            const artifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'updates.batch.start',
+                actionInput: { groupId: 'machine:studio', itemIds: [item!.itemId] }, actionRequestId: 'updates-stop' });
             expect(starts()).toEqual([]);
-            const replay = executor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, context);
+            const replay = executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
             expect(await Promise.race([
                 pollEntered.then(() => ({ kind: 'dispatched' as const })),
                 replay.then(result => ({ kind: 'settled' as const, result })),
@@ -196,9 +195,8 @@ describe('Updates Actions through current UI update owners', () => {
         replaceItems([helper]);
         const executor = createDefaultActionExecutor();
         const context = { surface: 'ui' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
-        const initial = await executor.execute('machines.capabilities.install', { machineId: 'studio', capabilityId: 'dep.gh', method: 'upgrade' }, context);
-        if (!initial.ok) throw new Error(JSON.stringify(initial));
-        const approval = ActionApprovalRequestCreatedResultSchema.parse(initial.result);
+        const artifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'machines.capabilities.install',
+            actionInput: { machineId: 'studio', capabilityId: 'dep.gh', method: 'upgrade' }, actionRequestId: 'updates-helper' });
         expect(observeMachineUpdateRun(readMachineUpdateRuns(scope.serverId), helper.id).running).toBe(false);
         expect(starts()).toEqual([]);
         let release!: () => void;
@@ -213,7 +211,7 @@ describe('Updates Actions through current UI update owners', () => {
             }
             return boundary(request);
         });
-        const replay = executor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, context);
+        const replay = executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
         const admission = await Promise.race([
             dispatched.then(() => ({ kind: 'dispatched' as const })),
             replay.then(result => ({ kind: 'settled' as const, result })),
@@ -226,15 +224,14 @@ describe('Updates Actions through current UI update owners', () => {
             running: false, errorMessage: 'Update failed.', logPath: '/logs/update.log',
         });
     });
-    it('keeps Account Ask-first policy before effects, then replays the exact target through the existing remote updater', async () => {
+    it('keeps an explicit update proposal free of effects, then replays its exact target through the existing remote updater', async () => {
         const { scope } = await installOwner();
         const executor = createDefaultActionExecutor();
         const context = { surface: 'ui' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
-        const initial = await executor.execute('machines.cli.update', { target: { kind: 'machine', machineId: 'studio' } }, context);
-        if (!initial.ok) throw new Error(JSON.stringify(initial));
-        const approval = ActionApprovalRequestCreatedResultSchema.parse(initial.result);
+        const artifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'machines.cli.update',
+            actionInput: { target: { kind: 'machine', machineId: 'studio' } }, actionRequestId: 'updates-cli' });
         expect(starts()).toEqual([]);
-        expect(await executor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, context))
+        expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context))
             .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { status: 'requested' } } } });
         expect(starts().map(([request]) => [request.serverId, request.accountId, request.machineId, request.payload.method]))
             .toEqual([[scope.serverId, 'alice', 'studio', 'start'], [scope.serverId, 'alice', 'studio', 'poll']]);
@@ -244,17 +241,15 @@ describe('Updates Actions through current UI update owners', () => {
         const { scope, replaceItems } = await installOwner();
         const executor = createDefaultActionExecutor();
         const context = { surface: 'ui' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
-        const initial = await executor.execute('updates.batch.start', { groupId: 'machine:studio', itemIds: [cli.id] }, context);
-        if (!initial.ok) throw new Error(JSON.stringify(initial));
-        const approval = ActionApprovalRequestCreatedResultSchema.parse(initial.result);
+        const artifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'updates.batch.start',
+            actionInput: { groupId: 'machine:studio', itemIds: [cli.id] }, actionRequestId: 'updates-withdrawn' });
         replaceItems([{ ...cli, state: 'upToDate', action: { kind: 'none' } }]);
-        expect(await executor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, context))
+        expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context))
             .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'update_target_unavailable' } } });
-        const foreign = await executor.execute('machines.cli.update', { target: { kind: 'machine', machineId: 'other' } }, context);
-        if (!foreign.ok) throw new Error(JSON.stringify(foreign));
-        const foreignApproval = ActionApprovalRequestCreatedResultSchema.parse(foreign.result);
+        const foreignArtifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'machines.cli.update',
+            actionInput: { target: { kind: 'machine', machineId: 'other' } }, actionRequestId: 'updates-foreign' });
         expect(starts()).toEqual([]);
-        expect(await executor.execute('approval.request.decide', { artifactId: foreignApproval.artifactId, decision: 'approve' }, context))
+        expect(await executor.execute('approval.request.decide', { artifactId: foreignArtifactId, decision: 'approve' }, context))
             .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'update_target_unavailable' } } });
         expect(starts()).toEqual([]);
     });
@@ -266,17 +261,12 @@ describe('Updates Actions through current UI update owners', () => {
         const executor = createDefaultActionExecutor();
         const context = { surface: 'ui' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
         const invalid = await executor.execute('updates.batch.start', { groupId: 'machine:studio', itemIds: ['made-up'] }, context);
-        if (!invalid.ok) throw new Error(JSON.stringify(invalid));
-        const invalidApproval = ActionApprovalRequestCreatedResultSchema.parse(invalid.result);
+        expect(invalid).toMatchObject({ ok: false, errorCode: 'update_target_unavailable' });
         expect(starts()).toEqual([]);
-        expect(await executor.execute('approval.request.decide', { artifactId: invalidApproval.artifactId, decision: 'approve' }, context))
-            .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'update_target_unavailable' } } });
+        const artifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'updates.batch.start',
+            actionInput: { groupId: 'machine:studio', itemIds: [cli.id, helper.id] }, actionRequestId: 'updates-order' });
         expect(starts()).toEqual([]);
-        const valid = await executor.execute('updates.batch.start', { groupId: 'machine:studio', itemIds: [cli.id, helper.id] }, context);
-        if (!valid.ok) throw new Error(JSON.stringify(valid));
-        const validApproval = ActionApprovalRequestCreatedResultSchema.parse(valid.result);
-        expect(starts()).toEqual([]);
-        expect(await executor.execute('approval.request.decide', { artifactId: validApproval.artifactId, decision: 'approve' }, context))
+        expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context))
             .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { status: 'requested' } } } });
         expect(starts().map(([request]) => request.payload.method)).toEqual(['upgrade', 'start', 'poll']);
     });

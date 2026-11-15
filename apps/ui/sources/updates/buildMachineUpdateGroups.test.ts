@@ -10,7 +10,7 @@ vi.mock('@/text', async () => {
 
 import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { describeUpdatesGroupRow, partitionUncheckedItems, partitionUpdatesPageGroups } from '@/components/updates/describeUpdatesGroupRow';
@@ -20,7 +20,7 @@ import { buildMachineUpdateGroups, readUpdatableInstallables } from './buildMach
 import { buildUpdatesSummary } from './items/buildUpdatesSummary';
 
 function machine(id: string, metadata: Partial<NonNullable<Machine['metadata']>> = {}): Machine {
-    return {
+    const row = {
         id,
         seq: 1,
         createdAt: 1,
@@ -36,6 +36,8 @@ function machine(id: string, metadata: Partial<NonNullable<Machine['metadata']>>
             ...metadata,
         },
     } as Machine;
+    publishMachineActivityForTest([row]);
+    return row;
 }
 
 const NO_RUNS = new Map();
@@ -65,7 +67,6 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
             currentVersion: '0.2.10', latestVersion: null, channel: 'stable', installSource: 'managed',
             updateCommand: 'happier self update', canUpdateRemotely: true, lastUpdate: null,
         } });
-        publishMachineActivity(guest, guest, []);
         const params = { accountScope: { serverId: 'home-a', accountId: 'updates-account' }, machines: [guest],
             thisMachineId: null, thisComputerItem: null, runs: NO_RUNS,
             machineAgents: new Map([[guest.id, ['claude', 'codex'].map(agentId => projectMachineAgent({
@@ -82,7 +83,6 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
         const updatedGuest = machine(guest.id, {
             ...guest.metadata!, cliUpdate: { ...guest.metadata!.cliUpdate!, latestVersion: '0.2.20' },
         });
-        publishMachineActivity(updatedGuest, updatedGuest, []);
         const answered = buildMachineUpdateGroups({ ...params, machines: [updatedGuest] });
         expect(answered.groups[0]!.items[0]).toMatchObject({ state: 'available', action: { kind: 'run', verb: 'update' } });
     });
@@ -99,13 +99,16 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
         });
         expect(unknown.groups[0]?.items[0]).toMatchObject({ currentVersion: '0.2.12', action: { kind: 'none' } });
         expect(buildUpdatesSummary(unknown.groups.flatMap(group => group.items)).status).not.toBe('offline');
-        const offline = buildMachineUpdateGroups({ ...params, accountScope: scope, machines: [{ ...studio, active: false, activeAt: Date.now() - 120_000 }] });
+        const offlineMachine = { ...studio, active: false, activeAt: Date.now() - 120_000 };
+        publishMachineActivityForTest([offlineMachine]);
+        const offline = buildMachineUpdateGroups({ ...params, accountScope: scope, machines: [offlineMachine] });
         expect(partitionUpdatesPageGroups(offline.groups).offline).toHaveLength(1);
     });
 
     it('keeps historical Machines visible without adding them to the current fleet offline count', () => {
         const current = { ...machine('current'), active: false, activeAt: 0 };
         const previous = { ...machine('previous'), active: false, activeAt: 0, replacedByMachineId: 'current' };
+        publishMachineActivityForTest([current, previous]);
         const built = buildMachineUpdateGroups({ accountScope: { serverId: 'home-a', accountId: 'updates-account' },
             machines: [current, previous], thisMachineId: null, thisComputerItem: null,
             runs: NO_RUNS, machineAgents: new Map(), snapshots: new Map() });
@@ -118,6 +121,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
     it('counts a current offline Machine while its display metadata is unavailable', () => {
         const locked = { ...machine('locked'), active: false, activeAt: 0, metadata: null,
             availability: { kind: 'locked' as const, reason: 'decryption_failed' as const } };
+        publishMachineActivityForTest([locked]);
         const built = buildMachineUpdateGroups({ accountScope: { serverId: 'home-a', accountId: 'updates-account' },
             machines: [locked], thisMachineId: null, thisComputerItem: null,
             runs: NO_RUNS, machineAgents: new Map(), snapshots: new Map() });
@@ -176,6 +180,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
     it('tells two machines with the same name apart, as every other machine list does', () => {
         const first = machine('f98b1234', { host: 'lima-happier-fresh' });
         const second = { ...machine('b8fe5678', { host: 'lima-happier-fresh' }), active: false } as Machine;
+        publishMachineActivityForTest([second]);
         const { groups } = buildMachineUpdateGroups({ accountScope: { serverId: "home-a", accountId: "updates-account" },
             machines: [first, second],
             thisMachineId: null,
@@ -189,6 +194,7 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
 
     it('carries when an offline machine was last seen, from the machine itself', () => {
         const studio = { ...machine('studio'), active: false, activeAt: 1_700_000_000_000 } as Machine;
+        publishMachineActivityForTest([studio]);
         const { groups } = buildMachineUpdateGroups({ accountScope: { serverId: "home-a", accountId: "updates-account" },
             machines: [studio],
             thisMachineId: null,
