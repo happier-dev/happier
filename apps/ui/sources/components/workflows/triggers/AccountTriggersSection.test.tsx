@@ -97,7 +97,7 @@ function fixture(legacy = false, triggers = [trigger('t1')]) {
     return WorkflowTriggerSetV1Schema.parse({ automationId: 'digest', revision: 1, enabled: true,
         health: 'available', project, ...(legacy ? { legacy: { editable: false, reason: 'created_in_0_2' } } : {}),
         target: { kind: 'inline', definition: { version: 1,
-            defaults: { engine: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } },
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
             blocks: [{ kind: 'step', id: 'first', name: 'Morning digest',
             document: { text: 'Morning digest', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] } },
         triggers });
@@ -841,6 +841,8 @@ describe('Account Workflow Library and settings', () => {
         const target = row.openTarget;
         const screen = await renderAccountScreen(<></>);
         void library.getCurrent().editor.open(target, { current: null });
+        // The review body mounts before its decision footer is published to the modal host.
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         // Exactly one confirmation: the Action's own.
         await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('actions.confirmation-review')).toHaveLength(1));
         expect(library.getCurrent().editor.popover).toBeNull();

@@ -16,6 +16,7 @@ import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/trig
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationRunCause';
 import { HappierStatusDot } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
+import { formatOnceScheduleStateLabel } from '@/components/workflows/triggers/triggerSchedule';
 
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -167,10 +168,10 @@ describe('opened habit History result', () => {
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="missed-once" set={set}
             draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        expect(screen.getTextContent()).toContain('common.done');
-        await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-more');
         await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
+        expect(screen.findHostByTestId('session-work-trigger-history:auto-1-once')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(formatOnceScheduleStateLabel('missed'));
         expect(screen.getTextContent()).toContain(errorCode === 'machine_offline'
             ? 'workflows.triggers.once.missedOffline' : 'workflows.triggers.once.missedUnavailable');
         expect(screen.getTextContent()).not.toContain('workflows.finalOutput.none');
@@ -190,8 +191,7 @@ describe('opened habit History result', () => {
         await flushHookEffects();
         expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
-        // History waits behind the row's ⋯ (owner 0936 #14), and opening the menu reads nothing.
-        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-more');
+        // History is available beside the saved start, but reads only when opened.
         expect(screen.findHostByTestId('saved-workflow-trigger:saved:timer-history')).not.toBeNull();
         expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
@@ -204,7 +204,6 @@ describe('opened habit History result', () => {
         expect(reads.length).toBeGreaterThan(0);
         for (const request of reads) expect(request.input).toMatchObject({ request: { triggerId: 'timer' } });
         const beforeSibling = http.requests.length;
-        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:sibling-timer-more');
         await screen.pressByTestIdAsync('saved-workflow-trigger:saved:sibling-timer-history');
         await waitForHomeGovernance(() => expect(http.requests.slice(beforeSibling).some(request => request.path === route)).toBe(true));
         await flushHookEffects();
@@ -214,9 +213,7 @@ describe('opened habit History result', () => {
         expect(siblingReads.length).toBeGreaterThan(0);
         for (const request of siblingReads) expect(request.input).toMatchObject({ request: { triggerId: 'sibling-timer' } });
         expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
-        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer');
-        expect(screen.findHostByTestId('saved-workflow-trigger-popover-history')).not.toBeNull();
-        await screen.pressByTestIdAsync('saved-workflow-trigger-popover-history');
+        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
     });
