@@ -771,6 +771,28 @@ test('control input reaches the admitted payload and EOF cancels its process tre
   await assert.rejects(readFile(pidFile), { code: 'ENOENT' });
 });
 
+test('dispatcher death ends a TERM-ignoring payload even though its output readers are gone', { skip: process.platform === 'win32' }, async t => {
+  // sshd exits with the dispatcher: lifeline EOF arrives with stdout/stderr
+  // readers already closed, so custody's teardown diagnostics hit a dead pipe.
+  const { root } = await createTempFixture(t, { prefix: 'hstack-dispatcher-death-' });
+  const marker = join(root, 'payload.pid');
+  let payloadPid;
+  t.after(() => { if (payloadPid) { try { process.kill(payloadPid, 'SIGKILL'); } catch {} } });
+  const child = spawn('/bin/bash', [custody, 'run', join(root, 'remote-exec/dispatcher-death.pid'), 'dispatcher-death', '/bin/bash', '-c',
+    `trap '' TERM; printf '%s\\n' "$$" > ${quote(marker)}; while :; do sleep 1; done`],
+  { env: { ...process.env, HAPPIER_REMOTE_EXEC_LIFELINE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = once(child, 'close');
+  await waitFor(async () => {
+    payloadPid = Number(await readFile(marker, 'utf8').catch(() => '0'));
+    return payloadPid > 0;
+  }, 'payload did not start');
+  child.stdout.destroy();
+  child.stderr.destroy();
+  child.stdin.end();
+  await closed;
+  await waitFor(() => !running(payloadPid), 'payload survived its dispatcher');
+});
+
 test('control input survives the native admitted process tree', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-admitted-control-' });
   const native = await installNativeAdmissionFixture({ root, prepareDependencies: true });

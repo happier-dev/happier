@@ -22,8 +22,10 @@ async function waitFor(predicate, message) {
 }
 
 // Requires the real systemd scope boundary: a detached worker remains in its
-// cgroup even after its launcher process group has terminated.
-for (const admitted of [false, true]) test(`lifeline EOF ends ${admitted ? 'the owned scope including a detached worker' : 'a queued job without running its payload'}`, {
+// cgroup even after its launcher process group has terminated. A dead SSH
+// dispatcher also takes sshd's stdout/stderr readers with it, so custody's own
+// teardown diagnostics must not end custody before it stops the scope.
+for (const [admitted, dispatcherGone] of [[false, false], [true, false], [false, true], [true, true]]) test(`${dispatcherGone ? 'dispatcher death' : 'lifeline EOF'} ends ${admitted ? 'the owned scope including a detached worker' : 'a queued job without running its payload'}`, {
   skip: process.platform !== 'linux' || process.env.HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS !== '1',
 }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'custody-scope-' });
@@ -74,6 +76,7 @@ await runAdmittedTask({ root: ${JSON.stringify(admissionRoot)}, className: 'vali
   const cgroup = (await readFile(`/proc/${workerPid}/cgroup`, 'utf8')).trim().split('/').at(-1);
   assert.match(cgroup, /^happier-jobs-.*\.scope$/u);
   assert.equal((await requestAdmissionSample(admissionRoot)).activeCount, admitted ? 1 : 0);
+  if (dispatcherGone) { child.stdout.destroy(); child.stderr.destroy(); }
   child.stdin.end();
   await completion;
   await waitFor(async () => {
@@ -83,5 +86,5 @@ await runAdmittedTask({ root: ${JSON.stringify(admissionRoot)}, className: 'vali
   await waitFor(() => !running(workerPid), 'detached worker survived caller EOF after broker slot release');
   const scope = spawnSync('systemctl', ['--user', 'show', cgroup, '--property=ActiveState', '--value'], { encoding: 'utf8' });
   assert.notEqual(scope.stdout.trim(), 'active', 'job scope survived caller EOF');
-  assert.match(error, /"target_kind":"scope"/u);
+  if (!dispatcherGone) assert.match(error, /"target_kind":"scope"/u);
 });

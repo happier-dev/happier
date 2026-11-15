@@ -357,7 +357,11 @@ terminate_command() {
     systemctl --user stop "$owned_scope" >/dev/null 2>&1 || true
   fi
 }
-cancel() { trap '' HUP INT TERM; termination_reason=signal; terminate_command "$termination_reason"; exit 130; }
+# Teardown outlives the controller's output readers: a dead SSH dispatcher
+# closes stdout/stderr with the lifeline, and the first diagnostic write would
+# otherwise SIGPIPE custody before it stops the payload. Ignore PIPE only here,
+# never before the payload starts, so the payload keeps the default disposition.
+cancel() { trap '' HUP INT TERM PIPE; termination_reason=signal; terminate_command "$termination_reason"; exit 130; }
 trap cleanup EXIT
 trap cancel HUP INT TERM
 if [ -n "$command_temp_parent" ]; then
@@ -395,7 +399,7 @@ if [ "$lifetime_stdin" = 1 ]; then
     done
     # Leader exit can make the wrapper's wait finish during TERM. Once EOF is
     # observed, cleanup must not interrupt the final KILL of stubborn children.
-    trap '' HUP INT TERM
+    trap '' HUP INT TERM PIPE
     signal_member lifeline_eof TERM pid "$$" "$$:$wrapper_token"
     terminate_command lifeline_eof
     rm -f -- "$pid_file"
