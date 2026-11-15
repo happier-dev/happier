@@ -521,9 +521,10 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     }
     // The finite operation consumes one admission, including its result receipt.
     expect(accountCurrentnessChecks).toBe(1);
-    // Initial snapshot, one context admission and one detached-result
-    // qualification before the materialized credential leaves the host.
-    expect(credentialReads).toBe(3);
+    // Initial snapshot and one context admission after the host callback
+    // (beforeInvoke); the materialized result publishes that admitted
+    // snapshot without an after-callback re-read (R6).
+    expect(credentialReads).toBe(2);
     // Acquisition repairs the pre-declaration account despite its already healthy status.
     expect(storedExportProjection).toEqual({
       directExportContract: 'happier.team-credential-manual-connected-account-direct.v1',
@@ -619,15 +620,17 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     await expect(owner.invoke({ account: target,
       operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
     })).resolves.toMatchObject({ kind: 'environment' });
-    expect(credentialReads - beforeMaterialCredentials).toBe(2);
+    // One credential admission per materialization (R6).
+    expect(credentialReads - beforeMaterialCredentials).toBe(1);
     for (const rotation of ['credential', 'configuration'] as const) {
       rotateAfterMaterialFields = rotation;
-      await expect(owner.invoke({ account: target,
+      const materialized = owner.invoke({ account: target,
         operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
-      })).rejects.toMatchObject({ code: configured
-        // A configured row must still match its admitted credential/configuration pair.
-        ? 'connected_account_configuration_unavailable'
-        : 'connected_account_producer_result_stale' });
+      });
+      // A credential or configuration row rotated during one materialization:
+      // that materialization publishes its admitted snapshot; the next one
+      // reads the new revision (R6, accepted imperfection #3).
+      await expect(materialized).resolves.toMatchObject({ kind: 'environment' });
       credentialRevision = requestAuthCredentialRevision;
       configurationRevision = snapshot.configurationRevision;
     }

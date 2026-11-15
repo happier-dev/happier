@@ -64,10 +64,15 @@ let directory: string;
 let providerRejectsRefresh = false;
 let groupActiveAccount: { service: typeof service; accountId: string } | null = null;
 const purposeInvalidations = new Set<() => void>();
+let freshAuthorityModeReads = 0;
 const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({
   reloadController: pluginReloadController,
   credentials,
-  getAccountEncryptionMode: async () => 'e2ee',
+  // Counts fresh-authority mode reads: the Home fences mode on credential writes.
+  getAccountEncryptionMode: async (_signal?: AbortSignal, options?: Readonly<{ usage?: 'fresh-authority' }>) => {
+    if (options?.usage === 'fresh-authority') freshAuthorityModeReads += 1;
+    return 'e2ee';
+  },
   configuration: {
     read: async () => null,
     secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
@@ -461,10 +466,10 @@ fi
       expect(fresh, fresh.ok ? 'fresh launch admitted' : fresh.result.errorMessage).toMatchObject({ ok: true });
       expect(fresh.ok ? JSON.parse(fresh.auth?.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? 'null') : null)
         .toEqual([expect.objectContaining({ kind: 'group', groupId: group.ref.groupId, activeProfileId: account.accountId })]);
-      // One acquisition for the selected account, then the required artifact
-      // publication qualification. The unused pool member needs no secret read.
+      // One admitted credential snapshot per materialization (R6): no
+      // after-callback re-read. The unused pool member needs no secret read.
       expect(http.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v4/connect/qualified/credential'))
-        .toHaveLength(2);
+        .toHaveLength(1);
       stale = await prepare(60_000);
       expect(stale).toMatchObject({ ok: false });
       const profiles = { ...accounts, accounts: accounts.accounts.map(profile => ({ ...profile,
@@ -495,6 +500,7 @@ fi
       const state = async () => ({ ...buildQualifiedConnectedAccountAuthGroupSwitchState({
         group: selectedGroup, profiles: profiles.accounts }), serviceId: service });
       try {
+        freshAuthorityModeReads = 0;
         rotated = await prepareDaemonConnectedServices({
           options: { directory, connectedServices: { v: 2, bindingsByServiceId: {
             'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: group.ref.groupId },
@@ -530,8 +536,11 @@ fi
         const reads = diagnostics.mock.calls.filter(([message, fields]) => message === '[CONNECTED ACCOUNT] Materialization phase'
           && fields && typeof fields === 'object' && 'phase' in fields && fields.phase === 'established_credential_read'
           && 'status' in fields && fields.status === 'started');
-        // Selected member status, material acquisition, final publication fence.
-        expect(reads).toHaveLength(3);
+        // Selected member status and material acquisition; no publication re-read (R6).
+        expect(reads).toHaveLength(2);
+        // The refreshed replacement is sealed with the admitted mode; the Home's
+        // fenced credential write refuses a stale mode (storage_mode_mismatch).
+        expect(freshAuthorityModeReads).toBe(0);
       } finally { diagnostics.mockRestore(); }
     } finally {
       for (const prepared of [fresh, stale, rotated]) {

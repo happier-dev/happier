@@ -425,7 +425,7 @@ describe('connected-account runtime invoker', () => {
         })).resolves.toEqual({ kind: 'httpHeaders', headers });
     });
     it.each(['current', 'retiredDuringCopy', 'cancelledDuringCopy', 'producerRejected'] as const)(
-        'qualifies a detached materialization once after copying computed fields (%s)', async (outcome) => {
+        'publishes a detached materialization from its entry admission without re-qualifying (%s)', async (outcome) => {
         let current = true;
         const isCurrent = vi.fn(() => current);
         const cancellation = new AbortController();
@@ -448,17 +448,17 @@ describe('connected-account runtime invoker', () => {
                 kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
             },
         }, isCurrent, cancellation.signal);
-        if (outcome === 'retiredDuringCopy') {
-            await expect(result).rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
-        } else if (outcome === 'cancelledDuringCopy') {
+        if (outcome === 'cancelledDuringCopy') {
             await expect(result).rejects.toMatchObject({ name: 'AbortError' });
         } else if (outcome === 'producerRejected') {
             await expect(result).rejects.toBe(producerError);
         } else {
+            // A credential retired during the copy is still the admitted one:
+            // revocation takes effect at the next materialization (R6).
             await expect(result).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer computed-credential' } });
         }
-        // One final admission still measures both independent authorities.
-        expect(isCurrent.mock.calls.length - qualificationsAtReturn).toBe(outcome === 'cancelledDuringCopy' ? 0 : 2);
+        // One credential admission per materialization: no after-callback re-qualification.
+        expect(isCurrent.mock.calls.length - qualificationsAtReturn).toBe(0);
     });
     it('consumes through the optional recovery facet under exact account context and fails closed without it', async () => {
         const operation = { kind: 'recoveryCredits.consume', request: { idempotencyKey: 'key-1', providerCreditId: 'credit-1' } } as const;

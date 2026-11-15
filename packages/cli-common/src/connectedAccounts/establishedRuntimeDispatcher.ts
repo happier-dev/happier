@@ -39,13 +39,12 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
         input: ConnectedAccountRuntimeEstablishedInvocation,
         lease: Readonly<{ isCurrent(): boolean }>,
         signal: AbortSignal,
-        phase: 'admission' | 'publication' = 'admission',
     ): Promise<void> {
         signal.throwIfAborted();
         if (!lease.isCurrent()) throw staleConnectedAccountProducerResult(input.operation.kind);
         const [configurationCurrent, credentialCurrent] = await Promise.all([
             observeMaterializationPhase('runtime_configuration_currentness', () => input.isConfigurationCurrent(input.context.configuration)),
-            observeMaterializationPhase('runtime_credential_currentness', () => input.isCredentialRevisionCurrent(phase)),
+            observeMaterializationPhase('runtime_credential_currentness', () => input.isCredentialRevisionCurrent()),
         ]);
         signal.throwIfAborted();
         if (!lease.isCurrent() || !configurationCurrent || !credentialCurrent) {
@@ -53,16 +52,15 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
         }
     }
 
-    /** Finite admitted work observes local cancellation; materialization qualifies before disclosure. */
+    /** Finite admitted work observes local cancellation; credential admission happened once at entry. */
     async function assertEstablishedFenceCurrent(
         input: ConnectedAccountRuntimeEstablishedInvocation,
         lease: Readonly<{ isCurrent(): boolean }>,
         signal: AbortSignal,
         phase?: ConnectedAccountCallbackCurrentnessPhase,
     ): Promise<void> {
-        if (phase === 'afterCallback' && input.operation.kind === 'materialize') {
-            return await assertEstablishedAuthorityCurrent(input, lease, signal, 'publication');
-        }
+        // One credential admission per materialization: the callback publishes
+        // the admitted snapshot; revocation applies at the next materialization.
         // A successful refresh may already have consumed a single-use token.
         // Its admitted replacement must survive cancellation and registry retirement.
         if (phase === 'afterCallback' && input.operation.kind === 'refresh') return;

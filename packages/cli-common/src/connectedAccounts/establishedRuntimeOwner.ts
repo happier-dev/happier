@@ -1034,11 +1034,11 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                   Object.freeze({ kind: 'configurationUnknown' as const }),
                 );
           },
-          async isCredentialRevisionCurrent(phase = 'publication') {
-            // Entry consumes the exact snapshot already admitted above. An
-            // intervening host callback and final credential disclosure retain
-            // their fresh qualification at the existing effect boundary.
-            const latest = phase === 'admission' && !input.beforeInvoke
+          async isCredentialRevisionCurrent() {
+            // Entry consumes the exact snapshot already admitted above (R6: one
+            // credential admission per materialization). Only an intervening
+            // host callback (quota beforeInvoke) re-qualifies the revision.
+            const latest = !input.beforeInvoke
               ? initial.credential
               : await readCredential({
                   ref: input.account,
@@ -1055,8 +1055,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
               || latest.configurationRevision !== initial.credential.configurationRevision
             ) return false;
             // Health belongs to this qualified snapshot even when revisions
-            // stay unchanged. Status consumes admission; materialization
-            // publication supplies its later snapshot.
+            // stay unchanged.
             observedCredentialHealth = latest.health ?? null;
             return true;
           },
@@ -1159,9 +1158,11 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                   metadata,
                   now: Date.now(),
                 });
-              const currentMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(signal, { usage: 'fresh-authority' }), signal);
+              // Sealed with the admitted mode: the Home's credential write checks
+              // the envelope against the Account mode under its publication lock
+              // and refuses a stale mode with a typed storage_mode_mismatch.
               assertNotAborted(signal);
-              if (currentMode !== accountMode || (input.operation.kind !== 'refresh' && !isCurrent())) {
+              if (input.operation.kind !== 'refresh' && !isCurrent()) {
                 throw new Error('Connected-account credential mutation basis is no longer current');
               }
               const content = params.sealCredentialContent(accountMode, plaintext);
