@@ -21,10 +21,6 @@ import { z } from 'zod/mini';
 import type { XaiRealtimeSettingsV1 } from '../../protocol/voice/settings.js';
 import { normalizeXaiRealtimeEventType } from './wire.js';
 
-const MAX_PENDING_TOOL_RESPONSES = 128;
-const MAX_COMPLETED_TOOL_RESPONSES = 512;
-const MAX_PROCESSED_EVENT_IDS = 4_096;
-
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -55,11 +51,6 @@ function parseArguments(value: unknown): VoiceRealtimeJsonValue {
 
 function optionalEntries(input: Readonly<Record<string, unknown>>): Record<string, VoiceRealtimeJsonValue> {
   return Object.fromEntries(Object.entries(input).filter((entry): entry is [string, VoiceRealtimeJsonValue] => entry[1] !== null && entry[1] !== undefined));
-}
-
-function deleteOldest<T>(setOrMap: Set<T> | Map<T, unknown>): void {
-  const oldest = setOrMap.keys().next();
-  if (!oldest.done) setOrMap.delete(oldest.value);
 }
 
 export type XaiRealtimeClientToolDefinition = Readonly<{
@@ -131,9 +122,7 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
 }>): RealtimeVoiceProviderProtocol {
   const transcriptLadder = createVoiceTranscriptLadderMapper();
   const pendingToolCalls = new Map<string, Map<string, ReturnType<typeof VoiceRealtimeToolCallV1Schema.parse>>>();
-  const completedToolResponses = new Set<string>();
-  const processedEventIds = new Set<string>();
-  const activeOutputItems = new Map<string, string>();
+  const activeOutputItems = new Set<string>();
   let conversationId: string | null = null;
 
   const transcriptEvent = (
@@ -151,13 +140,8 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
     decodeControl(raw: VoiceRealtimeJsonValue): readonly VoiceRealtimeCanonicalEvent[] {
       const event = record(raw);
       if (!event || typeof event.type !== 'string') return [];
-      // Provider identity is the only identity this adapter has. Synthesizing
-      // one from arrival order would be unstable across replay, reconnect and
-      // resumption — and, because only a provider id can be a dedupe key, it
-      // would also let the very events most likely to be resent walk straight
-      // past the duplicate filter and concatenate their text twice. An event
-      // without `event_id` therefore fails closed rather than being admitted
-      // under an id that cannot mean the same thing twice.
+      // Transcript revision belongs to the shared ladder;
+      // tool effect identity belongs to the host barrier, not a replay cache.
       const eventId = providerEventId(event.event_id);
       if (!eventId) return [];
       const eventType = normalizeXaiRealtimeEventType(event.type);
@@ -168,14 +152,9 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
           conversationId = nextConversationId;
           transcriptLadder.beginConversation();
           pendingToolCalls.clear();
-          completedToolResponses.clear();
-          processedEventIds.clear();
           activeOutputItems.clear();
         }
       }
-      if (processedEventIds.has(eventId)) return Object.freeze(result);
-      processedEventIds.add(eventId);
-      while (processedEventIds.size > MAX_PROCESSED_EVENT_IDS) deleteOldest(processedEventIds);
       if (event.type === 'error') {
         const code = text(record(event.error)?.code) ?? '';
         if (/(?:client_secret|auth|token).*(?:expired|invalid)|(?:expired|invalid).*(?:client_secret|auth|token)/iu.test(code)) {
@@ -192,6 +171,10 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         }
       }
       const itemId = text(event.item_id) ?? text(event.response_id);
+      if (event.type === 'output_audio_buffer.stopped' || event.type === 'input_audio_buffer.speech_started') {
+        if (activeOutputItems.size > 0) result.push({ type: 'assistant_output_stopped' });
+        activeOutputItems.clear();
+      }
       if (event.type === 'input_audio_buffer.speech_started') {
         result.push({ type: 'input_speech_started' });
       } else if (event.type === 'input_audio_buffer.speech_stopped') {
@@ -207,18 +190,11 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
       if (itemId && eventType === 'response.output_audio.delta' && outputAudioDelta) {
         if (!activeOutputItems.has(itemId)) {
           const wasIdle = activeOutputItems.size === 0;
-          activeOutputItems.set(itemId, text(event.response_id) ?? itemId);
+          activeOutputItems.add(itemId);
           result.push(wasIdle
             ? { type: 'assistant_output_started', itemId }
             : { type: 'assistant_output_started' });
         }
-      } else if (
-        itemId
-        && event.type === 'response.output_audio.done'
-        && activeOutputItems.delete(itemId)
-        && activeOutputItems.size === 0
-      ) {
-        result.push({ type: 'assistant_output_stopped' });
       }
       // A missing/blank provider transcript is not an empty transcript: it is an
       // event that carries no text of its own. Passing it through as `null`
@@ -247,7 +223,7 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         const responseId = text(event.response_id);
         const callId = text(event.call_id);
         const toolName = text(event.name);
-        if (responseId && callId && toolName && !completedToolResponses.has(responseId)) {
+        if (responseId && callId && toolName) {
           const calls = pendingToolCalls.get(responseId) ?? new Map();
           if (!calls.has(callId)) {
             const order = typeof event.output_index === 'number' && Number.isInteger(event.output_index) && event.output_index >= 0
@@ -259,7 +235,6 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
             if (parsed.success) calls.set(callId, parsed.data);
           }
           pendingToolCalls.set(responseId, calls);
-          while (pendingToolCalls.size > MAX_PENDING_TOOL_RESPONSES) deleteOldest(pendingToolCalls);
         }
       }
       if (event.type === 'response.done') {
@@ -269,20 +244,9 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         // currently omits `status`; preserve that documented wire while
         // refusing an explicitly unsuccessful OpenAI-compatible status.
         const completed = response?.status === undefined || response.status === 'completed';
-        if (responseId) {
-          let stopped = false;
-          for (const [activeItemId, activeResponseId] of activeOutputItems) {
-            if (activeResponseId !== responseId) continue;
-            activeOutputItems.delete(activeItemId);
-            stopped = true;
-          }
-          if (stopped && activeOutputItems.size === 0) result.push({ type: 'assistant_output_stopped' });
-        }
         const calls = responseId ? pendingToolCalls.get(responseId) : null;
-        if (responseId && calls?.size && !completedToolResponses.has(responseId)) {
-          completedToolResponses.add(responseId);
-          while (completedToolResponses.size > MAX_COMPLETED_TOOL_RESPONSES) deleteOldest(completedToolResponses);
-          pendingToolCalls.delete(responseId);
+        if (responseId) pendingToolCalls.delete(responseId);
+        if (responseId && calls?.size) {
           if (completed) {
             result.push({
               type: 'tool_calls', responseId,

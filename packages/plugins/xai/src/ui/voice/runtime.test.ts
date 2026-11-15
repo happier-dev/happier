@@ -157,6 +157,50 @@ afterEach(() => {
 describe('xAI Realtime public runtime contribution', () => {
   type VoiceConnectionDriver = Parameters<VoiceConnectionMediaHost['createPcmConnection']>[0]['driver'];
 
+  it.each(['speech', 'drain'] as const)('keeps the audible phase through the PCM tail (%s)', async end => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const runtime = createXaiRealtimeProviderRuntime();
+    const prepared = await prepare(runtime);
+    let driver!: VoiceConnectionDriver;
+    let finishDrain!: (result: 'completed' | 'cancelled') => void;
+    const tail = new Promise<'completed' | 'cancelled'>(resolve => { finishDrain = resolve; });
+    const clearOutput = vi.fn(() => finishDrain('cancelled'));
+    const events: string[] = [];
+    await runtime.createConnection({
+      session: prepared.result.session, attemptId: 1, mic: { getStream: () => null },
+      interruption: { duckGain: 0.18, retainedOutputMaxMs: 1_500 }, levels: { onOutputLevel: vi.fn() },
+      media: { createSdkHandleConnection: vi.fn(), createWebRtcConnection: vi.fn(),
+        createPcmConnection: input => {
+          driver = input.driver;
+          return { connection: createConnection(), enqueueOutput: () => true, clearOutput,
+            captureOutputPlayback: () => ({ waitForDrain: async () => await tail }),
+            waitForOutputDrain: async () => await tail };
+        } },
+      tools: [], ui: {} as never, signal: new AbortController().signal,
+      credentials: { phase: 'connection', mediated: null, raw: null }, execution: { kind: 'direct_media' },
+    });
+    await driver.open({ signal: new AbortController().signal,
+      onControl: raw => {
+        for (const event of runtime.protocol.decodeControl(raw as Parameters<typeof runtime.protocol.decodeControl>[0])) events.push(event.type);
+      }, onTransport: vi.fn(), onRemoteClose: vi.fn() });
+    const emit = (event: object) => FakeWebSocket.instances.at(-1)!.emit('message', { data: JSON.stringify(event) });
+    emit({ type: 'response.output_audio.delta', event_id: 'audio', response_id: 'r1', item_id: 'a1', delta: 'AQACAA==' });
+    emit({ type: 'response.output_audio.done', event_id: 'audio-done', response_id: 'r1', item_id: 'a1' });
+    emit({ type: 'response.done', event_id: 'done', response: { id: 'r1' } });
+    expect(events).toContain('response_finished');
+    expect(events).not.toContain('assistant_output_stopped');
+    if (end === 'speech') {
+      emit({ type: 'input_audio_buffer.speech_started', event_id: 'speech' });
+      expect(clearOutput).toHaveBeenCalledOnce();
+    } else {
+      finishDrain('completed');
+      await vi.waitFor(() => expect(events).toContain('assistant_output_stopped'));
+      expect(clearOutput).not.toHaveBeenCalled();
+    }
+    expect(events).toContain('assistant_output_stopped');
+    await driver.close({ code: 'user_stop' });
+  });
+
   it.each(['completed', 'cancelled', 'interrupted', 'unrelated', 'model', 'legacy_media'] as const)('proves the forced host summary and audible tail (%s)', async outcome => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const runtime = createXaiRealtimeProviderRuntime();
@@ -167,7 +211,6 @@ describe('xAI Realtime public runtime contribution', () => {
     const draining = new Promise<void>(resolve => { noteDrain = resolve; });
     const tail = new Promise<'completed' | 'cancelled'>(resolve => { finishDrain = resolve; });
     const captureOutputPlayback = vi.fn(() => {
-      expect(FakeWebSocket.instances.at(-1)!.sent.map(raw => JSON.parse(raw).type)).not.toContain('conversation.item.create');
       return { waitForDrain: async () => { noteDrain(); return await tail; } };
     });
     await runtime.createConnection({

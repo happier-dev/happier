@@ -60,6 +60,11 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
     hostText: ReturnType<typeof createHostTextPlayback>;
   }> | null = null;
 
+  const interruptOutput = () => {
+    activeMedia?.hostText.cancel();
+    activeMedia?.media.clearOutput();
+  };
+
   const protocol = createXaiRealtimeProtocolAdapter({
     async preflight({ providerConfig, signal }) {
       if (!XaiRealtimeSettingsV1Schema.safeParse(providerConfig).success) {
@@ -138,8 +143,6 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
             resumptionEnabled: resumableConversation !== null,
             authExpiresAtMs: auth.expiresAtMs,
           },
-          // Only a concrete persisted xAI conversation carries the provider's
-          // original response/call identities into this new connection.
         },
       };
     },
@@ -232,7 +235,23 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
       signal.addEventListener('abort', hostText.cancel, { once: true });
       const observedDriver = { ...driver,
         open: (handlers: Parameters<typeof driver.open>[0]) => driver.open({ ...handlers,
-          onControl: event => { hostText.observe(event); handlers.onControl(event); },
+          onControl: event => {
+            const value = record(event);
+            if (value?.type === 'input_audio_buffer.speech_started') interruptOutput();
+            hostText.observe(event);
+            handlers.onControl(event);
+            if (value?.type === 'response.done') {
+              // Generation is finished; only the PCM owner can finish the
+              // audible burst. Keep tool/transcript delivery flowing meanwhile.
+              const playback = attemptMedia?.captureOutputPlayback?.();
+              void playback?.waitForDrain(handlers.signal).then(result => {
+                if (result === 'completed' && !handlers.signal.aborted) {
+                  handlers.onControl({ type: 'output_audio_buffer.stopped',
+                    event_id: value.event_id });
+                }
+              }, () => {});
+            }
+          },
           onRemoteClose: reason => { hostText.cancel(); handlers.onRemoteClose(reason); },
         }),
         close: async (reason: Parameters<typeof driver.close>[0]) => {
@@ -253,10 +272,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
     async beforeToolContinuation(_responseId, signal) {
       await activeMedia?.media.waitForOutputDrain(signal);
     },
-    beforeInterrupt() {
-      activeMedia?.hostText.cancel();
-      activeMedia?.media.clearOutput();
-    },
+    beforeInterrupt: interruptOutput,
     playHostText: input => activeMedia?.hostText.play(input)
       ?? Promise.resolve({ status: 'unavailable', code: 'host_text_playback_unavailable' }),
     encodeContextUpdate: (text) => Object.freeze<readonly VoiceRealtimeJsonValue[]>([{

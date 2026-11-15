@@ -57,11 +57,10 @@ describe('xAI Realtime protocol adapter', () => {
     ['invalid_request_error', { type: 'provider_error', code: 'provider_response_invalid', providerCode: 'invalid_request_error', terminal: true }],
     ['private provider message /Users/private', { type: 'provider_error', code: 'provider_response_invalid', terminal: true }],
     ['invalid_token', { type: 'auth_expired' }],
-  ] as const)('projects %s once without exposing provider text', (code, expected) => {
+  ] as const)('projects %s without exposing provider text', (code, expected) => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
     const frame = { type: 'error', event_id: 'error-1', error: { code, message: 'private-provider-message' } };
     expect(adapter.decodeControl(frame)).toEqual([expected]);
-    expect(adapter.decodeControl(frame)).toEqual([]);
   });
 
   it('preserves the complete spawnSession schema in a JSON argument envelope', () => {
@@ -261,22 +260,6 @@ describe('xAI Realtime protocol adapter', () => {
     })).toEqual([]);
   });
 
-  it('deduplicates replayed stable event ids without re-emitting provider payloads', () => {
-    const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
-    const delta = {
-      type: 'response.output_audio_transcript.delta', event_id: 'stable-1', response_id: 'assistant-1', delta: 'hello',
-    } as const;
-    expect(adapter.decodeControl(delta)).toContainEqual(expect.objectContaining({
-      type: 'transcript', event: expect.objectContaining({ text: 'hello', revision: 1 }),
-    }));
-    expect(adapter.decodeControl(delta)).toEqual([]);
-    expect(adapter.decodeControl({
-      type: 'response.output_audio_transcript.done', event_id: 'stable-2', response_id: 'assistant-1', transcript: 'hello',
-    })).toContainEqual(expect.objectContaining({
-      type: 'transcript', event: expect.objectContaining({ text: 'hello', revision: 2 }),
-    }));
-  });
-
   it('refuses realtime events that carry no valid provider event identity', () => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
     // Every documented xAI realtime server message stamps `event_id`, so an
@@ -411,20 +394,15 @@ describe('xAI Realtime protocol adapter', () => {
     });
   });
 
-  it('bounds completed response dedupe state for long-running sessions', () => {
+  it('preserves pending calls beyond the removed local response-count cutoff', () => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
-    for (let index = 0; index < 513; index += 1) {
-      adapter.decodeControl({
-        type: 'response.function_call_arguments.done', event_id: `call-${index}`, response_id: `r${index}`, call_id: `c${index}`, name: 'noop', arguments: '{}',
-      });
-      adapter.decodeControl({ type: 'response.done', event_id: `done-${index}`, response: { id: `r${index}` } });
+    for (let index = 0; index < 129; index += 1) {
+      adapter.decodeControl({ type: 'response.function_call_arguments.done', event_id: `call-${index}`,
+        response_id: `r${index}`, call_id: `c${index}`, name: 'noop', arguments: '{}' });
     }
-    adapter.decodeControl({
-      type: 'response.function_call_arguments.done', event_id: 'call-new', response_id: 'r0', call_id: 'c-new', name: 'noop', arguments: '{}',
-    });
-    expect(adapter.decodeControl({ type: 'response.done', event_id: 'done-new', response: { id: 'r0' } })).toContainEqual(
-      expect.objectContaining({ type: 'tool_calls', responseId: 'r0' }),
-    );
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'done', response: { id: 'r0' } }))
+      .toContainEqual(expect.objectContaining({ type: 'tool_calls', responseId: 'r0',
+        calls: [expect.objectContaining({ callId: 'c0' })] }));
   });
 
   it('projects provider wire activity into provider-neutral speech and output edges', () => {
@@ -442,7 +420,7 @@ describe('xAI Realtime protocol adapter', () => {
     })).not.toContainEqual({ type: 'assistant_output_started' });
     expect(adapter.decodeControl({
       type: 'response.output_audio.done', event_id: 'audio-3', response_id: 'response-1', item_id: 'assistant-1',
-    })).toContainEqual({ type: 'assistant_output_stopped' });
+    })).not.toContainEqual({ type: 'assistant_output_stopped' });
     adapter.decodeControl({
       type: 'response.output_audio.delta', event_id: 'audio-4', response_id: 'response-2', item_id: 'assistant-2', delta: 'AA==',
     });
@@ -453,6 +431,8 @@ describe('xAI Realtime protocol adapter', () => {
       type: 'response.output_audio.done', event_id: 'audio-6', response_id: 'response-2', item_id: 'assistant-2',
     })).not.toContainEqual({ type: 'assistant_output_stopped' });
     expect(adapter.decodeControl({ type: 'response.done', event_id: 'audio-7', response: { id: 'response-2' } }))
+      .not.toContainEqual({ type: 'assistant_output_stopped' });
+    expect(adapter.decodeControl({ type: 'output_audio_buffer.stopped', event_id: 'playback-done' }))
       .toContainEqual({ type: 'assistant_output_stopped' });
   });
 
