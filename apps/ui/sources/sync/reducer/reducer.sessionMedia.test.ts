@@ -48,7 +48,10 @@ describe('tool-result session media ownership', () => {
         expect(parseSessionMediaMessageMeta(root.children[0]?.meta).inlineImages).toEqual([]);
         expect(updated.messages).toHaveLength(1);
 
-        const replay = reducer(state, [{ ...lateResult, id: 'late-result-replay', meta: JSON.parse(JSON.stringify(meta)) }]);
+        const replayMeta = JSON.parse(JSON.stringify({
+            happier: { payload: meta.happier.payload, kind: meta.happier.kind },
+        }));
+        const replay = reducer(state, [{ ...lateResult, id: 'late-result-replay', meta: replayMeta }]);
         expect(replay.messages).toEqual([]);
         const read = [...state.messages.values()].find(message => message.tool?.id === 'read');
         expect(read?.meta).toBe(nextRoot.children[0]?.meta);

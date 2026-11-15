@@ -1,5 +1,7 @@
 import { isClaudeAsyncAgentLaunchToolResult } from '@happier-dev/protocol';
 
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+
 import type { MessageMeta } from '../../domains/messages/messageMetaTypes';
 import type { ReducerMessage } from '../reducer';
 import {
@@ -55,7 +57,7 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
       ...(message.meta ?? {}),
       ...meta,
     };
-    if (JSON.stringify(nextMeta) !== JSON.stringify(message.meta)) {
+    if (stableJsonStringify(nextMeta) !== stableJsonStringify(message.meta)) {
       message.meta = nextMeta;
       changed.add(messageId);
     }
