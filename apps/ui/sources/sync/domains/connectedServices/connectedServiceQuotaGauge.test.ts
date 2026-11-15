@@ -109,6 +109,20 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(exhaustedCenter?.tone).toBe(exhaustedAlone?.tone);
     });
 
+    it('centers an explicitly chosen window on its drawn favorite ring from another unit group', () => {
+        const vm = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: snapshot([
+                meter({ meterId: 'weekly', label: 'Weekly', remainingPct: 10, utilizationPct: 90, windowDurationMs: 604_800_000 }),
+                meter({ meterId: 'daily', label: 'Daily', remainingPct: 20, utilizationPct: 80, windowDurationMs: 86_400_000 }),
+                meter({ meterId: 'session_tokens', label: '5-hour', unit: 'tokens', remainingPct: 60, utilizationPct: 40, windowDurationMs: 18_000_000 }),
+            ]),
+            windowMode: 'most_constrained', windowModes: ['weekly'], additionalMeterIds: ['session_tokens'],
+            numberWindowMode: 'session', nowMs: 2_000, formatter,
+        });
+        expect(vm?.usageRings.map(ring => ring.meterId)).toContain('session_tokens');
+        expect(vm?.ringValueLabel).toBe('60');
+    });
+
     it('draws longer windows outside shorter ones even within one window family', () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: snapshot([

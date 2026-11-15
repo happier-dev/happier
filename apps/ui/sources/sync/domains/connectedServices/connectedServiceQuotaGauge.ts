@@ -455,12 +455,14 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     const roundedRemaining = Math.round(effectiveRemainingPct);
     // The center number follows its own window; "most constrained" and an unreported
     // window use the lowest drawn ring, so the default never names an undrawn limit.
+    // Drawn favorites join the explicit candidates because they may sit outside the comparable unit group.
     const numberWindowMode = params.numberWindowMode;
+    const drawnMeters = selectedMeters.map(({ meter }) => meter);
     const center = !numberWindowMode
         ? selectedMeters[0]
         : (numberWindowMode === 'most_constrained' ? null : selectLeastRemainingQuotaMeter(
-            rankableMeters.filter((meter) => meterMatchesWindowMode(meter, numberWindowMode)),
-        )) ?? selectLeastRemainingQuotaMeter(selectedMeters.map(({ meter }) => meter)) ?? selectedMeters[0];
+            [...rankableMeters, ...drawnMeters].filter((meter) => meterMatchesWindowMode(meter, numberWindowMode)),
+        )) ?? selectLeastRemainingQuotaMeter(drawnMeters) ?? selectedMeters[0];
     const centerRow = center.meter === effectiveMeter ? selectedRow : buildMeterRow(center.meter, params.nowMs, params.formatter);
     const centerRemaining = Math.round(center.remainingPct);
     const remainingValueLabel = params.formatter.remaining({ percent: `${roundedRemaining}%` });
