@@ -12,8 +12,7 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
-import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -142,19 +141,17 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         });
     }, [dockedHostDraft, navigation, params, returnToComposer, returnToHost, router]);
     useNativeBackReturnsToComposer(navigation, returning && !pushedWay, nativeBackReturn);
-    const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
+    const startSession = React.useCallback(async (machine: Readonly<{ machineId: string; serverId: string }>) => {
         if (returning) { returnToComposer(machine); return; }
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        seedAndOpenNewSession({
+        await createFrontDoorActionExecute()('session.authoring.open', {
             seed: { placement: { kind: 'exactTarget', serverId: machine.serverId, machineId: machine.machineId } },
-            scope: lifetime.scope,
-            isCurrent: lifetime.isCurrent,
-            navigateToNewSession: ({ draftId }) => navigate({
-                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }),
-            }, 'MachineAddDraftScreen.startSession', false),
+        }, {
+            surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+            expectedAccountId: lifetime.scope.accountId,
         });
-    }, [navigate, returning, returnToComposer]);
+    }, [returning, returnToComposer]);
 
     return (
         <ItemList keyboardShouldPersistTaps="handled">

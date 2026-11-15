@@ -90,7 +90,8 @@ it('asks an agent to set it up: a New Session opens with the deploy request writ
   try {
     const onClose = vi.fn(() => expect(routerMock.spies.push).not.toHaveBeenCalled());
     routerMock.spies.push.mockClear();
-    const screen = await renderScreen(<NewAppScreen onClose={onClose} />);
+    const machine = { serverId: fixture.home.id, machineId: 'deploy-machine' };
+    const screen = await renderScreen(<NewAppScreen onClose={onClose} machine={machine} />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.askAgent')).toBeTruthy());
     // New Session's own draft store (local persistence, no sync) holds the request the person will read and send.
     const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
@@ -101,12 +102,21 @@ it('asks an agent to set it up: a New Session opens with the deploy request writ
     if (!scope) throw new Error('Expected the active Account scope');
     await prepareSessionDraftPersistenceStorage();
     configureSessionDraftRepository({ scope, syncEnabled: false });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+    storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'session.authoring.open': { enabled: false } } }) });
+    await screen.pressByTestIdAsync('newApp.askAgent');
+    expect(routerMock.spies.push, 'Ask an agent obeys the same Action policy as agent and MCP callers').not.toHaveBeenCalled();
+    onClose.mockClear();
+    storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
     await screen.pressByTestIdAsync('newApp.askAgent');
     expect(onClose).toHaveBeenCalledOnce();
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({
       pathname: '/new', params: expect.objectContaining({ draftId: expect.any(String) }),
     }));
     const draftId = (routerMock.spies.push.mock.calls[0]![0] as { params: { draftId: string } }).params.draftId;
+    expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ selectedMachineId: machine.machineId });
     expect(JSON.stringify(readNewSessionDraftFromRepository({ scope, draftId }))).toContain('deploy');
     await screen.unmount();
   } finally {

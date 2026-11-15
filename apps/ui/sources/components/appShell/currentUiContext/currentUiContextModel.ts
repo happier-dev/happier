@@ -102,6 +102,8 @@ export type CurrentUiContextMountedEnrichment = Readonly<{
         command: CurrentUiContextMountedCommand;
         /** Foreground overlay membership is supplied by the Modal presentation owner, never serialized. */
         foreground?: Readonly<{ modalId: string | null }>;
+        /** Supplied by the Details workspace boundary, never serialized. */
+        workspaceHosted?: true;
     }>[];
 }>;
 

@@ -1013,11 +1013,12 @@ describe('CurrentUiContextProvider', () => {
     it('withholds the page host controls beneath the focused Details workspace', async () => {
         providerState.authority = { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         const pageControls = [{ key: 'send', title: 'Send draft', invoke: () => true }];
+        function PageControls() { useCurrentUiContextLocalCommands(pageControls); return null; }
         try {
             const hook = await renderHook(() => {
-                useCurrentUiContextLocalCommands(pageControls);
                 return { publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() };
             }, { wrapper: (props: React.PropsWithChildren) => React.createElement(CurrentUiContextTestProvider, null,
+                React.createElement(PageControls),
                 React.createElement(CurrentUiContextWorkspaceBoundary, null, props.children)) });
             const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
             const publication = hook.getCurrent().publisher!.createMount();

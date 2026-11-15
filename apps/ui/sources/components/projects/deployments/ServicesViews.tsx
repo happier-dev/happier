@@ -37,8 +37,14 @@ import {
  * The Services page's views (pfc-redesign svcApps · svcDb · svcDom): one collection seen three ways, so a tab bar.
  * Checks and Watched join when their Account-wide reads exist; a view never computes a fact its owner doesn't report.
  */
-export type ServicesView = 'apps' | 'databases' | 'domains' | 'checks' | 'watched';
-const VIEWS: readonly ServicesView[] = ['apps', 'databases', 'domains', 'checks', 'watched'];
+export const SERVICES_VIEWS = [
+  { id: 'apps', labelKey: 'projects.deployments.services.apps' },
+  { id: 'databases', labelKey: 'projects.deployments.services.databases' },
+  { id: 'domains', labelKey: 'projects.deployments.services.domains' },
+  { id: 'checks', labelKey: 'projects.deployments.services.checks' },
+  { id: 'watched', labelKey: 'projects.deployments.services.watched' },
+] as const;
+export type ServicesView = typeof SERVICES_VIEWS[number]['id'];
 /** A view's count line, from its own read's reported rows (the page's head draws it, MainScreenHeader `count`). */
 export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly (string | null)[]; needYou?: number }>;
 
@@ -46,7 +52,7 @@ export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly (
 export function readServicesView(
   value: string | null | undefined,
 ): ServicesView {
-  return VIEWS.find((view) => view === value) ?? 'apps';
+  return SERVICES_VIEWS.find((view) => view.id === value)?.id ?? 'apps';
 }
 
 export function ServicesViewTabs(
@@ -59,19 +65,7 @@ export function ServicesViewTabs(
 ) {
   const overflow = React.useMemo(() => ({ label: t('common.more'), testID: 'services.view.more' }), []);
   const tabs = React.useMemo(
-    () => [
-      { id: 'apps' as const, label: t('projects.deployments.services.apps') },
-      {
-        id: 'databases' as const,
-        label: t('projects.deployments.services.databases'),
-      },
-      {
-        id: 'domains' as const,
-        label: t('projects.deployments.services.domains'),
-      },
-      { id: 'checks' as const, label: t('projects.deployments.services.checks') },
-      { id: 'watched' as const, label: t('projects.deployments.services.watched') },
-    ].map((tab) => {
+    () => SERVICES_VIEWS.map(({ id, labelKey }) => ({ id, label: t(labelKey) })).map((tab) => {
       const count = props.needYou?.[tab.id] ?? 0;
       return count > 0 ? { ...tab, count: String(count), countTone: 'danger' as const } : tab;
     }),

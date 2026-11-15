@@ -460,6 +460,43 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(screen.findByType(ProjectCockpitShell).props.surface).toBe('overview');
     });
 
+    it.each([1440, 390])('lets an agent open Available on at viewport %i and retires the command with the Project', async (width) => {
+        viewport.width = width;
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: runtime.serverId, expectedAccountId: 'account-a' };
+        const tree = (showProject: boolean) => <runtime.Wrapper><MainAppTabStateProvider>
+            <CurrentUiContextProvider><CurrentUiContextActionHost />
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    {showProject ? <ProjectDetailScreen workspaceRefId="wr_1" serverId={runtime.serverId} page="overview" isFocused /> : null}
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider>
+        </MainAppTabStateProvider></runtime.Wrapper>;
+        const screen = await renderScreen(tree(true));
+        try {
+            const executor = createDefaultActionExecutor();
+            const result = await executor.execute('ui.current_context.read', {}, context);
+            expect(result.ok).toBe(true);
+            if (!result.ok) throw new Error(result.errorCode);
+            const command = CurrentUiContextSnapshotV1Schema.parse(result.result).commands
+                .find(candidate => candidate.title === 'workspaceSync.availableOn');
+            expect(command, 'the Project menu operation is discoverable through the current UI Action').toBeDefined();
+            if (!command) throw new Error('Available on command is missing');
+            await act(async () => {
+                expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, context))
+                    .toMatchObject({ ok: true });
+            });
+            expect(runtime.pane.scopeState?.details.isOpen).toBe(true);
+            expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.kind)).toContain('workspaceInfo');
+            expect(screen.findByType(ProjectCockpitShell).props.surface).toBe('overview');
+            await screen.update(tree(false));
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, context))
+                .toMatchObject({ ok: false });
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('retains the route-owned Overview and checkout when a details companion opens', async () => {
         const screen = await mount({ page: 'overview' });
         await act(async () => runtime.pane.openDetailsTab({ key: 'file:a', kind: 'file', title: 'a', resource: { kind: 'file', path: 'a' } }));

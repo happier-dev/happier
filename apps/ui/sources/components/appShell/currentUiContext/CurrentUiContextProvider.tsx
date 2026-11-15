@@ -26,7 +26,7 @@ import { usePluginSurfaceCurrentUiContextEligibility } from '@/components/ui/pre
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
-import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from './CurrentUiContextCommands';
+import { CurrentUiContextCommandsProvider, CurrentUiContextWorkspaceCommandsBoundary, useCurrentUiContextComposedCommands } from './CurrentUiContextCommands';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useMachine, useSessionDisplayNameSource, useSetting } from '@/sync/store/hooks';
 import { projectParameterFreeRoute } from '@/track/parameterFreeRouteProjection';
@@ -70,6 +70,7 @@ type CurrentUiContextMountRecord = Readonly<{
         command: CurrentUiContextMountedCommand;
         retirement: AbortController;
         foreground?: Readonly<{ modalId: string | null }>;
+        workspaceHosted?: true;
     }>[];
 }>;
 
@@ -208,6 +209,7 @@ function createMountRecord(input: Readonly<{
             return !retained.has(candidate) && !candidate.retirement.signal.aborted
                 && descriptor.title === entry.title && descriptor.description === entry.description
                 && sameStrictJsonValue(candidate.foreground, entry.foreground)
+                && candidate.workspaceHosted === entry.workspaceHosted
                 // Host-local declarations own their semantic lifetime and resolve the latest handler,
                 // so the same declaration keeps its address across entity updates and record owners
                 // (a focused field's publication taking or releasing the record). Each address is a
@@ -222,7 +224,8 @@ function createMountRecord(input: Readonly<{
             return unchanged;
         }
         return Object.freeze({ id: input.nextCommandId(), command: entry.command, retirement: new AbortController(),
-            ...(entry.foreground === undefined ? {} : { foreground: entry.foreground }) });
+            ...(entry.foreground === undefined ? {} : { foreground: entry.foreground }),
+            ...(entry.workspaceHosted === undefined ? {} : { workspaceHosted: entry.workspaceHosted }) });
     }));
     const projection: CurrentUiContextMountProjection = Object.freeze({
         ...(input.enrichment.entity === undefined ? {} : { entity: input.enrichment.entity }),
@@ -260,9 +263,12 @@ function currentMountProjection(record: CurrentUiContextMountRecord | null, area
     if (area === 'modal') return null;
     if (area === 'workspace') {
         // The focused workspace's own content is current; the page behind it and that page's host controls are not.
+        const authorCount = record.owner.workspaceHosted ? record.enrichment.commands?.length ?? 0 : 0;
+        const commands = record.projection.commands.filter((entry, index) => index < authorCount
+            || record.semanticCommands[index]?.workspaceHosted === true);
         return record.owner.workspaceHosted === true
-            ? { ...record.projection, commands: record.projection.commands.slice(0, record.enrichment.commands?.length ?? 0) }
-            : null;
+            ? { ...record.projection, commands }
+            : commands.length ? { commands } : null;
     }
     if (record.semanticCommands.every(entry => entry.foreground === undefined)) return record.projection;
     const backgroundIds = new Set(record.semanticCommands.filter(entry => entry.foreground === undefined).map(entry => entry.id));
@@ -621,7 +627,9 @@ export function CurrentUiContextWorkspaceBoundary(props: Readonly<{ children: Re
     const workspacePublisher = React.useMemo<CurrentUiContextMountPublisher | null>(() => publisher && Object.freeze({
         createMount: (options?: CurrentUiContextMountOwner) => publisher.createMount({ ...options, workspaceHosted: true }),
     }), [publisher]);
-    return <CurrentUiContextMountPublisherContext.Provider value={workspacePublisher}>{props.children}</CurrentUiContextMountPublisherContext.Provider>;
+    return <CurrentUiContextMountPublisherContext.Provider value={workspacePublisher}>
+        <CurrentUiContextWorkspaceCommandsBoundary>{props.children}</CurrentUiContextWorkspaceCommandsBoundary>
+    </CurrentUiContextMountPublisherContext.Provider>;
 }
 
 /** Optional outside AppShell so legacy previews omit the unavailable host method. */

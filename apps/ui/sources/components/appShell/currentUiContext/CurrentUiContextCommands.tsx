@@ -54,6 +54,18 @@ const EMPTY_COMMANDS: ComposedCommands = Object.freeze([]);
 const CompositionContext = React.createContext<CommandComposition | null>(null);
 const CommandsContext = React.createContext<ComposedCommands>(EMPTY_COMMANDS);
 
+/** Descendant controls retain their placement in the existing root command registry. */
+export function CurrentUiContextWorkspaceCommandsBoundary(props: React.PropsWithChildren): React.ReactElement {
+    const parent = React.useContext(CompositionContext);
+    const composition = React.useMemo<CommandComposition | null>(() => parent && ({
+        ...parent,
+        register: (owner, commands) => parent.register(owner, commands.map(command => ({ ...command, workspaceHosted: true as const }))),
+        focus: (owner, commands, onRetire) => parent.focus(owner,
+            commands.map(command => ({ ...command, workspaceHosted: true as const })), onRetire),
+    }), [parent]);
+    return <CompositionContext.Provider value={composition}>{props.children}</CompositionContext.Provider>;
+}
+
 // React keeps the last reducer on its dispatch queue. It must not capture a
 // provider render and its obsolete composed command inventory in Hermes.
 function advanceCommandRevision(current: number): number {

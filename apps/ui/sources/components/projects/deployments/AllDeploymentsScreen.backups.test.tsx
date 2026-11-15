@@ -19,6 +19,7 @@ import {
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import type { ServicesView } from './ServicesViews';
 
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -30,11 +31,20 @@ vi.mock('expo-router', () => routerMock.module);
 // the page run for real.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-await import('@/sync/ops/actions/defaultActionExecutor');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { CurrentUiContextActionHost } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { captureLazyActionAccountContext } =
   await import('@/sync/ops/actions/actionAccountContext');
 const { AllDeploymentsView } = await import('./AllDeploymentsScreen');
 const { useDeploymentCollection } = await import('./useDeploymentReads');
+const { ServicesViewTabs } = await import('./ServicesViews');
+const { t } = await import('@/text');
 
 const shown = { mounted: true, visible: true, focused: true };
 const environment = (id: string, projectSourceId: string, title: string) => ({
@@ -99,6 +109,7 @@ const backupFacts = (
 async function mount(
   options: Readonly<{
     presented: boolean;
+    commands?: boolean;
     fail?: (input: ProjectReadinessReadInputV1) => boolean;
   }>,
 ) {
@@ -134,16 +145,24 @@ async function mount(
   const controller = controllerFor();
   function Page() {
     const read = useDeploymentCollection(controller, shown);
+    const [view, selectView] = React.useState<ServicesView>('apps');
     return (
       <AllDeploymentsView
         read={read}
         serverId="home"
         lifetime={account.accountLifetime}
         presented={options.presented}
+        {...(options.commands ? { controller, demand: shown, view, onSelectView: selectView } : {})}
       />
     );
   }
-  const screen = await renderScreen(<Page />);
+  // The active Account scope is keyed by the Home's identity, as AppShell activates it.
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  storage.getState().activateProfileScope({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' });
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+  const Wrapper = await createMountedCurrentUiContextWrapper();
+  const tree = (show: boolean) => <Wrapper><CurrentUiContextActionHost />{show ? <Page /> : null}</Wrapper>;
+  const screen = await renderScreen(tree(true));
   await act(async () => {
     await vi.waitFor(() =>
       expect(screen.findByTestId('all-deployments')).not.toBeNull(),
@@ -152,6 +171,8 @@ async function mount(
   return {
     screen,
     reads,
+    serverId,
+    removePage: () => screen.update(tree(false)),
     dispose: () => {
       controller.retire();
       account.dispose();
@@ -175,9 +196,54 @@ beforeEach(() => homes.reset());
 afterEach(() => {
   routerMock.spies.push.mockClear();
   standardCleanup();
+  retireActiveServerAccountScopeLifetime();
 });
 
 describe('All deployments → Not backed up', () => {
+  it.each(['agent', 'mcp'] as const)('lets %s discover and change the mounted Services view and backup filter, then retires them', async surface => {
+    const { screen, reads, serverId, removePage, dispose } = await mount({ presented: true, commands: true });
+    try {
+      await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('all-deployments.notBackedUp')).not.toBeNull()); });
+      const executor = createDefaultActionExecutor();
+      const context = { surface, authority: 'account_automation' as const, serverId, expectedAccountId: 'alice' };
+      const readCommands = async () => {
+        const result = await executor.execute('ui.current_context.read', {}, context);
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.errorCode);
+        return CurrentUiContextSnapshotV1Schema.parse(result.result).commands;
+      };
+      const commands = await readCommands();
+      const filter = commands.find(command => command.title === t('projects.deployments.notBackedUp'));
+      expect(filter, 'the rendered Apps filter is discoverable').toBeDefined();
+      if (!filter) throw new Error('Not backed up command is missing');
+      expect(filter.description).toBe(t('common.off'));
+      const invoke = async (id: string) => {
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: id }, context)).toMatchObject({ ok: true }); });
+      };
+      await invoke(filter.id);
+      expect(rowIds(screen)).toHaveLength(2);
+      expect(reads).toHaveLength(2);
+      const enabledFilter = (await readCommands()).find(command => command.title === t('projects.deployments.notBackedUp'))!;
+      expect(enabledFilter.description).toBe(t('common.on'));
+      for (const view of ['databases', 'domains', 'checks', 'watched', 'apps'] as const) {
+        const command = (await readCommands()).find(candidate => candidate.title === t(`projects.deployments.services.${view}`));
+        expect(command, `the ${view} view is discoverable`).toBeDefined();
+        if (!command) throw new Error(`${view} command is missing`);
+        await invoke(command.id);
+        expect(screen.findByType(ServicesViewTabs).props.active).toBe(view);
+        expect((await readCommands()).find(candidate => candidate.title === command.title)?.description).toBe(t('common.active'));
+        if (view !== 'apps') expect((await readCommands()).some(candidate => candidate.title === t('projects.deployments.notBackedUp'))).toBe(false);
+        if (view === 'databases') expect(await executor.execute('ui.current_context.command.invoke', { commandId: enabledFilter.id }, context)).toMatchObject({ ok: false });
+      }
+      expect(rowIds(screen)).toHaveLength(2);
+      const currentFilter = (await readCommands()).find(command => command.title === t('projects.deployments.notBackedUp'))!;
+      await invoke(currentFilter.id);
+      expect(rowIds(screen)).toHaveLength(3);
+      await removePage();
+      expect(await executor.execute('ui.current_context.command.invoke', { commandId: currentFilter.id }, context)).toMatchObject({ ok: false });
+    } finally { dispose(); }
+  });
+
   it('reads backup readiness once per Project for the shown Environments and filters to the ones not backed up', async () => {
     const { screen, reads, dispose } = await mount({ presented: true });
     try {
@@ -205,13 +271,17 @@ describe('All deployments → Not backed up', () => {
         child.props.testID === 'all-deployments.notBackedUp'))).toEqual([]);
       expect(screen.findByTestId('all-deployments.notBackedUp')).not.toBeNull();
 
+      // The chip runs the same mounted command an agent invokes; its effect lands once that command settles.
       await act(async () => {
         await screen.pressByTestIdAsync('all-deployments.notBackedUp');
       });
-      expect(rowIds(screen)).toEqual([
-        'all-deployments.row.env-shop-production',
-        'all-deployments.row.env-api-production',
-      ]);
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(rowIds(screen)).toEqual([
+          'all-deployments.row.env-shop-production',
+          'all-deployments.row.env-api-production',
+        ]);
+      });
 
       // A row shown for "Not backed up" opens where that Environment's backups are set up.
       await screen.pressByTestIdAsync('all-deployments.row.env-api-production');
@@ -256,9 +326,12 @@ describe('All deployments → Not backed up', () => {
       await act(async () => {
         await screen.pressByTestIdAsync('all-deployments.notBackedUp');
       });
-      expect(rowIds(screen)).toEqual([
-        'all-deployments.row.env-api-production',
-      ]);
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(rowIds(screen)).toEqual([
+          'all-deployments.row.env-api-production',
+        ]);
+      });
       expect(
         screen.findByTestId('all-deployments.backupsUnresolved'),
       ).not.toBeNull();

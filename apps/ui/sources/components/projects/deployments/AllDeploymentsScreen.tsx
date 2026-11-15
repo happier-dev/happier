@@ -22,6 +22,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { SelectionListFilterChips } from '@/components/ui/selectionList/SelectionListFilterChips';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -31,7 +32,7 @@ import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useDeploymentInventory } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
-import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
+import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
 import { deploymentRailState } from './deploymentPresentation';
 import { buildServiceCheckHref } from './deploymentNavigation';
 import { ServiceCheckDetail } from './ServiceCheckDetail';
@@ -168,8 +169,28 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     .filter((row) => row.status === 'uncovered').map((row) => row.environment.id)), [backups.coverage]);
   // The filter is offered only when it has something to show, and stays while it is on so it can be turned off.
   const filtering = notBackedUpOnly && backups.coverage !== null;
+  const showBackupFilter = filtering || uncovered.size > 0;
+  const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
+  const hasViewControls = Boolean(props.controller && props.demand && props.onSelectView);
+  const localCommands = React.useMemo(() => props.presented === false ? [] : [
+    ...(hasViewControls ? SERVICES_VIEWS.map(({ id, labelKey }) => ({
+      key: `services.view.${id}`,
+      title: t(labelKey),
+      ...(view === id ? { description: t('common.active') } : {}),
+      invoke: () => props.onSelectView?.(id),
+    })) : []),
+    ...(view === 'apps' && showBackupFilter ? [{
+      key: 'all-deployments.notBackedUp',
+      title: t('projects.deployments.notBackedUp'),
+      description: filtering ? t('common.on') : t('common.off'),
+      invoke: toggleNotBackedUp,
+    }] : []),
+  ], [filtering, hasViewControls, props.onSelectView, props.presented, showBackupFilter, toggleNotBackedUp, view]);
+  const commands = useCurrentUiContextLocalCommands(localCommands, {
+    contextKey: JSON.stringify([props.lifetime?.scope.serverId ?? serverId, props.lifetime?.scope.accountId]),
+  });
   // Inline under the header, one press away: a header action would fold into the phone's ⋯ (DEPLOY-REACCEPT-1113 D3).
-  const notBackedUpFilter = filtering || uncovered.size > 0 ? (
+  const notBackedUpFilter = showBackupFilter ? (
     <View testID="all-deployments.filters">
       <SelectionListFilterChips placement="inline" filters={[{
       id: 'all-deployments.notBackedUp',
@@ -179,7 +200,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         ? t('projects.deployments.notBackedUpCount', { count: uncovered.size })
         : t('projects.deployments.notBackedUp'),
       selected: filtering,
-      onToggle: toggleNotBackedUp,
+      onToggle: () => { void commands.invoke('all-deployments.notBackedUp'); },
     }]} />
     </View>
   ) : null;
@@ -189,7 +210,6 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   // instead, so the page never shows two.
   const deployCreate = React.useMemo<PageCreateAction>(() => ({ label: t('newApp.title'), onPress: openDeployApp,
     testID: 'all-deployments.deployApp' }), [openDeployApp]);
-  const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
   const viewDemand = props.demand!;
   const phone = useDeviceType() === 'phone';
   // Each view's needs-you count marks its tab (lab "Apps • 3"): Apps from its own read, the others as they report.
@@ -197,7 +217,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const appsNeedYou = React.useMemo(() => countAppsNeedYou(items), [items]);
   const needYou = React.useMemo(() => ({ ...viewNeedYou, apps: appsNeedYou }), [appsNeedYou, viewNeedYou]);
   const viewTabs = props.controller && props.demand ? (
-    <ServicesViewTabs active={view} needYou={needYou} onSelect={(next) => props.onSelectView?.(next)} />
+    <ServicesViewTabs active={view} needYou={needYou} onSelect={(next) => { void commands.invoke(`services.view.${next}`); }} />
   ) : null;
   // One create (reuse map D2): beside the Services column, its "+" is the page's create and its field the search.
   const besideColumn = useAppShellColumn().columnVisible;

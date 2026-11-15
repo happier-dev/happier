@@ -17,6 +17,7 @@ import { ProjectPageCatalogProvider } from './navigation/useProjectPageCatalog';
 import { ProjectPhonePageStrip } from '@/components/navigation/mobile/chrome/bars/ProjectCockpitTabBar';
 import { usePublishDetailPageMenuActions } from '@/components/navigation/mobile/chrome/pageMenuActions';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { DetailsPaneSlotHost } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { DetailsPaneContentView } from '@/components/appShell/panes/details/DetailsPaneHost';
@@ -83,10 +84,12 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId, props.serverId);
     const destinationScopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId, workspaceRef?.serverId ?? props.serverId));
     const scopeId = props.paneScopeId ?? destinationScopeId;
-    const pane = useAppPaneScope(scopeId, () => null);
+    const pane = useAppPaneScope(scopeId, scope => ({
+        bottomTerminalActive: scope?.bottom.isOpen === true && scope.bottom.activeTabId === 'terminal',
+        rightTerminalActive: scope?.right.isOpen === true && scope.right.activeTabId === 'terminal',
+    }));
     const dockLocation = resolveSessionTerminalDockLocation(deviceType);
-    const bottomTerminalActive = Boolean(pane.scopeState?.bottom?.isOpen) && pane.scopeState?.bottom?.activeTabId === 'terminal';
-    const rightTerminalActive = Boolean(pane.scopeState?.right?.isOpen) && pane.scopeState?.right?.activeTabId === 'terminal';
+    const { bottomTerminalActive, rightTerminalActive } = pane.scopeState;
     const openProjectTerminal = React.useCallback(() => {
         toggleEmbeddedTerminalInDockLocation({ pane, dockLocation, bottomTerminalActive, rightTerminalActive,
             rightPaneHiddenByDetails: false });
@@ -101,6 +104,9 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     ], [openProjectInfo, openProjectTerminal]);
     // A phone draws no Project header: the same list goes to the phone bar's More while this page is the one shown.
     const projectPageFocused = useIsFocused();
+    useCurrentUiContextLocalCommands(React.useMemo(() => projectPageFocused && props.isFocused !== false ? [{
+        key: 'project-available-on', title: t('workspaceSync.availableOn'), invoke: openProjectInfo,
+    }] : [], [openProjectInfo, projectPageFocused, props.isFocused]), { contextKey: scopeId });
     usePublishDetailPageMenuActions('project', deviceType === 'phone' && projectPageFocused ? projectMenuActions : null);
     // The page's menus and Add surfaces float inside its own column (header and body), never over the sidebar.
     const pageColumnRef = React.useRef<View>(null);

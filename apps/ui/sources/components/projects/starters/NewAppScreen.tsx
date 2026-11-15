@@ -5,7 +5,6 @@ import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark'
 import { useRegistryItems } from '@/registries/useRegistryItems';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
-import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -18,6 +17,7 @@ import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/Keyboard
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
@@ -72,8 +72,6 @@ import {
 } from '@/components/projects/deployments/deploymentNavigation';
 import { NewAppCodeSources } from './NewAppCodeSources';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
-import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
@@ -334,17 +332,17 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   };
   // Lab f1src footer: hand the whole job to an agent. New Session opens with the request written, on the door's
   // Machine when there is one; the person reads it, picks the agent and sends it.
-  const askAgent = () => {
+  const askAgent = async () => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) return;
     stepAside();
-    seedAndOpenNewSession({
+    await createFrontDoorActionExecute()(SESSION_OPEN_ACTION, {
       seed: { prompt: t('newApp.askAgentPrompt'),
         ...(props.machine ? { placement: { kind: 'exactTarget', serverId: props.machine.serverId, machineId: props.machine.machineId } } : {}) },
-      scope: lifetime.scope,
-      isCurrent: lifetime.isCurrent,
-      navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) } as never),
-    });
+    }, {
+      surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+      expectedAccountId: lifetime.scope.accountId,
+    }).catch(() => null);
   };
   const askAgentRef = React.useRef(askAgent);
   askAgentRef.current = askAgent;
