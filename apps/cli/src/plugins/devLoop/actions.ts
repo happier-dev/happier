@@ -1,5 +1,6 @@
 import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema, PluginPublishInspectActionInputSchema,
-  PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema, PluginPublishStatusActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+  PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema, PluginPublishStatusActionInputSchema,
+  PluginLogsReadActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext, PluginDevLoopActionIdV1 } from '@happier-dev/protocol';
 
 import { installPluginFromLocator } from '@/plugins/projection/catalog/installed';
@@ -28,6 +29,7 @@ import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machin
 import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 import { setCurrentAccountPluginEnabled } from '@/plugins/runtime/accountPluginActivationSource';
 import type { StoredCredentials } from '@/persistence';
+import type { readPluginInvocationLogsOnMachine, resolvePluginInvocationLogTarget } from '@/cli/commands/pluginInvocationLogsMachine';
 
 export type PluginDevLoopActionId = PluginDevLoopActionIdV1;
 
@@ -51,6 +53,8 @@ export type PluginDevLoopActionServices = Readonly<{
   installEffectAdmitted?: true;
   /** Captured Account reader supplied by the production Action composition. */
   marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'queryExactListing'>;
+  resolvePluginInvocationLogTarget?: typeof resolvePluginInvocationLogTarget;
+  readPluginInvocationLogsOnMachine?: typeof readPluginInvocationLogsOnMachine;
 }>;
 
 type PluginDevLoopActionInput = Readonly<Record<string, unknown>>;
@@ -382,6 +386,30 @@ export async function executePluginDevLoopAction(
       kind: 'plugins_change_status',
       status,
     };
+  }
+
+  if (params.actionId === 'plugins.logs.read') {
+    // The same exact-Machine read the CLI `plugins logs` command and the app's
+    // plugin detail use: the target daemon's logger answers the query, and its
+    // records were already redacted when the plugin logger wrote them.
+    const { machineId, ...query } = PluginLogsReadActionInputSchema.parse(input);
+    const signal = params.context?.signal;
+    const machineLogs = await import('@/cli/commands/pluginInvocationLogsMachine');
+    const resolution = await (services.resolvePluginInvocationLogTarget ?? machineLogs.resolvePluginInvocationLogTarget)({
+      requestedMachineId: machineId, ...(signal ? { signal } : {}) });
+    if (resolution.kind !== 'selected') {
+      return { ok: false, kind: 'plugins_logs_read', diagnostics: [resolution.kind === 'unavailable'
+        ? { code: resolution.code, message: resolution.message }
+        : { code: 'machine_selection_required', message: 'Select one exact Machine.' }] };
+    }
+    const result = await (services.readPluginInvocationLogsOnMachine ?? machineLogs.readPluginInvocationLogsOnMachine)({
+      target: resolution.target, request: query, ...(signal ? { signal } : {}) });
+    if (result.kind !== 'available') {
+      return { ok: false, kind: 'plugins_logs_read', diagnostics: [{ code: result.code,
+        message: 'The Machine could not read this plugin\'s logs.' }] };
+    }
+    const { version: _version, kind: _kind, ...page } = result;
+    return { ok: true, kind: 'plugins_logs_read', machineId: resolution.target.machineId, ...page };
   }
 
   if (params.actionId === 'plugins.dev.submit' || params.actionId === 'plugins.dev.unregister') {

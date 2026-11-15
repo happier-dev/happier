@@ -241,6 +241,7 @@ export const PLUGIN_DEV_LOOP_ACTION_IDS_V1 = [
   'plugins.reload',
   'plugins.list',
   'plugins.change.status',
+  'plugins.logs.read',
 ] as const;
 export type PluginDevLoopActionIdV1 = typeof PLUGIN_DEV_LOOP_ACTION_IDS_V1[number];
 

@@ -23,7 +23,7 @@ type AuthoringActionServices = Readonly<
     PluginDevLoopActionServices,
     'runPluginAuthorToolchain' | 'runPluginAuthorDoctor' | 'readUserPluginChangeStatus'
   >>
-  & Pick<PluginDevLoopActionServices, 'requestUserPluginChange'>
+  & Pick<PluginDevLoopActionServices, 'requestUserPluginChange' | 'resolvePluginInvocationLogTarget' | 'readPluginInvocationLogsOnMachine'>
 >;
 
 function createAgentActionExecutor(params: Readonly<{
@@ -246,6 +246,64 @@ describe('Plugin authoring Actions', () => {
       });
 
       expect(ActionIdSchema.safeParse('plugins.change.decision').success).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('lets an Agent read one plugin\'s invocation logs from one exact Machine through the daemon log reader', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-authoring-action-'));
+    const target = {
+      serverIdentityId: 'srv_identity_1', serverLabel: 'https://happier.example', serverUrl: 'https://happier.example',
+      machineId: 'machine-1', machineLabel: 'Laptop',
+    };
+    const record = {
+      version: 1 as const, kind: 'plugin_invocation_log' as const, level: 'info' as const, message: 'synced 3 items',
+      context: {
+        plugin: { id: 'acme.sync', version: '1.0.0' },
+        contribution: { id: 'sync', qualifiedId: 'acme.sync/sync' },
+        occurrenceId: 'occ-1', correlationId: 'corr-1', surface: 'action',
+      },
+      occurredAtMs: 1_700_000_000_000, sequence: 7,
+    };
+    const resolvedMachines: Array<string | undefined> = [];
+    const services: AuthoringActionServices = {
+      ...createToolchainServices({ spawnCalls: [] }),
+      readUserPluginChangeStatus: async () => { throw new Error('unexpected change-status read'); },
+      // System boundary: authenticated Machine inventory + exact machine RPC to the target daemon.
+      resolvePluginInvocationLogTarget: async ({ requestedMachineId }) => {
+        resolvedMachines.push(requestedMachineId);
+        return requestedMachineId === target.machineId
+          ? { kind: 'selected', target }
+          : { kind: 'unavailable', code: 'machine_not_found', message: 'Machine not found.' };
+      },
+      readPluginInvocationLogsOnMachine: async ({ target: readTarget, request }) => readTarget.machineId === target.machineId
+        && request.pluginId === 'acme.sync' && request.correlationId === 'corr-1' && request.limit === 50
+        ? { version: 1, kind: 'available', records: [record], cursor: 512, hasMore: false, logId: 'log-1', cursorReset: false }
+        : { kind: 'unavailable', code: 'daemon_plugin_log_target_mismatch' },
+    };
+    const executor = createAgentActionExecutor({ workspaceRoot, services });
+
+    try {
+      await expect(executor.execute('plugins.logs.read' as never, {
+        machineId: 'machine-1', pluginId: 'acme.sync', correlationId: 'corr-1', limit: 50,
+      }, { surface: 'agent', bypassApprovals: true })).resolves.toEqual({
+        ok: true,
+        result: {
+          ok: true, kind: 'plugins_logs_read', machineId: 'machine-1',
+          records: [record], cursor: 512, hasMore: false, logId: 'log-1', cursorReset: false,
+        },
+      });
+      await expect(executor.execute('plugins.logs.read' as never, {
+        machineId: 'machine-2', pluginId: 'acme.sync',
+      }, { surface: 'agent', bypassApprovals: true })).resolves.toEqual({
+        ok: true,
+        result: {
+          ok: false, kind: 'plugins_logs_read',
+          diagnostics: [{ code: 'machine_not_found', message: 'Machine not found.' }],
+        },
+      });
+      expect(resolvedMachines).toEqual(['machine-1', 'machine-2']);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

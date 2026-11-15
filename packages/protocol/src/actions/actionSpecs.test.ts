@@ -845,6 +845,7 @@ describe('Action Spec Registry', () => {
       ['plugins.reload', 'danger'],
       ['plugins.list', 'safe'],
       ['plugins.change.status', 'safe'],
+      ['plugins.logs.read', 'safe'],
     ] as const;
 
     for (const [actionId, safety] of expectations) {

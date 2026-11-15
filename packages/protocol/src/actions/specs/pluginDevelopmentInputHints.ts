@@ -63,4 +63,8 @@ export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
     { value: 'summary', label: 'Summary, without contribution detail' },
   ] }],
   'plugins.change.status': [{ path: 'pendingChangeId', title: 'Pending change id', widget: 'text', required: true }],
+  'plugins.logs.read': [{ ...machine, required: true }, plugin,
+    { path: 'occurrenceId', title: 'Invocation', widget: 'text' }, { path: 'correlationId', title: 'Correlation id', widget: 'text' },
+    { path: 'cursor', title: 'Cursor', widget: 'number' }, { path: 'logId', title: 'Log id', widget: 'text' },
+    { path: 'limit', title: 'Limit', widget: 'number' }],
 } satisfies Record<PluginDevLoopActionIdV1, ActionInputFieldHint[]>;

@@ -3,6 +3,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../../marketplace/pluginUpdatePolicyV1.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
+import { PluginInvocationLogReadQueryV1Schema } from '../../daemon/pluginInvocationLogs.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { type ActionCliBindContext } from '../actionCliProjection.js';
 import { type PluginDevLoopActionIdV1 } from '../actionIds.js';
@@ -145,6 +146,17 @@ export const PluginChangeStatusActionInputSchema = lazyZodSchema(() => z.strictO
   pendingChangeId: z.string().check(z.trim(), z.minLength(1)),
 }));
 
+/**
+ * One bounded page of one plugin's structured invocation records on one exact
+ * Machine. The query is the daemon log reader's own query; `cursor`/`logId`
+ * from a previous page continue it. There is no follow mode: the Action reads
+ * once and returns.
+ */
+export const PluginLogsReadActionInputSchema = lazyZodSchema(() => z.strictObject({
+  ...PluginInvocationLogReadQueryV1Schema.shape,
+  machineId: z.string().check(z.trim(), z.minLength(1)),
+}));
+
 export const PluginDevLoopActionInputSchemas = {
   'plugins.scaffold': PluginScaffoldActionInputSchema,
   'plugins.install': PluginInstallActionInputSchema,
@@ -169,6 +181,7 @@ export const PluginDevLoopActionInputSchemas = {
   'plugins.reload': PluginReloadActionInputSchema,
   'plugins.list': PluginListActionInputSchema,
   'plugins.change.status': PluginChangeStatusActionInputSchema,
+  'plugins.logs.read': PluginLogsReadActionInputSchema,
 } as const satisfies Readonly<Record<PluginDevLoopActionIdV1, z.ZodMiniType>>;
 
 export const PluginDevLoopActionResultKindSchema = lazyZodSchema(() => z.enum([
@@ -191,6 +204,7 @@ export const PluginDevLoopActionResultKindSchema = lazyZodSchema(() => z.enum([
   'plugins_reload',
   'plugins_list',
   'plugins_change_status',
+  'plugins_logs_read',
 ]));
 
 export const PluginDevLoopPendingReviewSchema = lazyZodSchema(() => z.looseObject({
@@ -261,6 +275,7 @@ export const PluginDevLoopActionOutputSchemas = {
   'plugins.reload': PluginDevLoopActionOutputSchema,
   'plugins.list': PluginDevLoopActionOutputSchema,
   'plugins.change.status': PluginDevLoopActionOutputSchema,
+  'plugins.logs.read': PluginDevLoopActionOutputSchema,
 } as const satisfies Readonly<Record<PluginDevLoopActionIdV1, z.ZodMiniType>>;
 
 export const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
@@ -287,6 +302,7 @@ export const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionI
   'plugins.reload': 'Reload plugin',
   'plugins.list': 'List plugins',
   'plugins.change.status': 'Get plugin change status',
+  'plugins.logs.read': 'Read plugin logs',
 });
 
 export const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
@@ -313,6 +329,7 @@ export const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopA
   'plugins.reload': 'Load a plugin you are developing again, so your latest changes take effect.',
   'plugins.list': 'List installed plugins plus daemon-owned pending changes with the issued ids needed to rejoin them. Pass projection "summary" to omit each plugin\'s per-contribution detail.',
   'plugins.change.status': 'Read one daemon-issued pending plugin change without creating or deciding it.',
+  'plugins.logs.read': 'Read one page of a plugin\'s structured invocation logs on one Machine, optionally narrowed to one invocation or correlation id. Pass the returned cursor and logId to read the next page.',
 });
 
 /**
@@ -348,7 +365,7 @@ export function readPluginDevLoopApprovalSubject(input: unknown): string | null 
 
 export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): PreNormalizedActionSpec {
   const describeApproval = PLUGIN_DEV_LOOP_APPROVAL_SUMMARIES[actionId];
-  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status'
+  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status' || actionId === 'plugins.logs.read'
     || actionId === 'plugins.dev.publication.inspect' || actionId === 'plugins.dev.publication.status';
   const isPublication = actionId === 'plugins.dev.publish' || actionId.startsWith('plugins.dev.publication.');
   const isPreparation = actionId === 'plugins.dev.publication.prepare';

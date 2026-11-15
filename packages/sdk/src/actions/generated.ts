@@ -2334,6 +2334,9 @@ export type GeneratedActions = Readonly<{
       readonly set: (input: PublicActionInputById["plugins.execution_origin.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.execution_origin.set">>;
     }> ;
     readonly list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.list">>;
+    readonly logs: Readonly<{
+      readonly read: (input: PublicActionInputById["plugins.logs.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.logs.read">>;
+    }> ;
     readonly npmRegistryProfiles: Readonly<{
       readonly add: (input: PublicActionInputById["plugins.npm_registry_profiles.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.npm_registry_profiles.add">>;
       readonly list: (input: PublicActionInputById["plugins.npm_registry_profiles.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.npm_registry_profiles.list">>;
@@ -5205,6 +5208,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         set: (input: PublicActionInputById["plugins.execution_origin.set"], options?: ActionExecutionOptions) => execute("plugins.execution_origin.set", input, options),
       },
       list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => execute("plugins.list", input, options),
+      logs: {
+        read: (input: PublicActionInputById["plugins.logs.read"], options?: ActionExecutionOptions) => execute("plugins.logs.read", input, options),
+      },
       npmRegistryProfiles: {
         add: (input: PublicActionInputById["plugins.npm_registry_profiles.add"], options?: ActionExecutionOptions) => execute("plugins.npm_registry_profiles.add", input, options),
         list: (input: PublicActionInputById["plugins.npm_registry_profiles.list"], options?: ActionExecutionOptions) => execute("plugins.npm_registry_profiles.list", input, options),
