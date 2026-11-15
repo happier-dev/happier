@@ -80,6 +80,7 @@ export {
   readExplicitJavaScriptRuntimeCommand,
   resolveJavaScriptRuntimePathEntries,
   resolveJavaScriptRuntimeCommand,
+  resolveHappierScriptRuntimeCommand,
   resolveExplicitJavaScriptRuntimeCommand,
   resolveExistingManagedJavaScriptRuntimeCommand,
   resolveDirectJavaScriptRuntimeCommand,

@@ -198,6 +198,32 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
   return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
 }
 
+/**
+ * Runtime for Happier-owned scripts (the CLI entry, hook forwarders, relays). Under Node the
+ * running executable is that runtime whatever its name: a `node` binary, or the Happier single
+ * executable, whose embedded main runs `<exe> [--no-warnings] [--no-deprecation] <absolute
+ * script> ...args` as Node does. Overrides and Bun processes resolve as
+ * `resolveJavaScriptRuntimeCommand`, which third-party Agent CLIs use because they need a
+ * runtime named `node`.
+ */
+export function resolveHappierScriptRuntimeCommand(params: Readonly<{
+  isBunRuntime: boolean;
+  processEnv?: NodeJS.ProcessEnv;
+  currentExecPath?: string | null;
+}>): string | null {
+  const processEnv = params.processEnv ?? process.env;
+  const currentExecPath = String(params.currentExecPath ?? '').trim() || process.execPath;
+  if (
+    !readExplicitJavaScriptRuntimeCommand(processEnv)
+    && typeof process.versions.bun !== 'string'
+    && currentExecPath === process.execPath
+    && isRunnableExecutablePath(currentExecPath)
+  ) {
+    return currentExecPath;
+  }
+  return resolveJavaScriptRuntimeCommand(params);
+}
+
 export function resolveDirectJavaScriptRuntimeCommand(params: Readonly<{
   isBunRuntime: boolean;
   processEnv?: NodeJS.ProcessEnv;

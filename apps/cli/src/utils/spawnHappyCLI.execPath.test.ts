@@ -299,6 +299,32 @@ describe('spawnHappyCLI runtime executable selection', () => {
     }
   });
 
+  it('spawns Session children through the Happier single executable without a managed runtime', async () => {
+    await withTempHappyCliEntrypoint(async (entrypoint) => {
+      const executable = join(entrypoint, '..', process.platform === 'win32' ? 'happier.exe' : 'happier');
+      writeFileSync(executable, process.platform === 'win32' ? '' : '#!/bin/sh\n', { mode: 0o755 });
+      vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', '');
+      vi.stubEnv('HAPPIER_NODE_PATH', '');
+      vi.stubEnv('HAPPIER_MANAGED_NODE_BIN', '');
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: undefined,
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+        HAPPIER_HOME_DIR: join(entrypoint, '..', 'home'),
+      });
+      const execPath = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+      // The running Node process is the single executable (a platform fact, not internal logic).
+      Object.defineProperty(process, 'execPath', { ...execPath, value: executable });
+      try {
+        const mod = await import('@/utils/spawnHappyCLI');
+        const launchSpec = mod.buildHappyCliSubprocessLaunchSpec(['--version']);
+        expect(launchSpec.filePath).toBe(executable);
+        expect(launchSpec.args).toEqual(['--no-warnings', '--no-deprecation', entrypoint, '--version']);
+      } finally {
+        Object.defineProperty(process, 'execPath', execPath);
+      }
+    });
+  });
+
   it('reuses the current bundled bun script when dist entrypoint is missing without a runtime override', async () => {
     const originalArgv = [...process.argv];
     const originalExecPath = process.execPath;

@@ -79,6 +79,30 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
     expect(resolveJavaScriptRuntimeExecutable({ isBunRuntime: false })).toBe(process.execPath);
   });
 
+  it('runs Happier scripts on the Happier single executable without a managed runtime', () => {
+    const happyHomeDir = createTempDirSync('happier-js-runtime-single-executable-');
+    tempDirs.add(happyHomeDir);
+    const executable = join(happyHomeDir, 'versions', '0.3.0', process.platform === 'win32' ? 'happier.exe' : 'happier');
+    mkdirSync(join(executable, '..'), { recursive: true });
+    writeFileSync(executable, process.platform === 'win32' ? '' : '#!/bin/sh\n', 'utf8');
+    if (process.platform !== 'win32') chmodSync(executable, 0o755);
+    envScope.patch({
+      HAPPIER_MANAGED_NODE_BIN: undefined,
+      HAPPIER_JS_RUNTIME_PATH: undefined,
+      HAPPIER_NODE_PATH: undefined,
+      HAPPIER_HOME_DIR: happyHomeDir,
+      PATH: '',
+    });
+    const execPath = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+    // The running Node process is the single executable (a platform fact, not internal logic).
+    Object.defineProperty(process, 'execPath', { ...execPath, value: executable });
+    try {
+      expect(resolveJavaScriptRuntimeExecutable({ isBunRuntime: false, processEnv: { ...process.env } })).toBe(executable);
+    } finally {
+      Object.defineProperty(process, 'execPath', execPath);
+    }
+  });
+
   it('prefers an installed managed JavaScript runtime wrapper under bun', () => {
     const happyHomeDir = createTempDirSync('happier-js-runtime-');
     tempDirs.add(happyHomeDir);
