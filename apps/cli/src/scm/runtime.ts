@@ -6,6 +6,7 @@ import { closeSync, openSync, realpathSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
 import type { BackendCommandRunInput, BackendCommandStreamInput } from '@happier-dev/plugin-sdk/scm/backend';
 import { resolveBackendCommandMaxOutputBytes } from '@happier-dev/plugin-sdk/scm/backend';
@@ -23,7 +24,7 @@ import { currentWorkspaceSource, type WorkspaceChildProcess } from '@/workspaces
 import { isSpawnWorkingDirectoryMissing } from '@/processes/spawnFailure/classifySpawnFailure';
 import { isHostGitPush, runHostGitPush } from './gitHostTransport';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { resolveScmCommandOperationInput } from './commandOperation';
+import { isWithinScmCommandOperation, resolveScmCommandOperationInput } from './commandOperation';
 import { observeScmCommandResult, type ScmExecResult } from './commandDiagnostics';
 
 export type { ScmExecResult } from './commandDiagnostics';
@@ -104,19 +105,31 @@ export type ScmCommandInput = {
 /** Host-private process port; the existing Exec owner decides identity and custody. */
 export type ScmCommandRunner = (input: ScmCommandInput) => Promise<ScmExecResult>;
 
-const scmCommandRunner = new AsyncLocalStorage<ScmCommandRunner>();
+const scmCommandRunner = new AsyncLocalStorage<Readonly<{ runner: ScmCommandRunner; requester: boolean }>>();
 
+/** A component default; it never replaces the runner the admitted requester selected. */
 export function runWithScmCommandRunner<T>(runner: ScmCommandRunner | undefined, run: () => T): T {
-    return runner ? scmCommandRunner.run(runner, run) : run();
+    return runner && !scmCommandRunner.getStore()?.requester ? scmCommandRunner.run({ runner, requester: false }, run) : run();
+}
+
+/** The RPC owner's one placement decision for an admitted requester; backends below keep it. */
+export function runWithRequesterScmCommandRunner<T>(runner: ScmCommandRunner, run: () => T): T {
+    return scmCommandRunner.run({ runner, requester: true }, run);
 }
 
 export function readScmCommandRunner(): ScmCommandRunner | undefined {
-    return scmCommandRunner.getStore();
+    return scmCommandRunner.getStore()?.runner;
 }
 
-/** Daemon callers consume the same held policy through the incumbent Exec owner. */
+/** Results computed under an admitted requester's runner are not another placement's results. */
+export function isRequesterScmCommandRunnerSelected(): boolean {
+    return scmCommandRunner.getStore()?.requester === true;
+}
+
+/** Daemon callers consume the same held policy through the incumbent Exec owner.
+ * Without a policy port the command runs as the daemon user (an admitted Manage requester). */
 export function createHostScmCommandRunner(input: Readonly<{
-    agentIsolation: HostAgentIsolationLaunchContext;
+    agentIsolation?: HostAgentIsolationLaunchContext;
     isCurrent(): boolean;
     assertLaunchCurrent?(signal: AbortSignal): Promise<void>;
 }>): ScmCommandRunner {
@@ -257,6 +270,12 @@ export function createScmCommandRunnerFromExecService(exec: ExecService): ScmCom
     };
 }
 
+/** The host refused to start the command; `actionErrorCode` is the typed refusal (e.g. Agent isolation). */
+export class ScmExecutionRefusedError extends Error {
+    readonly errorCode = SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE;
+    constructor(readonly actionErrorCode: string) { super('Source control could not run on this Machine'); }
+}
+
 export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
     input = resolveScmCommandOperationInput(input);
     const startedAt = performance.now();
@@ -266,6 +285,14 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         const data: unknown = error && typeof error === 'object' ? Reflect.get(error, 'data') : undefined;
         const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
         const dataCode: unknown = data && typeof data === 'object' ? Reflect.get(data, 'code') : undefined;
+        // Exec refused before any process started: no Git outcome exists. Inside a Machine
+        // SCM route, keep the typed cause instead of flattening it into stderr; library
+        // callers outside a route keep their command-result contract.
+        if (error instanceof ScmExecutionRefusedError) throw error;
+        if (isWithinScmCommandOperation() && error && typeof error === 'object'
+            && Reflect.get(error, 'execLaunch') === 'notStarted' && typeof code === 'string') {
+            throw new ScmExecutionRefusedError(code);
+        }
         return { success: false, stdout: '', exitCode: -1,
             stderr: typeof code === 'string' ? code : typeof dataCode === 'string' ? dataCode : 'SCM command execution is unavailable' };
     };

@@ -105,7 +105,9 @@ import { readStoredCredentials } from '@/persistence';
 import { sendFileReviewNoteToSession } from '@/session/services/sendFileReviewNote';
 import type { FileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
-import { resolveCwd } from '@/scm/runtime';
+import { createHostScmCommandRunner, isRequesterScmCommandRunnerSelected, resolveCwd, runWithRequesterScmCommandRunner } from '@/scm/runtime';
+import { isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 
 const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
@@ -126,8 +128,22 @@ export function registerScmHandlers(
         actionExecutor?: RpcActionExecutor;
         deliverFileAtRevision?: Parameters<typeof executeScmActionOperation>[0]['deliverFileAtRevision'];
         prepareFileBytesExport?: Parameters<typeof executeScmActionOperation>[0]['prepareFileBytesExport'];
+        /** The filesystem admission's requester decision, shared so SCM runs where that person may run. */
+        resolveRequester?: (context: RpcHandlerContext) => Promise<FilesystemEffectRequester>;
     }>,
 ): void {
+    // Manage is full control of this Machine (owner ruling 2026-10-31): an admitted Manage
+    // requester's Project SCM runs as the daemon user, like its file effects and shell.
+    // Ingress refuses every other requester on these routes; closed host calls keep their runner.
+    const runAsAdmittedRequester = async <T>(context: RpcHandlerContext | undefined, run: () => T | Promise<T>): Promise<T> => {
+        if (!deps?.resolveRequester || !context) return await run();
+        const requester = await deps.resolveRequester(context);
+        try {
+            if (!isHostRequesterUnrestrictedOwner(requester.identity)) return await run();
+            return await runWithRequesterScmCommandRunner(
+                createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
+        } finally { await requester.dispose(); }
+    };
     const scopedRegistrar = (unwrapTarget: boolean): RpcHandlerRegistrar => ({
         registerHandler<TRequest, TResponse>(
             method: string,
@@ -158,7 +174,8 @@ export function registerScmHandlers(
                     { context: operationContext, workingDirectory: scoped?.cwd ?? workingDirectory, accessPolicy },
                     // Raw SCM methods consume semantic input; Action-spec RPCs
                     // retain the same envelope for their canonical target parser.
-                    () => handler((unwrapTarget && target?.success ? target.data.input : request) as TRequest, operationContext),
+                    () => runAsAdmittedRequester(context,
+                        () => handler((unwrapTarget && target?.success ? target.data.input : request) as TRequest, operationContext)),
                 )
                 );
             });
@@ -265,6 +282,8 @@ export function registerScmHandlers(
         return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1_000;
     })();
     const statusSnapshotKey = (request: ScmStatusSnapshotRequest): string => JSON.stringify({
+        // The same path read under another execution placement is another answer.
+        requesterPlacement: isRequesterScmCommandRunnerSelected(),
         workingDirectory: routeBase.workingDirectory,
         accessPolicy: routeBase.accessPolicy,
         cwd: request.cwd ?? null,

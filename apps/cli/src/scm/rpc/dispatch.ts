@@ -46,10 +46,13 @@ function readCarriedScmErrorCode(error: unknown): ScmOperationErrorCode | null {
 
 function fallbackError<TResponse extends ScmErrorResponse>(error: unknown): TResponse {
     const message = error instanceof Error ? error.message : 'Unknown error';
+    // A host refusal before any command ran keeps its typed cause (e.g. Agent isolation).
+    const actionErrorCode = (error as { actionErrorCode?: unknown } | null | undefined)?.actionErrorCode;
     return {
         success: false,
         error: message,
         errorCode: readCarriedScmErrorCode(error) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        ...(typeof actionErrorCode === 'string' ? { actionErrorCode } : {}),
     } as TResponse;
 }
 

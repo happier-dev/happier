@@ -13,6 +13,11 @@ function combineSignals(parent: AbortSignal | undefined, signal: AbortSignal | u
     return parent && signal && parent !== signal ? AbortSignal.any([parent, signal]) : parent ?? signal;
 }
 
+/** A Machine SCM route owns this command; its response carries typed host refusals. */
+export function isWithinScmCommandOperation(): boolean {
+    return operation.getStore() !== undefined;
+}
+
 export function resolveScmCommandOperationInput(input: ScmCommandInput): ScmCommandInput {
     const current = operation.getStore();
     return current ? { ...input, timeoutMs: undefined, signal: combineSignals(current.signal, input.signal) } : input;

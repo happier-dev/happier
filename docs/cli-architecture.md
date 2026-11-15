@@ -2588,6 +2588,17 @@ availability, owns that separate disclosure. Admin attention, approved SCM
 Actions and person terminals keep their existing owners and approval policies;
 an Agent cannot gain the person's terminal authority through copied context.
 
+Session-less Project SCM (the Machine-scoped `scm.*` RPCs) runs where the
+admitted viewer may run. The SCM handler resolves the requester through the
+filesystem-effect requester owner. An admitted Manage requester or the custodian
+runs Git as the daemon user, unisolated, like its file effects and shell. Ingress
+refuses every other requester on these routes with `agent_isolation_unavailable`.
+The daemon-level isolation port carries no launch material. Without a selected
+requester, a Project read inside a Workspace root on an isolation-enabled Machine
+is refused before Git starts. Machine SCM keeps that typed refusal as the response's
+`actionErrorCode` beside `BACKEND_UNAVAILABLE`, instead of a Git probe message.
+Can use reads of a member's own folder are not served by Machine SCM yet.
+
 In 0.3 development, automatic folder selection consumes the canonical execution
 placement policy. With isolation disabled, shared-Machine Sessions run as the
 daemon user: the most recent folder, or that user's Machine home, is the default.

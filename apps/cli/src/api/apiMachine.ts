@@ -2041,6 +2041,7 @@ export class ApiMachineClient {
         registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,
+            resolveRequester: this.filesystemEffectAdmission.resolveRpcRequester,
             selectWorkspaceSource: (context, input) => this.filesystemEffectAdmission.selectWorkspaceSource(context, input),
             deliverFileAtRevision: async (request, response, signal) => await deliverScmFileAtRevision({ request, response, signal,
                 ...(this.lifecycleDependencies.directPeerServerLifecycle ? { lifecycle: this.lifecycleDependencies.directPeerServerLifecycle } : {}) }),
