@@ -998,16 +998,17 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     },
     refresh,
     readPublicProjection(request) {
+      const snapshot = adopted;
       if (
-        adopted === null
+        snapshot === null
         || params.occurrenceSignal.aborted
         || !params.isOccurrenceCurrent()
       ) return { kind: 'initializing' };
       return {
         kind: 'available',
-        revision: adopted.revision,
-        definitions: (request === undefined ? adopted.definitions : request.definitions.flatMap((selector) => {
-          const selected = adopted.definitionsByAdmissionKey.get(admissionKey(selector));
+        revision: snapshot.revision,
+        definitions: (request === undefined ? snapshot.definitions : request.definitions.flatMap((selector) => {
+          const selected = snapshot.definitionsByAdmissionKey.get(admissionKey(selector));
           return selected === undefined ? [] : [selected.definition];
         })).map((definition) => projectPublicDefinition(definition)),
       };

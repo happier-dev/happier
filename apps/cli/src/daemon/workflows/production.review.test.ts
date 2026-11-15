@@ -354,7 +354,7 @@ describe('durable review coordinator', () => {
       const result = await h.storage.execute(...args);
       const request = args[0];
       if (stop === 'terminal_child' && !childSettled && request.operation === 'invocations.list'
-        && request.lifecycles?.length === 2 && request.lifecycles.includes('cancel_requested')) {
+        && Array.isArray(request.lifecycles) && request.lifecycles.length === 2 && request.lifecycles.includes('cancel_requested')) {
         childSettled = true;
         // Native recovery commits terminal evidence while cancellation drains
         // structural rows from its earlier page. The final custody read owns it.

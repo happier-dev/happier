@@ -614,12 +614,14 @@ describe('SCM hosting Action response boundary', () => {
                 id: 'github', adapter: { pullRequests: {
                     getPullRequestAuthProfileKey: () => null,
                     listPullRequests: async () => [], getPullRequest: async () => null,
+                    createPullRequest: async () => { throw new Error('Unexpected pull request creation'); },
                 } },
             } }],
             prepareHostingProviderOperation: async () => async () => ({ ok: true, result }),
         });
         const adapter = registry.getPullRequests('test.forge/github')!;
-        const input = { provider: { id: 'test.forge/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, head: 'feature' };
+        const input = { provider: { id: 'test.forge/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com',
+            urlSafety: { allowedSchemes: ['https:'] } }, head: 'feature' } satisfies Parameters<typeof adapter.listPullRequests>[0];
         await expect(adapter.listPullRequests(input)).rejects.toMatchObject({
             errorCode: 'COMMAND_FAILED', message: 'SCM hosting listPullRequests returned an invalid response',
         });

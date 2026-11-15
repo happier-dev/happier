@@ -47,7 +47,7 @@ it('keeps the trigger popover form and a source form opened inside it across the
         </View>;
     }
     function Harness() {
-        const anchor = React.useRef<View | null>(null);
+        const anchor = React.useRef<React.ComponentRef<typeof View>>(null);
         return <>
             <View ref={anchor} testID="e09-trigger-anchor" />
             <TriggerAnchoredPopoverShell open autoFocusOnOpen phonePresentation="sheet" anchorRef={anchor}

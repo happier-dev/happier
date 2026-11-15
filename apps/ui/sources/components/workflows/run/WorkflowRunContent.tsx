@@ -393,8 +393,11 @@ function RunDetailsSheet(props: Readonly<{ content: React.ReactNode }>): React.R
     return <View style={styles.sheetBody}>{props.content}</View>;
 }
 
+type WorkflowSelectedDetailInput = Omit<WorkflowInvocationDetailProps,
+    'continuationText' | 'onChangeContinuationText' | 'replacementText' | 'onChangeReplacementText'>;
+
 function WorkflowSelectedDetail(props: Readonly<{
-    detail: WorkflowInvocationDetailProps;
+    detail: WorkflowSelectedDetailInput;
     sessionId: string | null;
     serverId?: string | null;
     active: boolean;
@@ -1634,7 +1637,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         props.run.availability.cancel && props.onCancel !== undefined ? 'stop'
             : props.onRunAgain !== undefined ? 'run_again'
                 : props.sourceAction ? 'open_workflow' : null;
-    const detailProps = React.useMemo((): WorkflowInvocationDetailProps | null => (
+    const detailProps = React.useMemo((): WorkflowSelectedDetailInput | null => (
         props.selectedInvocationId === null ? null : {
             onSelectInvocation: selectInvocation,
             progress: props.selectedInvocationProgress ?? null,
