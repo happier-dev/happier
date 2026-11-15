@@ -11,11 +11,12 @@ import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/ag
 import { registerMachineAgentInstallJobRpcHandlers } from '@/api/machine/rpcHandlers.agentInstallJobs';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { AgentInstallJobOutcome } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { createAgentInstallJobOwner } from './agentInstallJobOwner';
 import type { TrackedSession } from '@/daemon/types';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-const os = vi.hoisted(() => ({ directory: '', home: '', workspace: '', capture: '', dispatch: [] as { args: readonly string[]; env: unknown }[] }));
+const os = vi.hoisted(() => ({ directory: '', home: '', workspace: '', capture: '', outcome: { kind: 'succeeded', version: '1.0.0' } as AgentInstallJobOutcome, dispatch: [] as { args: readonly string[]; env: unknown }[] }));
 // Only native filesystem metadata and sudo are substituted. Binding reads,
 // requester placement, RunAs framing, RPC jobs and process settlement stay real.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -44,19 +45,25 @@ vi.mock('node:child_process', async importOriginal => {
         if(bytes.length<12||replied)return; const end=12+bytes.readUInt32BE(8);
         if(bytes.length<end||!bytes.subarray(end).includes(10))return;
         fs.writeFileSync(${JSON.stringify(os.capture)},bytes); replied=true;
-        process.stdout.write(JSON.stringify({t:'outcome',outcome:{kind:'succeeded',version:'1.0.0'}})+'\\n');
+        process.stdout.write(JSON.stringify({t:'outcome',outcome:${JSON.stringify(os.outcome)}})+'\\n');
       });
     `], { ...args[2], cwd: os.directory });
   } };
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-test.skipIf(process.platform !== 'linux').each([{ role: 'use', accountId: 'member' }, { role: 'manage', accountId: 'member' }, { role: 'manage', accountId: 'custodian' }] as const)('registered $role $accountId install uses the Agent placement without daemon secrets', async ({ role, accountId }) => {
+test.skipIf(process.platform !== 'linux').each([{ role: 'use', accountId: 'member', networkFailure: true }, { role: 'use', accountId: 'member', networkFailure: false }, { role: 'manage', accountId: 'member', networkFailure: false }, { role: 'manage', accountId: 'custodian', networkFailure: false }] as const)('registered $role $accountId install uses the Agent placement without daemon secrets (networkFailure=$networkFailure)', async ({ role, accountId, networkFailure }) => {
   const directory = await mkdtemp(join(tmpdir(), 'member-install-boundary-'));
   const requester: AgentIsolationMemberRequester = { kind: 'isolated', separationRequired: role === 'use', homeServerIdentityId: 'home',
     requester: { serverId: 'home', accountId, machineId: 'machine', installationId: 'installation' } };
   const identity = deriveAgentIsolationMemberIdentity(requester);
-  Object.assign(os, { directory, home: identity.home, workspace: identity.workspaceRoot, capture: join(directory, 'capture'), dispatch: [] });
+  const expectedOutcome: AgentInstallJobOutcome = networkFailure
+    ? { kind: 'failed', code: 'download_failed', stepId: 'cli.fixture', message: 'Download failed',
+      failureCause: { phase: 'agent.install.download', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null } }
+    : { kind: 'succeeded', version: '1.0.0' };
+  // The member boundary intentionally sanitizes the diagnostic message.
+  const expectedRetainedOutcome = expectedOutcome.kind === 'failed' ? { ...expectedOutcome, message: expect.any(String) } : expectedOutcome;
+  Object.assign(os, { directory, home: identity.home, workspace: identity.workspaceRoot, capture: join(directory, 'capture'), dispatch: [], outcome: expectedOutcome });
   const boundary = createAgentIsolationMemberPreparationBoundary({ activeServerDir: directory, requesterIdentity: requester,
     custodianAccountId: 'custodian', encryptionMode: 'plain', uid: 2401 });
   const prepared = await boundary.prepare();
@@ -87,13 +94,19 @@ test.skipIf(process.platform !== 'linux').each([{ role: 'use', accountId: 'membe
     const result = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'install', consent: { vendorRecipe: true } }, context);
     if (!result || typeof result !== 'object' || !('jobId' in result) || typeof result.jobId !== 'string') throw new Error(JSON.stringify(result));
     expect(await owner.read({ jobId: result.jobId, cursor: 0, waitForTerminal: true }, accountId))
-      .toMatchObject({ done: true, outcome: { kind: 'succeeded', version: '1.0.0' } });
+      .toMatchObject({ done: true, outcome: expectedRetainedOutcome });
+    const read = handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_READ)!;
+    const readRequest = { jobId: result.jobId, cursor: 0 };
+    expect(await read(readRequest, context)).toMatchObject({ ok: true, done: true,
+      outcome: expectedRetainedOutcome });
+    expect(await read(readRequest, { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'other-account' } }))
+      .toMatchObject({ ok: false, errorCode: 'job_not_found' });
     expect(owner.list('other-account')).toEqual({ ok: true, jobs: [] });
     expect(owner.list(accountId)).toMatchObject({ jobs: [{ executionScope: 'member' }] });
     const updated = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'update', consent: { vendorRecipe: true } }, context);
     if (!updated || typeof updated !== 'object' || !('jobId' in updated) || typeof updated.jobId !== 'string') throw new Error(JSON.stringify(updated));
     expect(await owner.read({ jobId: updated.jobId, cursor: 0, waitForTerminal: true }, accountId))
-      .toMatchObject({ done: true, outcome: { kind: 'succeeded' } });
+      .toMatchObject({ done: true, outcome: expectedRetainedOutcome });
     session.requesterWorkAttributionV1 = requester.requester;
     expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'update', consent: { vendorRecipe: true } }, context))
       .toMatchObject({ ok: false, errorCode: 'in_use' });

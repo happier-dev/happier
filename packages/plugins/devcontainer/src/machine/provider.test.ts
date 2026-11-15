@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -10,11 +10,29 @@ import { DEVCONTAINER_PLUGIN, DEVCONTAINER_RECONCILIATION_SCHEMAS } from '../man
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
+// The Lima boot marker is an OS boundary; configuration files stay real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, access: vi.fn(actual.access) };
+});
+async function onLima() {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(access).mockImplementation(async (path, mode) => {
+    if (path === '/run/lima-boot-done') return;
+    return actual.access(path, mode);
+  });
+}
+
 const containerId = 'a'.repeat(64);
 let launch: DevcontainerLaunch;
 let resource: DevcontainerResource;
 let configurationRoot: string;
 beforeEach(async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(access).mockImplementation(async (path, mode) => {
+    if (path === '/run/lima-boot-done') throw Object.assign(new Error('No Lima marker in this fixture'), { code: 'ENOENT' });
+    return actual.access(path, mode);
+  });
   configurationRoot = await mkdtemp(join(tmpdir(), 'happier-devcontainer-native-'));
   await mkdir(join(configurationRoot, '.devcontainer'));
   const query = { workspaceFolder: configurationRoot, configPath: join(configurationRoot, '.devcontainer', 'devcontainer.json') };
@@ -25,13 +43,13 @@ beforeEach(async () => {
   storage: { kind: 'bind' as const, hostPath: '/host/project', childPath: '/work/custom' },
   volumes: [{ name: 'retained-data', childPath: '/data' }] };
 });
-afterEach(async () => { vi.unstubAllEnvs(); await rm(configurationRoot, { recursive: true, force: true }); });
+afterEach(async () => { vi.unstubAllEnvs(); vi.mocked(access).mockReset(); await rm(configurationRoot, { recursive: true, force: true }); });
 function result(value: unknown, exitCode = 0): PluginProcessResult {
   return { termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } },
     stdout: new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)), stderr: new Uint8Array(),
     stdoutTruncated: false, stderrTruncated: false };
 }
-function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode?: string; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
+function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode?: string; dns?: readonly string[]; dnsExit?: number; hostDnsExit?: number; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = overrides.running ?? true;
   let observedId = overrides.id ?? containerId;
@@ -41,6 +59,9 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode
   let memoryBytes = 2 * 1024 ** 3;
   const exec: Pick<ExecService, 'run' | 'spawn'> = { spawn: async () => { throw new Error('No channel in this fixture'); }, run: async request => {
     requests.push(request);
+    if (request.args?.includes('getent hosts github.com')) return result('140.82.121.3 github.com\n',
+      request.args.includes('--rm') ? overrides.hostDnsExit ?? 0 : overrides.dnsExit ?? 0);
+    if (request.args?.[0] === 'network' && request.args[1] === 'inspect') return result([{ Driver: 'bridge' }]);
     // Native 0.90.0 validates the filename in resolve(), used by `up`.
     if (request.args?.[0] === 'up') {
       const config = request.args?.[request.args.indexOf('--config') + 1];
@@ -74,7 +95,7 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode
     if (request.args?.[0] === 'rm') removed = true;
     if (request.args?.[0] === 'ps') return overrides.inventory ?? result(request.args.some(arg => arg.startsWith('label=')) ? `${observedId}\n` : '');
     if (request.args?.[0] === 'inspect' && overrides.absent) return result('', 1);
-    if (request.args?.[0] === 'inspect') return result([{ Id: observedId, HostConfig: { ...(overrides.runtime === 'podman'
+    if (request.args?.[0] === 'inspect') return result([{ Id: observedId, Image: 'sha256:authored-image', HostConfig: { Dns: overrides.dns ?? [], ...(overrides.runtime === 'podman'
       ? { CpuQuota: cpuCores * 100000, CpuPeriod: 100000 } : { NanoCpus: cpuCores * 1e9 }), Memory: memoryBytes, NetworkMode: overrides.networkMode ?? 'bridge' }, State: { Running: running, Paused: overrides.paused ?? false },
       Config: { Labels: { 'devcontainer.local_folder': launch.workspaceFolder, 'devcontainer.config_file': launch.configPath,
         'happier.managed-machine': managedMachineId } },
@@ -88,7 +109,7 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode
     signal: new AbortController().signal, observedAt: 42 } satisfies Parameters<typeof createDevcontainerProvider>[0];
   return { requests, tools, provider: createDevcontainerProvider(tools) };
 }
-function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId?: string; setup?: PluginProcessResult; hostPath?: string; cleanupFailure?: boolean; runResult?: PluginProcessResult; managedId?: string } = {}) {
+function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId?: string; bridgeDnsExit?: number; hostDnsExit?: number; setup?: PluginProcessResult; hostPath?: string; cleanupFailure?: boolean; runResult?: PluginProcessResult; managedId?: string } = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = true;
   let currentId = containerId;
@@ -107,6 +128,8 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
     requests.push(request);
     expect(request.executable).toMatchObject({ id: { localId: runtime } });
     const args = request.args ?? [];
+    if (args.includes('--rm') && args.includes('getent hosts github.com')) return result('140.82.121.3 github.com\n',
+      args.includes('host') ? options.hostDnsExit ?? 0 : options.bridgeDnsExit ?? 0);
     if (args[0] === 'image') return result([{ Id: options.imageId ?? 'sha256:image', Config: { User: 'coder', Env: ['TOKEN=private-image-env'] } }]);
     if (args[0] === 'run') {
       labels = Object.fromEntries(args.flatMap((arg, index) => arg === '--label' ? [args[index + 1]!.split(/=(.*)/su).slice(0, 2)] : []));
@@ -141,6 +164,39 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
 }
 
 describe('Devcontainer native roles', () => {
+  it.each(['docker', 'podman'] as const)('uses the host branch only for confirmed Lima bridge DNS failure (%s)', async runtime => {
+    await onLima();
+    for (const [bridgeDnsExit, hostDnsExit, expectedHost] of [[2, 0, true], [0, 0, false], [2, 2, false], [127, 0, false]] as const) {
+      const { provider, requests } = imageNative(runtime, { bridgeDnsExit, hostDnsExit });
+      const acquired = await provider.acquire({ runtime, configuration: { kind: 'image', image: 'example:latest' } }, 'managed-a');
+      expect(acquired.kind).toBe('bound');
+      const creation = requests.find(request => request.args?.includes('--detach'));
+      expect(creation?.args?.includes('--network')).toBe(expectedHost);
+      expect(creation?.args?.includes('--dns')).toBe(false);
+      if (expectedHost) expect(creation?.args).toEqual(expect.arrayContaining(['--network', 'host']));
+      expect(requests.filter(request => request.args?.includes('--rm')).length).toBe(bridgeDnsExit === 2 ? 2 : 1);
+    }
+  });
+
+  it('does no DNS probing when same-host identity already selects host networking', async () => {
+    await onLima();
+    const { provider, requests } = imageNative();
+    expect((await provider.acquire({ configuration: { kind: 'image', image: 'example:latest' } }, 'managed-a', {
+      origin: 'https://home.example.test:9443', addresses: [], hostIdentity: { homeMachineHost: 'controller', controllerMachineHost: 'controller' },
+    })).kind).toBe('bound');
+    expect(requests.filter(request => request.args?.includes('--rm'))).toHaveLength(0);
+  });
+
+  it.each(['bridge', 'compose_default', 'host'])('keeps authored %s networking and exposes confirmed DNS failure at bootstrap', async networkMode => {
+    await onLima();
+    const { provider, requests } = native({ networkMode, dns: ['192.0.2.53'], dnsExit: 2 });
+    if (networkMode !== 'host') await expect(provider.bootstrap(resource)).rejects.toMatchObject({ code: 'dns_host_network_required',
+      message: expect.stringContaining('host networking') });
+    else expect(await provider.bootstrap(resource)).toMatchObject({ kind: 'native' });
+    expect(requests.filter(request => request.args?.[0] === 'up')).toHaveLength(0);
+    expect(requests.some(request => request.args?.includes('--dns'))).toBe(false);
+  });
+
   it.each(['docker', 'podman'] as const)('uses host networking only for same-Home-host image guests (%s)', async runtime => {
     for (const homeMachineHost of ['controller.local', 'remote', undefined]) {
       const { provider, requests } = imageNative(runtime);

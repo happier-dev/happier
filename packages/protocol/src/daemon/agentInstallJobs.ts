@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 // Development install-job operation, independent of the package version. Every
 // envelope is closed: caller-supplied commands and consent extensions are rejected.
@@ -40,6 +41,7 @@ export const AgentInstallJobOutcomeSchema = lazyZodSchema(() => z.discriminatedU
     stepId: z.string().check(z.minLength(1)),
     message: z.string().check(z.minLength(1)),
     guideUrl: z.optional(z.string().check(z.url())),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   }),
 ]));
 export const AgentInstallJobEventSchema = lazyZodSchema(() => z.discriminatedUnion('t', [

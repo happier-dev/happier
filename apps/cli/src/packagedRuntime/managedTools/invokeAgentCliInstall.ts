@@ -45,6 +45,7 @@ export type AgentCliInstallInvocationResult =
         | 'termination-failed'
         | 'install-failed';
       errorMessage: string;
+      failureCause?: Extract<InstallAgentCliResult, { ok: false }>['failureCause'];
       logPath: string | null;
     }>;
 
@@ -130,6 +131,7 @@ export async function invokeAgentCliInstall(params: Readonly<{
               ? errorCode
             : 'install-failed',
       errorMessage: result.errorMessage,
+      ...(result.failureCause ? { failureCause: result.failureCause } : {}),
       logPath: result.logPath ?? null,
     };
   }

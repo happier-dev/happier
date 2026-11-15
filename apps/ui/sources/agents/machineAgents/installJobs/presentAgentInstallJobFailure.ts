@@ -66,7 +66,8 @@ export function presentAgentInstallJobFailure(
             case 'install_not_available': return { title: t('agentInstallJob.manualInstall'), body: t('agentInstallJob.manualBody'), kind: 'guide' } as const;
             case 'update_not_available': return { title: t('agentInstallJob.updateUnavailable'), body: t('agentInstallJob.updateBody'), kind: 'guide' } as const;
             case 'archive_expanded_byte_limit': return { title: t('agentInstallJob.failed'), body: t('agentInstallJob.archiveExpandedByteLimitBody'), kind: 'retry' } as const;
-            case 'download_failed': return { title: t('agentInstallJob.downloadFailed'), body: t('agentInstallJob.downloadBody'), kind: 'retry' } as const;
+            case 'download_failed': return { title: t('agentInstallJob.downloadFailed'),
+                body: `${t('agentInstallJob.downloadBody')}${failure.failureCause?.errorCode ? ` (${failure.failureCause.errorCode})` : ''}`, kind: 'retry' } as const;
             case 'rate_limited': return { title: t('agentInstallJob.rateLimited'), body: rateLimitBody(failure.message), kind: 'retry' } as const;
             case 'verification_failed': return { title: t('agentInstallJob.verificationFailed'), body: t('agentInstallJob.verificationBody'), kind: 'retry' } as const;
             case 'timeout': return { title: t('agentInstallJob.timeout'), body: t('agentInstallJob.timeoutBody'), kind: 'retry' } as const;

@@ -1,8 +1,9 @@
-import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import { compareMachineHosts, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerSizeV1Schema, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
+import { access } from 'node:fs/promises';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerNativeOperationSchema } from './schemas.js';
@@ -65,7 +66,38 @@ export function createDevcontainerProvider(input: Readonly<{
     env: { ...environment, ...(managedMachineId ? { COMPOSE_PROJECT_NAME: devcontainerComposeProjectName(managedMachineId) } : {}) } });
   const run = (executable: ManagedExecutableRef, args: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string, workspaceFolder?: string) =>
     input.exec.run({ ...request(executable, args, managedMachineId, workspaceFolder), ...(stdin === undefined ? {} : { stdin }) },
-      { signal: input.signal, ...(live ? { outputDelivery: 'invocation' as const } : {}) });
+      { signal: input.signal, ...(live ? { outputDelivery: 'invocation' as const } : {}),
+        // Successful native up owns its Docker attachment beyond this invocation.
+        // Failed and cancelled launches retain the ordinary Exec cleanup policy.
+        ...(args[0] === 'up' ? { descendantDisposition: 'preserve-on-success' as const } : {}) });
+  async function bridgeNeedsHostDns(image: string, current?: Readonly<{ resource: DevcontainerResource; native: Record<string, unknown> }>) {
+    // Lima's boot marker identifies the reproduced VM topology. Probe only here,
+    // never impose DNS work on other hosts or an already selected host network.
+    try { await access('/run/lima-boot-done'); } catch { return false; }
+    if (current && !await usesBridge(current.native)) return false;
+    // GitHub is the failing Agent download origin, not an alternate DNS server.
+    // Both probes use the image's own resolver and NSS configuration. --rm lets
+    // the native runtime own probe cleanup; no mount, hook or guest setup runs.
+    const probe = ['sh', '-c', 'getent hosts github.com'];
+    const bridge = current
+      ? await childExec(current.resource, current.resource.containerId, probe, undefined, false, current.resource.managedMachineId)
+      : await run(input.docker, ['run', '--rm', '--network', 'bridge', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
+    // getent 2 means the lookup key was not found. Missing tooling (127),
+    // cancellation and transport failures do not establish a DNS diagnosis.
+    if (bridge.termination.requestedBy.kind !== 'none' || bridge.termination.observed.kind !== 'exit'
+      || bridge.termination.observed.exitCode !== 2) return false;
+    const host = await run(input.docker, ['run', '--rm', '--network', 'host', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
+    return completed(host) && !host.stdoutTruncated && host.stdout.length > 0;
+  }
+  async function usesBridge(native: Record<string, unknown>) {
+    const mode = record(native.HostConfig).NetworkMode;
+    if (mode === 'bridge' || mode === 'default') return true;
+    if (typeof mode !== 'string' || mode === 'host' || mode === 'none' || mode.startsWith('container:')) return false;
+    const inspected = await run(input.docker, ['network', 'inspect', mode]);
+    if (!completed(inspected) || inspected.stdoutTruncated) return false;
+    const networks = json(inspected);
+    return Array.isArray(networks) && record(networks[0]).Driver === 'bridge';
+  }
   async function inspectContainer(containerId: string, launch: DevcontainerLaunch, managedMachineId: string) {
     const inspected = await run(input.docker, ['inspect', '--type', 'container', containerId], undefined, false, managedMachineId, launch.workspaceFolder);
     if (!completed(inspected)) {
@@ -179,12 +211,13 @@ export function createDevcontainerProvider(input: Readonly<{
       // hooks. Discovery and retained-resource inspection never evaluate them.
       let result: PluginProcessResult;
       const source = imageSource(launch);
+      const useHostNetwork = source && (homeOnControllerHost || await bridgeNeedsHostDns(source.image));
       const command = source ? 'run' : 'up';
       try { result = source
         ? await run(input.docker, ['run', '--detach',
           // Image-only input has no authored network. Advanced file/inline/Compose
           // networking stays under its existing effect review and native CLI.
-          ...(homeOnControllerHost ? ['--network', 'host'] : []),
+          ...(useHostNetwork ? ['--network', 'host'] : []),
           ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
           '--mount', mountArgument([launch.workspaceFolder ? 'type=bind' : 'type=volume',
             `source=${launch.workspaceFolder ?? `${devcontainerComposeProjectName(managedMachineId)}-workspace`}`, 'target=/workspace']),
@@ -322,6 +355,10 @@ export function createDevcontainerProvider(input: Readonly<{
     },
     async bootstrap(resource: DevcontainerResource) {
       const { native } = await exact(resource, true);
+      if (!imageSource(resource) && typeof native.Image === 'string' && await bridgeNeedsHostDns(native.Image, { resource, native })) {
+        throw new PluginError({ code: 'dns_host_network_required',
+          message: 'This container uses bridge networking; DNS on this host is only reachable with host networking. Configure host networking in the devcontainer or Compose source, or provide a DNS resolver reachable from that network.' });
+      }
       return { kind: 'native' as const, transport: { contributionRef, schemaVersion: 1 },
         ...(resource.homeOnControllerHost && !imageSource(resource) && record(native.HostConfig).NetworkMode !== 'host'
           ? { homeNetworkHint: 'authored_network' as const } : {}) };

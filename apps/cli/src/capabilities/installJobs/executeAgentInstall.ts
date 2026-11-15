@@ -5,6 +5,7 @@ import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from 
 import { PluginAgentCliInstallMetadataSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentInstallJobEvent, AgentInstallJobFailureCode, AgentInstallJobOutcome, DaemonAgentInstallStartRequest } from '@happier-dev/protocol';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { invalidateCliSnapshots, probeAgentCliForInstall } from '@/capabilities/snapshots/cliSnapshot';
 import { withAgentCliUpdates } from '@/capabilities/cliUpdate/agentCliUpdates';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
@@ -66,7 +67,8 @@ export async function executeAgentInstall(input: DaemonAgentInstallStartRequest,
     const stepId = buildAgentInstallJobCliStepId(input);
     const label = definition?.title ?? 'Remove managed Agent';
     emit({ t: 'step', stepId, label, state: 'running' });
-    const fail = (code: AgentInstallJobFailureCode, message: string): AgentInstallJobOutcome => ({ kind: 'failed', code, stepId, message });
+    const fail = (code: AgentInstallJobFailureCode, message: string, failureCause?: ActionFailureCauseV1): AgentInstallJobOutcome => ({ kind: 'failed', code, stepId, message,
+      ...(failureCause ? { failureCause } : {}) });
     let result: AgentInstallJobOutcome;
     try {
       signal.throwIfAborted();
@@ -101,7 +103,7 @@ export async function executeAgentInstall(input: DaemonAgentInstallStartRequest,
             : { ok: false, errorCode: removed.code, errorMessage: 'The retained version cannot be removed for repair.', logPath: null };
           if (!installed.ok) {
             if (installed.errorCode === 'termination-failed') cleanupError = new ExecFileTerminationError(new Error(installed.errorMessage));
-            result = fail(failureCode(installed.errorCode ?? 'install-failed'), installed.errorMessage);
+            result = fail(failureCode(installed.errorCode ?? 'install-failed'), installed.errorMessage, installed.failureCause);
           } else {
             signal.throwIfAborted();
             const resolution = await resolveAcpLaunch(params);
@@ -134,8 +136,9 @@ export async function executeAgentInstall(input: DaemonAgentInstallStartRequest,
       emit({ t: 'step', stepId, label, state: 'running' });
     };
     const done = () => emit({ t: 'step', stepId, label, state: 'done' });
-    const fail = (code: AgentInstallJobFailureCode, message: string): AgentInstallJobOutcome => ({
+    const fail = (code: AgentInstallJobFailureCode, message: string, failureCause?: ActionFailureCauseV1): AgentInstallJobOutcome => ({
       kind: 'failed', code, stepId, message,
+      ...(failureCause ? { failureCause } : {}),
       ...(code === 'install_not_available' && (spec.installGuideUrl ?? spec.docsUrl)
         ? { guideUrl: spec.installGuideUrl ?? spec.docsUrl ?? undefined } : {}),
     });
@@ -211,7 +214,7 @@ export async function executeAgentInstall(input: DaemonAgentInstallStartRequest,
             if (!updated?.ok) {
               const code = updated?.error.code ?? 'install-failed';
               if (code === 'termination-failed') cleanupError = new ExecFileTerminationError(new Error(updated?.error.message));
-              cliFailure = fail(failureCode(code), updated?.error.message ?? 'Agent update failed.');
+              cliFailure = fail(failureCode(code), updated?.error.message ?? 'Agent update failed.', updated && !updated.ok ? updated.error.failureCause : undefined);
             }
           } else {
             const installed = await installAgentCliForRuntime({
@@ -222,7 +225,7 @@ export async function executeAgentInstall(input: DaemonAgentInstallStartRequest,
             });
             if (!installed.ok) {
               if (installed.errorCode === 'termination-failed') cleanupError = new ExecFileTerminationError(new Error(installed.errorMessage));
-              cliFailure = fail(failureCode(installed.errorCode), installed.errorMessage);
+              cliFailure = fail(failureCode(installed.errorCode), installed.errorMessage, installed.failureCause);
             }
           }
           if (cliFailure) {

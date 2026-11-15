@@ -5,6 +5,7 @@ import {
   buildManagedUvAgentEnvironment, installManagedUvAgent, resolveManagedUvAgentCommand, type ManagedUvAgentSpec,
 } from '@happier-dev/cli-common/agents';
 import type { AccountSettings, InstallableDependencyDescriptor } from '@happier-dev/protocol';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol/installables';
 import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { resolveAcpPlatformFitV1, type AcpPlatformFitV1 } from '@happier-dev/protocol/acp/catalog/registry/acpPlatformFitV1';
@@ -116,7 +117,7 @@ export type AcpLaunchInstallParams = AcpLaunchParams & Readonly<{
   signal?: AbortSignal; onProgress?: Parameters<typeof installAgentCliForRuntime>[0]['onProgress']; intent?: 'install' | 'update'; force?: boolean;
 }>;
 export type AcpLaunchInstallResult = Readonly<{ ok: true; checksum?: 'verified' | 'not_published' }>
-  | Readonly<{ ok: false; errorMessage: string; errorCode?: string; logPath: string | null }>;
+  | Readonly<{ ok: false; errorMessage: string; errorCode?: string; failureCause?: ActionFailureCauseV1; logPath: string | null }>;
 
 export async function installAcpLaunch(params: AcpLaunchInstallParams,
   deps: Readonly<{ installerDeps?: Parameters<typeof installAgentCliForRuntime>[0]['deps'] }> = {},

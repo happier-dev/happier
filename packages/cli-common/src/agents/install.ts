@@ -5,6 +5,7 @@ import {
   type AgentCliInstallPlatform,
 } from '@happier-dev/agents/cli/runtime';
 import { resolveAgentSetupHostPlatform } from '@happier-dev/protocol/agents/setup';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { existsSync } from 'node:fs';
 
@@ -82,6 +83,7 @@ export type InstallAgentCliResult =
         | 'termination-failed'
         | 'update-not-available';
       errorMessage: string;
+      failureCause?: ActionFailureCauseV1;
       plan: AgentCliInstallPlan | null;
       logPath: string | null;
     }>;

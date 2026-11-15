@@ -15,6 +15,15 @@ import { AgentInstallJobRpcError } from './api';
 import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from './presentAgentInstallJobFailure';
 
 describe('agent install failure presentation', () => {
+    it.each(['ENOTFOUND', 'ETIMEDOUT'])('shows the typed download cause %s while keeping private diagnostics out', errorCode => {
+        const failure = { kind: 'failed' as const, code: 'download_failed' as const, stepId: 'cli', message: 'private URL and installer path',
+            failureCause: { phase: 'agent.install.download', errorClass: 'Error' as const, errorCode, httpStatus: null } };
+        const presented = presentAgentInstallJobFailure(failure);
+        expect(presented.body).toContain(errorCode);
+        expect(presented.body).not.toContain(failure.message);
+        expect(presented.recovery.kind).toBe('retry');
+    });
+
     it('preserves the recovery cause for refused installation changes', () => {
         for (const [code, body] of [
             ['in_use', 'agentInstallJob.inUseBody'],

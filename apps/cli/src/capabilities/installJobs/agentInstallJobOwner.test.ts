@@ -377,7 +377,10 @@ test.skipIf(process.platform === 'win32')('vendor recipe consent fails at the in
   }
 });
 
-test.skipIf(process.platform === 'win32')('release transport failures are typed and retained without an installed executable', async () => {
+test.skipIf(process.platform === 'win32').each([
+  { networkCode: 'ENOTFOUND', intent: 'install' }, { networkCode: 'ETIMEDOUT', intent: 'install' },
+  { networkCode: 'ENOTFOUND', intent: 'update' }, { networkCode: 'ETIMEDOUT', intent: 'update' },
+] as const)('release transport failures retain their network cause ($intent $networkCode)', async ({ networkCode, intent }) => {
   const root = await mkdtemp(join(tmpdir(), 'agent-job-download-'));
   let owner: AgentInstallJobOwner | undefined;
   try {
@@ -387,13 +390,20 @@ test.skipIf(process.platform === 'win32')('release transport failures are typed 
       managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/download', binaryName: 'fixture-download' },
       acceptsJavaScriptFileOverride: false,
     };
-    owner = createAgentInstallJobOwner({ readRegistry: () => registryWith(spec), env: { HOME: root, HAPPIER_HOME_DIR: root, PATH: '' }, installerDeps: {
-      fetchGitHubLatestRelease: async () => { throw new Error('Fixture release transport unavailable'); },
+    const env = { HOME: root, HAPPIER_HOME_DIR: root, PATH: '' };
+    if (intent === 'update') {
+      const command = resolveAgentCliManagedCommandPathForRuntime(spec, { processEnv: env });
+      await mkdir(join(command, '..'), { recursive: true });
+      await writeFile(command, '#!/bin/sh\nprintf "fixture-download 1.0.0\\n"\n', { mode: 0o755 });
+    }
+    owner = createAgentInstallJobOwner({ readRegistry: () => registryWith(spec), env, installerDeps: {
+      fetchGitHubLatestRelease: async () => { throw Object.assign(new Error('Fixture release transport unavailable'), { code: networkCode }); },
     } });
-    const start = owner.start({ agentId: spec.id, intent: 'install', consent: { vendorRecipe: false } });
+    const start = owner.start({ agentId: spec.id, intent, consent: { vendorRecipe: false } });
     expect(start.ok).toBe(true);
     if (!start.ok) return;
-    expect(await outcome(owner, start.jobId)).toMatchObject({ kind: 'failed', code: 'download_failed', stepId: `cli.${spec.id}` });
+    expect(await outcome(owner, start.jobId)).toMatchObject({ kind: 'failed', code: 'download_failed', stepId: `cli.${spec.id}`,
+      failureCause: { phase: 'agent.install.download', errorCode: networkCode } });
     expect(owner.read({ jobId: start.jobId, cursor: 0 })).toMatchObject({ events: expect.arrayContaining([
       { t: 'step', stepId: `cli.${spec.id}`, label: spec.title, state: 'failed' },
     ]) });

@@ -33,6 +33,13 @@ reload together under the unpublished development direct cut: earlier strict
 development readers reject the added fields. No migration, wire epoch,
 compatibility adapter or released format changes.
 
+Agent install failed outcomes optionally carry the existing `ActionFailureCauseV1`
+as `failureCause`. The download owner projects the original transport cause;
+machine/member job transports and the UI consume it without a second classifier.
+This additive field follows the same unpublished 0.3 direct cut: Protocol, CLI
+and UI reload together because older strict development readers reject it.
+No new failure-code vocabulary, persistence table or migration is introduced.
+
 ## Managed Machine creation provenance (unreleased 0.3)
 
 Provider-authored bound acquire results carry optional `resource.origin: 'created'`

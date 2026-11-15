@@ -4,6 +4,7 @@ import { AgentCliDownloadError } from '../downloadGitHubReleaseAsset.js';
 import { ExecFileTerminationError } from '../../process/index.js';
 import { ArchiveExpandedByteLimitError, ArchiveExtractionTimeoutError } from '@happier-dev/release-runtime/archiveExtraction';
 import { GitHubReleaseRateLimitError } from '@happier-dev/release-runtime/github';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type RuntimeInstallFailureErrorCode = 'archive-expanded-byte-limit' | 'managed-runtime-unavailable' | 'command-failed' | 'command-timed-out' | 'termination-failed' | AgentCliDownloadError['errorCode'];
 
@@ -38,6 +39,12 @@ export function buildRuntimeInstallFailureResult(params: Readonly<{
         ok: false,
         errorCode,
         errorMessage,
+        // The download wrapper owns the broad outcome; its cause owns the
+        // transport diagnosis (DNS, timeout, HTTP), rather than "download-failed".
+        ...(errorCode === 'download-failed' ? { failureCause: projectActionFailureCauseV1(
+            params.error instanceof AgentCliDownloadError ? params.error.cause ?? params.error : params.error,
+            'agent.install.download', { allowUnknownErrorCode: false },
+        ) } : {}),
         plan: params.plan,
         logPath: params.lifecycleContext.logPath,
     };

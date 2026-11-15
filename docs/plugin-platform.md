@@ -4328,15 +4328,29 @@ Home/controller host identities from the daemon's existing Home observation. The
 controller uses the existing Home carrier policy and OS resolver; these addresses
 are not settings or retained resource identity. At realization, the image-only
 provider compares the host identities through the canonical hostname helper.
-Matching hosts use Docker/Podman host networking; remote or unknown hosts keep
-the native default. `--add-host` preserves the selected Home hostname for TLS.
+Matching hosts use Docker/Podman host networking. On Lima, a failed bridge DNS
+lookup followed by a successful host-network lookup in the same image selects
+that same host-network branch for image-only input. Other hosts and inconclusive
+lookups keep the native default. The probes use the image's resolver settings,
+with no alternate DNS server, relay or forwarding rules. `--add-host` preserves
+the selected Home hostname for TLS.
 Advanced file, inline and Compose configurations always retain their reviewed
 networking authority. The retained resource and uncertain-acquisition reference
 keep the same-host fact for bootstrap/recovery. If enrollment actually reports
 `home_not_guest_reachable` for a same-host authored network other than host mode,
 the failure keeps that code and adds typed `authored_network` guidance: configure
 host networking in the authored source or expose a Home endpoint that network
-can reach. No extra reachability probe or authored-network override is added.
+can reach. On Lima, authored bridge networking whose DNS lookup fails while the
+same image resolves on the host network fails bootstrap with
+`dns_host_network_required`: configure host networking in the authored source or
+provide a resolver reachable from that network. Authored networking and DNS are
+never rewritten. Lookup probes use native resolver budgets; missing `getent`
+does not establish a DNS diagnosis. No extra Home reachability probe is added.
+
+Agent download failures retain the canonical content-free `failureCause` through
+the machine/member install job outcome. The install presenter shows its typed
+network code (for example `ENOTFOUND` or `ETIMEDOUT`), keeping private download
+URLs and installer paths out of primary copy.
 
 For advanced configuration, Devcontainer options accept the controller
 `workspaceFolder` and `configPath`, or a saved `configuration` with `kind: inline`

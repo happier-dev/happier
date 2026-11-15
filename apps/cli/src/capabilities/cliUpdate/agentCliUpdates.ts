@@ -200,7 +200,8 @@ export function withAgentCliUpdates(cap: Capability, agentId: string, deps: Agen
     if (!result.ok) {
       return {
         ok: false,
-        error: { message: result.errorMessage, code: result.errorCode },
+        error: { message: result.errorMessage, code: result.errorCode,
+          ...(result.failureCause ? { failureCause: result.failureCause } : {}) },
         ...(result.logPath ? { logPath: result.logPath } : {}),
       };
     }
