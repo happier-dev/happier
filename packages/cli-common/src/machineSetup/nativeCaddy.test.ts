@@ -3,6 +3,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import * as net from 'node:net';
+import { createNativeCaddyAdminExchange } from './nativeCaddy.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { getRelayAccessProvider } from '../relayAccess/registry.js';
@@ -332,6 +333,36 @@ it.skipIf(process.platform === 'win32')('does not report a started container rea
         const before = f.commands.length;
         expect(await ensureNativeCaddyContainer(f.input, f.options())).toMatchObject({ status: 'ready' });
         expect(f.commands.slice(before).some(command => ['create', 'start', 'stop', 'rm', 'wait'].includes(command.args[3]!))).toBe(false);
+    } finally { controller.abort(); await result.catch(() => {}); }
+});
+
+it.skipIf(process.platform !== 'linux' || process.getuid?.() === 0)('waits for Caddy to grant socket access after binding during fresh startup', async () => {
+    const f = await fixture(false, true, true); await f.setup();
+    await f.serveAdmin(JSON.parse(f.input.initialConfig));
+    const socket = join(f.input.adminDirectory, 'admin.sock');
+    // Caddy 2.10.2 binds before chmod. Model that OS boundary window with
+    // a real socket that exists but does not yet admit the daemon's request.
+    await chmod(socket, 0o400);
+    const controller = new AbortController();
+    let waiting!: () => void;
+    const wait = new Promise<void>(resolve => { waiting = resolve; });
+    const result = ensureNativeCaddyContainer(f.input, { ...f.options(), signal: controller.signal, run: async command => {
+        if (command.args.includes('wait')) waiting();
+        return f.run(command);
+    } });
+    try {
+        await wait;
+        // Observe the real permission refusal before allowing Caddy's chmod.
+        await expect(createNativeCaddyAdminExchange(socket)({ method: 'GET', path: '/config/' })).rejects.toMatchObject({ code: 'EACCES' });
+        await new Promise<void>(resolve => setImmediate(resolve));
+        await chmod(socket, 0o660);
+        expect(await result).toMatchObject({ status: 'ready' });
+        // Outside startup, a real access failure retains its typed cause.
+        await chmod(socket, 0o400);
+        expect(await observeNativeCaddyContainer({}, { run: f.run })).toMatchObject({
+            status: 'unavailable', reason: 'required_fact_unavailable',
+            details: { failure: { requiredFact: 'caddyAdminConfig', errorCode: 'EACCES' } },
+        });
     } finally { controller.abort(); await result.catch(() => {}); }
 });
 

@@ -557,7 +557,10 @@ async function startNativeCaddyContainer(input: NativeCaddySetupInput, container
                 options.signal?.throwIfAborted();
                 if (lifetime.signal.aborted) continue;
                 const code = object(error)?.code;
-                if (code !== 'ENOENT' && code !== 'ECONNREFUSED') return caddyFactUnavailable('caddyAdminConfig', error);
+                // Caddy binds with the process umask before applying the seed's
+                // socket mode. A daemon in its group can see EACCES until that
+                // chmod wakes this existing startup watcher (Caddy 2.10.2).
+                if (code !== 'ENOENT' && code !== 'ECONNREFUSED' && code !== 'EACCES') return caddyFactUnavailable('caddyAdminConfig', error);
                 if (!changed) await new Promise<void>(resolve => { wake = resolve; });
                 wake = undefined;
             }
