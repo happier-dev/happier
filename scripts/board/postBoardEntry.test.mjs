@@ -43,6 +43,9 @@ test('accepts every allowed type, unrestricted body length, and duplicate posts'
 
 async function fixture(t, contents = header + newPost + oldPost) {
   const directory = await fs.mkdtemp(path.join(tmpdir(), 'board-writer-'));
+  const previousCwd = process.cwd();
+  process.chdir(directory);
+  t.after(() => process.chdir(previousCwd));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const board = path.join(directory, 'HANDOFF.md');
   const entryFile = path.join(directory, 'entry.md');
@@ -264,3 +267,30 @@ for (const corruption of ['heading', 'body']) {
     assert.deepEqual(await fs.readFile(board), before);
   });
 }
+
+
+test('warns for ended addressees in known report trees while the post still lands', async (t) => {
+  const f = await fixture(t);
+  const reports = {
+    '.project/plans/program/nested/lanes/ENDED.md': 'DONE — committed',
+    '.project/tmp/program/reports/STOPPED.md': 'BLOCKED-ended — no active run',
+    '.project/plans/program/lanes/ACTIVE.md': 'IN_PROGRESS',
+    '.project/tmp/program/WAITING.md': 'BLOCKED — waiting for input',
+    '.project/plans/program/lanes/ENDED-OTHER.md': 'DONE',
+    '.project/plans/program/briefs/NOT-A-REPORT.md': 'DONE',
+    '.project/tmp/program/node_modules/vendored/ACTIVE.md': 'DONE',
+  };
+  for (const [name, line] of Object.entries(reports)) {
+    const file = path.join(f.directory, name);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, line + '\nbody\n');
+  }
+  const entry = '### 2026-11-15 16:31 UTC — Writer → ENDED, STOPPED, ACTIVE, WAITING, MISSING, NOT-A-REPORT — ASK — route\nBody\n';
+  await fs.writeFile(f.entryFile, entry);
+  const { stderr } = await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory });
+  const warnings = stderr.trim().split('\n');
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /ENDED.*DONE/);
+  assert.match(warnings[1], /STOPPED.*BLOCKED-ended/);
+  assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry));
+});

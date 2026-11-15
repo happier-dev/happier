@@ -33,6 +33,7 @@ Apply strict RED-GREEN-REFACTOR while following Happier-specific lane, fixture, 
 - `inconclusive`: available evidence cannot yet identify the owning class
 
 3. **RED**
+- For corridor defects found live, build RED from a captured request, response or event payload from the loaded runtime, rather than hand-built input; retain the failing shape while removing secrets (F14, J32, restore, preset-auth: green owner tests, failed live).
 - Write or update the smallest relevant test first.
 - Run only the smallest relevant slice and confirm it fails because the intended behavior is missing or wrong, not because of setup, fixtures, mocks, wording, syntax, or an unrelated error.
 

@@ -21,6 +21,51 @@ function validateEntry(entry) {
   if (headings.length === 0) throw new Error('Add a board heading with an allowed type: CLAIM, RESULT, ASK, URGENT, RULING or HOLD.');
 }
 
+async function warnEndedAddressees(entry) {
+  const addressees = new Set([...entry.toString('utf8').matchAll(/^### .*? → (.+?) — /gm)]
+    .flatMap((match) => match[1].split(',').map((name) => name.trim())));
+  const ended = new Map();
+  // Restrict discovery to report trees, never the repository root or plan briefs.
+  let directories = ['.project/plans', '.project/tmp'];
+  while (directories.length) {
+    const listings = await Promise.all(directories.map(async (directory) => {
+      try { return { directory, entries: await fs.readdir(directory, { withFileTypes: true }) }; }
+      catch (error) { if (error.code === 'ENOENT') return { directory, entries: [] }; throw error; }
+    }));
+    directories = [];
+    for (const { directory, entries } of listings) {
+      for (const entry of entries) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules' && entry.name !== '.git') directories.push(file);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+        if (file.startsWith(path.join('.project', 'plans') + path.sep) && path.basename(directory) !== 'lanes') continue;
+        const lane = path.basename(file, '.md');
+        if (!addressees.has(lane)) continue;
+        let handle;
+        try {
+          handle = await fs.open(file);
+          for await (const line of handle.readLines()) {
+            const verdict = line.replace(/^#+\s*/, '').replace(/^status:?\s*/i, '');
+            if (/^(?:DONE\b|BLOCKED-ended\b)/.test(verdict)) ended.set(lane, { file, line });
+            break;
+          }
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        } finally {
+          await handle?.close();
+        }
+      }
+    }
+  }
+  for (const lane of addressees) {
+    const report = ended.get(lane);
+    if (report) console.error(`Warning: addressee ${lane} has an ended report (${report.file}: ${report.line}); route to a live owner. Post will still land.`);
+  }
+}
+
 function holderIsAlive(holder) {
   if (!Number.isSafeInteger(holder.pid) || holder.pid <= 0 || holder.hostname !== hostname()) {
     throw new Error('Board lock has no verifiable local holder; refusing to steal it');
@@ -142,6 +187,8 @@ async function replaceBoard(board, current, candidate, archived, mode, minimumBy
 export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
   const entry = await fs.readFile(entryFile);
   validateEntry(entry);
+  try { await warnEndedAddressees(entry); }
+  catch (error) { console.error(`Warning: could not inspect addressee reports (${error.code ?? error.name}); post will still land.`); }
   let cutoff;
   if (rotateBefore !== undefined) {
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(rotateBefore)

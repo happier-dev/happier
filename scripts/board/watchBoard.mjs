@@ -99,8 +99,10 @@ async function main() {
         seen.add(heading);
         if (silent) continue;
         process.stdout.write(heading + '\n');
-        // ALL-leads HOLDs are batched: recorded and printed with the next real wake (Systemic ruling 11-04 09:30Z), not a wake of their own.
-        const wakesNow = (broadcast && match[3] !== 'HOLD') || ['ASK', 'URGENT', 'RULING'].includes(match[3]) || wakeRegex?.test(heading);
+        // Informational cc posts remain delivered/seen, but cannot end this watch alone.
+        const informationalCc = !names.has(addressees[0]) && ['RESULT', 'CLAIM'].includes(match[3]);
+        const wakesNow = !informationalCc && (names.has(addressees[0])
+          || ['ASK', 'URGENT', 'HOLD', 'LIFTED', 'RULING'].includes(match[3]) || wakeRegex?.test(heading));
         if (!selfNames.has(match[1].trim()) && wakesNow) wake = true;
       }
     }

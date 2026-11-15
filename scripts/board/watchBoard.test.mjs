@@ -69,7 +69,7 @@ test('delivers both missed Coordination asks inserted deep out of order, exactly
   const store = '### 2026-11-03 04:32 UTC — STORE-LIVE → Coordination — ASK — reload journey stack for f898901cbe279aa91837c1156580817c6081cc75';
   const hydrate = '### 2026-11-03 04:56 UTC — HYDRATE-LIVE → Coordination — ASK — reload journey stack for 103bb932d33553700e73032ffdcb55957a319e3a';
   await fs.writeFile(f.seen, Array.from({ length: 1150 }, (_, i) => JSON.stringify({ heading: heading('Coordination', 'ASK', `seen ${i}`) })).join('\n') + '\n');
-  const ready = heading('Coordination', 'CLAIM', 'watching');
+  const ready = heading('Other, Coordination', 'CLAIM', 'watching');
   const lines = [ready, ...Array.from({ length: 600 }, (_, i) => heading('Other', 'ASK', `unrelated ${i}`))];
   await fs.writeFile(f.board, lines.join('\n'));
   const run = start(t, f, ['--wake-regex', 'reload journey stack'], 10000, false, names);
@@ -151,13 +151,13 @@ test('filters before delivery, never truncates addressed headings, and persists 
 
 test('watches all named boards through atomic replacement and wakes immediately on addressed RULING', { timeout: 15000 }, async (t) => {
   const f = await fixture(t);
-  await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+  await fs.writeFile(f.board, heading('Other, Programme', 'CLAIM') + '\n');
   const run = start(t, f);
   await run.line();
   const next = f.second + '.tmp';
   await fs.writeFile(next, heading('Programme', 'RULING') + '\n');
   await fs.rename(next, f.second);
-  assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), heading('Programme', 'RULING')]);
+  assert.deepEqual(await run.done, [heading('Other, Programme', 'CLAIM'), heading('Programme', 'RULING')]);
 });
 
 for (const status of ['DONE', 'BLOCKED', 'IMPLEMENTED_NOT_VERIFIED']) {
@@ -165,11 +165,11 @@ for (const status of ['DONE', 'BLOCKED', 'IMPLEMENTED_NOT_VERIFIED']) {
     const f = await fixture(t);
     const report = path.join(f.root, 'lanes', 'lane.md');
     await fs.writeFile(report, 'STATUS: IN_PROGRESS\nbody\n');
-    await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+    await fs.writeFile(f.board, heading('Other, Programme', 'CLAIM') + '\n');
     const run = start(t, f);
     await run.line();
     await fs.writeFile(report, `STATUS: ${status} — evidence\nbody\n`);
-    assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), `${report}: STATUS: ${status} — evidence`]);
+    assert.deepEqual(await run.done, [heading('Other, Programme', 'CLAIM'), `${report}: STATUS: ${status} — evidence`]);
     assert.deepEqual(await start(t, f, [], 50).done, ['HEARTBEAT']);
   });
 }
@@ -179,11 +179,11 @@ for (const line of ['# DONE: producer committed', 'Status: BLOCKED — prerequis
     const f = await fixture(t);
     const report = path.join(f.root, 'lanes', 'lane.md');
     await fs.writeFile(report, 'STATUS: IN_PROGRESS\nbody\n');
-    await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+    await fs.writeFile(f.board, heading('Other, Programme', 'CLAIM') + '\n');
     const run = start(t, f);
     await run.line();
     await fs.writeFile(report, `${line}\nbody\n`);
-    assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), `${report}: ${line}`]);
+    assert.deepEqual(await run.done, [heading('Other, Programme', 'CLAIM'), `${report}: ${line}`]);
   });
 }
 
@@ -191,31 +191,55 @@ test('optional wake regex wakes on RESULT', { timeout: 15000 }, async (t) => {
   const f = await fixture(t);
   const reports = path.join(f.root, 'custom');
   await fs.mkdir(reports);
-  await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+  await fs.writeFile(f.board, heading('Other, Programme', 'CLAIM') + '\n');
   const run = start(t, f, ['--reports', reports, '--wake-regex', 'producer ready']);
   await run.line();
   await fs.appendFile(f.second, heading('LANE', 'RESULT', 'producer ready') + '\n');
-  assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), heading('LANE', 'RESULT', 'producer ready')]);
+  assert.deepEqual(await run.done, [heading('Other, Programme', 'CLAIM'), heading('LANE', 'RESULT', 'producer ready')]);
 });
 
 test('explicit report roots wake on newly created terminal reports', { timeout: 15000 }, async (t) => {
   const f = await fixture(t);
   const reports = path.join(f.root, 'custom');
   await fs.mkdir(reports);
-  await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+  await fs.writeFile(f.board, heading('Other, Programme', 'CLAIM') + '\n');
   const run = start(t, f, ['--reports', reports]);
   await run.line();
   const report = path.join(reports, 'new.md');
   await fs.writeFile(report, 'STATUS: DONE\n');
-  assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), `${report}: STATUS: DONE`]);
+  assert.deepEqual(await run.done, [heading('Other, Programme', 'CLAIM'), `${report}: STATUS: DONE`]);
 });
 
 test('a report root sharing a board directory still observes new report files before heartbeat', { timeout: 2000 }, async (t) => {
   const f = await fixture(t);
-  await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+  await fs.writeFile(f.board, heading('Other, Programme', 'CLAIM') + '\n');
   const run = start(t, f, ['--reports', f.root], 10000);
   await run.line();
   const report = path.join(f.root, 'new-report.md');
   await fs.writeFile(report, 'STATUS: BLOCKED\n');
-  assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), `${report}: STATUS: BLOCKED`]);
+  assert.deepEqual(await run.done, [heading('Other, Programme', 'CLAIM'), `${report}: STATUS: BLOCKED`]);
 });
+
+
+for (const type of ['CLAIM', 'RESULT']) {
+  test(`cc-only ${type} batches even with a matching wake regex and stays seen`, async (t) => {
+    const f = await fixture(t);
+    const cc = heading('Other, Programme', type, 'producer ready');
+    await fs.writeFile(f.board, cc + '\n');
+    const options = ['--wake-regex', 'producer ready'];
+    assert.deepEqual(await start(t, f, options, 80).done, [cc, 'HEARTBEAT']);
+    assert.deepEqual(await start(t, f, options, 80).done, ['HEARTBEAT']);
+    const primary = heading('Programme, Other', type, 'primary work');
+    await fs.appendFile(f.board, primary + '\n');
+    assert.deepEqual(await start(t, f, [], 80).done, [primary]);
+  });
+}
+
+for (const type of ['URGENT', 'HOLD', 'LIFTED', 'RULING', 'ASK']) {
+  test(`cc-only ${type} wakes before heartbeat`, async (t) => {
+    const f = await fixture(t);
+    const cc = heading('Other, Programme', type);
+    await fs.writeFile(f.board, cc + '\n');
+    assert.deepEqual(await start(t, f, [], 80).done, [cc]);
+  });
+}
