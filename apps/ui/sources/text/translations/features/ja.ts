@@ -17357,7 +17357,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         attentionItemCount: ({ count }: { count: number }) => `${count} 件`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} があなたの確認を待っています。`,
         waitingSentence: 'この実行はあなたの操作を待っています。',
-        runningSentence: '作業を実行中です。',
         runningStepSentence: ({ step }: { step: string }) => `${step} を実行中です。`,
         parkedReviewSentence: '確認するまで、ほかの作業は進みません。',
         parkedReviewCount: ({ count }: { count: number }) => `${count} 件の結果の確認が必要です。`,

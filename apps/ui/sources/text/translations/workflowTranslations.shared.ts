@@ -660,7 +660,6 @@ export const en = {
         attentionItemCount: ({ count }: { count: number }) => `${count} items`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} is waiting for your review.`,
         waitingSentence: 'This run is waiting for you.',
-        runningSentence: 'Work is running.',
         runningStepSentence: ({ step }: { step: string }) => `${step} is running.`,
         parkedReviewSentence: 'Nothing else can run until you review.',
         parkedReviewCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "result needs" : "results need"} review.`,

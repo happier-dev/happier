@@ -2,7 +2,8 @@ import { formatWorkflowResultFieldType, formatWorkflowValueReference, workflowRe
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPageRowFieldLayoutContext, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPageRowFieldLayoutContext, HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
+import { useLocalSetting } from '@/sync/store/hooks';
 
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowAuthoredResultReference, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
@@ -251,6 +252,8 @@ export function WorkflowBindingRow(props: Readonly<{
 }
 
 const VALUE_TRACK_FIELD_LAYOUT = Object.freeze({ maxWidthPx: null, stacked: true });
+/** The lab's label column (S6 `.uwe-kr`) at the default text size. */
+const ACTION_FIELD_LABEL_COLUMN_PX = 120;
 
 /**
  * A typed row's label column and value track (lab `.uwe-kr`): the label says what the value is, on the
@@ -266,10 +269,13 @@ function WorkflowFieldPair(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const track = React.useContext(WorkflowKindCardLabelTrack);
+    // The column is measured in text: at a larger text size it widens with its labels, so "Command" never runs into its value.
+    const { metricScale } = useHappierTextPresentation({ textScale: useLocalSetting('uiFontScale') });
     return (
         <>
             <View
-                style={[workflowEditorStyles.actionFieldLabelColumn, track?.width == null ? null : { width: track.width }]}
+                style={[workflowEditorStyles.actionFieldLabelColumn, { flexBasis: ACTION_FIELD_LABEL_COLUMN_PX * metricScale },
+                    track?.width == null ? null : { width: track.width }]}
                 onLayout={track === null || track.width !== null ? undefined
                     : (event) => track.report(props.trackKey, event.nativeEvent.layout.width)}
             >

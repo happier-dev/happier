@@ -17351,7 +17351,6 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         attentionItemCount: ({ count }: { count: number }) => `${count} 項`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} 正在等待你審閱。`,
         waitingSentence: '本次執行正在等待你。',
-        runningSentence: '工作正在執行。',
         runningStepSentence: ({ step }: { step: string }) => `${step} 正在執行。`,
         parkedReviewSentence: '在你審查之前，其他工作無法繼續。',
         parkedReviewCount: ({ count }: { count: number }) => `${count} 個結果需要審查。`,

@@ -67,9 +67,10 @@ export function WorkflowExamplesSection(props: Readonly<{
     session?: WorkflowStarterSessionTarget;
     /**
      * `list`: a Session's compact one-line-per-example picker (with `session`); `cards` draws each with its map;
-     * `strip`: the returning library's secondary row (lab `nav-N1`), two compact cards and the rest one press away.
+     * `strip`: the returning library's secondary row (lab `nav-N1`), two compact cards and the rest one press away;
+     * `featured`: the first visit (lab `nav-N3`), the first few drawn as maps and the rest one press away.
      */
-    presentation?: 'cards' | 'list' | 'strip';
+    presentation?: 'cards' | 'list' | 'strip' | 'featured';
     /** A phone sheet already names the picker in its header. */
     hideTitle?: boolean;
 }>): React.ReactElement {
@@ -120,7 +121,8 @@ export function WorkflowExamplesSection(props: Readonly<{
             })}
         </ItemGroup></ListPresentationProvider>;
     }
-    if (props.presentation === 'strip') return <ExamplesStrip examples={examples} choose={choose} choice={choice}
+    if (props.presentation === 'strip' || props.presentation === 'featured') return <ExamplesStrip examples={examples}
+        featured={props.presentation === 'featured'} choose={choose} choice={choice}
         onCloseChoice={() => setChoice(null)} onUse={useExample} />;
     return <ItemGroup title={props.hideTitle ? undefined : t('workflows.examples.title')} surface="none"
         {...(props.opensDraft === false ? {} : { description: t('workflows.examples.description') })}>
@@ -130,14 +132,17 @@ export function WorkflowExamplesSection(props: Readonly<{
 
 /** How many examples the returning library shows before "more": one row of the two-column grid. */
 const STRIP_EXAMPLE_COUNT = 2;
+/** The first visit's look (lab `nav-N3` draws four): two rows of the grid, so the page leads with its invitation, not a catalog. */
+const FEATURED_EXAMPLE_COUNT = 4;
 
 /**
  * The returning library's examples (lab `nav-N1`): one row of compact cards under the section title, and the whole
- * catalog one press away in the same picker the column's "+" › From an example opens. The first visit keeps the
- * full cards with their maps (lab `nav-N3`).
+ * catalog one press away in the same picker the column's "+" › From an example opens. The first visit draws its
+ * few as full cards with their maps (lab `nav-N3`), with the same way to the rest.
  */
 function ExamplesStrip(props: Readonly<{
     examples: readonly WorkflowStarterExampleV1[];
+    featured: boolean;
     choose: (example: WorkflowStarterExampleV1) => void;
     choice: Readonly<{ key: string; lifetime: ActiveServerAccountScopeLifetime | null }> | null;
     onCloseChoice: () => void;
@@ -145,14 +150,15 @@ function ExamplesStrip(props: Readonly<{
 }>) {
     const [pickerOpen, setPickerOpen] = React.useState(false);
     const anchorRef = React.useRef<View>(null);
-    const rest = props.examples.length - STRIP_EXAMPLE_COUNT;
+    const count = props.featured ? FEATURED_EXAMPLE_COUNT : STRIP_EXAMPLE_COUNT;
+    const rest = props.examples.length - count;
     const { examples } = props;
-    const shown = React.useMemo(() => examples.slice(0, STRIP_EXAMPLE_COUNT), [examples]);
+    const shown = React.useMemo(() => examples.slice(0, count), [examples, count]);
     return <ItemGroup title={t('workflows.examples.title')} description={t('workflows.examples.description')} surface="none"
         action={rest > 0 ? <View ref={anchorRef} collapsable={false}><SectionActionButton testID="workflow-examples:more"
             icon="tree-structure" title={t('common.more')} expanded={pickerOpen}
             onPress={() => setPickerOpen(true)} /></View> : undefined}>
-        <ExampleCards examples={shown} compact choose={props.choose} choice={props.choice} onCloseChoice={props.onCloseChoice} onUse={props.onUse} />
+        <ExampleCards examples={shown} compact={!props.featured} choose={props.choose} choice={props.choice} onCloseChoice={props.onCloseChoice} onUse={props.onUse} />
         {pickerOpen ? <WorkflowExamplesPopover anchorRef={anchorRef} onRequestClose={() => setPickerOpen(false)} /> : null}
     </ItemGroup>;
 }

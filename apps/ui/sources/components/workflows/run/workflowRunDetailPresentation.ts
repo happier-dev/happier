@@ -768,9 +768,10 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
             ? t('workflows.run.attentionWaitSentence', { step: params.attention.step })
             : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
     }
+    // With no known step the status word says it all: the line reads "Running" alone (owner R2, 2026-11-15).
     if (run.state === 'running') return params.runningStep
         ? t('workflows.run.runningStepSentence', { step: params.runningStep })
-        : t('workflows.run.runningSentence');
+        : formatWorkflowRunStateLabel('running');
     // A stopped Run says how far it got, from the server's authored progress the Run row also reads
     // (DESIGN-15 R9); unlike a success count it does not depend on the loaded history pages.
     if (run.state === 'cancelled' && run.stepProgress) {
@@ -786,7 +787,7 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     }
     if (run.state === 'pause_requested') return t('workflows.run.pausePending');
     if (run.state === 'paused') return t('workflows.run.paused');
-    if (run.state === 'claimed' && coverage.observedLeafCounts.completed > 0) return t('workflows.run.runningSentence');
+    if (run.state === 'claimed' && coverage.observedLeafCounts.completed > 0) return formatWorkflowRunStateLabel('running');
     return formatWorkflowRunStateLabel(run.state);
 }
 

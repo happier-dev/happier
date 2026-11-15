@@ -987,6 +987,15 @@ describe('workflow library page anatomy', () => {
         await vi.waitFor(() => expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(1));
         await vi.waitFor(() => expect(screen.findByTestId('workflows-home:firstVisit') !== null).toBe(!hasHistory));
         if (hasHistory) await vi.waitFor(() => expect(screen.findByTestId('workflows-home:empty')).not.toBeNull());
+        if (!hasHistory) {
+            // Lab nav-N3: a first look at a few examples drawn as maps, the whole catalog one press away.
+            const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
+            const { Collection } = await import('@happier-dev/plugin-ui');
+            const cards = screen.findAllByType(Collection).find(collection => collection.props.testID === 'workflow-examples:cards');
+            expect(cards?.props.model.keys).toEqual(WORKFLOW_STARTER_EXAMPLES_V1.slice(0, 4).map(example => example.key));
+            expect(cards?.props.anatomy.card?.body).toBeDefined();
+            expect(screen.findByTestId('workflow-examples:more')).not.toBeNull();
+        }
     });
     it('keeps a saved row retained in the window while it is carried, and releases it after', async () => {
         const definitionId = '10000000-0000-4000-8000-000000000011';

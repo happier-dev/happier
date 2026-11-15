@@ -17405,7 +17405,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         attentionItemCount: ({ count }: { count: number }) => `Элементов: ${count}`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} ждёт вашей проверки.`,
         waitingSentence: 'Этот запуск ждёт вас.',
-        runningSentence: 'Работа выполняется.',
         runningStepSentence: ({ step }: { step: string }) => `${step} выполняется.`,
         parkedReviewSentence: 'Пока вы не проверите результат, другая работа не может продолжиться.',
         parkedReviewCount: ({ count }: { count: number }) => `Результатов для проверки: ${count}.`,

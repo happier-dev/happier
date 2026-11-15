@@ -633,7 +633,7 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
                 {columnListsBuiltins ? null : <WorkflowBuiltinsSection />}
-                <WorkflowExamplesSection />
+                <WorkflowExamplesSection presentation="featured" />
                 <View style={styles.importLine}>
                     <Text style={styles.importPrompt}>{t('workflows.destination.importPrompt')}</Text>
                     <RoundButton

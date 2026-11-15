@@ -418,7 +418,7 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...coverage, knownFailure: true } }))
             .toBe(t('workflows.runState.completed_with_failures'));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'running' }, coverage }))
-            .toBe(t('workflows.run.runningSentence'));
+            .toBe(t('workflows.runState.running'));
     });
     it('says how far a stopped Run got rather than the bare state word (DESIGN-15 R9)', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
@@ -441,7 +441,7 @@ describe('managed workflow Run presentation', () => {
     it('describes a claimed continuation and an accepted Stop from their current facts', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
         const run = createWorkflowRunSummaryFixture({ state: 'claimed' });
-        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.runningSentence'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.runState.running'));
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, cancelRequested: true })).toBe(t('workflows.run.stopping'));
         expect(formatWorkflowRunOutcomeLabel({ state: 'claimed', coverage, cancelRequested: true })).toBe(t('workflows.run.stopping'));
     });
@@ -1281,6 +1281,17 @@ describe('managed workflow Run presentation', () => {
         expect(line).toBe(t('workflows.run.outcomeLine', {
             word: t('workflows.review.waitTitle'), sentence: t('workflows.run.waitingSentence'),
         }));
+    });
+
+    it('reads a running Run whose step is unknown as the word alone (owner R2, 2026-11-15)', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'running' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: true });
+        const word = formatWorkflowRunOutcomeLabel({ state: run.state, coverage });
+        expect(formatWorkflowRunOutcomeLine({ word, sentence: formatWorkflowRunOutcomeSentence({ run, coverage, attention: null }) }))
+            .toBe(word);
+        // A known step keeps its sentence.
+        expect(formatWorkflowRunOutcomeLine({ word, sentence: formatWorkflowRunOutcomeSentence({ run, coverage, runningStep: 'Check the fix' }) }))
+            .toBe(t('workflows.run.outcomeLine', { word, sentence: t('workflows.run.runningStepSentence', { step: 'Check the fix' }) }));
     });
 
     it('presents a claimed Run with a known hold through attention while preserving terminal parent authority', () => {

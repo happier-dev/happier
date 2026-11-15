@@ -17395,7 +17395,6 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         attentionItemCount: ({ count }: { count: number }) => `${count} elements`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} espera la teva revisió.`,
         waitingSentence: 'Aquesta execució t’espera.',
-        runningSentence: 'La feina està en marxa.',
         runningStepSentence: ({ step }: { step: string }) => `${step} s’està executant.`,
         parkedReviewSentence: 'Res més no pot continuar fins que ho revisis.',
         parkedReviewCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "resultat necessita" : "resultats necessiten"} revisió.`,

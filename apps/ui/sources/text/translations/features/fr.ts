@@ -17420,7 +17420,6 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         attentionItemCount: ({ count }: { count: number }) => `${count} éléments`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} attend ta vérification.`,
         waitingSentence: 'Cette exécution vous attend.',
-        runningSentence: 'Le travail est en cours.',
         runningStepSentence: ({ step }: { step: string }) => `${step} est en cours.`,
         parkedReviewSentence: 'Rien d’autre ne peut avancer avant votre vérification.',
         parkedReviewCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "résultat attend" : "résultats attendent"} votre vérification.`,

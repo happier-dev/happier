@@ -17422,7 +17422,6 @@ const es = translated(workflowValueReferenceTranslations.es, {
         attentionItemCount: ({ count }: { count: number }) => `${count} elementos`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} espera tu revisión.`,
         waitingSentence: 'Esta ejecución te está esperando.',
-        runningSentence: 'El trabajo está en marcha.',
         runningStepSentence: ({ step }: { step: string }) => `${step} se está ejecutando.`,
         parkedReviewSentence: 'Nada más puede continuar hasta que lo revises.',
         parkedReviewCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "resultado necesita" : "resultados necesitan"} revisión.`,

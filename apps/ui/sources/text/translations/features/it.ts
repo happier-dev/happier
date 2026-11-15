@@ -17374,7 +17374,6 @@ const it = translated(workflowValueReferenceTranslations.it, {
         attentionItemCount: ({ count }: { count: number }) => `${count} elementi`,
         attentionReviewSentence: ({ step }: { step: string }) => `${step} attende la tua revisione.`,
         waitingSentence: 'Questa esecuzione ti sta aspettando.',
-        runningSentence: 'Il lavoro è in corso.',
         runningStepSentence: ({ step }: { step: string }) => `${step} è in esecuzione.`,
         parkedReviewSentence: 'Nient’altro può proseguire finché non lo rivedi.',
         parkedReviewCount: ({ count }: { count: number }) => `${count} ${count === 1 ? "risultato richiede" : "risultati richiedono"} una revisione.`,

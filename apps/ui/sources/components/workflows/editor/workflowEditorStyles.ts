@@ -648,15 +648,15 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         borderColor: 'transparent',
         borderRadius: theme.borderRadius.md,
     },
-    /** The label track: the lab's 120 px column; its words wrap inside it. */
+    /** The label track: the lab's column; its words wrap inside it. */
     actionFieldLabelColumn: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'baseline',
         columnGap: theme.space.s4,
-        // The lab's column where the row has it; a card narrower than that gives the label the card's width
-        // and its words wrap there (a phone at a large text size cut "Required" at the card's edge).
-        flexBasis: 120,
+        // The lab's column where the row has it (its basis, scaled with the text, comes from WorkflowFieldPair);
+        // a card narrower than that gives the label the card's width and its words wrap there (a phone at a
+        // large text size cut "Required" at the card's edge).
         flexGrow: 0,
         flexShrink: 1,
         minWidth: 0,
