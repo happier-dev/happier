@@ -146,7 +146,7 @@ import { canDeployDeploymentEnvironment } from './deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
-import { readDeploymentReadAuthorizationInTx } from './deploymentReadAuthorization';
+import { readAdmittedDeploymentReadScopeInTx, readDeploymentReadAuthorizationInTx, readDeploymentTargetAuthorizationInTx } from './deploymentReadAuthorization';
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from './deploymentDomainService';
 import { isCurrentDeploymentChildInTx, readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx } from './deploymentChildAuthorization';
 import { isDeploymentPreparationAuthorizedInTx, readDeploymentBackupConfigureHttpPurpose } from './deploymentPreparationAuthorization';
@@ -3806,6 +3806,75 @@ describe('deployment children retain their controller Action authority', () => {
                     }, [authorization.token]);
             }
         }, { authentication: 'real' });
+    });
+
+    it.each(['vercel', 'workers'] as const)('admits the %s log role admission metadata reads its logs root signs', async platformTarget => {
+        // Live #162 (COR4B-VERCEL-1115, COR6): a provider build-log read re-admits its role through the role admission host,
+        // which signs its Environment and receipt reads with the logs root. Home refused them (deployment_native_read_purpose, 401).
+        const f = await fixture('account', 'account', { platformTarget });
+        const actionId = 'deployments.logs.read' as const;
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
+            targetLinkId: f.link.id, machineId: f.controller.id, installationId: f.controller.installationId,
+            kind: 'build' as const };
+        const admission = projectDeploymentReadAdmissionV1(actionId, input);
+        if (!admission) throw new Error('Build log read admission missing');
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+            serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), deploymentReadAdmission: admission });
+        const receiptSpec = getActionSpec('deployments.receipts.get');
+        if (!receiptSpec.serverTransport) throw new Error('Receipt transport missing');
+        const rootSigned = (path: string) => ({ method: 'GET' as const, url: path, headers: {
+            ...currentAccountStoredContentCompatibilityHeaders,
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                authorizationToken: authorization.token, effectActionId: actionId, target,
+                installationId: f.controller.installationId, requestId: envelope.requestId,
+                method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+        } });
+        const environmentRead = (environmentId: string) => rootSigned(
+            `/v1/deployments/environments/${encodeURIComponent(environmentId)}?serverId=${encodeURIComponent(serverId)}`);
+        const receiptRead = (deploymentId: string) => rootSigned(bindHomeDomainHttpRequestV1({ transport: receiptSpec.serverTransport!,
+            inputSchema: receiptSpec.inputSchema, input: { serverId, environmentId: f.environment.id, deploymentId } }).path);
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const environment = await app.inject(environmentRead(f.environment.id));
+            expect(environment.statusCode, environment.body).toBe(200);
+            expect(environment.json()).toMatchObject({ ok: true, environment: { id: f.environment.id } });
+            const receipt = await app.inject(receiptRead(f.receipt.id));
+            expect(receipt.statusCode, receipt.body).toBe(200);
+            expect(receipt.json()).toMatchObject({ ok: true, deployment: { id: f.receipt.id } });
+            for (const rejected of [environmentRead(crypto.randomUUID()), receiptRead(crypto.randomUUID())]) {
+                await expectHttpRefusalWarning({ phase: 'deployment_native_read_purpose', method: 'GET', path: rejected.url.split('?')[0] },
+                    async () => { const response = await app.inject(rejected); expect(response.statusCode, response.body).toBe(401); },
+                    [authorization.token]);
+            }
+        }, { authentication: 'real' });
+    });
+
+    it('selects compact platform log custody from its exact receipt and refuses an explicit different link', async () => {
+        // RECEIPT-SETTLE-1115: a compact platform log read omits its link. Prisma reads an undefined id as no filter, so the
+        // first same-Environment link (a decoy) was selected instead of the receipt's own link.
+        const f = await fixture();
+        const selected = await db.deploymentTargetLink.create({ data: { environmentId: f.environment.id, createdByAccountId: f.account.id,
+            role: 'runtime', state: 'deployed', sourceKind: 'plugin', pluginId: 'happier.deploy.vercel', contributionLocalId: 'vercel',
+            targetKind: 'platform', ...await f.content('deployment-target-link.v1') } });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { targetLinkId: selected.id } });
+        const admission = projectDeploymentReadAdmissionV1('deployments.logs.read', { serverId, environmentId: f.environment.id,
+            deploymentId: f.receipt.id, kind: 'build' });
+        if (!admission || !('deploymentId' in admission) || admission.actionId !== 'deployments.logs.read') throw new Error('Compact log admission missing');
+        const environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+        const receipt = await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } });
+        const expected = [environment.contentArtifactId, selected.contentArtifactId, receipt.contentArtifactId];
+        const scope = await readAdmittedDeploymentReadScopeInTx(db, admission);
+        expect(scope?.artifactContents.map(reference => reference.contentArtifactId)).toEqual(expected);
+        expect(await readDeploymentTargetAuthorizationInTx(db, environment, admission)).toEqual({ ok: true, artifactIds: expected });
+        const mismatch = { ...admission, targetLinkId: f.link.id };
+        expect(await readAdmittedDeploymentReadScopeInTx(db, mismatch)).toBeNull();
+        expect(await readDeploymentTargetAuthorizationInTx(db, environment, mismatch)).toBeNull();
     });
 
     it.each(['plain', 'e2ee'] as const)('opens captured %s Domain inventory only for the admitted member job', async contentMode => {

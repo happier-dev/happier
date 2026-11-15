@@ -59,7 +59,7 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
-    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -2567,10 +2567,16 @@ async function readDeploymentNativeReadHttpPurpose(verified: VerifiedSignedChild
         || verified.effectActionId === verified.binding.actionId)) return {};
     const access = openLogs ? readDeploymentEnvironmentAccessPurpose(verified, proof) : null;
     if (access) return access.environmentIds.length === 1 && access.environmentIds[0] === admission.environmentId ? {} : false;
-    if (verified.signedChildPurpose.sibling.deploymentRead) {
-        if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) return false;
+    // A provider-role admission host (createDeploymentTargetRoleAdmissionHost) signs its Environment and receipt
+    // metadata reads with the root, as action.invoke's does. They spend the same declared-read scope as a sibling.
+    const rootMetadataRead = verified.effectActionId !== verified.binding.actionId ? undefined
+        : isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof) ? DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+            : isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, proof) ? DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 : undefined;
+    const declaredRead = verified.signedChildPurpose.sibling.deploymentRead ? verified.effectActionId : rootMetadataRead;
+    if (declaredRead) {
+        if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, declaredRead, proof)) return false;
         return openLogs ? {} : { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
-            ...('deploymentId' in admission && verified.effectActionId === 'deployments.receipts.get'
+            ...('deploymentId' in admission && declaredRead === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1
                 ? { deploymentId: admission.deploymentId } : {}), contentCustody: true } } };
     }
     if (verified.effectActionId !== verified.binding.actionId || !isReadOnlyArtifactHttpPurpose(proof)) return false;
@@ -3673,6 +3679,21 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (!managedRoot.success && isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) {
         // The signed setup scope names reviewed grants; configure retains its
         // exact-installation scope. The route owns proof and target access.
+    } else if (verified.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        && proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/setup/report') {
+        const report = MachineSetupReportInputV1Schema.safeParse(proof.body);
+        if (verified.effectActionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || !report.success || !('target' in report.data)
+            || report.data.homeId !== verified.binding.serverIdentityId || !report.data.target.sessionId
+            || report.data.target.controller.machineId !== verified.binding.machineId
+            || report.data.target.controller.installationId !== verified.binding.installationId) return refuse('managed_bound_session_setup');
+        // Birth already admitted this association. Consume its exact active
+        // Session once; do not mint a second admission or re-evaluate permissions.
+        const session = await db.session.findFirst({ where: { id: report.data.target.sessionId,
+            accountId: verified.binding.accountId, managedCreationId: report.data.managedId, archivedAt: null,
+            managedCreation: { homeId: report.data.homeId, custodianAccountId: verified.binding.custodianAccountId,
+                controllerMachineId: verified.binding.machineId, controllerInstallationId: verified.binding.installationId },
+        }, select: { id: true } });
+        if (!session) return refuse('managed_bound_session_setup');
     } else if (managedRoot.success) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();
