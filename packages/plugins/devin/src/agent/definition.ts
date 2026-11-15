@@ -27,7 +27,7 @@ export const AGENT_DEFINITION = Object.freeze({
     // Devin consumes Happier's per-session tool set through its native MCP config.
     tools: { delivery: 'native_mcp', support: 'supported' },
   },
-  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' } as const,
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,
