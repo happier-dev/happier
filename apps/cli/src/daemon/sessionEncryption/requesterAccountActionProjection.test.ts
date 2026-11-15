@@ -10,7 +10,8 @@ import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploy
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema,
-  projectDeploymentPreparationAdmissionV1, createDeploymentCandidatePublicationV1, deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
+  projectDeploymentPreparationAdmissionV1, createDeploymentCandidatePublicationV1, deriveWorkspaceSyncRelationshipId,
+  projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -553,8 +554,8 @@ describe('admitted requester Action projection', () => {
     { mode: 'e2ee', failure: 'network', expected: 'project_requester_home_unavailable' },
     { mode: 'plain', failure: 'authentication', expected: 'invalid_envelope' },
     { mode: 'e2ee', failure: 'authentication', expected: 'invalid_encrypted_envelope' },
-    { mode: 'plain', failure: 'authorization', expected: 'machine_admission_after_principal' },
-    { mode: 'e2ee', failure: 'authorization', expected: 'machine_admission_after_principal' },
+    { mode: 'plain', failure: 'authorization', expected: 'invalid_token' },
+    { mode: 'e2ee', failure: 'authorization', expected: 'invalid_token' },
   ] as const)('preserves unavailable Home admission without accepting refused custody ($mode/$failure)', async ({ mode, failure, expected }) => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(45));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 7,
@@ -617,7 +618,8 @@ describe('admitted requester Action projection', () => {
     });
     expect(await dispatchOriginalAccountAction({ actionId: 'session.message.send', input, requestId: 'correction', target,
       credentials, serverIdentityId: 'srv_fx45_home', serverHttpBaseUrl: 'https://requester-home.test' }))
-      .toEqual({ ok: false, errorCode: expected, error: expected });
+      .toEqual({ ok: false, errorCode: expected, error: expected,
+        ...(failure === 'authorization' ? {} : { requestId: 'correction' }) });
     expect(failures).toEqual([expected]);
   });
   it.each(['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'projects.worker.status', 'localServices.launcher.start',
@@ -1224,10 +1226,9 @@ describe('admitted requester Action projection', () => {
       accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'controller', installationId: 'controller-install',
       actionId: 'deployments.promote', requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-      deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'bob', serverIdentityId: 'stable-home',
-        actionId: 'deployments.promote', requestId,
-        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-        environmentId: original.environmentId, source: { id: 'source', revision: 1 } }),
+      environmentId: original.environmentId,
+      deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({
+        actionId: 'deployments.promote', envelope }),
     } });
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
