@@ -27,6 +27,7 @@ const serverProfiles = await import('@/sync/domains/server/serverProfiles');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
 const { resolveForegroundNotificationBehavior } = await import('./resolveForegroundNotificationBehavior');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
 type Home = Readonly<{ scope: ServerAccountScope; serverUrl: string; portableId: string; profileId: string }>;
 const credentialWrites: Array<NonNullable<Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>>>> = [];
@@ -53,6 +54,12 @@ async function enrollHome(name: string, settings: unknown): Promise<Home> {
     await writeHomeCredential({ scope, serverUrl: profile.serverUrl }, scope.accountId);
     saveAccountSettings(scope, settingsParse(settings), 1);
     return { scope, serverUrl: profile.serverUrl, portableId, profileId: profile.id };
+}
+
+/** Mutes are read once per Home Account; an edit reaches readers through its own Account change push. */
+async function changeMutes(home: Home, scopes: unknown): Promise<void> {
+    mutedScopes = scopes;
+    publishHomeAccountChange(home.scope.serverId);
 }
 
 function readyAlert(home: Home) {
@@ -108,11 +115,11 @@ describe('resolveForegroundNotificationBehavior', () => {
     it('suppresses a source muted by its exact Account without borrowing another Home or treating unavailable as unmuted', async () => {
         const home = await enrollHome('mute-home', { attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'full' } });
         const arrival = { content: { data: readyAlert(home) }, localSettings: {}, isSessionVisible: nothingVisible, now: NOON };
-        mutedScopes = [{ kind: 'source', source: { kind: 'session', sessionId: 'session-1' } }];
+        await changeMutes(home, [{ kind: 'source', source: { kind: 'session', sessionId: 'session-1' } }]);
         expect(await resolveForegroundNotificationBehavior(arrival)).toBe('off');
-        mutedScopes = [{ kind: 'source', source: { kind: 'session', sessionId: 'another-session' } }];
+        await changeMutes(home, [{ kind: 'source', source: { kind: 'session', sessionId: 'another-session' } }]);
         expect(await resolveForegroundNotificationBehavior(arrival)).toBe('full');
-        mutedScopes = null;
+        await changeMutes(home, null);
         expect(await resolveForegroundNotificationBehavior(arrival)).toBe('off');
     });
 

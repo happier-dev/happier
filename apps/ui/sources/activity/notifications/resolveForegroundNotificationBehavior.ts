@@ -9,7 +9,7 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import type { ActivityAttentionDeliveryChannel, ActivityAttentionDeliveryEventKind } from '../delivery/activityAttentionDeliveryPlanTypes';
 import { readExactHomeAccountSettings } from '../delivery/useExactHomeAccountSettings';
-import { readAccountSessionDeliveryMutedScopes } from '@/sync/api/session/sessionFollowApi';
+import { readAccountDeliveryMutedScopes } from '@/activity/source/accountDeliveryMutes';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { resolveActivityAttentionDeliveryPlan } from '../delivery/resolveActivityAttentionDeliveryPlan';
 import { consumeOtherLegActivityAlertPresentation, noteActivityAlertPresented } from './remoteAlerts/activityAlertPresentationNotes';
@@ -150,11 +150,12 @@ export async function resolveForegroundNotificationBehavior(params: Readonly<{
         : null;
     if (!accountSettings || resolution.kind !== 'bound') return 'off';
     if (arrival.sessionId) {
-        const scopes = await readAccountSessionDeliveryMutedScopes(resolution.scope);
+        // Read once per Home Account; refreshed only by their own change push.
+        const scopes = await readAccountDeliveryMutedScopes(resolution.scope);
         if (scopes === null || isFollowDeliveryMutedV1(scopes, {
             senderSessionId: arrival.sessionId, source: { kind: 'session', sessionId: arrival.sessionId },
         })) return 'off';
-        // The HTTP read may overlap a privacy/settings edit. Use its current
+        // The read may overlap a privacy/settings edit. Use its current
         // exact-Home policy rather than the pre-read snapshot for presentation.
         accountSettings = readExactHomeAccountSettings(resolution.scope);
         if (!accountSettings) return 'off';

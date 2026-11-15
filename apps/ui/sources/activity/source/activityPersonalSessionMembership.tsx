@@ -94,8 +94,8 @@ function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean,
                 }) : Promise.resolve();
             const muteRead = resolveServerCredentialAccountScope(serverId).then(async resolution => {
                 if (resolution.kind !== 'bound') return null;
-                const { readAccountSessionDeliveryMutedScopes } = await import('@/sync/api/session/sessionFollowApi');
-                const scopes = await readAccountSessionDeliveryMutedScopes(resolution.scope, request.controller.signal);
+                const { readAccountDeliveryMutedScopes } = await import('./accountDeliveryMutes');
+                const scopes = await readAccountDeliveryMutedScopes(resolution.scope);
                 return scopes === null ? null : { scope: resolution.scope, scopes };
             }).then(mutes => {
                 if (!disposed && !request.controller.signal.aborted) setMute(serverId, request.rerun ? null : mutes);

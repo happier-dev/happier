@@ -13,7 +13,7 @@ import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolv
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
-import { readAccountSessionDeliveryMutedScopes } from '@/sync/api/session/sessionFollowApi';
+import { readAccountDeliveryMutedScopes } from '@/activity/source/accountDeliveryMutes';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
 import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -235,13 +235,12 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     React.useEffect(() => {
         const controller = new AbortController();
         const notify = async (event: ActivityLocalNotificationEvent) => {
-            // Capture the reconciliation decision while its owning scope is
-            // active, before the asynchronous Account mute read can outlive it.
             if (event.kind === 'ready' && event.source === 'reconciliation'
                 && isActivityLocalNotificationMutedForWake(event.address)) return;
             const scope = audienceSource.audienceScopes?.get(event.address.serverId);
             if (!scope) return;
-            const scopes = await readAccountSessionDeliveryMutedScopes(scope, controller.signal);
+            // Read once per Home Account; refreshed only by their own change push.
+            const scopes = await readAccountDeliveryMutedScopes(scope);
             if (controller.signal.aborted || scopes === null || isFollowDeliveryMutedV1(scopes, {
                 senderSessionId: event.address.sessionId, source: { kind: 'session', sessionId: event.address.sessionId },
             })) return;

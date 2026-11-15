@@ -430,6 +430,31 @@ describe('live Follow socket notifications', () => {
         expect(boundary.expo).toHaveBeenCalledTimes(2);
     });
 
+    // P03-DESKTOP-FLOWS: the runtime read the Account's delivery mutes over HTTP for every arriving alert. They are
+    // read once per Home Account, shared with the Activity membership, and refreshed by their own change push.
+    it('reads the Account delivery mutes once, not once per arriving alert', async () => {
+        let muteReads = 0;
+        setRuntimeFetch(async url => {
+            if (new URL(String(url)).pathname !== '/v2/account/session-delivery-mutes') return Response.json({});
+            muteReads += 1;
+            return Response.json({ scopes: [] });
+        });
+        const { ActivityPersonalSessionMembershipProvider } = await import('@/activity/source/activityPersonalSessionMembership');
+        screen = await renderScreen(<ActivityPersonalSessionMembershipProvider enabled><ActivityLocalNotificationRuntime /></ActivityPersonalSessionMembershipProvider>);
+        // The membership owner reads them as it acquires the Home (and again on its own change push).
+        await vi.waitFor(() => expect(muteReads).toBeGreaterThan(0));
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+        const acquired = muteReads;
+        const transition = (turn: number) => handleEphemeralSocketUpdate({
+            sourceServerId: 'srv_home_a', update: { type: 'session-personal-event', sessionId: 'session-1', eventId: `mutation-${turn}`, event: 'failed', turnId: `turn-${turn}` },
+            addActivityUpdate: () => undefined, addMachineActivityUpdate: () => undefined,
+            getSessionEncryption: () => null, getSession, applyMessages: () => undefined,
+        });
+        for (let turn = 1; turn <= 3; turn++) await act(async () => { await transition(turn); });
+        await vi.waitFor(() => expect(boundary.expo).toHaveBeenCalledTimes(3));
+        expect(muteReads - acquired).toBe(0);
+    });
+
     it('does not let native scheduling overwrite the foreground presentation owner', async () => {
         const settings = settingsParse({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'full' } });
         storage.setState({ settings });
