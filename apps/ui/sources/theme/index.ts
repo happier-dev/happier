@@ -542,7 +542,9 @@ const darkThemeBase = {
             // See the light theme's note. Tracks dark `state.active.foreground`.
             focus: '#9EB9FF',
             modal: 'rgba(255,255,255,0.080)',
-            subtle: 'rgba(255,255,255,0.040)',
+            // The divider ink at the doctrine's 6% (light is 6% black): at 4% the one list-row rule all but vanished
+            // between dark Sessions rows (owner 2026-11-15).
+            subtle: 'rgba(255,255,255,0.060)',
             faint: 'rgba(255,255,255,0.024)',
         },
         chrome: {

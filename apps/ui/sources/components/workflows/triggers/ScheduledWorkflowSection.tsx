@@ -30,6 +30,7 @@ import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 import { projectScheduledWorkflowRows } from './scheduledWorkflowRows';
 import type { ScheduledWorkflowRow } from './scheduledWorkflowRows';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 
 const ACCOUNT_SCHEDULES = { scope: 'account_all' } as const;
 
@@ -151,8 +152,9 @@ export const ScheduledWorkflowSectionView = React.memo(function ScheduledWorkflo
     rows: readonly ScheduledWorkflowRow[]; onOpen: (row: ScheduledWorkflowRow) => void;
     resolveWorkflowTitle?: (ref: string) => string | null; sessionId?: string; density?: SessionListRowDensity;
 }>) {
-    return <>{props.rows.map(row => <ScheduledRow key={row.key} row={row} onOpen={props.onOpen}
-        resolveWorkflowTitle={props.resolveWorkflowTitle} sessionId={props.sessionId} density={props.density} />)}</>;
+    // The rows in drawn order: the one list-row rule runs between them (a sheet's rows keep their sheet's dividers).
+    return <CollectionRows>{props.rows.map(row => <ScheduledRow key={row.key} row={row} onOpen={props.onOpen}
+        resolveWorkflowTitle={props.resolveWorkflowTitle} sessionId={props.sessionId} density={props.density} />)}</CollectionRows>;
 });
 
 const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{

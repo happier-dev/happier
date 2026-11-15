@@ -14,6 +14,7 @@ import {
   CollectionList,
   CollectionListGroupLabel,
   CollectionNavigationRow,
+  CollectionRows,
   CollectionSkeletonRows,
   collectionListStyles,
 } from '@/components/ui/lists/collection/CollectionList';
@@ -412,6 +413,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           onPress={() => onNavigate(SERVICES_ROUTE)}
         />
         {pinnedRows.length > 0 ? <CollectionListGroupLabel title={t('projects.groups.pinned')} /> : null}
+        <CollectionRows>
         {pinnedRows.map((row) => {
           const href = environmentHref(row.projectSourceId, row.environmentId);
           const testID = `services-column:pinned:${row.environmentId}`;
@@ -432,6 +434,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
             />
           );
         })}
+        </CollectionRows>
         {!status.value && status.status !== 'unavailable' ? (
           <CollectionSkeletonRows count={3} />
         ) : !status.value && selection?.kind !== 'all' ? (
@@ -466,6 +469,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           return machineId && serverId ? [<ProjectsTreeEnvironmentRead key={environmentId} onChildren={publishChildren}
             environment={{ environmentId, serverId, machineId }} />] : [];
         })}
+        {/* The tree's rows in drawn order, disclosed children included: the one list-row rule runs between them. */}
+        <CollectionRows>
         {tree.presented.map(({ group, only, open }) => {
           // A Project whose one Environment carries its name folds into that Environment's row.
           if (only) return renderEnvironment(only, false, group.title);
@@ -502,6 +507,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
             </React.Fragment>
           );
         })}
+        </CollectionRows>
       </CollectionList>
     </View>
   );

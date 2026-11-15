@@ -6,7 +6,7 @@ import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
-import { CollectionCreateButton } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionCreateButton, CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -165,7 +165,8 @@ export const ProjectsListView = React.memo(() => {
                 onChildren={publishEnvironmentChildren} />
             {rows.length > 0 ? (
                 <View testID="projects-list:tree" {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>
-                    <ItemGroup>
+                    {/* A browse list lies flat on the page, its rows parted by the one list-row rule (owner 2026-11-15). */}
+                    <CollectionRows>
                         {rows.map((row) => (
                             <ProjectsListRow
                                 key={row.key}
@@ -184,7 +185,7 @@ export const ProjectsListView = React.memo(() => {
                                 onToggleRow={toggleRow}
                             />
                         ))}
-                    </ItemGroup>
+                    </CollectionRows>
                 </View>
             ) : null}
 
@@ -235,7 +236,7 @@ function buildPhoneRows(
 /**
  * One phone row. It reads the live facts of its own checkouts (a Project row: all of its Project's; a
  * checkout row: its own), so a fact change re-renders the rows it touches and nothing else. The list
- * keeps membership, order and disclosure; the Item group hands each row its `showDivider`.
+ * keeps membership, order and disclosure; `CollectionRows` states each row's place for the one list-row rule.
  */
 function ProjectsListRow(props: Readonly<{
     row: ProjectsTreeRow;
@@ -253,7 +254,6 @@ function ProjectsListRow(props: Readonly<{
     onOpenRow: (row: ProjectsTreeRow) => void;
     /** Only the chevron discloses: the row itself opens the Project. */
     onToggleRow: (row: ProjectsTreeRow) => void;
-    showDivider?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
@@ -339,7 +339,6 @@ function ProjectsListRow(props: Readonly<{
             rightElement={trailing}
             style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX * row.level } : undefined}
             dimmed={row.offline}
-            showDivider={props.showDivider}
             {...props.rowProps}
             onPress={() => props.onOpenRow(row)}
         />

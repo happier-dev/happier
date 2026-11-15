@@ -1573,20 +1573,22 @@ export const Item = React.memo<ItemProps>((props) => {
     });
     const rowFollowed = React.useContext(HappierListRowFollowedContext);
     const rowPrecedesSelected = React.useContext(HappierListRowPrecedesSelectedContext);
-    // A column row's rule: the one list-row rule, drawn while its list owner says another row follows, from the row's
-    // text column (its own leading padding, then its glyph column), never over its own fill.
-    const columnRuleShown = inCollectionColumn && resolveHappierListRowRuleShown({
+    // The one list-row rule, for a row whose list states its order (a column, a flat page list; never a sheet's or a
+    // menu's rows, which their group divides): drawn while another row follows, from the row's text column (a page
+    // row's text inset; a column row's own leading padding, then its glyph column), never over its own fill.
+    const listRuleRow = rowFollowed !== null && (inCollectionColumn || (pageSheet === null && !isMenuRow));
+    const listRuleShown = listRuleRow && resolveHappierListRowRuleShown({
         followed: rowFollowed,
         selected: selected === true,
         precedesSelected: rowPrecedesSelected,
         hovered: isHovered,
     });
-    const columnRuleStartPx = columnRuleShown
-        ? (readLeadingPadding(style) ?? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity])
-            + (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0)
-        : 0;
-    const columnRule = columnRuleShown ? <HappierListRowRule startPx={columnRuleStartPx} color={theme.colors.border.subtle} /> : null;
-    const dividerNode = columnRule ?? (sharedItemBehavior.dividerVisible ? (
+    const listRuleStartPx = !listRuleShown ? 0
+        : isPageRow && flatDividerInset !== null ? flatDividerInset.marginStart
+        : (readLeadingPadding(style) ?? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity])
+            + (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0);
+    const listRule = listRuleShown ? <HappierListRowRule startPx={listRuleStartPx} color={theme.colors.border.subtle} /> : null;
+    const dividerNode = listRuleRow ? listRule : (sharedItemBehavior.dividerVisible ? (
         <HappierDivider
             color={flatDividerColor ?? theme.colors.border.default}
             style={[
