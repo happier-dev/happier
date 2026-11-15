@@ -124,7 +124,7 @@ describe('MachineSummaryStrip', () => {
         const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={MACHINE_SUMMARY_PREVIEW.calm} style="bars" metrics={['cpu', 'memory', 'disk']} layout="under" />);
         const label = String(screen.findByTestId('strip')?.props.accessibilityLabel);
         expect(label).toContain('4%');
-        expect(label).toContain('19 GB');
+        expect(label).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(label).toContain('310 GB');
     });
 
@@ -132,15 +132,15 @@ describe('MachineSummaryStrip', () => {
         const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={MACHINE_SUMMARY_PREVIEW.calm} style="sparklines" metrics={['cpu', 'memory', 'disk']} layout="inline" />);
         const label = String(screen.findByTestId('strip')?.props.accessibilityLabel);
         expect(label).toContain('4%');
-        expect(label).toContain('19 GB');
+        expect(label).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(label).toContain('310 GB');
-        expect(screen.getTextContent()).not.toContain('GB');
+        expect(screen.getTextContent()).not.toMatch(/G(?:i)?B/u);
     });
 
     it('leaves a list row\'s name its width when numbers are the style: one figure stands, the metric in trouble first', async () => {
         const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={MACHINE_SUMMARY_PREVIEW.calm} style="numbers" metrics={['cpu', 'memory', 'disk']} layout="inline" />);
         expect(screen.getTextContent()).toContain('4%');
-        expect(screen.getTextContent()).not.toContain('19 GB');
+        expect(screen.getTextContent()).not.toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(screen.getTextContent()).not.toContain('310 GB');
     });
 
@@ -185,11 +185,11 @@ describe('MachineSummaryStrip', () => {
             disk: { ...calm.summary.disk, availableBytes: null, totalBytes: null } };
         const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={{ ...calm, summary }}
             style="numbers" metrics={['cpu', 'memory', 'disk']} layout="under" />);
-        expect(screen.getTextContent()).toContain('19 GB');
+        expect(screen.getTextContent()).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(screen.getTextContent()).not.toMatch(/[–—]/u);
         expect(screen.findAll(node => node.type === Tooltip)).toHaveLength(1);
         const label = String(screen.findByTestId('strip')?.props.accessibilityLabel);
-        expect(label).toContain('19 GB');
+        expect(label).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(label).not.toContain(t('machineSummary.metrics.cpu'));
         expect(label).not.toContain(t('machineSummary.metrics.disk'));
     });
@@ -198,7 +198,7 @@ describe('MachineSummaryStrip', () => {
         const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={MACHINE_SUMMARY_PREVIEW.calm}
             style="rings" metrics={['memory', 'disk']} layout="tiles" />);
         expect(screen.getTextContent()).toContain('GB free');
-        expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain('19 GB');
+        expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain('310 GB');
     });
 
@@ -218,7 +218,7 @@ describe('MachineSummaryStrip', () => {
         expect(charts.length).toBeGreaterThan(0);
         expect(charts.every(chart => chart.props.decorative === true)).toBe(true);
         expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain('4%');
-        expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain('19 GB');
+        expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
     });
 
     it('draws the rail row\'s unlabelled instruments in calm ink whatever their tone: the row\'s word says the trouble', async () => {
@@ -248,7 +248,7 @@ describe('MachineSummaryStrip', () => {
             const style = [screen.findByTestId('strip')?.props.style].flat(3).filter(Boolean) as Array<{ opacity?: number }>;
             return style.some(entry => typeof entry.opacity === 'number' && entry.opacity < 1);
         };
-        expect(heldText).toContain('19 GB');
+        expect(heldText).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
         expect(dimmed()).toBe(false);
         await screen.update(draw({ ...calm, freshness: 'held' }));
         expect(screen.getTextContent()).toBe(heldText);
