@@ -163,6 +163,7 @@ export async function executeMemberScmRead(
       {
         registry: registry.registry,
         accessPolicy: { kind: 'restrictedRoots', roots: [folder.cwd] },
+        admittedLocalRepositoryOperation: true,
       },
     );
     const handler = handlers.get(effect.method);

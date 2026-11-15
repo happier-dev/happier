@@ -333,6 +333,37 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
+  // F-B follow-up: blame is a local repository read (an Action-spec RPC); in the member child it runs
+  // without the daemon's Account credentials, for Manage and for the folder's own Can use member.
+  it('runs blame of a member repository in that member child for Manage and Can use', async () => {
+    const f = await fixture();
+    await writeFile(join(f.memberRepository, 'notes.txt'), 'line one\n');
+    git(f.memberRepository, 'add', 'notes.txt');
+    git(f.memberRepository, 'commit', '-q', '-m', 'notes');
+    for (const [accountId, role] of [['manager-account', 'manage'], ['member-account', 'use']] as const) {
+      const response = await f.invoke(RPC_METHODS.SCM_BLAME_FILE, { cwd: f.memberRepository, path: 'notes.txt' }, accountId, role);
+      expect(response, JSON.stringify(response)).toMatchObject({ success: true, ranges: [expect.anything()] });
+    }
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual([['workspace-effect', 2401], ['workspace-effect', 2401]]);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  // Hosting work would apply this Machine's hosting credentials to another person's repository.
+  it('refuses Manage hosting work in a member folder with a typed credential refusal, before any Git', async () => {
+    const f = await fixture();
+    for (const [method, params] of [
+      [RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd: f.memberRepository }],
+      [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH, { cwd: f.memberRepository }],
+      [RPC_METHODS.SCM_REPOSITORY_CLONE, { destinationParentPath: f.memberRoot, destinationDirectoryName: 'clone' }],
+    ] as const) {
+      expect(await f.invoke(method, params, 'manager-account', 'manage'), method)
+        .toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'credential_scope_denied' });
+    }
+    expect(gitLaunches()).toEqual([]);
+    expect(os.runAs).toEqual([]);
+  });
+
   it('refuses a Git write in a member folder for a Team member without Manage, before any Git', async () => {
     const f = await fixture();
     await writeFile(join(f.memberRepository, 'notes.txt'), 'from use\n');

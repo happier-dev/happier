@@ -119,6 +119,12 @@ export type ScmActionSpecDefinition<
    * this Machine's own credentials or services.
    */
   localRepository?: 'read' | 'write';
+  /**
+   * Runs on this Machine's SCM hosting providers and their credentials (pull requests, hosting repositories,
+   * clone). In a member's folder it is refused `credential_scope_denied`: those credentials do not belong to that
+   * member, and the member's own runs never hold them.
+   */
+  hostingCredentials?: true;
 }>;
 
 /**
@@ -260,7 +266,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.worktrees.enrichment' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepository: 'read',
     inputSchema: scm.ScmWorktreesEnrichmentRequestSchema,
     outputSchema: scm.ScmWorktreesEnrichmentResponseSchema,
     inputHints: {
@@ -319,7 +325,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.SCM_BLAME_FILE },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', localRepository: 'read',
     inputSchema: scm.ScmBlameFileRequestSchema,
     outputSchema: scm.ScmBlameFileResponseSchema,
     inputHints: {
@@ -1167,7 +1173,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmPullRequestListResponseSchema,
     inputSchema: ScmPullRequestListRequestSchema,
     inputHints: {
@@ -1213,7 +1219,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmPullRequestGetResponseSchema,
     inputSchema: SessionScmPullRequestGetInputSchema,
     inputHints: {
@@ -1246,7 +1252,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external',
+    sideEffectClass: 'external', hostingCredentials: true,
     outputSchema: ScmPullRequestOpenOrReuseResponseSchema,
     inputSchema: ScmPullRequestOpenOrReuseRequestSchema,
     inputHints: {
@@ -1281,7 +1287,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmPullRequestOpenComposeResponseSchema,
     inputSchema: ScmPullRequestOpenComposeRequestSchema,
     inputHints: {
@@ -1313,7 +1319,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'write',
+    sideEffectClass: 'write', hostingCredentials: true,
     outputSchema: ScmPullRequestCheckoutResponseSchema,
     inputSchema: ScmPullRequestCheckoutRequestSchema,
     inputHints: {
@@ -1345,7 +1351,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'write',
+    sideEffectClass: 'write', hostingCredentials: true,
     outputSchema: ScmPullRequestPrepareWorktreeResponseSchema,
     inputSchema: ScmPullRequestPrepareWorktreeRequestSchema,
     inputHints: {
@@ -1418,7 +1424,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'danger',
+    sideEffectClass: 'danger', hostingCredentials: true,
     outputSchema: ScmPullRequestRunStackedResponseSchema,
     inputSchema: ScmPullRequestRunStackedRequestSchema,
     inputHints: {
@@ -1492,7 +1498,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external',
+    sideEffectClass: 'external', hostingCredentials: true,
     outputSchema: ScmRepositoryCloneOutputSchema,
     inputSchema: ScmRepositoryCloneInputSchema,
     inputHints: {
@@ -1584,7 +1590,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
     id: 'scm.hostingRepository.resolveAddress', approval: {result: 'required'},
     title: 'Resolve repository address',
     description: 'Resolve a credential-free repository address through the selected Machine’s SCM hosting providers.',
-    safety: 'safe', placements: [], sideEffectClass: 'read',
+    safety: 'safe', placements: [], sideEffectClass: 'read', hostingCredentials: true,
     bindings: { rpcMethod: RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS, sdkMethod: 'scm.hostingRepository.resolveAddress',
       mcpToolName: 'scm_hosting_repository_resolve_address', voiceClientToolName: 'resolveScmRepositoryAddress' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
@@ -1597,7 +1603,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
     id: 'scm.hostingRepository.get', approval: {result: 'required'},
     title: 'Read hosting repository',
     description: 'Read authoritative public repository metadata through the selected Machine’s SCM hosting provider.',
-    safety: 'safe', placements: [], sideEffectClass: 'read',
+    safety: 'safe', placements: [], sideEffectClass: 'read', hostingCredentials: true,
     bindings: { rpcMethod: RPC_METHODS.SCM_HOSTING_REPOSITORY_GET, sdkMethod: 'scm.hostingRepository.get' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     cli: { commands: [{ path: ['scm', 'hosting-repository', 'get'], visibility: 'canonical' }] },
@@ -1623,7 +1629,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
     inputSchema: ScmHostingRepositoryDescribePublishTargetsRequestSchema,
     inputHints: {
@@ -1665,7 +1671,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external',
+    sideEffectClass: 'external', hostingCredentials: true,
     outputSchema: ScmHostingRepositoryPublishResponseSchema,
     inputSchema: ScmHostingRepositoryPublishRequestSchema,
     inputHints: {
@@ -2123,6 +2129,11 @@ export function isScmLocalRepositoryReadRpcMethod(method: string): boolean {
 /** A projection of `localRepository` on the declaration owner: any read or write that runs as the folder's owner. */
 export function isScmLocalRepositoryRpcMethod(method: string): boolean {
   return findScmRpcSpec(method)?.localRepository !== undefined;
+}
+
+/** A projection of `hostingCredentials` on the declaration owner. */
+export function isScmHostingCredentialRpcMethod(method: string): boolean {
+  return findScmRpcSpec(method)?.hostingCredentials === true;
 }
 
 function findScmRpcSpec(method: string) {

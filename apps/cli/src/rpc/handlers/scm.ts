@@ -109,7 +109,8 @@ import { createHostScmCommandRunner, isRequesterScmCommandRunnerSelected, resolv
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { ApiMachineClient } from '@/api/apiMachine';
-import { isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { isScmActionId } from '@happier-dev/protocol/actions/executor/actionFamilies';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
@@ -140,6 +141,8 @@ export function registerScmHandlers(
         resolveRequester?: (context: RpcHandlerContext) => Promise<FilesystemEffectRequester>;
         /** The member execution owner (as bash, Project Open and Sync use it). */
         nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'> & Partial<Pick<ApiMachineClient, 'readMemberFolderOwner'>>;
+        /** The member Workspace effect child: the daemon already admitted this one local repository operation. */
+        admittedLocalRepositoryOperation?: true;
     }>,
 ): void {
     const refused = (actionErrorCode: string) => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
@@ -175,7 +178,9 @@ export function registerScmHandlers(
         } finally { await native.dispose(); }
     };
     const readRequestCwd = (input: unknown): string | undefined => {
-        const cwd: unknown = input && typeof input === 'object' ? Reflect.get(input, 'cwd') : undefined;
+        // A clone names its folder as the destination parent.
+        const cwd: unknown = input && typeof input === 'object'
+            ? Reflect.get(input, 'cwd') ?? Reflect.get(input, 'destinationParentPath') : undefined;
         // Lexical, against the same base the handler resolves it on; the member child resolves links.
         return typeof cwd === 'string' ? resolvePath(workingDirectory, cwd) : undefined;
     };
@@ -192,12 +197,15 @@ export function registerScmHandlers(
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
                 // reads and writes (F-B) run in that member's own child, as that member. Happier never
-                // adds a safe.directory exception for it.
+                // adds a safe.directory exception for it. Hosting work there is refused: this Machine's
+                // hosting credentials are not that member's (F-B follow-up, orchestrator 2026-11-15).
                 const target = projectRoot ?? readRequestCwd(input);
                 const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
-                const member = readOwner && target !== undefined && isScmLocalRepositoryRpcMethod(method)
+                const hosting = isScmHostingCredentialRpcMethod(method);
+                const member = readOwner && target !== undefined && (hosting || isScmLocalRepositoryRpcMethod(method))
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refused('agent_isolation_unavailable');
+                if (member && hosting) return refused('credential_scope_denied');
                 if (member) return await runAsMember(context, member, method, projectRoot, input);
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
@@ -316,7 +324,11 @@ export function registerScmHandlers(
             'scm.diffSummary.reviewed.mark', 'scm.diffSummary.reviewed.unmark'],
         ...(deps?.machineId ? { targetMachineId: deps.machineId } : {}),
         defaultMachineTarget: true,
-        mapRequestForMethod: async ({ actionId, input }) => {
+        mapRequestForMethod: async ({ actionId, method, input }) => {
+            // In the member child the daemon has already admitted this operation and run its Action policy;
+            // the child holds no Account credentials, so it executes the repository operation itself.
+            if (deps?.admittedLocalRepositoryOperation && isScmLocalRepositoryRpcMethod(method) && isScmActionId(actionId)) return { accepted: false,
+                response: await executeScmActionOperation({ actionId, input, ...routeBase, rpcCompatibility: true }) };
             if (actionId !== 'scm.diff.file') return { accepted: true, input };
             // The scoped registrar already admitted the target. Preserve its
             // envelope for captured evidence's canonical Action admission.

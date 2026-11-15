@@ -2640,14 +2640,20 @@ the member who owns the folder (named by the committed member binding), in that
 member's `workspace-effect` child, so daemon Git never runs a member repository's
 config or hooks. Writes there (stage, commit, branch, stash, conflicts,
 worktrees, remotes, fetch/pull/push) use the member's own Git identity and
-credentials; Happier adds no `safe.directory` exception.
+credentials; Happier adds no `safe.directory` exception. Methods marked
+`hostingCredentials` (pull requests, hosting repositories, clone) are refused
+there as `credential_scope_denied` before any Git: they would apply this
+Machine's hosting credentials to that member's repository. A clone names its
+folder by `destinationParentPath`.
 A person with Can use (or their own Account automation) gets local repository
 reads only. The SCM Action specs mark each Git-only repository method
 `localRepository: 'read'` (status, log, history, branches, stashes, commit and
-file diffs, file content, backend describe) or `'write'`;
+file diffs, file content, blame, worktree enrichment, backend describe) or `'write'`;
 `isScmLocalRepositoryReadRpcMethod` projects the reads for ingress and the
 handler, and `isScmLocalRepositoryRpcMethod` both kinds for the member-folder
-placement. The handler runs the whole read (Git and every
+placement. In the child, Action-spec repository methods (blame, commit outcome)
+run directly, because the daemon already admitted them and the child holds no
+Account credentials. The handler runs the whole read (Git and every
 repository metadata read, such as rebase/merge state files and `shallow`) in
 the member's `workspace-effect` child, the Project Open/Sync member owner,
 launched as the member through `prepareNativeOperation`. The daemon never
