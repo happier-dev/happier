@@ -148,8 +148,7 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
     const options = { domains: [{ domain: { id: 'shop-domain', environmentId: 'shop', targetLinkId: 'runtime' },
       content: { hostname: 'shop.example', target: { service: 'web', containerPort: 3000, path: '/store' },
         healthCheck: { path: '/ready', expectStatus: 204 } } }] };
-    const read = readServiceCheckSettings as (...args: [...Parameters<typeof readServiceCheckSettings>, typeof options]) => ReturnType<typeof readServiceCheckSettings>;
-    expect(read(seed(config), 'public', options)).toMatchObject({ address: 'https://shop.example/ready', expectStatus: 204, periodMs: 300_000 });
+    expect(readServiceCheckSettings(seed(config), 'public', options)).toMatchObject({ address: 'https://shop.example/ready', expectStatus: 204, periodMs: 300_000 });
   });
 
   it.each(['http', 'certificate'] as const)('uses the probe target builder for a Domain query route and exposes only its human route label (%s)', kind => {

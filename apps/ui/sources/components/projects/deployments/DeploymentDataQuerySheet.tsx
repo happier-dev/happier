@@ -80,7 +80,7 @@ function DeploymentDataQuerySheet(props: DeploymentDataQuerySheetInput & CustomM
   const source = DeploymentSecretBindingSourceV1Schema.safeParse(isRecord(selection) ? { kind: 'secret', ...selection } : null);
   const success = result?.ok === true ? result : null;
   const refusal = result?.ok === false ? result : null;
-  const refusalCode = refusal ? ('diagnostic' in refusal && refusal.diagnostic && 'code' in refusal.diagnostic
+  const refusalCode = refusal ? ('diagnostic' in refusal && refusal.diagnostic && 'code' in refusal.diagnostic && typeof refusal.diagnostic.code === 'string'
     ? refusal.diagnostic.code : null) ?? refusal.error : null;
   const rows = success?.rows ?? [];
   const run = async () => {

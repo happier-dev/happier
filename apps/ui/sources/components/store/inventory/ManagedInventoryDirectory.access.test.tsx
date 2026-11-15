@@ -31,7 +31,7 @@ it.each([false, true])('offers Docker removal only for manageable installations 
   const inventory: ManagedInventoryView = {
     families: { app: { ...empty, navigation: appNavigation }, browserExtension: empty, mcpServer: empty, skill: empty, agent: empty,
       provider: empty, plugin: empty, software: { rows: [row], coverage: 'available' } },
-    operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: empty },
+    operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: { ...empty, navigation: appNavigation } },
     rows: [row], coverage: 'complete', loading: false, attention: [], noticeSource: null,
   };
   const input = { scope, projectKey: null,

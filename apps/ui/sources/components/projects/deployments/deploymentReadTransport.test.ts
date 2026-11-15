@@ -11,7 +11,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1,
     createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema, DeploymentEnvironmentCollectionV1Schema } from '@happier-dev/deployment-protocol/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { encodeBase64 } from '@/encryption/base64';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -99,7 +99,7 @@ describe('deployment scoped read transport', () => {
             const page = await transport.listEnvironments(lifetime.scope, {}, options);
             expect(page.ok, JSON.stringify(page)).toBe(true);
             if (!page.ok) throw new Error(page.failure.code);
-            return page.value.items[0]!;
+            return DeploymentEnvironmentCollectionV1Schema.parse(page.value).items[0]!;
         };
         respond();
         const before = homes.requests.length;
@@ -217,6 +217,7 @@ describe('deployment scoped read transport', () => {
         } });
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
         const receipt = createDeploymentReceiptDetailV1();
+        Object.assign(receipt.content, { actor: { actorKind: 'agent', sessionId: 'claude-session', onBehalfOf: { serverId: 'home', accountId: 'ana' } } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(serverId);
         try {
@@ -244,7 +245,8 @@ describe('deployment scoped read transport', () => {
             { signal: new AbortController().signal });
         expect(page.unavailableSources).toEqual([]);
         expect(page).toMatchObject({ coverage: 'complete', nextCursor: null,
-            items: [{ kind: 'receipt', receipt: { id: receipt.deployment.id } }] });
+            items: [{ kind: 'receipt', receipt: { id: receipt.deployment.id,
+                actor: { actorKind: 'agent', sessionId: 'claude-session', onBehalfOf: { serverId: 'home', accountId: 'ana' } } } }] });
     });
 
     it.each(['plain', 'e2ee'] as const)('opens the exact %s protected pending request without blanking the Environment', async mode => {
@@ -636,7 +638,8 @@ describe('deployment scoped read transport', () => {
         try {
             await Promise.all([collection.refresh(), history.refresh()]);
             expect(collection.getSnapshot().value?.items[0]?.currentDeployment).toEqual({ ...receiptHeader,
-                title: 'Exact revision A', steps: receiptDetail.content.steps });
+                title: 'Exact revision A', steps: receiptDetail.content.steps,
+                source: { kind: 'repository', sha: 'a'.repeat(40) }, commitSubject: null });
             expect(collection.getSnapshot().value?.items[0]).toHaveProperty('backupConfigured', true);
             expect(history.getSnapshot().value?.items[0]?.title).toBe('aaaaaaa');
         } finally { collection.release(); history.release(); controller.retire(); }

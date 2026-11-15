@@ -79,7 +79,7 @@ function useRecognizedApplications(lifetime: ServerAccountScopeLifetime, workspa
         if (!workspace || !workspaceId) return;
         const cancellation = new AbortController();
         setRead(previous => previous?.workspaceId === workspaceId && previous.status === 'ready' ? previous : { status: 'loading', workspaceId });
-        readDeploymentPreparationFacts(lifetime, { configure: {}, workspace: { serverId: workspace.serverId, workspaceId,
+        readDeploymentPreparationFacts(lifetime, { configure: { name: '' }, workspace: { serverId: workspace.serverId, workspaceId,
             machineId: workspace.machineId, rootPath: workspace.rootPath } }, { signal: cancellation.signal })
             .then(result => {
                 if (cancellation.signal.aborted) return;

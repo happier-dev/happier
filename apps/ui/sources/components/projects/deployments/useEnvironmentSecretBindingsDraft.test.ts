@@ -141,8 +141,8 @@ describe('Environment Variables consumer draft', () => {
         await act(async () => { expect(hook.getCurrent().editor.put(selected)).toEqual({ ok: true }); });
         expect(hook.getCurrent().editor.rows[0]?.secretDisclosure).toEqual({ kind: 'teamEnvironmentMachines', teamId: 'team-a' });
         expect(hook.getCurrent().editor.rows[0]?.binding).toMatchObject({ ...selected, grantRef: expect.any(String) });
-        expect(hook.getCurrent().editor.rows[0]?.binding.purpose === 'variable'
-            ? hook.getCurrent().editor.rows[0]?.binding.grantRef : undefined).not.toBe(selected.grantRef);
+        const binding = hook.getCurrent().editor.rows[0]?.binding;
+        expect(binding?.purpose === 'variable' ? binding.grantRef : undefined).not.toBe(selected.grantRef);
         await hook.rerender(ready({ ...detail, environment: { ...detail.environment,
             owner: { kind: 'team', teamId: 'team-b' } } }));
         expect(hook.getCurrent().editor.rows[0]?.secretDisclosure).toEqual({ kind: 'teamEnvironmentMachines', teamId: 'team-b' });

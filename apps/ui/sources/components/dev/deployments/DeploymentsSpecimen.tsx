@@ -1,3 +1,4 @@
+import type { DeploymentOwnServerContentV1 } from '@happier-dev/deployment-protocol/v1';
 import * as React from 'react';
 import {
   createDeploymentReadControllerV1,
@@ -115,7 +116,7 @@ function readStepLog(input: Readonly<{ ref?: string; tail?: true; cursor?: { sou
  */
 function ownServerFacts(state: ReceiptState, previous: string | null,
   base: Pick<ReturnType<typeof createDeploymentReceiptDetailV1>, 'deployment'> & Readonly<{
-    content: Readonly<{ sourceIntent: NonNullable<ReturnType<typeof createDeploymentReceiptDetailV1>['content']['sourceIntent']> }>;
+    content: Readonly<{ sourceIntent: DeploymentOwnServerContentV1['sourceIntent'] }>;
   }>) {
   const tail = LOG_TAIL[state];
   return {

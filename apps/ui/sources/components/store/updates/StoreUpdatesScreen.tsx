@@ -62,7 +62,11 @@ export function StoreUpdatesScreen(): React.ReactNode {
   const { view, check, checkNow, execution, app, mcpServer, skill, agent, browserExtension, plugin } =
     useInstalledUpdates(query, presented, externalActionTarget, true);
   const refreshBrowserExtensions = browserExtension.continuation;
-  const families = { app, mcpServer, skill, agent, browserExtension, plugin };
+  const families = {
+    app: { kind: 'app', result: app }, mcpServer: { kind: 'mcpServer', result: mcpServer },
+    skill: { kind: 'skill', result: skill }, agent: { kind: 'agent', result: agent },
+    browserExtension: { kind: 'browserExtension', result: browserExtension }, plugin: { kind: 'plugin', result: plugin },
+  } as const;
   const rowHost = useStoreUpdateRowHost(React.useMemo(() => ({ input: query, execute: execution.execute,
     getSignal: execution.getSignal, ready: execution.ready, onApplied: refreshBrowserExtensions }),
     [execution.execute, execution.getSignal, execution.ready, query, refreshBrowserExtensions]));
@@ -71,9 +75,9 @@ export function StoreUpdatesScreen(): React.ReactNode {
     view.sections.length === 0 &&
     [app, mcpServer, skill, agent, browserExtension, plugin].some((family) => family.coverage === 'loading');
   const coverageKinds = STORE_UPDATE_KINDS.filter((kind): kind is keyof typeof families => kind in families);
-  const coverageFamilies = coverageKinds.map(kind => ({ kind, result: families[kind] }));
+  const coverageFamilies = coverageKinds.map(kind => families[kind]);
   const unresolved = coverageKinds.flatMap(kind => {
-    const family = families[kind];
+    const family = families[kind].result;
     return typeof family.coverage === 'object' ? [{ kind, family, coverage: family.coverage }] : [];
   });
   const reasons = describeUncheckedSources(check.results);

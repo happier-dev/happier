@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { act, createMachineFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -235,7 +236,7 @@ async function healthCheckDetail(id: string, enabled = true, encryption?: Readon
             ...(encryption ? { mode: 'e2ee' as const, material: { type: 'legacy' as const, secret: encryption.secret },
                 randomBytes: (length: number) => new Uint8Array(length).fill(3) } : { mode: 'plain' as const }),
             binding: { v: 1, automationId: summary.id, triggerId: trigger.id, triggerRevision: trigger.revision,
-                triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+                triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
             definition: { v: 1, sourceInstanceId: `health:shop:${id}`, displayLabel: 'Shop availability',
                 sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [{ checkId: 'readiness',
                     kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' }, binding: { kind: 'healthCheck' },
@@ -330,8 +331,11 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
     const { plugin } = await import('../../../../../../packages/plugins/machine-services/src/manifest');
     const { PluginAccountAvailabilityIntentReadResponseV1Schema, createPackageAssetArchiveV1 } = await import('@happier-dev/protocol/plugins/availability');
     const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
-    const archive = createPackageAssetArchiveV1({ manifest: plugin.manifest,
-        files: plugin.manifest.contributes.resources.filter(resource => resource.kind === 'asset')
+    const parsed = parsePluginManifest(plugin.manifest);
+    if (!parsed.ok) throw new Error('Expected bundled health plugin manifest');
+    const manifest = parsed.manifest;
+    const archive = createPackageAssetArchiveV1({ manifest,
+        files: manifest.contributes.resources.filter(resource => resource.kind === 'asset')
             .map(resource => ({ path: resource.path, bytes: new TextEncoder().encode('{}') })) });
     if (!archive) throw new Error('Expected actual plugin assets to form a release fixture');
     const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
@@ -354,7 +358,7 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
         enabled: true, trustState: 'trusted', observedAt: 1 });
     const peer = PluginMachineMaterializationV1Schema.parse({ ...materialization, machineId: 'other-observer',
         declaredManifest: { ...plugin.manifest, contributes: { ...plugin.manifest.contributes,
-            healthCheckKinds: plugin.manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, title: 'Other Machine check' })) } } });
+            healthCheckKinds: manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, title: 'Other Machine check' })) } } });
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 2,
         intentReads: [{ pluginId: plugin.manifest.id, response: { ...response, intent: null, release: null } }],
         materializations: [peer, materialization], snapshots: [peer, materialization].map(row => ({

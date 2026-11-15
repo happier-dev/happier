@@ -289,7 +289,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     return (
       <ItemList testID="all-deployments.loading">
         {header(false)}
-        <PageLoadingRows />
+        <PageLoadingRows testID="all-deployments.loading-rows" />
       </ItemList>
     );
   }
