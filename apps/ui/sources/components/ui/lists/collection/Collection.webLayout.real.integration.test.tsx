@@ -194,6 +194,7 @@ function WideLensList({ lensWidth }: { lensWidth: number }) {
     const model = useHappierCollection({ items, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
     return <CoreCollectionScope renderPageScroller={renderPageScroller}>
         <Collection model={model} anatomy={anatomy} accessibilityLabel="Entries" presentation="list" detail="none" scroll="page"
+            minListWidth={PLUGIN_CARD_MIN_WIDTH_PX} minDetailWidth={PLUGIN_CARD_MIN_WIDTH_PX} preferredListRatio={0.5}
             header={(slots) => <CollectionToolbar slots={slots} testID="toolbar"
                 lens={<View testID="wide-lens" style={{ width: lensWidth, height: 28 }} />}
                 views={{ label: 'Arrange', value: 'list', onChange: () => {},
@@ -229,6 +230,7 @@ function TitledSearchList() {
     const model = useHappierCollection({ items, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
     return <CoreCollectionScope renderPageScroller={renderPageScroller}>
         <Collection model={model} anatomy={anatomy} accessibilityLabel="Entries" presentation="list" detail="none" scroll="page"
+            minListWidth={PLUGIN_CARD_MIN_WIDTH_PX} minDetailWidth={PLUGIN_CARD_MIN_WIDTH_PX} preferredListRatio={0.5}
             search={{ label: 'Search tasks', value: '', onValueChange: () => {}, testID: 'search' }}
             header={(slots) => <CollectionToolbar slots={{ ...slots, title: <View testID="page-name" style={{ width: 165, height: 32 }} /> }}
                 testID="toolbar" lens={<View style={{ width: 200, height: 28 }} />}

@@ -536,7 +536,7 @@ describe('Project Add machine modal', () => {
                 details: { reason: 'target_not_authorized', privatePath: '/secret/workspace' },
                 failureCause: { phase: 'target.preflight', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } } });
         workspace.home.artifacts(workspace.serverId).replaceStoredRow(createPlainArtifactHttpFixture({
-            id: 'failed-sync', isDecrypted: true, header: buildApprovalRequestArtifactHeaderV1(request),
+            id: 'failed-sync', isDecrypted: true, title: request.summary, header: buildApprovalRequestArtifactHeaderV1(request),
             body: JSON.stringify(request), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
         }, workspace.accountId));
         let failure: unknown;
@@ -556,6 +556,7 @@ describe('Project Add machine modal', () => {
         let requestId = '';
         workspace.home.answer(workspace.serverId, 'POST /v1/actions/projects.open', { select: body => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            if (!request.requestId) throw new Error('Expected the projects.open Action request ID');
             requestId = request.requestId;
             return { status: 403, body: ExternalActionHttpErrorSchema.parse({ error: 'credential_scope_denied',
                 requestId, details: { reason: 'target_not_authorized', privatePath: '/secret/workspace' },

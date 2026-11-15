@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_WIDGET_DESCRIPTORS_V1, WIDGET_SIZE_POLICY_V1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { BUILTIN_WIDGET_DESCRIPTORS_V1, WIDGET_SIZE_POLICY_V1, WidgetInstanceV1Schema, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 import { createPublicProfileWidgetAreaPresetsV1 } from '@happier-dev/protocol/widgets/publicProfileWidgetPresetsV1';
 
@@ -334,7 +334,8 @@ describe('The title a widget instance wears', () => {
                     ? t('publicIdentity.blocks.sky') : undefined });
             const item = preset.find(entry => entry.id === 'minimal')!.items.find(entry => entry.kind === 'widget' && entry.instance.id === 'days');
             if (item?.kind !== 'widget') throw new Error('Missing public profile days preset');
-            const saved = item.instance;
+            const saved = WidgetInstanceV1Schema.parse(item.instance);
+            if (saved.definition.kind !== 'builtin') throw new Error('Expected the built-in public profile days widget');
             await preloadTranslationsForSettings('fr');
             setPreferredLanguageFromSettings('fr');
             const candidate = readWidgetDescriptor(null, saved.definition);

@@ -67,6 +67,7 @@ it.each(['plain', 'e2ee'] as const)('publishes accepted inspection facts through
             detection: { entries: [], toolchains: [], devcontainers: [], diagnostics: [], ...observation, observedAtMs } } };
         if (mode === 'e2ee') {
             const envelope = ExternalActionRequestEnvelopeV2Schema.parse(input);
+            if (!envelope.target) throw new Error('Expected the projects.inspect Machine target');
             const authentication = readOriginalAccountActionAuthentication(credentials.token);
             if (!authentication) throw new Error('Expected current Account authentication');
             const binding = { serverIdentityId: 'srv_repository_observation_home', accountId: 'alice', authentication,

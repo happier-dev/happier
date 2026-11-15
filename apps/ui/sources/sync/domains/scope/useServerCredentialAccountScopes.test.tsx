@@ -154,6 +154,7 @@ describe('useServerCredentialAccountScopes', () => {
         const { createServerAccountScope } = await import('./serverAccountScope');
         const { createTeamAddress } = await import('@/sync/domains/teams/teamAddress');
         const { teamGroupsQueryKeyV1, NO_TEAM_GROUP_CAPABILITIES_V1 } = await import('@happier-dev/protocol/teams');
+        const { teamGroupFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
         // The engine is the effectful owner that retires these rows, and every
         // Teams surface reaches the store through it; importing it here is the
         // same wiring production has rather than a test-only subscription.
@@ -171,7 +172,7 @@ describe('useServerCredentialAccountScopes', () => {
             scope,
             address,
             queryKey: key,
-            items: [{
+            items: [teamGroupFixture({
                 v: 1,
                 id: 'g1',
                 teamId: 'team-1',
@@ -181,7 +182,7 @@ describe('useServerCredentialAccountScopes', () => {
                 memberCount: 1,
                 management: { kind: 'native' },
                 capabilities: NO_TEAM_GROUP_CAPABILITIES_V1,
-            }],
+            })],
             nextCursor: null,
             observedAt: 1,
         });

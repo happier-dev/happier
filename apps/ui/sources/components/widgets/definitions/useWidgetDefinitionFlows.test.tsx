@@ -15,7 +15,7 @@ import type { WidgetAddSection } from '../add/widgetAddModel';
  * real Account Artifact store; only the network and the credential store are replaced.
  */
 const harness = createHomeGovernanceHarness();
-// Only physical confirmation is substituted; the real Action policy and its Inbox custody remain.
+// Only physical confirmation is substituted; the real Action policy and consent remain.
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 // A native virtual list needs layout callbacks the host renderer cannot supply.
 vi.mock('@legendapp/list/react-native', async importOriginal =>
@@ -153,30 +153,38 @@ describe('widget definition flows', () => {
             uuid.mockRestore();
             const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
             const inventory = createDeferred<void>();
+            const consent = createDeferred<boolean>();
+            const { Modal } = await import('@/modal');
+            if (approval) vi.mocked(Modal.confirm).mockClear().mockImplementationOnce(() => consent.promise);
             // Unrelated Account inventory is a network boundary, not a prerequisite
             // for acknowledging this known builtin's exact copy.
             harness.answer(serverId, 'GET /v1/artifacts', { respondAfter: inventory.promise, body: { artifacts: [], nextCursor: null } });
             let outcome: Awaited<ReturnType<typeof setup.submit>> | undefined;
             const submission = setup.submit(setup.initial).then(result => { outcome = result; });
             try {
-                await act(async () => { await expect.poll(() => outcome).toEqual(approval ? { ok: true, approvalPending: true } : { ok: true }); });
-            } finally { inventory.resolve(); await submission; }
+                if (approval) {
+                    await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
+                    expect(outcome).toBeUndefined();
+                    expect(harness.artifacts(serverId).list()).toHaveLength(before.size);
+                    consent.resolve(true);
+                }
+                await act(async () => { await expect.poll(() => outcome).toEqual({ ok: true }); });
+            } finally { consent.resolve(false); inventory.resolve(); await submission; }
             const created = harness.artifacts(serverId).list().find(row => !before.has(row.id));
             expect(created).toBeDefined();
-            if (!approval) {
-                const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-                const read = await createDefaultActionExecutor().execute('widgets.item.list', { surface: { serverId, accountId: ACCOUNT_ID,
-                    owner: { kind: 'project', projectId: 'destination-project' } } }, { serverId, surface: 'ui', authority: 'present_user' });
-                expect(read).toMatchObject({ ok: true, result: { instances: expect.arrayContaining([expect.objectContaining({ instance: expect.objectContaining({
-                    definition: source.definition, bindings: setup.initial.bindings,
-                }) })]) } });
-                return;
-            }
-            const body = JSON.parse(harness.artifacts(serverId).readPlainBody(created!.id)!);
-            expect(body).toMatchObject({ actionId: 'widgets.item.add', actionArgs: { surface: { serverId, accountId: ACCOUNT_ID,
-                owner: destinationKind === 'home' ? { kind: 'home' } : { kind: 'project', projectId: 'destination-project' } },
-                instance: { definition: source.definition, bindings: setup.initial.bindings } } });
-            expect(body.actionArgs.instance.id).not.toBe(source.id);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const { WidgetInstanceActionOutputSchemasV1 } = await import('@happier-dev/protocol/widgets');
+            const read = await createDefaultActionExecutor().execute('widgets.item.list', { surface: { serverId, accountId: ACCOUNT_ID,
+                owner: destinationKind === 'home' ? { kind: 'home' } : { kind: 'project', projectId: 'destination-project' } } },
+                { serverId, surface: 'ui', authority: 'present_user' });
+            expect(read).toMatchObject({ ok: true });
+            if (!read.ok) throw new Error('The copied widget must be readable on its destination');
+            const copies = WidgetInstanceActionOutputSchemasV1['widgets.item.list'].parse(read.result).instances;
+            expect(copies).toEqual(expect.arrayContaining([expect.objectContaining({ instance: expect.objectContaining({
+                definition: source.definition, bindings: setup.initial.bindings,
+            }) })]));
+            expect(copies.every(copy => copy.instance.id !== source.id)).toBe(true);
+            expect(harness.artifacts(serverId).list()).toHaveLength(before.size + 1);
             expect(source.bindings.period).toEqual({ kind: 'context', slot: 'period' });
             expect(source.bindings.breakdown).toEqual({ kind: 'value', value: ['agent'] });
         } finally { await screen.unmount(); await disconnect(); }
@@ -336,13 +344,20 @@ describe('widget definition flows', () => {
         } finally { storage.setState(previousScopes); }
     });
 
-    it('offers saved widgets on a shared Board and submits an admitted inline copy to real approval custody', async () => {
+    it('offers saved widgets on a shared Board and commits an admitted inline copy after in-flow consent', async () => {
         const serverId = await addDefinitionHome();
         await harness.requireUiApproval(serverId, 'widgets.item.add');
         const disconnect = await applyDefinitionHomeConnection();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { storage } = await import('@/sync/domains/state/storage');
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { createSessionSystemRecordHttpFixture } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { projectSessionAccessCapabilitiesV1 } = await import('@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1');
+        const { SessionBoardMutationV1Schema, SessionBoardMutationResultV1Schema } = await import('@happier-dev/protocol/sessions/board');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const { projectSessionBoard } = await import('@/sync/domains/session/board');
         const React = await import('react');
         const { act } = await import('react-test-renderer');
@@ -351,11 +366,33 @@ describe('widget definition flows', () => {
         const { createSessionBoardActionsPort } = await import('@/sync/domains/session/board/sessionBoardActionsPort');
         const { WidgetAddSurface } = await import('../add/WidgetAddSurface');
         const account = { serverId, accountId: ACCOUNT_ID };
-        const surface = { ...account, owner: { kind: 'sessionBoard', sessionId: 'shared' } } as const;
         const previousScopes = { profileScope: storage.getState().profileScope, settingsScope: storage.getState().settingsScope };
         storage.setState({ profileScope: account, settingsScope: account });
-        const session = createSessionFixture({ id: 'shared', serverId, encryptionMode: 'plain' });
+        const session = createSessionFixture({ id: 'shared', serverId, encryptionMode: 'plain', accessLevel: 'edit' });
         storage.getState().applySessions([session]);
+        const features = createRootLayoutFeaturesResponse();
+        if (!tryWriteServerEnabledBitInPlace(features, 'sessions.board', true)) throw new Error('Missing Board feature');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        harness.answer(serverId, '/v1/features', { body: features });
+        harness.answer(serverId, '/v1/features/authenticated', { body: features });
+        const records = createSessionSystemRecordHttpFixture({ sessionId: session.id, records: [], effectiveAccess: {
+            v: 1, level: 'edit', sources: [{ kind: 'direct', shareId: 'shared-board-edit' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [{ accessLevel: 'edit', canApprovePermissions: false }] }),
+        } });
+        setRuntimeFetch((input, init) => {
+            const path = new URL(String(input)).pathname;
+            return path === '/v2/sessions/read-batch' || (path.startsWith('/v2/sessions/shared') && init?.method !== 'PUT')
+                ? records.request(input, init) : harness.request(input, init);
+        });
+        const writes: Array<ReturnType<typeof SessionBoardMutationV1Schema.parse>> = [];
+        const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+        harness.answer(serverId, 'PUT /v2/sessions/shared/board', { select: raw => {
+            const mutation = SessionBoardMutationV1Schema.parse(raw);
+            if (mutation.operation !== 'upsert_item') throw new Error('Expected the admitted widget copy');
+            writes.push(mutation);
+            return { body: SessionBoardMutationResultV1Schema.parse({ operation: mutation.operation,
+                itemId: mutation.itemId, outcome: 'created', itemRevision: revision, layoutRevision: revision }) };
+        } });
         try {
             const executor = createDefaultActionExecutor();
             expect(await executor.execute('widgets.definition.create', { account, artifactId: '22222222-2222-4222-8222-222222222231', definition: DRAFT },
@@ -379,16 +416,26 @@ describe('widget definition flows', () => {
                 const entry = sections().find(section => section.id === 'yours')!.entries[0]!;
                 const before = new Set(harness.artifacts(serverId).list().map(row => row.id));
                 const setup = entry.setup!();
-                expect(await setup.submit({ bindings: { repo: { kind: 'value', value: 'main' } } })).toEqual({ ok: true, approvalPending: true });
-                const approvals = harness.artifacts(serverId).list().filter(row => !before.has(row.id));
-                expect(approvals).toHaveLength(1);
-                const approval = JSON.parse(harness.artifacts(serverId).readPlainBody(approvals[0]!.id)!);
-                expect(approval).toMatchObject({ actionId: 'widgets.item.add', actionArgs: { surface, placement: { tabId: 'overview' },
-                    instance: { definition: { kind: 'inline', definition: { id: '22222222-2222-4222-8222-222222222231', name: DRAFT.name } }, bindings: { repo: { kind: 'value', value: 'main' } } } } });
-                const { SessionSurfaceItemV1Schema } = await import('@happier-dev/protocol/sessions/board');
-                const publishedItem = SessionSurfaceItemV1Schema.parse({ v: 1, title: DRAFT.name, frame: 'card', height: { mode: 'auto', fallback: 'regular' },
-                    source: { kind: 'widget', instance: approval.actionArgs.instance } });
-                const published = projectSessionBoard({ layout: undefined, items: new Map([['copy', { revision: 'r1', outcome: { status: 'ready' as const, value: publishedItem } }]]),
+                const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+                const consent = createDeferred<boolean>();
+                const { Modal } = await import('@/modal');
+                vi.mocked(Modal.confirm).mockClear().mockImplementationOnce(() => consent.promise);
+                const submission = setup.submit({ bindings: { repo: { kind: 'value', value: 'main' } } });
+                try {
+                    await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
+                    expect(writes).toHaveLength(0);
+                    expect(harness.artifacts(serverId).list()).toHaveLength(before.size);
+                    consent.resolve(true);
+                    expect(await submission).toEqual({ ok: true });
+                } finally { consent.resolve(false); await submission; }
+                expect(writes).toHaveLength(1);
+                const committed = writes[0]!;
+                if (committed.operation !== 'upsert_item' || committed.itemContent.t !== 'plain') throw new Error('Expected the committed Plain Widget');
+                expect(committed.itemContent.v).toMatchObject({ source: { kind: 'widget', instance: {
+                    definition: { kind: 'inline', definition: { id: '22222222-2222-4222-8222-222222222231', name: DRAFT.name } },
+                    bindings: { repo: { kind: 'value', value: 'main' } },
+                } } });
+                const published = projectSessionBoard({ layout: undefined, items: new Map([[committed.itemId, { revision, outcome: { status: 'ready' as const, value: committed.itemContent.v } }]]),
                     capabilities: { readTranscript: true, editSessionRecords: true }, freshness: 'fresh', reachability: 'reachable', loading: 'idle', incomplete: false });
                 await act(async () => { updateBoard(published); });
                 const copiedEntry = sections().find(section => section.id === 'yours')!.entries[0]!;
@@ -396,7 +443,8 @@ describe('widget definition flows', () => {
                 expect(copiedEntry.added).not.toBe(true);
                 const refused = await setup.submit({ bindings: { connection: { kind: 'value', value: { service: { pluginId: 'acme.checks', localId: 'cloud' }, accountId: 'private-author' } } } });
                 expect(refused).toMatchObject({ ok: false });
-                expect(harness.artifacts(serverId).list()).toHaveLength(before.size + 1);
+                expect(writes).toHaveLength(1);
+                expect(harness.artifacts(serverId).list()).toHaveLength(before.size);
             } finally { await act(async () => { screen.tree.unmount(); }); }
         } finally { await disconnect(); storage.setState(previousScopes); }
     });
@@ -1007,7 +1055,7 @@ describe('widget definition flows', () => {
                 bindings: { session: { kind: 'value', value: { serverId, sessionId: 'shared' } } } } } });
         const screen = await renderScreen(React.createElement(SessionWidgetHost, { serverId, sessionId: 'shared', session,
             item: { itemId: 'shared-copy', revision: 'r1', state: { kind: 'ready', item } }, host: 'details', density: 'full',
-            canEdit: true, executableCurrentness: 'current', heightBounds: { min: 96, max: 520 }, testID: 'sessionCopy' }),
+            canEdit: true, heightBounds: { min: 96, max: 520 }, testID: 'sessionCopy' }),
             { createNodeMock: element => ({ testID: element.props.testID ?? null }) });
         try {
             const save = screen.tree.root.findAllByType(ItemRowActions).flatMap(menu => menu.props.actions)
@@ -1106,27 +1154,20 @@ describe('widget definition flows', () => {
                 results: [{ sessionId: 'source', detail: { status: 200, body: detail } }],
             }) });
         }
-        let screen = await renderScreen(React.createElement(SessionVisualCopyPanel, { account: { serverId, accountId: ACCOUNT_ID },
+        const screen = await renderScreen(React.createElement(SessionVisualCopyPanel, { account: { serverId, accountId: ACCOUNT_ID },
             sessionId: 'source', itemId: 'html', item, share: true, onClose: () => {}, testID: 'copyHandoff' }));
+        const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+        const consent = createDeferred<boolean>();
+        const { Modal } = await import('@/modal');
+        if (kind === 'builtin') vi.mocked(Modal.confirm).mockClear().mockImplementationOnce(() => consent.promise);
         try {
             await screen.pressByTestIdAsync('copyHandoff.save');
             if (kind === 'builtin') {
-                const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
-                const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
-                const { DocumentShareSheet } = await import('@/components/sharing/documents/DocumentShareSheet');
+                await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
+                expect(harness.artifacts(serverId).list()).toHaveLength(0);
+                consent.resolve(true);
                 await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-                const approvalId = harness.artifacts(serverId).list()[0]!.id;
-                const request = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(approvalId)!));
-                expect(request).toMatchObject({ actionId: 'widgets.definition.saveFromSession', actionArgs: {
-                    account: { serverId, accountId: ACCOUNT_ID }, session: { serverId, sessionId: 'source' }, itemId: 'html',
-                } });
-                const decision = await decideApprovalAsInbox(serverId, approvalId, 'approve');
-                expect(decision, JSON.stringify({ approval: harness.artifacts(serverId).readPlainBody(approvalId),
-                    requests: harness.requests.map(request => request.path) }))
-                    .toMatchObject({ ok: true, result: { status: 'executed' } });
-                // Sharing the newly saved definition is the existing explicit share-sheet entry,
-                // after approval custody completes; the pending copy panel does not auto-share.
-                const saved = harness.artifacts(serverId).list().find(row => row.id !== approvalId)!;
+                const saved = harness.artifacts(serverId).list()[0]!;
                 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
                 const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
                 const read = await createDefaultActionExecutor().execute('widgets.definition.get', {
@@ -1139,9 +1180,6 @@ describe('widget definition flows', () => {
                 expect(outputSchema.parse(read.result)).toMatchObject({
                     definition: { body: { kind: 'builtin', id: 'usage_period_summary' } },
                 });
-                await screen.unmount();
-                screen = await renderScreen(React.createElement(DocumentShareSheet, { artifactId: saved.id,
-                    kind: 'widget-definition.v1', scope: { serverId, accountId: ACCOUNT_ID }, testID: 'copyHandoff.share' }));
             }
             await vi.waitFor(() => expect(screen.findByTestId('copyHandoff.share:document-share-public-link'),
                 `${screen.getTextContent()} ${JSON.stringify(harness.requests.map(request => request.path))}`).not.toBeNull());
@@ -1152,7 +1190,7 @@ describe('widget definition flows', () => {
             await screen.pressByTestIdAsync('session-public-link-create');
             await screen.pressByTestIdAsync('session-public-link-options-cancel');
             expect(harness.requestsFor('/v1/public-shares').filter(request => request.input)).toHaveLength(0);
-            const createdArtifacts = kind === 'builtin' ? 2 : 1;
+            const createdArtifacts = 1;
             expect(harness.requestsFor('/v1/artifacts').filter(request => request.input)).toHaveLength(createdArtifacts);
             expect(harness.artifacts(serverId).list()).toHaveLength(createdArtifacts);
             const foreignHome = await harness.addHome({ name: 'Foreign Home', serverUrl: 'https://foreign-home.example', accountId: 'account-b' });
@@ -1167,7 +1205,7 @@ describe('widget definition flows', () => {
             expect(harness.requestsFor('/v1/public-shares').every(request => request.serverId === serverId)).toBe(true);
             expect(harness.artifacts(serverId).list()).toHaveLength(createdArtifacts);
             expect(harness.artifacts(foreignHome).list()).toHaveLength(0);
-        } finally { await screen.unmount(); await disconnect?.(); }
+        } finally { consent.resolve(false); await screen.unmount(); await disconnect?.(); }
     });
 
     it('lets a reader explicitly save an inline HTML visual as an independent HTML Artifact before sharing', async () => {
@@ -1192,7 +1230,7 @@ describe('widget definition flows', () => {
                 requestedCapabilities: { networkOrigins: ['https://api.example.com'] } } });
         const screen = await renderScreen(React.createElement(SessionWidgetHost, { serverId, sessionId: session.id, session,
             item: { itemId: 'html', revision: 'r1', state: { kind: 'ready', item } }, host: 'inlineTranscript',
-            density: 'compact', canEdit: false, executableCurrentness: 'current', heightBounds: { min: 96, max: 520 }, testID: 'htmlCopy' }));
+            density: 'compact', canEdit: false, heightBounds: { min: 96, max: 520 }, testID: 'htmlCopy' }));
         try {
             const actions = screen.tree.root.findAllByType(ItemRowActions).flatMap(menu => menu.props.actions);
             const save = actions.find((action: { id: string }) => action.id === 'saveArtifact');

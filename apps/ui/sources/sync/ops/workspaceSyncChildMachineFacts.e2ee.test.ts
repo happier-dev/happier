@@ -3,6 +3,7 @@ import { resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/work
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -50,7 +51,7 @@ describe('workspace Sync E2EE managed child facts', () => {
             '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1'
         );
         const recipient = {
-            account: { kind: 'account' as const, accountId: 'owner', firstName: 'Owner', lastName: null, username: 'owner', avatarUrl: null },
+            account: { kind: 'account' as const, accountId: 'owner', name: null, firstName: 'Owner', lastName: null, username: 'owner', avatarUrl: null },
             readiness: { status: 'available' as const, contentPublicKey: encodeBase64(encryption.contentDataKey, 'base64'),
                 contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) },
             envelopeStatus: 'missing' as const,
@@ -62,9 +63,9 @@ describe('workspace Sync E2EE managed child facts', () => {
         const reviewedFacts = {
             launch, controller, optionStatus: 'current' as const,
             billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const }, prerequisites: [],
-            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] as const },
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
-        };
+        } satisfies ManagedConfigurationFactsV1;
         const snapshot = replaceManagedMachinePresetLaunchNameV1({
             presetId: 'devcontainer-preset', mode: 'e2ee', content: sealed.content, recipients: sealed.recipients,
             accountId: 'owner', accountKey: encryption.getContentPrivateKey(), launchName: launch.name,

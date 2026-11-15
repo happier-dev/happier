@@ -42,13 +42,14 @@ export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
         state: runtime.state,
         /** Clears every `router.setParams` override this module-level mock accumulated. */
         resetParams: runtime.resetParams,
-        spies: runtime.spies as {
-            push: ReturnType<typeof vi.fn<RouterMethod<[unknown], unknown>>>;
-            back: ReturnType<typeof vi.fn<RouterMethod<[], unknown>>>;
-            replace: ReturnType<typeof vi.fn<RouterMethod<[unknown], unknown>>>;
-            dismissTo: ReturnType<typeof vi.fn<RouterMethod<[unknown], unknown>>>;
-            dismissAll: ReturnType<typeof vi.fn<RouterMethod<[], unknown>>>;
-            setParams: ReturnType<typeof vi.fn<RouterMethod<[ExpoRouterParams], unknown>>>;
+        spies: {
+            push: vi.mocked(runtime.spies.push),
+            navigate: vi.mocked(runtime.spies.navigate),
+            back: vi.mocked(runtime.spies.back),
+            replace: vi.mocked(runtime.spies.replace),
+            dismissTo: vi.mocked(runtime.spies.dismissTo),
+            dismissAll: vi.mocked(runtime.spies.dismissAll),
+            setParams: vi.mocked(runtime.spies.setParams),
         },
         module: {
             Redirect: (props: Record<string, unknown>) => React.createElement('Redirect', props),

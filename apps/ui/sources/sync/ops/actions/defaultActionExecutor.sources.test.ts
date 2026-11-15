@@ -15,6 +15,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 import { openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -50,6 +51,21 @@ const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/
 const { ArtifactEncryption } = await import('@/sync/encryption/artifactEncryption');
 const { openArtifactPrivateRevisionMetadata } = await import('@/sync/domains/artifacts/accountArtifactEnvelope');
 let restoreScopedMovePolicy: (() => void) | undefined;
+
+function accountTokenLabel(tokenId: string, value: string, accountId: string,
+    encryption: Awaited<ReturnType<typeof createEncryptionFromAuthCredentials>> | null = null,
+) {
+    const binding = { entity: 'account_api_token', field: 'label', id: tokenId };
+    if (!encryption) return projectPrivateLabelForRecipientV1({ recipientAccountId: accountId,
+        stored: sealPrivateLabelV1({ mode: 'plain', binding, value }) });
+    const dataKey = nacl.randomBytes(32);
+    const stored = sealPrivateLabelV1({ mode: 'e2ee', binding, value, dataKey, randomBytes: nacl.randomBytes,
+        recipients: [{ accountId, envelope: {
+            encryptedDataKey: encryptDataKeyForRecipientV0(dataKey, encodeBase64(encryption.contentDataKey, 'base64')),
+            recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey),
+        } }] });
+    return projectPrivateLabelForRecipientV1({ stored, recipientAccountId: accountId });
+}
 
 /** Drive the mounted UI's native review through the real Account Action host. */
 function executeReviewedMove(input: unknown,
@@ -325,10 +341,13 @@ async function openMoveScenario(options: Readonly<{ failure?: 'source-conflict' 
                     contentBodyVersion: candidate.revision.bodyVersion } };
         },
     });
-    const token = (tokenId: string, parentTokenId: string | null) => AccountApiTokenSummaryV1Schema.parse({ tokenId, label: parentTokenId ? 'CI child' : 'CI root',
-        displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`, createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null, expiresAt: null,
-        hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
-        parentTokenId, activeChildCount: parentTokenId ? 0 : 1, embedConfig: null });
+    const token = (tokenId: string, parentTokenId: string | null) => {
+        return AccountApiTokenSummaryV1Schema.parse({ tokenId,
+            label: accountTokenLabel(tokenId, parentTokenId ? 'CI child' : 'CI root', 'account-owner', encryption),
+            displayPrefix: `hap_v1_${tokenId.slice(0, 8)}`, createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null, expiresAt: null,
+            hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
+            parentTokenId, activeChildCount: parentTokenId ? 0 : 1, embedConfig: null });
+    };
     const root = token('dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', null);
     const child = token('ee03e74b-4aae-4a0a-81ee-1c23ddc4525d', root.tokenId);
     homes.answer(serverId, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, { body: { tokens: [root, child] } });
@@ -408,7 +427,9 @@ describe('Source admission through the default Account Action host', () => {
             accountId: 'workload-account', currentAccount: true, active: false });
         await homes.addHome({ name: 'Focused CI Home', serverUrl: 'https://ci-focused.test',
             accountId: 'focused-account', currentAccount: true });
-        const token = AccountApiTokenSummaryV1Schema.parse({ tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'CI deploy',
+        const tokenId = 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d';
+        const token = AccountApiTokenSummaryV1Schema.parse({ tokenId,
+            label: accountTokenLabel(tokenId, 'CI deploy', 'workload-account'),
             displayPrefix: 'hap_v1_dd03e74b', createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null, expiresAt: null,
             hasEncryptionAccess: false, hasUnattendedTeamAccess: true, grant: API_TOKEN_FULL_GRANT_V1,
             parentTokenId: null, activeChildCount: 0, embedConfig: null });
@@ -636,6 +657,7 @@ describe('Source admission through the default Account Action host', () => {
         for (const machineId of ['machine-a', 'controller', 'builder', 'edge', 'cleanup-machine']) answerMoveMachine(serverId, machineId);
         const { captureLazyActionAccountContext } = await import('./actionAccountContext');
         const writer = await captureLazyActionAccountContext(serverId);
+        const encryption = mode === 'e2ee' ? await createEncryptionFromAuthCredentials(writer.credentials) : null;
         try {
             for (const item of all) {
                 await writer.createArtifactDocument({ artifactId: item.environment.contentArtifactId,
@@ -648,7 +670,9 @@ describe('Source admission through the default Account Action host', () => {
             await writer.createArtifactDocument({ artifactId: 'defaults-content', header: { kind: 'project-deployment-defaults.v1', title: 'Defaults' },
                 body: JSON.stringify({ projectSourceId: source.id, deploymentDefaults: {} }) });
         } finally { writer.dispose(); }
-        const token = AccountApiTokenSummaryV1Schema.parse({ tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'CI deploy',
+        const tokenId = 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d';
+        const token = AccountApiTokenSummaryV1Schema.parse({ tokenId,
+            label: accountTokenLabel(tokenId, 'CI deploy', 'account-owner', encryption),
             displayPrefix: 'hap_v1_dd03e74b', createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null, expiresAt: null,
             hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
             parentTokenId: null, activeChildCount: 1, embedConfig: null });

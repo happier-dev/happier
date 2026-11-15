@@ -24,7 +24,9 @@ export function createDeploymentVariableBindingV1(input: Readonly<Pick<Environme
 export function createDeploymentSecretVariableBindingV1(input: Readonly<{
     name: string; phase: 'build' | 'runtime'; resourceId: string; resourceRevision: number;
     grantRef?: string;
-}>): EnvironmentVariableBindingV1 {
+}>): Omit<EnvironmentVariableBindingV1, 'source'> & {
+    source: Extract<EnvironmentVariableBindingV1['source'], { kind: 'secret' }>;
+} {
     const source = DeploymentSecretBindingSourceV1Schema.parse({ kind: 'secret',
         ref: formatSharedSavedSecretRefV1(input.resourceId), resourceRevision: input.resourceRevision });
     const binding = createDeploymentVariableBindingV1({ name: input.name, phase: input.phase,
