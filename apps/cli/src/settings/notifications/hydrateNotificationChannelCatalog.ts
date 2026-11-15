@@ -10,6 +10,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 /** The invocation holder, not the process-global Account, owns runner delivery. */
 export async function hydrateNotificationChannelCatalogForOperation(input: Readonly<{
   operationContext: SavedSecretOperationContextV1; signal?: AbortSignal; assertCurrent?(): Promise<void>;
+  cleanupActiveSource?: false;
 }>): Promise<NotificationChannelCatalogSnapshotV1> {
   const operation = input.operationContext;
   const commit = async (catalog: NotificationChannelCatalogSnapshotV1) => {
@@ -23,7 +24,8 @@ export async function hydrateNotificationChannelCatalogForOperation(input: Reado
     input.signal?.throwIfAborted();
   };
   const catalog = await createCliNotificationChannelStore({ credentials: operation.credentials,
-    operationContext: operation, signal: input.signal }).readNotificationChannelCatalog(commit);
+    operationContext: operation, signal: input.signal }).readNotificationChannelCatalog(commit,
+    { cleanupActiveSource: input.cleanupActiveSource });
   try { await commit(catalog); }
   catch { return { status: 'unavailable', reason: input.signal?.aborted ? 'cancelled' : 'scope-retired' }; }
   return catalog;
@@ -32,6 +34,7 @@ export async function hydrateNotificationChannelCatalogForOperation(input: Reado
 /** A real daemon/bootstrap demand, admitted to the captured Account lifetime. */
 export async function hydrateNotificationChannelCatalogForActiveAccount(input: Readonly<{
   credentials: StoredCredentials; signal?: AbortSignal; scopeKey?: string; lifetimeToken?: number; maintainSource?: false;
+  cleanupActiveSource?: false;
 }>): Promise<NotificationChannelCatalogSnapshotV1> {
   const scopeKey = input.scopeKey ?? resolveAccountSettingsScopeKey(input.credentials);
   const lifetimeToken = input.lifetimeToken ?? getActiveAccountSettingsSnapshotLifetimeToken();
@@ -41,7 +44,7 @@ export async function hydrateNotificationChannelCatalogForActiveAccount(input: R
   beginActiveNotificationChannelCatalogRefresh({ scopeKey, lifetimeToken });
   const catalog = await createCliNotificationChannelStore(input).readNotificationChannelCatalog(async ready => {
     if (current()) commitActiveNotificationChannelCatalog({ scopeKey, lifetimeToken, catalog: ready });
-  }, { maintainSource: input.maintainSource });
+  }, { maintainSource: input.maintainSource, cleanupActiveSource: input.cleanupActiveSource });
   if (!current()) return { status: 'unavailable', reason: 'scope-retired' };
   commitActiveNotificationChannelCatalog({ scopeKey, lifetimeToken, catalog });
   return catalog;

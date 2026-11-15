@@ -88,12 +88,19 @@ export function createCliNotificationChannelStore(input: Readonly<{
     else commitActiveAccountSettingsSnapshot(next);
   };
   const readCapturedNotificationChannelCatalog = async (onReady?: (catalog: NotificationChannelCatalogSnapshotV1) => Promise<void>,
-    maintainSource = true) => {
+    maintainSource = true, cleanupActiveSource?: false) => {
     const context = await readStorageContext('identity');
     const accountId = readAccountIdFromToken(input.credentials.token);
     if (!accountId) throw Object.assign(new Error('Account identity unavailable'), { code: 'unauthorized' });
     const reobserveMode = async () => {
       const current = await readStorageContext();
+      if (current.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
+      return current;
+    };
+    // A channel reader borrows the held Account observation (R3); source writes keep their fresh reads.
+    const reobserveReadMode = async () => {
+      if (cleanupActiveSource !== false) return reobserveMode();
+      const current = await readStorageContext('identity');
       if (current.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
       return current;
     };
@@ -109,8 +116,8 @@ export function createCliNotificationChannelStore(input: Readonly<{
     };
     const catalog = await loadNotificationChannelCatalogV1({ ...context, signal: input.signal,
       settingsSecretsReadKeys: readSnapshot()?.settingsSecretsReadKeys,
-      readRow,
-      ...(onReady ? { onReadyBeforeCleanup: async catalog => { await reobserveMode(); await onReady(catalog); } } : {}),
+      readRow, ...(cleanupActiveSource === false ? { cleanupActiveSource } : {}),
+      ...(onReady ? { onReadyBeforeCleanup: async catalog => { await reobserveReadMode(); await onReady(catalog); } } : {}),
       transfer: maintainSource ? {
         accountId,
         readSourceSnapshot,
@@ -262,12 +269,13 @@ export function createCliNotificationChannelStore(input: Readonly<{
           } });
         },
       } : undefined });
-    await reobserveMode();
+    await reobserveReadMode();
     return catalog;
   };
+  /** `cleanupActiveSource: false` = a channel reader: an already active catalog costs only its row read. */
   const readNotificationChannelCatalog = async (onReady?: (catalog: NotificationChannelCatalogSnapshotV1) => Promise<void>,
-    options?: Readonly<{ maintainSource?: false }>): Promise<NotificationChannelCatalogSnapshotV1> => {
-    try { return await readCapturedNotificationChannelCatalog(onReady, options?.maintainSource !== false); }
+    options?: Readonly<{ maintainSource?: false; cleanupActiveSource?: false }>): Promise<NotificationChannelCatalogSnapshotV1> => {
+    try { return await readCapturedNotificationChannelCatalog(onReady, options?.maintainSource !== false, options?.cleanupActiveSource); }
     catch (error) {
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
       return { status: 'unavailable', reason: input.signal?.aborted ? 'cancelled' : !isCurrent() ? 'scope-retired'

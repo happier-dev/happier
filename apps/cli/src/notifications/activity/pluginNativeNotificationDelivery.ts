@@ -62,7 +62,7 @@ export function createPluginNativeNotificationDelivery(params: Readonly<{
     const snapshot = getActiveAccountSettingsSnapshot();
     if (!snapshot || snapshot.scopeKey !== scopeKey) return none;
     if (!snapshot.notificationChannelCatalog || snapshot.notificationChannelCatalog.status === 'loading') {
-      await hydrateNotificationChannelCatalogForActiveAccount({ credentials: params.credentials, signal });
+      await hydrateNotificationChannelCatalogForActiveAccount({ credentials: params.credentials, signal, cleanupActiveSource: false });
     }
     if (!await isCurrent()) return none;
     const current = getActiveAccountSettingsSnapshot();

@@ -85,6 +85,53 @@ describe('ready notification Account catalog admission', () => {
       } finally { receipt.mockRestore(); get.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
     });
   });
+  it('[p03redesign.F1] Turn ends on an Account with no channels read the channel row once and no Settings source or history', async () => {
+    resetActiveAccountSettingsSnapshotForTests();
+    const home = 'https://runner-turn-end.example';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'runner-turn-end-account' })).toString('base64url')}.signature`, encryption: null };
+    await runWithServerHttpBaseUrl(home, async () => {
+      setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+        settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+      const receipt = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+      const readCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+      const reads: string[] = [];
+      // Home HTTP is the only substituted boundary; the channel row is present and empty.
+      const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+        const url = new URL(String(input));
+        reads.push(url.pathname);
+        if (url.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+          mode: 'plain', version: 1, settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        if (url.pathname === '/v1/account/entity-rows/notification-channels') return { status: 200, data: {
+          status: 'present', revision: 3, content: { t: 'plain', v: { v: 1, channels: [] } } } };
+        if (url.pathname === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: {} } } };
+        if (url.pathname === '/v2/account/settings/history') return { status: 200, data: { snapshots: [{ version: 6 }] } };
+        if (url.pathname === '/v2/account/settings/history/6') return { status: 200, data: { version: 6, content: { t: 'plain', v: {} } } };
+        if (url.pathname === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [] } };
+        const empty = emptyAccountSettingsHistoryCaptureResponse(url.pathname);
+        if (empty) return empty;
+        throw new Error(`Unexpected notification HTTP boundary: ${url.pathname}`);
+      });
+      try {
+        for (let turn = 1; turn <= 3; turn += 1) {
+          await sendReadyWithPushNotification({ session: { sessionId: 'turn-end-source',
+            enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true, localId: `ready-${turn}`, committedSequence: turn,
+              personalFollow: { sourceSessionId: 'turn-end-source', sourceMessage: { localId: `ready-${turn}`, seq: turn,
+                policies: [{ preset: 'everything' as const }] } } }) },
+            completedTurn: { turnId: `turn-${turn}` }, waitingForCommandLabel: 'Agent', logPrefix: '[turn-end]',
+            pushSender: { fetchSessionNotificationContext: async (id: string) => createSessionNotificationContextFixture(id),
+              readAccountSessionDeliveryMutedScopes: async () => [], sendToAllDevicesAsync: async () => true } });
+          await vi.waitFor(() => expect(receipt.mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome')).toHaveLength(turn));
+        }
+        const count = (match: (path: string) => boolean) => reads.filter(match).length;
+        expect({
+          settingsSourceAndHistory: count(path => path.startsWith('/v2/account/settings')),
+          savedSecrets: count(path => path.startsWith('/v1/account/saved-secrets')),
+          otherCatalogRows: count(path => path.startsWith('/v1/account/entity-rows/') && path !== '/v1/account/entity-rows/notification-channels'),
+          channelRow: count(path => path === '/v1/account/entity-rows/notification-channels'),
+        }).toEqual({ settingsSourceAndHistory: 0, savedSecrets: 0, otherCatalogRows: 0, channelRow: 1 });
+      } finally { receipt.mockRestore(); get.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
+    });
+  });
   it('does not send a late rich ready after its terminal Turn personal effect was accepted', async () => {
     resetActiveAccountSettingsSnapshotForTests();
     setActiveAccountSettingsSnapshot(createNotificationAccountSnapshotFixture());

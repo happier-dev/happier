@@ -51,7 +51,8 @@ export function prepareRuntimeNotificationCatalogRead(params: RuntimeNotificatio
       if (!await observeCurrent(signal => operation.isCurrent(signal), params.signal)) throw new NotificationChannelCatalogUnavailableError('scope-retired');
       params.signal?.throwIfAborted();
       const existing = operation.readSnapshot()?.notificationChannelCatalog;
-      if (!existing || existing.status === 'loading') await hydrateNotificationChannelCatalogForOperation({ operationContext: operation, signal: params.signal });
+      if (!existing || existing.status === 'loading') await hydrateNotificationChannelCatalogForOperation({ operationContext: operation, signal: params.signal,
+        cleanupActiveSource: false });
       params.signal?.throwIfAborted();
       const initialSnapshot = operation.readSnapshot();
       if (!initialSnapshot || !await observeCurrent(signal => operation.isCurrent(signal), params.signal)) throw new NotificationChannelCatalogUnavailableError('scope-retired');
@@ -95,7 +96,8 @@ export function prepareRuntimeNotificationCatalogRead(params: RuntimeNotificatio
       if (!credentials || resolveAccountSettingsScopeKey(credentials) !== incumbent.scopeKey) {
         throw new NotificationChannelCatalogUnavailableError('scope-retired');
       }
-      await hydrateNotificationChannelCatalogForActiveAccount({ credentials, ...incumbent, signal: params.signal });
+      // Delivery reads channels; source cleanup belongs to the daemon warm and Settings writers.
+      await hydrateNotificationChannelCatalogForActiveAccount({ credentials, ...incumbent, signal: params.signal, cleanupActiveSource: false });
       await assertIncumbent();
       captured = getActiveAccountSettingsSnapshot();
     }

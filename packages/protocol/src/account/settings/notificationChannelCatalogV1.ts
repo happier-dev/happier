@@ -72,6 +72,9 @@ type LoadInput = Readonly<{
   transfer?: NotificationChannelSourceTransferV1;
   onReadyBeforeCleanup?: (catalog: Extract<NotificationChannelCatalogSnapshotV1, { status: 'ready' }>) => Promise<void>;
   hasPendingCleanup?: () => boolean;
+  /** A channel reader (delivery): a catalog already active is returned as read; source cleanup and history
+   * normalization run only when this pass makes the catalog active (owner ruling 2026-11-15). */
+  cleanupActiveSource?: false;
 }>;
 type ReadCatalog = NotificationChannelCatalogSnapshotV1 | Readonly<{ status: 'absent' }>;
 function readFailureReason(error: unknown, signal?: AbortSignal): NotificationChannelCatalogUnavailableReasonV1 {
@@ -110,7 +113,7 @@ export async function loadNotificationChannelCatalogV1(input: LoadInput): Promis
     }
     if (catalog.status === 'ready') {
       await input.onReadyBeforeCleanup?.(catalog);
-      if (input.hasPendingCleanup?.()) return catalog;
+      if (input.hasPendingCleanup?.() || input.cleanupActiveSource === false) return catalog;
     }
     let source: Awaited<ReturnType<NotificationChannelSourceTransferV1['readSourceSnapshot']>>;
     try { source = await transfer.readSourceSnapshot(); }
