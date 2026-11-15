@@ -176,7 +176,6 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
                 {...(canManageBoardItemPlugin ? { onManageBoardItemPlugin: manageBoardItemPlugin } : {})}
                 addBinding={addBoard}
                 addPlacement="external"
-                revealTranscript={props.onRequestClose}
                 presentation="full"
             />
         </View>

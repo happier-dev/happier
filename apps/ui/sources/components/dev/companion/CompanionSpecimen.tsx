@@ -17,7 +17,7 @@ import { Typography } from '@/constants/Typography';
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
 
 import { projectSessionBoard } from '@/sync/domains/session/board';
-import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
+import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
 import { t } from '@/text';
 
 /**
@@ -26,14 +26,13 @@ import { t } from '@/text';
  * build can be paired against the lab without a live session on the dev account.
  */
 
-const ASK: SessionPendingPermission = {
-    requestId: 'specimen-ask',
-    toolName: 'Bash',
-    summary: 'Run yarn test:ui',
-    command: 'The full UI suite on MacBook Pro · about 4 min',
-    createdAtMs: Date.now() - 134_000,
-    policy: { protocol: 'standard', usePermissionUpdates: false },
-    answers: ['allowOnce', 'allowForSession', 'deny'],
+/** The waiting ask; the card draws it through the shared prompt card when a live Session backs it. */
+const ASK: SessionPendingRequest = {
+    id: 'specimen-ask',
+    kind: 'permission',
+    tool: 'Bash',
+    arguments: { command: 'yarn test:ui' },
+    createdAt: Date.now() - 134_000,
 };
 
 const PLAN = projectSessionAgentPlan([
@@ -57,7 +56,7 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
         identityDestination: 'sessionInfo',
         rows: [],
         needsYou: { request: ASK, moreCount: 0 },
-        sinceMs: ASK.createdAtMs ?? null,
+        sinceMs: ASK.createdAt ?? null,
         progress: { step: 4, total: 5 },
         plan: PLAN,
         facts: [
@@ -147,8 +146,6 @@ function Column(props: Readonly<{ summary: SessionSummaryCardModel; activity: Se
                             model={props.summary}
                             density="comfortable"
                             destinations={DESTINATIONS}
-                            answerPermission={async () => {}}
-                            showPermissionInChat={NOOP}
                             machineName="MacBook Pro"
                             headerAccessory={accessory}
                             presentation="full"
@@ -210,7 +207,7 @@ function StatesFrame() {
                 model={model({
                     stale: true,
                     status: { state: 'disconnected', statusText: 'Disconnected', quiet: false },
-                    needsYou: { request: { ...ASK, answers: [] }, moreCount: 0 },
+                    needsYou: null,
                 })}
                 density="comfortable"
                 machineName="MacBook Pro"

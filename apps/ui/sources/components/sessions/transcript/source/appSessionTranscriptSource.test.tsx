@@ -643,16 +643,20 @@ describe('app transcript source', () => {
         }
         try {
             storage.setState({ sessions: { [session.id]: session }, sessionMessages: { [session.id]: createSessionMessagesFixture({ messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message }, isLoaded: true }) } });
+            // The Home-scoped row the prompt card's footer reads its interaction from, as the real producer writes it.
+            storage.getState().applySessions([session]);
             const hook = await renderHook(() => useSessionTranscriptSource().usePendingRequests(), { wrapper: (props) => <AppSessionTranscriptSourceProvider sessionId={session.id}>{props.children}</AppSessionTranscriptSourceProvider> });
             expect(hook.getCurrent()).toEqual(listPendingRequestListsFromSession(session, [message]));
             const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId={session.id} serverId={serverId}>
                 <Companion />
             </AppSessionTranscriptSourceProvider>);
-            expect(screen.findByTestId('session-companion-content-summary-allow')).not.toBeNull();
-            await screen.pressByTestIdAsync('session-companion-content-summary-allow');
+            // The Companion draws the chat tray's own prompt card and answers through its footer.
+            expect(screen.findByTestId('session-companion-content-summary-allow')).toBeNull();
+            expect(screen.findByTestId('permission-prompt-card')).not.toBeNull();
+            await screen.pressByTestIdAsync('permission-footer.allow');
             expect(sessionRpcTransport).toHaveBeenLastCalledWith(expect.objectContaining({
                 sessionId: session.id, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
-                payload: { id: 'permission', turnId: 'pending-turn', approved: true },
+                payload: expect.objectContaining({ id: 'permission', turnId: 'pending-turn', approved: true }),
             }));
             // Delivery is not the host's updated pending-request projection.
             expect(screen.findByTestId('session-companion-content-summary-ask')).not.toBeNull();
@@ -666,7 +670,7 @@ describe('app transcript source', () => {
             }]); });
             expect(hook.getCurrent()).toEqual({ permissionRequests: [], userActionRequests: [] });
             expect(screen.findByTestId('session-companion-content-summary-ask')).toBeNull();
-            expect(screen.findByTestId('session-companion-content-summary-answered')).not.toBeNull();
+            expect(screen.findByTestId('permission-prompt-card')).toBeNull();
             await hook.unmount();
             await screen.unmount();
         } finally { storage.setState(previous); }
@@ -706,6 +710,7 @@ describe('app transcript source', () => {
         });
         try {
             storage.setState({ sessions: { [session.id]: session }, profileScope: { serverId, accountId: 'standalone-account' } });
+            storage.getState().applySessions([session]);
             const controller = await renderHook(() => useSessionCompanionController({ sessionId: session.id, serverId, openFullSurface: routerPush }));
             await act(async () => { expect(controller.getCurrent().show()).not.toBeNull(); });
             await controller.unmount();
@@ -717,11 +722,13 @@ describe('app transcript source', () => {
                 sessionId={session.id} address={{ sessionId: session.id, serverId }}
                 onRevealBoardItem={routerPush} onRequestClose={routerPush}
             /></AppPaneProvider></InjectedAuthProvider>);
-            expect(screen.findByTestId('session-companion-content-summary-allow')).not.toBeNull();
-            await screen.pressByTestIdAsync('session-companion-content-summary-allow');
+            // The Companion draws the chat tray's own prompt card and answers through its footer.
+            expect(screen.findByTestId('session-companion-content-summary-allow')).toBeNull();
+            expect(screen.findByTestId('permission-prompt-card')).not.toBeNull();
+            await screen.pressByTestIdAsync('permission-footer.allow');
             expect(sessionRpcTransport).toHaveBeenLastCalledWith(expect.objectContaining({
                 sessionId: session.id, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
-                payload: { id: 'permission', turnId: 'standalone-turn', approved: true },
+                payload: expect.objectContaining({ id: 'permission', turnId: 'standalone-turn', approved: true }),
             }));
             // The standalone root observes the same real Session projection.
             expect(screen.findByTestId('session-companion-content-summary-ask')).not.toBeNull();
@@ -730,7 +737,7 @@ describe('app transcript source', () => {
                 updatedAt: session.updatedAt + 1,
             }]); });
             expect(screen.findByTestId('session-companion-content-summary-ask')).toBeNull();
-            expect(screen.findByTestId('session-companion-content-summary-answered')).not.toBeNull();
+            expect(screen.findByTestId('permission-prompt-card')).toBeNull();
             await screen.unmount();
         } finally { storage.setState(previous); }
     });

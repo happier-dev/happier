@@ -8,7 +8,6 @@ import {
 } from '@/utils/sessions/sessionUtils';
 
 import type { SessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
-import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
 import type { SessionAgentPlan } from '../plan/sessionAgentPlan';
 import type { SessionCompanionDensity } from '../state/sessionCompanionPreference';
 import type { SessionRecap } from './sessionRecap';
@@ -95,9 +94,12 @@ export type SessionSummaryInput = Readonly<{
     usage: SessionSummaryUsageFacts | null;
     /** `resolveSessionRecap` output: the latest synopsis, else the latest worker update headline. */
     recap?: SessionRecap | null;
-    /** The shared pending-permission projection (`listSessionPendingPermissions`). */
-    pendingPermissions?: readonly SessionPendingPermission[];
-    /** Canonical pending questions and Action confirmations, with their native answer controls. */
+    /**
+     * Pending permission requests this viewer can answer now, as the request owner decided
+     * (`isTranscriptPendingRequestAnswerable`, the same verdict the chat tray and Inbox consume).
+     */
+    pendingPermissions?: readonly SessionPendingRequest[];
+    /** Canonical pending questions and Action confirmations this viewer can answer now. */
     pendingUserActions?: readonly SessionPendingRequest[];
     /** The agent's Plan (`projectSessionAgentPlan`), for "step N of M". */
     plan?: SessionAgentPlan | null;
@@ -107,9 +109,9 @@ export type SessionSummaryInput = Readonly<{
     lastObservedAtMs?: number | null;
 }>;
 
-/** The one ask the hero shows with its answers; the rest are counted. */
+/** The one ask the hero shows through the shared prompt card; the rest are counted. */
 export type SessionSummaryNeedsYou = Readonly<{
-    request: SessionPendingPermission | SessionPendingRequest;
+    request: SessionPendingRequest;
     moreCount: number;
 }>;
 
@@ -245,9 +247,7 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
     const step = plan ? (plan.currentStep ?? plan.nextStep) : null;
     return Object.freeze({
         needsYou,
-        sinceMs: needsYou
-            ? ('requestId' in needsYou.request ? needsYou.request.createdAtMs ?? null : needsYou.request.createdAt)
-            : input.turnStartedAtMs ?? null,
+        sinceMs: needsYou ? needsYou.request.createdAt : input.turnStartedAtMs ?? null,
         progress: plan && step !== null ? Object.freeze({ step, total: plan.total }) : null,
         plan,
         facts: resolveFacts(rows),
@@ -270,13 +270,10 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
 }
 
 function resolveNeedsYou(
-    permissions: readonly SessionPendingPermission[],
+    permissions: readonly SessionPendingRequest[],
     userActions: readonly SessionPendingRequest[],
 ): SessionSummaryNeedsYou | null {
-    const pending = [
-        ...permissions.map((request) => ({ id: request.requestId, createdAt: request.createdAtMs ?? null, request })),
-        ...userActions.map((request) => ({ id: request.id, createdAt: request.createdAt, request })),
-    ];
+    const pending = [...permissions, ...userActions].map((request) => ({ id: request.id, createdAt: request.createdAt, request }));
     const oldest = selectOldestPendingRequest(pending);
     return oldest ? Object.freeze({ request: oldest.request, moreCount: pending.length - 1 }) : null;
 }

@@ -9,19 +9,7 @@ export type SessionCompanionTranslations = Readonly<{
         agentFallback: string;
     }>;
     ask: Readonly<{
-        question: (params: Readonly<{ summary: string }>) => string;
-        allow: string;
-        deny: string;
-        showInChat: string;
         moreWaiting: (params: Readonly<{ count: number }>) => string;
-        allowed: (params: Readonly<{ summary: string }>) => string;
-        denied: (params: Readonly<{ summary: string }>) => string;
-        justNow: string;
-        failed: string;
-        answerWhenBack: (params: Readonly<{ machine: string }>) => string;
-        answerWhenSessionBack: string;
-        notAllowed: string;
-        groupA11y: string;
     }>;
     facts: Readonly<{
         subagents: string;
@@ -74,19 +62,7 @@ export const sessionCompanionTranslationsEnglish = { en: {
             agentFallback: 'The agent',
         },
         ask: {
-            question: ({ summary }) => `${summary}?`,
-            allow: 'Allow',
-            deny: 'Deny',
-            showInChat: 'Show in chat',
             moreWaiting: ({ count }) => `${count} more waiting`,
-            allowed: ({ summary }) => `Allowed ${summary}`,
-            denied: ({ summary }) => `Denied ${summary}`,
-            justNow: 'just now',
-            failed: 'Your answer didn’t reach the session. Try again.',
-            answerWhenBack: ({ machine }) => `You can answer when ${machine} is back.`,
-            answerWhenSessionBack: 'You can answer when the session is back.',
-            notAllowed: 'Only people who can run this session can answer.',
-            groupA11y: 'Waiting for you',
         },
         facts: {
             subagents: 'subagents',

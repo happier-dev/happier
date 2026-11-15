@@ -27,11 +27,10 @@ import {
 } from './sessionSummaryProjection';
 import { useSessionRecap } from './useSessionRecap';
 import { projectSessionAgentPlan } from '../plan/sessionAgentPlan';
-import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { listSessionPendingPermissions, type SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
 import { listPendingRequestListsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
+import { isTranscriptPendingRequestAnswerable } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useSessionSummaryAwareness } from './useSessionSummaryAwareness';
 
 type SessionUsageLike = Readonly<{
@@ -58,7 +57,6 @@ const REALM_UNAVAILABLE_SUMMARY: SessionSummaryCardModel = Object.freeze({
     facts: Object.freeze([]),
 });
 
-const NO_PENDING_PERMISSIONS: readonly SessionPendingPermission[] = Object.freeze([]);
 const NO_PENDING_REQUESTS: SessionPendingRequestLists = Object.freeze({
     permissionRequests: Object.freeze([]),
     userActionRequests: Object.freeze([]),
@@ -142,15 +140,22 @@ export function useSessionSummaryModel(input: Readonly<{
         // transcript storage keyed only by a same-id Session from another Home.
         return listPendingRequestListsFromSession(awarenessSource, []);
     }, [address, awarenessSource, transcriptPendingRequests, transcriptSource]);
+    // Only what this viewer can answer now waits for them: the request owner's one verdict,
+    // the same the chat tray and the Inbox consume. A Session whose runtime is away holds
+    // its asks until it is back, and its freshness line says why.
+    const answerableRequests = React.useMemo((): SessionPendingRequestLists => {
+        const answerable = (request: SessionPendingRequestLists['permissionRequests'][number]) =>
+            isTranscriptPendingRequestAnswerable(awarenessSource, request);
+        const permissionRequests = pendingRequests.permissionRequests.filter(answerable);
+        const userActionRequests = pendingRequests.userActionRequests.filter(answerable);
+        return permissionRequests.length === pendingRequests.permissionRequests.length
+            && userActionRequests.length === pendingRequests.userActionRequests.length
+            ? pendingRequests
+            : Object.freeze({ permissionRequests, userActionRequests });
+    }, [awarenessSource, pendingRequests]);
     const recap = useSessionRecap(address);
-    const accountScopeResolution = useServerCredentialAccountScopeResolution(address?.serverId);
-    const accountScope = accountScopeResolution.kind === 'bound' ? accountScopeResolution.scope : null;
     // Pending asks and the Plan come from the live row: both are exactly the facts
     // the stabilised shell Session omits from its render signature.
-    const pendingPermissions = React.useMemo(
-        () => (address ? listSessionPendingPermissions(awarenessSource, accountScope, pendingRequests.permissionRequests) : NO_PENDING_PERMISSIONS),
-        [accountScope, address, awarenessSource, pendingRequests.permissionRequests],
-    );
     const plan = projectSessionAgentPlan(awarenessSource.todos);
     const scm = React.useMemo(() => buildSessionScmSummary(scmSnapshot), [scmSnapshot]);
     const agentLabel = React.useMemo(() => readSessionAgentLabel(session), [session]);
@@ -179,8 +184,8 @@ export function useSessionSummaryModel(input: Readonly<{
         scm,
         usage: usageFacts,
         recap,
-        pendingPermissions,
-        pendingUserActions: pendingRequests.userActionRequests,
+        pendingPermissions: answerableRequests.permissionRequests,
+        pendingUserActions: answerableRequests.userActionRequests,
         plan,
         turnStartedAtMs,
         lastObservedAtMs: awarenessSource.activeAt,

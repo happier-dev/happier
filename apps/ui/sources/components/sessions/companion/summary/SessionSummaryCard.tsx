@@ -6,22 +6,19 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
-import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
-import type { SessionPermissionAnswer } from '@/sync/ops/sessionPermissionAnswers';
 import { t } from '@/text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/SessionPendingPromptCards';
-import { TranscriptOriginSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
+import { AppSessionTranscriptSourceProvider, TranscriptOriginSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { sync } from '@/sync/sync';
@@ -44,20 +41,16 @@ import { SessionSummaryStatusLine } from './SessionSummaryStatusLine';
 /**
  * The first-party Session Summary, recomposed as the Companion's live hero (lab CA).
  *
- * One status line in words with its timer, the ask that is waiting for you with its
- * answers, three facts and the remaining detail rows. Every value comes from the
- * pure projection; answers go through the ONE shared permission-answer owner the
- * caller hands in, and every fact or row opens its EXISTING owning surface. The card
- * never mutates Git, approvals, goals or usage itself.
+ * One status line in words with its timer, the ask that is waiting for you, three
+ * facts and the remaining detail rows. Every value comes from the pure projection; the
+ * ask is drawn by the SAME prompt card as the chat tray and the Inbox, so its choices,
+ * whether they can be given now and why not are decided once by that owner. Every fact
+ * or row opens its EXISTING owning surface. The card never mutates Git, approvals,
+ * goals or usage itself.
  */
 
 export type SessionSummaryDestinationHandlers =
     Partial<Readonly<Record<SessionSummaryDestination, () => void>>>;
-
-export type SessionSummaryAnswerPermission = (
-    request: SessionPendingPermission,
-    answer: SessionPermissionAnswer,
-) => Promise<void>;
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: { gap: theme.space.s12 },
@@ -69,38 +62,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         marginStart: 23,
     },
-    need: {
-        paddingTop: theme.space.s10,
-        paddingBottom: theme.space.s12,
-        paddingHorizontal: theme.space.s12,
-        borderRadius: 12,
-        backgroundColor: theme.colors.state.warning.background,
-        gap: theme.space.s2,
-    },
-    needHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
-    needQuestion: {
-        color: theme.colors.text.primary,
-        ...Typography.variant('body', 'semiBold'),
-        flexShrink: 1,
-    },
-    needReason: {
-        color: theme.colors.text.secondary,
-        ...Typography.variant('meta'),
-        marginStart: 22,
-    },
-    needActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, marginStart: 22, marginTop: theme.space.s8 },
     quietLink: {  color: theme.colors.text.secondary, ...Typography.variant('meta') },
-    done: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-        minHeight: 36,
-        paddingHorizontal: theme.space.s12,
-        borderRadius: 12,
-        backgroundColor: theme.colors.state.success.background,
-    },
-    doneText: {  color: theme.colors.text.primary, ...Typography.variant('meta'), flexShrink: 1 },
-    doneTime: {  color: theme.colors.text.tertiary, ...Typography.variant('meta') },
+    moreWaiting: { alignSelf: 'flex-start' },
     facts: { flexDirection: 'row', gap: theme.space.s6 },
     fact: {
         flex: 1,
@@ -206,151 +169,27 @@ const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
     );
 });
 
-type AskOutcome = Readonly<{ summary: string; answer: SessionPermissionAnswer; atMs: number }>;
-
-/** How long "✓ Allowed … · just now" stays before its one shared-clock expiry. */
-const ANSWERED_JUST_NOW_MS = 60_000;
+const NO_PROMPTS: readonly PendingPermissionRequest[] = Object.freeze([]);
 
 /**
- * The waiting ask, answered in place (lab CX): Allow calls the same permission
- * owner as the chat card, the block folds into one confirmation line, and the chat
- * card updates from the same Session state in the same frame.
+ * The ask's transcript source: the Session's own when this card sits in its transcript,
+ * else one for exactly this Session, so an answer always reaches the Session it names.
  */
-const SummaryAsk = React.memo(function SummaryAsk(props: Readonly<{
-    needsYou: NonNullable<SessionSummaryCardModel['needsYou']> | null;
-    offline: boolean;
-    machineName: string | null;
-    answerPermission?: SessionSummaryAnswerPermission;
-    showInChat?: (request: SessionPendingPermission) => void;
-    openApprovals?: () => void;
-    testID: string;
+function SummaryPromptSource(props: Readonly<{
+    sessionId: string;
+    serverId: string | null;
+    readOnly: boolean;
+    children: React.ReactNode;
 }>) {
-    const { theme } = useUnistyles();
-    const [inFlight, setInFlight] = React.useState<SessionPermissionAnswer | null>(null);
-    const [failed, setFailed] = React.useState(false);
-    const [outcome, setOutcome] = React.useState<AskOutcome | null>(null);
-    const candidate = props.needsYou?.request ?? null;
-    const request = candidate && 'requestId' in candidate ? candidate : null;
-    const requestId = request?.requestId ?? null;
-    const presented = useLayoutPresentationActive();
-    const viewed = useHostActivelyViewed();
-    // The receipt includes exactly 60 seconds; its existing predicate expires on the next millisecond.
-    const expiresAtMs = outcome === null ? null : outcome.atMs + ANSWERED_JUST_NOW_MS + 1;
-    const readNextRefreshAtMs = React.useCallback((nowMs: number) =>
-        expiresAtMs !== null && nowMs < expiresAtMs ? expiresAtMs : null, [expiresAtMs]);
-    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs,
-        outcome !== null && request === null && presented && viewed);
-    React.useEffect(() => {
-        // A new ask replaces both the confirmation and any failure for the last one.
-        if (requestId === null) return;
-        setFailed(false);
-        setInFlight(null);
-        setOutcome((current) => (current ? null : current));
-    }, [requestId]);
-
-    const answer = React.useCallback((value: SessionPermissionAnswer) => {
-        if (!request || !props.answerPermission || inFlight) return;
-        setInFlight(value);
-        setFailed(false);
-        props.answerPermission(request, value).then(
-            () => {
-                setOutcome({ summary: request.summary, answer: value, atMs: Date.now() });
-                setInFlight(null);
-            },
-            () => {
-                setFailed(true);
-                setInFlight(null);
-            },
-        );
-    }, [inFlight, props, request]);
-
-    if (!request) {
-        if (!outcome || nowMs - outcome.atMs > ANSWERED_JUST_NOW_MS) return null;
-        return (
-            <View testID={`${props.testID}-answered`} style={stylesheet.done} accessibilityRole="text" accessibilityLiveRegion="polite">
-                <Icon
-                    name={outcome.answer === 'deny' ? 'x-circle' : 'check-circle'}
-                    size={15}
-                    color={outcome.answer === 'deny' ? theme.colors.text.secondary : theme.colors.state.success.foreground}
-                />
-                <Text style={stylesheet.doneText} numberOfLines={1}>
-                    {outcome.answer === 'deny'
-                        ? t('sessionCompanion.ask.denied', { summary: outcome.summary })
-                        : t('sessionCompanion.ask.allowed', { summary: outcome.summary })}
-                </Text>
-                <View style={stylesheet.grow} />
-                <Text style={stylesheet.doneTime}>{t('sessionCompanion.ask.justNow')}</Text>
-            </View>
-        );
-    }
-
-    const canAllow = request.answers.includes('allowOnce');
-    const canDeny = request.answers.includes('deny');
-    const answerable = props.answerPermission !== undefined && (canAllow || canDeny);
-    const reason = failed
-        ? t('sessionCompanion.ask.failed')
-        : answerable
-            ? request.command ?? null
-            : props.offline
-                ? (props.machineName
-                    ? t('sessionCompanion.ask.answerWhenBack', { machine: props.machineName })
-                    : t('sessionCompanion.ask.answerWhenSessionBack'))
-                : t('sessionCompanion.ask.notAllowed');
-    const moreCount = props.needsYou?.moreCount ?? 0;
-    return (
-        <View
-            testID={`${props.testID}-ask`}
-            style={stylesheet.need}
-            accessibilityRole="summary"
-            accessibilityLabel={t('sessionCompanion.ask.groupA11y')}
-        >
-            <View style={stylesheet.needHead}>
-                <Icon name="warning" size={15} color={theme.colors.state.warning.foreground} />
-                <Text style={stylesheet.needQuestion} numberOfLines={2}>
-                    {t('sessionCompanion.ask.question', { summary: request.summary })}
-                </Text>
-            </View>
-            {reason ? (
-                <Text testID={`${props.testID}-ask-reason`} style={stylesheet.needReason} numberOfLines={2}>
-                    {reason}
-                </Text>
-            ) : null}
-            <View style={stylesheet.needActions}>
-                <RoundButton
-                    size="small"
-                    testID={`${props.testID}-allow`}
-                    title={t('sessionCompanion.ask.allow')}
-                    disabled={!answerable || !canAllow || inFlight !== null}
-                    loading={inFlight === 'allowOnce'}
-                    onPress={() => answer('allowOnce')}
-                />
-                <RoundButton
-                    size="small"
-                    display="secondary"
-                    testID={`${props.testID}-deny`}
-                    title={t('sessionCompanion.ask.deny')}
-                    disabled={!answerable || !canDeny || inFlight !== null}
-                    loading={inFlight === 'deny'}
-                    onPress={() => answer('deny')}
-                />
-                <View style={stylesheet.grow} />
-                {moreCount > 0 && props.openApprovals ? (
-                    <HappierPressable accessibilityRole="link" onPress={props.openApprovals}>
-                        <Text style={stylesheet.quietLink}>{t('sessionCompanion.ask.moreWaiting', { count: moreCount })}</Text>
-                    </HappierPressable>
-                ) : props.showInChat ? (
-                    <HappierPressable
-                        testID={`${props.testID}-show-in-chat`}
-                        accessibilityRole="link"
-                        onPress={() => props.showInChat?.(request)}
-                    >
-                        <Text style={stylesheet.quietLink}>{t('sessionCompanion.ask.showInChat')}</Text>
-                    </HappierPressable>
-                ) : null}
-            </View>
-        </View>
-    );
-});
+    const source = useOptionalSessionTranscriptSource();
+    const exact = source !== null && source.sessionId === props.sessionId && source.serverId !== null
+        && props.serverId !== null && areServerProfileIdentifiersEquivalent(source.serverId, props.serverId);
+    return exact
+        ? <TranscriptOriginSourceProvider readOnly={props.readOnly}>{props.children}</TranscriptOriginSourceProvider>
+        : <AppSessionTranscriptSourceProvider sessionId={props.sessionId} serverId={props.serverId} readOnly={props.readOnly}>
+            {props.children}
+        </AppSessionTranscriptSourceProvider>;
+}
 
 const FACT_ICONS = {
     subagents: 'robot',
@@ -491,10 +330,7 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
     destinations?: SessionSummaryDestinationHandlers;
     /** Opens the full Companion, where every omitted row stays reachable. */
     onOpenFullSurface?: () => void;
-    /** The shared permission-answer owner, bound to this exact Session by the caller. */
-    answerPermission?: SessionSummaryAnswerPermission;
-    showPermissionInChat?: (request: SessionPendingPermission) => void;
-    /** The owning machine's name, for "You can answer when … is back". */
+    /** The owning machine's name, for the freshness line's "… is offline". */
     machineName?: string | null;
     /** The placement's own controls (reorder, item menu), drawn at the end of the status line. */
     headerAccessory?: React.ReactNode;
@@ -544,12 +380,10 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
         : model.availability === 'locked'
             ? resolveSessionAwarenessContentLabel(model.encryption) ?? t('status.encryptedUnavailable')
             : null;
-    // Session runtime freshness and Machine transport reachability are separate facts.
-    // This is the same scoped, reactive presence owner that Vitals consumes.
-    const { machineReachability } = useSessionMachineReachability(
-        props.session?.id ?? '', props.serverId ?? props.session?.serverId,
-    );
-    const offline = machineReachability === 'unreachable';
+    const ask = model.needsYou;
+    const prompts = React.useMemo(() => (ask === null ? null : ask.request.kind === 'permission'
+        ? { permissions: [ask.request], userActions: NO_PROMPTS }
+        : { permissions: NO_PROMPTS, userActions: [ask.request] }), [ask]);
     // A host that frames the status itself (the Companion's widget frame) draws the freshness line and
     // the status words in its own header; the card then draws only the ask and its rows.
     const ownsStatus = props.statusInFrame !== true;
@@ -569,34 +403,30 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
                 </View>
             ) : null}
 
-            {exact && model.needsYou && 'id' in model.needsYou.request && props.session ? (
-                <TranscriptOriginSourceProvider readOnly={props.readOnly === true}>
+            {exact && ask && prompts && props.session ? (
+                <SummaryPromptSource sessionId={props.session.id} serverId={props.serverId ?? props.session.serverId ?? null}
+                    readOnly={props.readOnly === true}>
                     <View style={styles.rows}>
                         <SessionPendingPromptCards
                             testID={`${testID}-ask`}
                             sessionId={props.session.id}
                             serverId={props.serverId ?? props.session.serverId}
                             session={props.session}
-                            permissions={[]}
-                            userActions={[model.needsYou.request]}
+                            permissions={prompts.permissions}
+                            userActions={prompts.userActions}
                         />
-                        {model.needsYou.moreCount > 0 ? (
-                            <Text testID={`${testID}-ask-more-waiting`} style={styles.quietLink}>
-                                {t('sessionCompanion.ask.moreWaiting', { count: model.needsYou.moreCount })}
+                        {ask.moreCount > 0 && props.destinations?.approvals && props.readOnly !== true ? (
+                            <HappierPressable testID={`${testID}-ask-more-waiting`} accessibilityRole="link"
+                                onPress={props.destinations.approvals} style={styles.moreWaiting}>
+                                <Text style={styles.quietLink}>{t('sessionCompanion.ask.moreWaiting', { count: ask.moreCount })}</Text>
+                            </HappierPressable>
+                        ) : ask.moreCount > 0 ? (
+                            <Text testID={`${testID}-ask-more-waiting`} style={[styles.quietLink, styles.moreWaiting]}>
+                                {t('sessionCompanion.ask.moreWaiting', { count: ask.moreCount })}
                             </Text>
                         ) : null}
                     </View>
-                </TranscriptOriginSourceProvider>
-            ) : exact ? (
-                <SummaryAsk
-                    needsYou={model.needsYou}
-                    offline={offline}
-                    machineName={props.machineName ?? null}
-                    {...(props.answerPermission ? { answerPermission: props.answerPermission } : {})}
-                    {...(props.showPermissionInChat ? { showInChat: props.showPermissionInChat } : {})}
-                    {...(props.destinations?.approvals ? { openApprovals: props.destinations.approvals } : {})}
-                    testID={testID}
-                />
+                </SummaryPromptSource>
             ) : null}
 
             {exact && ownsStatus && model.facts.length > 0 ? (

@@ -9,13 +9,11 @@ import { isUsageBuiltinWidgetId } from '@/components/settings/usage/widgets/usag
 import { YourHomeWidgetBody } from '@/components/hub/yourHome/YourHomeWidgetBody';
 import { MachineWidgetBody, isMachineBuiltinWidgetId } from '@/components/machines/widgets/MachineWidgetBody';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useOpenApprovalArtifactsForSession } from '@/sync/domains/state/storage';
-import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
 import { ChangesGlance } from './ChangesGlance';
 import { EnvironmentGlance } from './EnvironmentGlance';
 import { LinksGlance } from './LinksGlance';
@@ -23,7 +21,7 @@ import { RunningGlance } from './RunningGlance';
 import { UsageGlance } from './UsageGlance';
 import { AppLocalServicesGlance, LocalServicesGlance } from './LocalServicesGlance';
 import { useSessionSummaryModel } from '../summary/useSessionSummaryModel';
-import { SessionSummaryCard, type SessionSummaryAnswerPermission } from '../summary/SessionSummaryCard';
+import { SessionSummaryCard } from '../summary/SessionSummaryCard';
 import { SessionAgentPlanCard } from '../plan/SessionAgentPlanCard';
 import { createSessionSummaryDestinations } from '../summary/sessionSummaryDestinations';
 
@@ -93,18 +91,12 @@ function SummaryWidgetBody(props: SessionBodyProps) {
         navigate: href => router.push(href as Parameters<typeof router.push>[0]),
         approvalId: approvals[0]?.artifact.id,
     }), [approvals, props.serverId, props.session.id, router]);
-    const actions = React.useMemo(() => createAppSessionTranscriptActions(props.session.id, props.serverId), [props.session.id, props.serverId]);
-    const answerPermission = React.useCallback<SessionSummaryAnswerPermission>((request, answer) => answerSessionPermission({
-        requestId: request.requestId, ...(request.turnId !== undefined ? { turnId: request.turnId } : {}),
-        ...(request.source !== undefined ? { source: request.source } : {}),
-        toolName: request.toolName, answer, policy: request.policy, respondToPermission: actions.respondToPermission,
-    }), [actions]);
     return props.id === 'agent_plan'
         ? <SessionAgentPlanCard plan={model.plan} agentLabel={model.agentLabel}
             activity={model.needsYou ? 'held' : model.status?.state === 'thinking' ? 'working' : 'idle'}
             presentation="body" testID={props.testID} />
         : <SessionSummaryCard model={model} session={props.session} serverId={props.serverId}
-            density="comfortable" presentation="full" answerPermission={answerPermission} destinations={destinations}
+            density="comfortable" presentation="full" destinations={destinations}
             onOpenFullSurface={() => router.push(buildScopedSessionRouteHref({ sessionId: props.session.id,
                 serverId: props.serverId }) as Parameters<typeof router.push>[0])} testID={props.testID} />;
 }

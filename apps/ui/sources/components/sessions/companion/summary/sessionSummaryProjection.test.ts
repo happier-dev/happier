@@ -11,7 +11,7 @@ import {
     resolveSessionSummaryVisibleRows,
     type SessionSummaryInput,
 } from './sessionSummaryProjection';
-import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
+import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
 import { projectSessionAgentPlan } from '../plan/sessionAgentPlan';
 
 function awareness(overrides: Partial<SessionAwarenessProjectionV1> = {}): SessionAwarenessProjectionV1 {
@@ -218,17 +218,8 @@ describe('resolveSessionSummaryVisibleRows', () => {
     });
 });
 
-function pending(requestId: string, createdAtMs: number, answers: SessionPendingPermission['answers'] = ['allowOnce', 'allowForSession', 'deny']): SessionPendingPermission {
-    return {
-        requestId,
-        toolName: 'Bash',
-        canApprove: answers.length > 0,
-        summary: 'Run yarn test:ui',
-        command: 'yarn test:ui',
-        createdAtMs,
-        policy: { protocol: 'standard', usePermissionUpdates: false },
-        answers,
-    };
+function pending(id: string, createdAt: number): SessionPendingRequest {
+    return { id, kind: 'permission', tool: 'Bash', arguments: { command: 'yarn test:ui' }, createdAt };
 }
 
 const fivePlan = projectSessionAgentPlan([
@@ -274,7 +265,7 @@ describe('the live hero (lab CA)', () => {
             turnStartedAtMs: 500,
         }));
 
-        expect(model.needsYou).toMatchObject({ request: { requestId: 'req-1' }, moreCount: 1 });
+        expect(model.needsYou).toMatchObject({ request: { id: 'req-1' }, moreCount: 1 });
         expect(model.sinceMs).toBe(1_000);
         expect(model.progress).toEqual({ step: 4, total: 5 });
     });

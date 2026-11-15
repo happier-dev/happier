@@ -2,7 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
-import { clearMachineRequestReachabilityForTest, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { View } from 'react-native';
+import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
+import { listPendingPermissionRequests } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { storage, useSession } from '@/sync/domains/state/storage';
@@ -16,6 +19,8 @@ const { SessionCompanionContent } = await import('./SessionCompanionContent');
 const { useSessionCompanionController } = await import('./state/useSessionCompanionController');
 const { AGENT_PLAN_COMPANION_ITEM, SESSION_SUMMARY_COMPANION_ITEM } = await import('./state/sessionCompanionPreference');
 const { SessionSummaryCard } = await import('./summary/SessionSummaryCard');
+const { AgentInputPermissionRequests } = await import('@/components/sessions/agentInput/components/AgentInputPermissionRequests');
+const { AppSessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/appSessionTranscriptSource');
 
 let controller: SessionCompanionController;
 const openFullSurface = () => {};
@@ -53,7 +58,7 @@ describe('Companion rail real Session facts', () => {
             await act(async () => { controller.addItem(AGENT_PLAN_COMPANION_ITEM); });
             await flushHookEffects({ cycles: 10 });
             const summary = screen.findByType(SessionSummaryCard);
-            expect(summary.props.model).toMatchObject({ scope: 'exact', needsYou: { request: { requestId: 'ask' } },
+            expect(summary.props.model).toMatchObject({ scope: 'exact', needsYou: { request: { id: 'ask', kind: 'permission' } },
                 facts: expect.arrayContaining([{ kind: 'context', percent: 42, stale: false, destination: 'usage' }]),
                 plan: { doneCount: 1, total: 2, currentStep: 2 } });
             expect(summary.props.model.status).not.toBeNull();
@@ -85,5 +90,85 @@ describe('Companion rail real Session facts', () => {
             expect(summary).not.toBeNull();
             expect(screen.getTextContent()).not.toContain(t('status.offline'));
         } finally { await screen.unmount(); clearMachineRequestReachabilityForTest(); }
+    });
+
+    describe('a native permission request, in the chat tray and the Companion', () => {
+        const nativeChoices = {
+            requirementId: 'occurrence', source: 'native',
+            choices: [
+                { id: 'once', label: 'Allow once', decision: 'approved' as const, scope: 'once' as const, response: { approved: true } },
+                { id: 'always', label: 'Always allow', decision: 'approved' as const, scope: 'localPersistent' as const, response: { approved: true } },
+                { id: 'reject', label: 'Reject', decision: 'denied' as const, scope: 'once' as const, response: { approved: false } },
+            ],
+        };
+        function nativeSession(overrides: Parameters<typeof createSessionFixture>[0] = {}) {
+            const base = createSessionFixture();
+            return createSessionFixture({ id: 's1', serverId: runtime.serverId, active: true, activeAt: Date.now(), presence: 'online',
+                metadata: { ...base.metadata!, machineId: 'machine-native', path: '/repo', host: 'Build computer' },
+                agentState: { controlledByUser: false, requests: { ask: { tool: 'Shell', arguments: { command: 'pwd' }, createdAt: 1, nativeChoices } } },
+                ...overrides });
+        }
+        /** The composer's tray exactly as the Session screen mounts it: the Session's own source and interaction. */
+        function Tray() {
+            const session = useSession('s1', runtime.serverId);
+            if (!session) return null;
+            const interaction = deriveTranscriptInteractionFromSession(session);
+            return <AppSessionTranscriptSourceProvider sessionId="s1" serverId={runtime.serverId}>
+                <View testID="tray">
+                    <AgentInputPermissionRequests sessionId="s1" metadata={session.metadata}
+                        permissionRequests={listPendingPermissionRequests(session)} permissionLocationsById={new Map()}
+                        canApprovePermissions={interaction.canApprovePermissions} disabledReason={interaction.permissionDisabledReason}
+                        maxHeightPx={1000} onContentSizeChange={() => {}} onLayout={() => {}} />
+                </View>
+            </AppSessionTranscriptSourceProvider>;
+        }
+        function offeredChoices(root: ReturnType<Awaited<ReturnType<typeof renderScreen>>['findByTestId']>) {
+            const nodes = root?.findAll((node) => typeof node.type === 'string'
+                && typeof node.props.testID === 'string' && node.props.testID.startsWith('permission-footer.choice.')) ?? [];
+            return nodes.map((node) => `${node.props.testID}:${node.props.accessibilityState?.disabled === true ? 'off' : 'on'}`);
+        }
+        async function renderBoth() {
+            const screen = await renderScreen(<runtime.Wrapper><Tray /><RailFacts /></runtime.Wrapper>);
+            await act(async () => { controller.show(SESSION_SUMMARY_COMPANION_ITEM); });
+            await flushHookEffects({ cycles: 10 });
+            return screen;
+        }
+
+        it('offers the same answerable choices in both while the Session is live', async () => {
+            storage.getState().applySessions([nativeSession()]);
+            const screen = await renderBoth();
+            try {
+                const tray = offeredChoices(screen.findByTestId('tray'));
+                expect([...tray].sort()).toEqual(['permission-footer.choice.always:on', 'permission-footer.choice.once:on', 'permission-footer.choice.reject:on']);
+                expect(offeredChoices(screen.findByTestId('session-companion-content-summary'))).toEqual(tray);
+                expect(screen.findByTestId('session-companion-content-summary-allow')).toBeNull();
+            } finally { await screen.unmount(); }
+        });
+
+        it('agrees with the tray when the Machine is offline: the same choices while the Session still runs, the freshness line names the Machine', async () => {
+            const machine = createMachineFixture({ id: 'machine-native', active: true, activeAt: Date.now() });
+            storage.getState().applyMachines([machine], true, { sourceServerId: runtime.serverId });
+            storage.getState().applySessions([nativeSession()]);
+            recordMachineRequestFailed({ serverId: runtime.serverId, accountId: 'account-a', machineId: machine.id });
+            const screen = await renderBoth();
+            try {
+                const tray = offeredChoices(screen.findByTestId('tray'));
+                expect(tray).toHaveLength(3);
+                expect(offeredChoices(screen.findByTestId('session-companion-content-summary'))).toEqual(tray);
+                expect(screen.findByTestId('session-companion-content-summary-ask-reason')).toBeNull();
+            } finally { await screen.unmount(); clearMachineRequestReachabilityForTest(); }
+        });
+
+        it('agrees with the tray once the Session runtime is away: neither offers an answer nor says it is waiting', async () => {
+            const lastSeenAt = Date.now() - 20 * 60_000;
+            storage.getState().applySessions([nativeSession({ active: false, activeAt: lastSeenAt, presence: lastSeenAt })]);
+            const screen = await renderBoth();
+            try {
+                expect(offeredChoices(screen.findByTestId('tray'))).toEqual([]);
+                expect(offeredChoices(screen.findByTestId('session-companion-content-summary'))).toEqual([]);
+                expect(screen.findByTestId('session-companion-content-summary-ask')).toBeNull();
+                expect(screen.getTextContent()).not.toContain(t('sessionCompanion.status.waitingForYou'));
+            } finally { await screen.unmount(); }
+        });
     });
 });

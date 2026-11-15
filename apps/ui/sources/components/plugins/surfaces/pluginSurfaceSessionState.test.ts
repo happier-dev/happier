@@ -730,10 +730,12 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
             const transcriptOnly = { ...loaded, agentState: null };
             const pending = listPendingRequestListsFromSession(transcriptOnly, messages);
             const shared = listSessionPendingPermissions(transcriptOnly, CURRENT_ACCOUNT_LIFETIME.scope, pending.permissionRequests);
-            const companion = projectSessionSummaryCard({ awareness: projectUiSessionAwareness(loaded, NOW),
-                agentLabel: null, activity: null, openApprovalCount: 0, scm: null, usage: null, pendingPermissions: shared });
-            expect(companion.needsYou?.request).toMatchObject({ requestId: 'req-1', turnId: 'native-turn',
+            expect(shared[0]).toMatchObject({ requestId: 'req-1', turnId: 'native-turn',
                 source: 'native_tool_approval_once', answers: state?.pendingPermissions[0]?.answers });
+            // The Companion draws the same canonical request through the chat tray's prompt card.
+            const companion = projectSessionSummaryCard({ awareness: projectUiSessionAwareness(loaded, NOW),
+                agentLabel: null, activity: null, openApprovalCount: 0, scm: null, usage: null, pendingPermissions: pending.permissionRequests });
+            expect(companion.needsYou?.request).toMatchObject({ id: 'req-1', turnId: 'native-turn', source: 'native_tool_approval_once' });
             await expect(mounted.api.respondToSessionPermission({ sessionId: 'linked-1', requestId: 'req-1', answer: 'allowForSession' }))
                 .resolves.toEqual({ status: 'refused', reason: 'answerUnavailable' });
             expect(mockSessionRpcWithPreferredSessionScope).not.toHaveBeenCalled();

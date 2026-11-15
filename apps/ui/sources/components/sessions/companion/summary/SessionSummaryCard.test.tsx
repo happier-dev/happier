@@ -8,9 +8,6 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
-import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -21,17 +18,6 @@ import { SessionSummaryCard } from './SessionSummaryCard';
 import type { SessionSummaryCardModel } from './sessionSummaryProjection';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const ASK: SessionPendingPermission = {
-    requestId: 'req-1',
-    toolName: 'Bash',
-    canApprove: true,
-    summary: 'Run yarn test:ui',
-    command: 'yarn test:ui',
-    createdAtMs: 1_000,
-    policy: { protocol: 'standard', usePermissionUpdates: false },
-    answers: ['allowOnce', 'allowForSession', 'deny'],
-};
 
 function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummaryCardModel {
     return {
@@ -55,63 +41,6 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
 }
 
 describe('SessionSummaryCard (the Companion hero)', () => {
-    it('retires the answered receipt clock after its existing visibility window', async () => {
-        vi.useFakeTimers({ now: Date.parse('2026-09-30T12:00:00.000Z') });
-        const census = installTimerCensus((stack) => stack.includes('sessionListRuntimeClock') ? 'receipt' : null);
-        const answerPermission = vi.fn(async () => {});
-        const screen = await renderScreen(<SessionSummaryCard model={model({ needsYou: { request: ASK, moreCount: 0 } })}
-            density="compact" answerPermission={answerPermission} />);
-        try {
-            await act(async () => { screen.pressByTestId('session-companion-summary-allow'); });
-            await screen.update(<SessionSummaryCard model={model()} density="compact" answerPermission={answerPermission} />);
-            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
-            // The existing visibility predicate includes the exact 60-second boundary.
-            await act(async () => { vi.advanceTimersByTime(60_000); });
-            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
-            await act(async () => { vi.advanceTimersByTime(1); });
-            expect(screen.findByTestId('session-companion-summary-answered')).toBeNull();
-            const before = census.readFires();
-            await act(async () => { vi.advanceTimersByTime(300_000); });
-            expect(census.readFires()).toEqual(before);
-            expect(census.read()).toEqual([]);
-        } finally {
-            await screen.unmount();
-            census.stop();
-            vi.useRealTimers();
-        }
-    });
-    it('pauses the retained receipt deadline while hidden and reopens with the expired receipt gone', async () => {
-        vi.useFakeTimers({ now: Date.parse('2026-09-30T12:00:00.000Z') });
-        const census = installTimerCensus((stack) => stack.includes('sessionListRuntimeClock') ? 'receipt' : null);
-        const answerPermission = vi.fn(async () => {});
-        const draw = (active: boolean, needsYou: SessionSummaryCardModel['needsYou']) =>
-            <PluginSurfaceFocusEligibilityProvider active={active}>
-                <SessionSummaryCard model={model({ needsYou })} density="compact" answerPermission={answerPermission} />
-            </PluginSurfaceFocusEligibilityProvider>;
-        const screen = await renderScreen(draw(true, { request: ASK, moreCount: 0 }));
-        try {
-            await act(async () => { screen.pressByTestId('session-companion-summary-allow'); });
-            await screen.update(draw(true, null));
-            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
-            await screen.update(draw(false, null));
-            const before = census.readFires();
-            await act(async () => { vi.advanceTimersByTime(300_000); });
-            expect(census.readFires()).toEqual(before);
-            expect(census.read()).toEqual([]);
-            await screen.update(draw(true, null));
-            expect(screen.findByTestId('session-companion-summary-answered')).toBeNull();
-            const nextAsk = { ...ASK, requestId: 'req-2', summary: 'New permission request' };
-            await screen.update(draw(true, { request: nextAsk, moreCount: 0 }));
-            await act(async () => { screen.pressByTestId('session-companion-summary-deny'); });
-            await screen.update(draw(true, null));
-            expect(answerPermission).toHaveBeenLastCalledWith(nextAsk, 'deny');
-            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
-        } finally {
-            await screen.unmount();
-            census.stop();
-            vi.useRealTimers();
-        }
-    });
     it('uses the compact widget summary with a truthful full-surface route and expands detail for a tall body', async () => {
         const openFull = vi.fn();
         const summary = model({ rows: [
@@ -131,6 +60,42 @@ describe('SessionSummaryCard (the Companion hero)', () => {
         expect(screen.findByTestId('session-companion-summary-more')).toBeNull();
         expect(screen.findByTestId('session-companion-summary-row-approvals')).not.toBeNull();
     });
+    it('presents a native permission with the offered choices of the shared prompt card and answers the exact choice', async () => {
+        const respondToPermission = vi.fn(async () => {});
+        const nativeChoices = {
+            requirementId: 'occurrence', source: 'native',
+            choices: [
+                { id: 'once', label: 'Allow once', decision: 'approved' as const, scope: 'once' as const, response: { approved: true } },
+                { id: 'reject', label: 'Reject', decision: 'denied' as const, scope: 'once' as const, response: { approved: false } },
+            ],
+        };
+        const request = { id: 'permission', kind: 'permission' as const, tool: 'Shell', arguments: { command: 'pwd' }, createdAt: 100, nativeChoices };
+        const screen = await renderWithSessionTranscriptSource(
+            <AppPaneProvider>
+                <SessionSummaryCard
+                    model={model({ needsYou: { request, moreCount: 0 } })}
+                    density="compact"
+                    session={createSessionFixture({ id: 'session-1', active: true, presence: 'online', serverId: 'home-a' })}
+                    serverId="home-a"
+                />
+            </AppPaneProvider>,
+            createTestSessionTranscriptSource({
+                sessionId: 'session-1', serverId: 'home-a',
+                agentState: { requests: { permission: { tool: request.tool, arguments: request.arguments, createdAt: 100, nativeChoices } } },
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+                actions: { respondToPermission, answerUserAction: async () => {}, abort: async () => {}, submitMessage: async () => {} },
+            }),
+        );
+        expect(screen.findByTestId('permission-prompt-card')).not.toBeNull();
+        expect(screen.findByTestId('session-companion-summary-allow')).toBeNull();
+        const once = screen.findAll((node) => typeof node.type === 'string' && node.props.testID === 'permission-footer.choice.once')[0];
+        expect(once?.props.accessibilityState?.disabled).not.toBe(true);
+        await act(async () => { once?.props.onPress(); });
+        expect(respondToPermission).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'permission', nativeChoice: expect.objectContaining({ requirementId: 'occurrence', choiceId: 'once' }),
+        }));
+    });
+
     it('renders a pending question through the shared prompt controls instead of permission answers', async () => {
         const answerUserAction = vi.fn(async () => {});
         const request = {
@@ -235,7 +200,8 @@ describe('SessionSummaryCard (the Companion hero)', () => {
     it('says the present in words: waiting for you, and the plan step the agent paused before', async () => {
         const screen = await renderScreen(
             <SessionSummaryCard
-                model={model({ needsYou: { request: ASK, moreCount: 0 }, sinceMs: Date.now(), progress: { step: 4, total: 5 } })}
+                model={model({ needsYou: { request: { id: 'req-1', kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 1_000 }, moreCount: 0 },
+                    sinceMs: Date.now(), progress: { step: 4, total: 5 } })}
                 density="compact"
             />,
         );
@@ -245,64 +211,6 @@ describe('SessionSummaryCard (the Companion hero)', () => {
         expect(screen.findByTestId('session-companion-summary-what')?.props.children)
             .toBe('sessionCompanion.status.pausedBeforeStep(agent=Claude,step=4,total=5)');
         expect(screen.findByTestId('session-companion-summary-timer')).not.toBeNull();
-    });
-
-    it('answers the ask in place through the shared answer owner, then folds into one confirmation', async () => {
-        let resolveAnswer: () => void = () => {};
-        const answerPermission = vi.fn(() => new Promise<void>((resolve) => { resolveAnswer = resolve; }));
-        const screen = await renderScreen(
-            <SessionSummaryCard
-                model={model({ needsYou: { request: ASK, moreCount: 0 } })}
-                density="compact"
-                answerPermission={answerPermission}
-            />,
-        );
-
-        await act(async () => { screen.findByTestId('session-companion-summary-allow')?.props.onPress(); });
-        expect(answerPermission).toHaveBeenCalledWith(ASK, 'allowOnce');
-        // One answer at a time: the ask cannot be answered twice while the first is in flight.
-        expect(screen.findByTestId('session-companion-summary-deny')?.props.disabled).toBe(true);
-
-        await act(async () => { resolveAnswer(); });
-        // The Session state the chat card reads drops the answered ask.
-        await act(async () => {
-            await screen.update(<SessionSummaryCard model={model()} density="compact" answerPermission={answerPermission} />);
-        });
-        expect(screen.findByTestId('session-companion-summary-ask')).toBeNull();
-        expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
-    });
-
-    it('keeps the ask when the answer does not reach the session, and says so', async () => {
-        const answerPermission = vi.fn(async () => { throw new Error('offline'); });
-        const screen = await renderScreen(
-            <SessionSummaryCard
-                model={model({ needsYou: { request: ASK, moreCount: 0 } })}
-                density="compact"
-                answerPermission={answerPermission}
-            />,
-        );
-
-        await act(async () => { screen.findByTestId('session-companion-summary-deny')?.props.onPress(); });
-        expect(screen.findByTestId('session-companion-summary-ask-reason')?.props.children).toBe('sessionCompanion.ask.failed');
-        expect(screen.findByTestId('session-companion-summary-allow')?.props.disabled).toBe(false);
-    });
-
-    it('keeps an unanswerable ask disabled without inventing machine reachability from Session status', async () => {
-        const screen = await renderScreen(
-            <SessionSummaryCard
-                model={model({
-                    status: { state: 'disconnected', statusText: 'Disconnected', quiet: false },
-                    needsYou: { request: { ...ASK, answers: [] }, moreCount: 0 },
-                })}
-                density="compact"
-                answerPermission={vi.fn(async () => {})}
-                machineName="MacBook Pro"
-            />,
-        );
-
-        expect(screen.findByTestId('session-companion-summary-allow')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('session-companion-summary-ask-reason')?.props.children)
-            .toBe('sessionCompanion.ask.notAllowed');
     });
 
     it('opens each fact and the dedicated Recap row at its existing owner in a compact card', async () => {

@@ -62,7 +62,6 @@ import {
     resolveSessionSummaryWhatLine,
     SessionSummaryCard,
     SessionSummaryFreshnessLine,
-    type SessionSummaryAnswerPermission,
     type SessionSummaryDestinationHandlers,
 } from './summary/SessionSummaryCard';
 import { SessionSummaryStatusTitle } from './summary/SessionSummaryStatusLine';
@@ -75,11 +74,7 @@ import { useSessionWidgetSurface } from '@/components/widgets/surface/useWidgetI
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 import { SessionCompanionDropSlot } from './drop/SessionCompanionDropSlot';
-import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
-import { showPendingPermissionInChat } from './summary/showPendingPermissionInChat';
-import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
-import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { useSessionSummaryModel } from './summary/useSessionSummaryModel';
 import {
     resolveSessionCompanionOuterRailWidthPx,
@@ -192,11 +187,6 @@ export type SessionCompanionContentProps = Readonly<{
     addBinding?: Omit<SessionCompanionAddBinding, 'refs' | 'snapshot' | 'addItem'>;
     /** Hosts that seat Add elsewhere (the phone's navigation bar) hide the column's row. */
     addPlacement?: 'column' | 'external';
-    /**
-     * Hosts that replace the transcript (the phone's Companion destination) reveal it
-     * before "Show in chat" lands; a host beside a live transcript passes nothing.
-     */
-    revealTranscript?: () => void;
     /** The rail is intentionally condensed; the Cockpit/full route is uncapped. */
     presentation?: 'rail' | 'full';
     testID?: string;
@@ -356,20 +346,6 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
 
     const summary = useSessionSummaryModel({ session: props.session, serverId: props.serverId ?? null });
     const sessionId = props.session.id;
-    const actions = React.useMemo(() => createAppSessionTranscriptActions(sessionId, props.serverId ?? null), [sessionId, props.serverId]);
-    // The ONE permission-answer owner the chat card and plugin Host API use, bound to
-    // this exact Session. A measurement pass never answers anything.
-    const answerPermission = React.useCallback<SessionSummaryAnswerPermission>((request, answer) => (
-        answerSessionPermission({
-            requestId: request.requestId,
-            ...(request.turnId !== undefined ? { turnId: request.turnId } : {}),
-            ...(request.source !== undefined ? { source: request.source } : {}),
-            toolName: request.toolName,
-            answer,
-            policy: request.policy,
-            respondToPermission: actions.respondToPermission,
-        })
-    ), [actions]);
     const summaryExact = summary.scope === 'exact' && summary.availability !== 'locked';
     const planActivity: SessionAgentPlanActivity = summary.needsYou
         ? 'held'
@@ -410,14 +386,6 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         });
     }, [mutateCompanion]);
     const machineName = useSessionMachineName(props.session.id, props.serverId ?? null);
-    const revealTranscript = props.revealTranscript;
-    const showPermissionInChat = React.useCallback((request: SessionPendingPermission) => {
-        showPendingPermissionInChat({
-            sessionId,
-            requestId: request.requestId,
-            ...(revealTranscript ? { revealTranscript } : {}),
-        });
-    }, [revealTranscript, sessionId]);
     const [pickerRequest, setPickerRequest] = React.useState(0);
     const addItem = React.useCallback(async (ref: SessionCompanionAddBinding['refs'][number]) => {
         const outcome = await mutateCompanion({
@@ -527,8 +495,6 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                     testID={`${testID}-summary`}
                     {...(summaryDestinations ? { destinations: summaryDestinations } : {})}
                     {...(summaryOpenFullSurface ? { onOpenFullSurface: summaryOpenFullSurface } : {})}
-                    {...(props.measurementOnly ? {} : { answerPermission })}
-                    {...(props.measurementOnly ? {} : { showPermissionInChat })}
                     machineName={machineName}
                     headerAccessory={headerAccessory}
                     presentation={full ? 'full' : 'card'}
