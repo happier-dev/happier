@@ -2,7 +2,7 @@ import { resolveAgentStateRequestCoverageOptions, type AgentStateRequestCoverage
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happier-dev/agents/agent-ids';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
-import { readDaemonMergedProjectionSummary } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { readDaemonMergedProjectionSummary } from '@/agents/backendCatalog/daemonMergedProjectionCache';
 import { resolveSessionMachineId } from '../external/resolveSessionMachineId';
 import { readSessionOwnerMetadataView } from '../readSessionOwnerMetadataView';
 import { readSessionPresentationAgentId } from '../presentation/readSessionPresentationAgentId';
