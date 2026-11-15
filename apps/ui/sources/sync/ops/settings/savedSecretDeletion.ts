@@ -12,7 +12,7 @@ import { applySavedSecretCatalogDeletion, refreshSavedSecretCatalog } from '@/sy
 import { isTeamActionApprovalPendingError, runTeamAction, type HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { getSavedSecretCatalogSnapshot } from '@/sync/store/settings/savedSecretCatalogSnapshot';
-import { captureSavedSecretReferenceStateInContext, operationFailureReason,
+import { captureSavedSecretReferenceStateInContext, projectSavedSecretResourceOperationFailure,
     type SavedSecretAdmittedMutationExecute, type SavedSecretResourceOperationResult } from './savedSecretResourceOperations';
 import { captureManagedMachinePresetSavedSecretReferencesInContext } from '@/sync/ops/machines/machinePresetCollectionClientImpl';
 
@@ -25,7 +25,7 @@ type SavedSecretResourceDeleteFailure = (
     | Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>
     | Readonly<{ ok: false; reason: 'managed_resources_review_required'; resources: readonly ManagedResourceDependencyV1[] }>
     | Readonly<{ ok: false; reason: 'in_use'; references: readonly AccountSettingsSavedSecretReference[] }>
-) & Readonly<{ failure?: Readonly<{ code: string; context?: Readonly<Record<string, string | number | boolean | null>> }> }>;
+) & Pick<Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>, 'failure'>;
 type SavedSecretDeleteOutput = Readonly<{ resourceId: string }>;
 
 function savedSecretDeleteFailure(failure: HomeDomainFailure<string>): SavedSecretResourceDeleteFailure {
@@ -35,9 +35,7 @@ function savedSecretDeleteFailure(failure: HomeDomainFailure<string>): SavedSecr
             return { ok: false, reason: 'managed_resources_review_required', resources: review.data.resources };
         }
     }
-    return { ok: false, reason: operationFailureReason(failure.kind),
-        ...(failure.code ? { failure: { code: failure.code, context: { kind: failure.kind,
-            ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }) } } } : {}) };
+    return projectSavedSecretResourceOperationFailure(failure);
 }
 
 function readConnectedAccountCredentialRecordsForScope(scope: ServerAccountScope) {

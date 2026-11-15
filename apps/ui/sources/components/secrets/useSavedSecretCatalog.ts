@@ -21,6 +21,7 @@ import {
 } from '@/components/approvals/actionApprovalContinuation';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { runTeamAction, type TeamActionOutcome } from '@/sync/ops/teams/teamActionClient';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1, PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
   type SavedSecretVaultTargetV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import type { SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -763,7 +764,7 @@ function updatePrivateResource(
   input: Pick<
     Parameters<typeof updateSavedSecretResource>[0],
     'resourceId' | 'expectedRevision' | 'nextName' | 'nextValue' | 'nextSource'
-  >,
+  > & Partial<Pick<Parameters<typeof updateSavedSecretResource>[0], 'onApprovalSucceeded' | 'onApprovalFailed'>>,
 ) {
   return runTeamAction({
     scope,
@@ -779,5 +780,12 @@ function updatePrivateResource(
       PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.update'].parse(
         value,
       ),
+    ...(input.onApprovalSucceeded ? { onApprovalSucceeded: async value => {
+      await input.onApprovalSucceeded?.({ resourceId: input.resourceId, revision: value.updatedAt });
+    } } : {}),
+    ...(input.onApprovalFailed ? { onApprovalFailed: (code, failure) => {
+      input.onApprovalFailed?.(code, projectSavedSecretResourceUpdateFailure(
+        homeDomainFailureFromActionFailure(failure ?? { errorCode: code })));
+    } } : {}),
   });
 }

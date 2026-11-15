@@ -95,6 +95,7 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                     if ('details' in result) throw Object.assign(new Error(result.reason, { cause: {
                         ok: false, errorCode: result.reason, error: result.reason, details: result.details,
                     } }), { code: result.reason });
+                    if (result.failure) refusal(result.failure.code, result.failure.context);
                     refusal(result.reason);
                 }
                 return { revision: args.expectedUpdatedAt + 1 };

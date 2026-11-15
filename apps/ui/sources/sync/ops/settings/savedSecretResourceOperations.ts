@@ -35,6 +35,8 @@ import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncrypt
 import type { ProfileRecordV1, ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import { readSafeFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { sealOwnerSavedSecretResourceEnvelope } from '@/sync/encryption/savedSecretOwnerEnvelope';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -77,10 +79,25 @@ function isHealthySavedSecretResourceMaterialV1(
 
 export type SavedSecretResourceOperationResult =
     | Readonly<{ ok: true }>
-    | Readonly<{ ok: false; reason: 'changed' | 'unavailable' | 'failed' | 'outcome_unknown' | 'recipient_mode_unsupported' }>;
+    | Readonly<{ ok: false; reason: 'changed' | 'unavailable' | 'failed' | 'outcome_unknown' | 'recipient_mode_unsupported';
+        failure?: Readonly<{ code: string; context?: ActionFailureContext }> }>;
 
 export type SavedSecretResourceUpdateResult = SavedSecretResourceOperationResult
     | Readonly<{ ok: false; reason: 'backup_rekey_required'; details: SavedSecretBackupRekeyRequiredV1 }>;
+
+type SavedSecretUpdateApprovalHandlers = Readonly<{
+    onApprovalSucceeded?: (value: SavedSecretMutationOutput) => void | Promise<void>;
+    onApprovalFailed?: (code: string, result: Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>>) => void;
+}>;
+
+/** Safe diagnostic projection shared by Saved Secret mutation consumers. */
+export function projectSavedSecretResourceOperationFailure(failure: HomeDomainFailure<string>): Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>> {
+    return { ok: false, reason: operationFailureReason(failure.kind),
+        ...(failure.code ? { failure: { code: failure.code, context: {
+            ...readSafeFailureDetails(failure.details), kind: failure.kind,
+            ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
+        } } } : {}) };
+}
 
 /** Both private Action and shared Resource updates consume the same Home refusal. */
 export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailure<string>): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
@@ -88,7 +105,7 @@ export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailu
         const details = SavedSecretBackupRekeyRequiredV1Schema.safeParse(failure.details);
         if (details.success) return { ok: false, reason: 'backup_rekey_required', details: details.data };
     }
-    return { ok: false, reason: operationFailureReason(failure.kind) };
+    return projectSavedSecretResourceOperationFailure(failure);
 }
 
 export type SavedSecretPromotionResult =
@@ -1733,7 +1750,7 @@ export async function updateSavedSecretResource(params: Readonly<{
     /** Explicit owner directive; absent follows the shared Account write-mode policy. */
     toMode?: 'plain' | 'e2ee';
     decryptDataKeyEnvelope: (encryptedDataKey: string) => Promise<Uint8Array | null>;
-}> & SavedSecretApprovalHandlers<SavedSecretMutationOutput>): Promise<SavedSecretResourceUpdateResult> {
+}> & SavedSecretUpdateApprovalHandlers): Promise<SavedSecretResourceUpdateResult> {
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     let context: ProfileAccountContext | undefined;
     try {
@@ -1754,7 +1771,7 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
     resourceId: string; expectedRevision?: number; nextName?: string; nextValue?: string; nextSource?: SavedSecretExternalSourceV1;
     toMode?: 'plain' | 'e2ee'; executeAdmittedMutation?: SavedSecretAdmittedMutationExecute;
     decryptDataKeyEnvelope?: (encryptedDataKey: string) => Promise<Uint8Array | null>;
-}> & SavedSecretApprovalHandlers<SavedSecretMutationOutput>): Promise<SavedSecretResourceUpdateResult> {
+}> & SavedSecretUpdateApprovalHandlers): Promise<SavedSecretResourceUpdateResult> {
     const scope = { serverId: context.serverId, accountId: context.accountId };
     const decryptDataKeyEnvelope = params.decryptDataKeyEnvelope ?? (async (encryptedDataKey: string) => {
         const { encryption } = await context.resolveAccountEncryption();
@@ -1866,7 +1883,9 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
                 },
                 parse: (value) => SharedSavedSecretMutationOutputV1Schema.parse(value),
                 onApprovalSucceeded,
-                ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
+                ...(params.onApprovalFailed ? { onApprovalFailed: (code, failure) => params.onApprovalFailed?.(
+                    code, projectSavedSecretResourceUpdateFailure(homeDomainFailureFromActionFailure(failure ?? { errorCode: code })),
+                ) } : {}),
             });
             context.assertResultCurrent('write');
             if (outcome.kind !== 'succeeded') {

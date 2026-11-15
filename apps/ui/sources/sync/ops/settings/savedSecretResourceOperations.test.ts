@@ -47,7 +47,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { resetTeamActionClientForTests, runTeamAction, TeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { copyUsedSavedSecretResourcesToTeam, createSavedSecretResource, createSavedSecretResourcesWithConnectedAccountCredentialInContext, promotePersonalSavedSecretResource, updateSavedSecretResource, updateSavedSecretResourceInContext,
     deleteSavedSecretResource, setSavedSecretResourceGrants, repairCustodiedSavedSecretResourceEnvelopesBestEffort,
-    captureSavedSecretReferenceStateInContext, importLegacySavedSecretsInContext } from './savedSecretResourceOperations';
+    captureSavedSecretReferenceStateInContext, importLegacySavedSecretsInContext, projectSavedSecretResourceUpdateFailure } from './savedSecretResourceOperations';
 import { withProfileAccount } from '@/sync/api/account/apiProfileCatalog';
 import { createUiPersonalSavedSecretActionExecute } from './personalSavedSecretActionHost';
 import { createHomeDomainActionExecutorForScope } from '@/sync/api/home/homeDomainActions';
@@ -151,7 +151,7 @@ afterEach(async () => { await standardCleanup(); clearActiveUnsavedChangesGuard(
 let accountFixtureSequence = 0;
 
 /** Only HTTP, credentials and Socket transport are substituted; Account/Action/Settings/crypto owners stay real. */
-async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: boolean; teams?: boolean; home?: string;
+async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: boolean; askAgentUpdate?: boolean; teams?: boolean; home?: string;
     raw?: Record<string, unknown>; captureSourceTrace?: boolean; historySnapshot?: Record<string, unknown>; encryptedVaultMachine?: boolean } = {}) {
     // Each fixture replaces its HTTP database with version 7. Do not rewind
     // one physical Home under evidence retained by the real history owner.
@@ -163,13 +163,13 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
     let persistedMode = mode;
     // Server fixture material remains available when the client deliberately has token-only credentials.
     let serverCredentials = { token: credentials.token, secret: encodeBase64(new Uint8Array(32).fill(24), 'base64url') };
-    const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, ...(options.ask ? { actions: {
+    const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, ...(options.ask || options.askAgentUpdate ? { actions: {
         'secrets.create': { approvalRequiredSurfaces: ['ui'] },
         'secrets.update': { approvalRequiredSurfaces: ['ui'] },
         'secrets.delete': { approvalRequiredSurfaces: ['ui'] },
         'secrets.shared.create': { approvalRequiredSurfaces: ['ui'] },
         'secrets.shared.promote': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.shared.update': { approvalRequiredSurfaces: ['ui'] },
+        'secrets.shared.update': { approvalRequiredSurfaces: [options.askAgentUpdate ? 'agent' : 'ui'] },
         'secrets.shared.delete': { approvalRequiredSurfaces: ['ui'] },
         'secrets.shared.grants.set': { approvalRequiredSurfaces: ['ui'] },
     } } : { approvalWaivedSurfaces: {
@@ -3520,6 +3520,37 @@ describe('Saved Secret operations through their real Account and Action owners',
             nextName: 'Renamed external source', decryptDataKeyEnvelope: async () => key?.slice() ?? null })).toEqual({ ok: true });
     });
 
+    it.each(['shared', 'private'] as const)('preserves a safe Home refusal through the %s update transport', async entry => {
+        const account = await openAccount('plain');
+        const row = account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
+        if (entry === 'private') account.resources.set('resource-a', { ...row, entry: { ...row.entry,
+            audience: { accounts: [], teams: [], groups: [] } } });
+        account.setEffect(() => Response.json({ error: 'forbidden' }, { status: 403 }));
+        await refreshCatalogAndWaitForLegacyImport(account.scope);
+        const hook = entry === 'private' ? await renderHook(() => useSavedSecretCatalog({ scope: account.scope })) : null;
+        try {
+            if (hook) await vi.waitFor(() => expect(hook.getCurrent().personalSecrets).toHaveLength(1));
+            const input = { resourceId: 'resource-a', expectedRevision: 3, nextValue: 'fixture-new', decryptDataKeyEnvelope: async () => null };
+            const result = hook ? await hook.getCurrent().updateResource(input)
+                : await updateSavedSecretResource({ ...input, scope: account.scope });
+            expect(result).toEqual({ ok: false, reason: 'failed', failure: {
+                code: 'forbidden', context: { kind: 'forbidden', httpStatus: 403 },
+            } });
+            expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
+        } finally { await hook?.unmount(); }
+    });
+
+    it('projects only safe update refusal reasons while retaining the Home classification', () => {
+        expect(projectSavedSecretResourceUpdateFailure({ kind: 'forbidden', code: 'forbidden', retryable: false,
+            httpStatus: 403, details: { reason: 'recipient_envelope_missing', retryable: false, kind: 'private_transport',
+                message: 'private-detail-marker', token: 'private-token-marker', status: '/private/path',
+                reasonCode: { token: 'private-nested-marker' } } })).toEqual({
+            ok: false, reason: 'failed', failure: { code: 'forbidden', context: {
+                reason: 'recipient_envelope_missing', retryable: false, kind: 'forbidden', httpStatus: 403,
+            } },
+        });
+    });
+
     it.each(['shared', 'private'] as const)('preserves backup re-key recovery through the %s replacement transport', async entry => {
         const account = await openAccount('plain');
         const row = account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
@@ -3889,6 +3920,39 @@ describe('Saved Secret operations through their real Account and Action owners',
             // Explicit recovery never replaces the already-approved audience.
             expect(account.writes).toHaveLength(1);
         } else expect(key).toEqual(new Uint8Array(32));
+    });
+
+    it('settles an Inbox-refused update with its retained typed cause', async () => {
+        const account = await openAccount('plain', { askAgentUpdate: true });
+        account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
+        account.setEffect(() => Response.json({ error: 'forbidden' }, { status: 403 }));
+        const failed = vi.fn();
+        const pending = await updateSavedSecretResource({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3,
+            nextName: 'Renamed', decryptDataKeyEnvelope: async () => null, onApprovalFailed: failed,
+            executeAdmittedMutation: mutation => runTeamAction({ ...mutation, actionContext: {
+                surface: 'agent', authority: 'account_automation',
+                actionCaller: { kind: 'host' },
+            } }),
+        }).catch((error: unknown) => error);
+        if (!(pending instanceof TeamActionApprovalPendingError) || typeof pending.registration === 'string') throw new Error('Expected result-bearing update approval');
+        expect(account.writes).toEqual([]);
+        const artifactId = pending.registration.artifactId;
+        await decideApprovalAsInbox(account.scope.serverId, artifactId, 'approve');
+        const artifact = account.artifacts.find(candidate => candidate.id === artifactId);
+        if (!artifact?.body) throw new Error('Expected stored update settlement');
+        const body = decodePlainArtifactStoredContent(artifact.body);
+        if (!body || typeof body !== 'object' || typeof Reflect.get(body, 'body') !== 'string') throw new Error('Expected Plain settlement');
+        const settled = ApprovalRequestV2Schema.parse(JSON.parse(Reflect.get(body, 'body')));
+        expect(settled.status).toBe('failed');
+        const header = buildApprovalRequestArtifactHeaderV1(settled);
+        const observation: DecryptedArtifact = { id: artifact.id, header, title: header.title,
+            body: JSON.stringify(settled), headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
+            seq: artifact.seq, createdAt: artifact.createdAt, updatedAt: artifact.updatedAt, isDecrypted: true };
+        pending.registration.onTerminal?.('failed', observation);
+        expect(failed).toHaveBeenCalledWith('forbidden', { ok: false, reason: 'failed',
+            failure: { code: 'forbidden', context: { kind: 'forbidden' } } });
+        expect(account.writes).toHaveLength(1);
+        expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
     });
 
     it.each(['create', 'update', 'delete', 'grants'] as const)('settles the exact approved %s result without redispatching the mutation', async operation => {

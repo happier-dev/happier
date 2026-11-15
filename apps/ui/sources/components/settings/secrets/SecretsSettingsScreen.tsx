@@ -25,6 +25,8 @@ import {
     deleteSavedSecretResource,
     repairCustodiedSavedSecretResourceEnvelopesBestEffort,
     type SavedSecretResourceDeleteResult,
+    type SavedSecretResourceOperationResult,
+    type SavedSecretResourceUpdateResult,
 } from '@/sync/ops/settings/savedSecretResourceOperations';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
@@ -32,6 +34,12 @@ import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
+
+function alertSavedSecretOperationFailure(reason: string,
+    failure?: Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>['failure']) {
+    alertActionFailure({ code: failure?.code ?? reason, context: failure?.context,
+        reason: reason === 'outcome_unknown' ? t('secrets.catalog.outcomeUnknown') : t('secrets.catalog.operationFailed') });
+}
 
 /**
  * Settings → Secrets: owns the catalog, the shared-secret mutations and their approval continuation,
@@ -154,35 +162,31 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                 ? encryption.decryptEncryptionKey(value, scope)
                 : Promise.resolve(null),
             onApprovalSucceeded: finish,
-            onApprovalFailed: () => {
-                if (currentScopeKey.current !== requestedScopeKey) return;
-                setSharedMutationPending(false);
-                Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
-            },
+            onApprovalFailed: (_code, result) => { void settleResult(result); },
         };
-        const result = await catalog.updateResource(request);
-        if (currentScopeKey.current !== requestedScopeKey) return;
-        setSharedMutationPending(false);
-        // Replace refused because backups still use this value: the owner-approved re-key, inside this same Replace.
-        const lifetime = !result.ok && result.reason === 'backup_rekey_required' && update.nextValue !== undefined
-            ? captureActiveServerAccountScopeLifetime() : null;
-        if (!result.ok && result.reason === 'backup_rekey_required' && update.nextValue !== undefined
-            && lifetime && areServerAccountScopesEqual(lifetime.scope, scope)) {
-            const { reviewSavedSecretBackupRekey } = await import('./SavedSecretBackupRekey');
-            const replaced = await reviewSavedSecretBackupRekey({
-                lifetime, secretName: entry.name ?? t('secrets.catalog.unavailableName'), value: update.nextValue,
-                details: result.details, retryReplace: async () => (await catalog.updateResource(request)).ok,
-            });
-            return replaced || undefined;
-        }
-        if (!result.ok) {
-            if (result.reason === 'outcome_unknown') await catalog.reload().catch(() => {});
-            Modal.alert(t('common.error'), result.reason === 'outcome_unknown'
-                ? t('secrets.catalog.outcomeUnknown')
-                : t('secrets.catalog.operationFailed'));
-            return;
-        }
-        return true;
+        const settleResult = async (result: SavedSecretResourceUpdateResult) => {
+            if (currentScopeKey.current !== requestedScopeKey) return;
+            setSharedMutationPending(false);
+            // Replace refused because backups still use this value: the owner-approved re-key, inside this same Replace.
+            const lifetime = !result.ok && result.reason === 'backup_rekey_required' && update.nextValue !== undefined
+                ? captureActiveServerAccountScopeLifetime() : null;
+            if (!result.ok && result.reason === 'backup_rekey_required' && update.nextValue !== undefined
+                && lifetime && areServerAccountScopesEqual(lifetime.scope, scope)) {
+                const { reviewSavedSecretBackupRekey } = await import('./SavedSecretBackupRekey');
+                const replaced = await reviewSavedSecretBackupRekey({
+                    lifetime, secretName: entry.name ?? t('secrets.catalog.unavailableName'), value: update.nextValue,
+                    details: result.details, retryReplace: async () => (await catalog.updateResource(request)).ok,
+                });
+                return replaced || undefined;
+            }
+            if (!result.ok) {
+                if (result.reason === 'outcome_unknown') await catalog.reload().catch(() => {});
+                alertSavedSecretOperationFailure(result.reason, 'failure' in result ? result.failure : undefined);
+                return;
+            }
+            return true;
+        };
+        return await settleResult(await catalog.updateResource(request));
         } catch (cause) {
             if (currentScopeKey.current !== requestedScopeKey) return;
             if (isTeamActionApprovalPendingError(cause)) {
@@ -244,11 +248,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             }));
             return;
         }
-        alertActionFailure({ code: result.failure?.code ?? result.reason,
-            context: result.failure?.context,
-            reason: result.reason === 'outcome_unknown'
-                ? t('secrets.catalog.outcomeUnknown')
-                : t('secrets.catalog.operationFailed') });
+        alertSavedSecretOperationFailure(result.reason, result.failure);
     }, []);
 
     const removeSharedResource = React.useCallback(async (resourceId: string, expectedRevision: number, confirmation: Readonly<{

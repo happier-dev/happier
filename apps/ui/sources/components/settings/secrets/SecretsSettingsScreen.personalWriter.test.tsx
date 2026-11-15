@@ -159,7 +159,7 @@ it('renames and replaces an imported private resource directly, but confirms del
     expect(alert).not.toHaveBeenCalled();
 });
 
-it('retains a refused replacement and saves the same draft on retry', async () => {
+it.each(['rotate', 'rename'] as const)('reveals a refused %s cause and saves the same draft on retry', async mode => {
     let refuseUpdate = true;
     home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async path => {
         if (path !== '/v1/account/saved-secrets/resources/update' || !refuseUpdate) return null;
@@ -169,19 +169,23 @@ it('retains a refused replacement and saves the same draft on retry', async () =
     const { entry } = await home.addOwnerResource();
     const screen = await renderSecretPage(entry.ref);
     await waitForSecretPage(entry.ref, screen);
-    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:rotate`);
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:${mode}`);
     await act(async () => screen.changeTextByTestId(`saved-secret:${entry.ref}:edit-input`, 'synthetic-replacement'));
     await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:edit-save`);
     await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
     expect(home.updates).toHaveLength(0);
     expect(screen.findByTestId(`saved-secret:${entry.ref}:edit-input`)?.props.value).toBe('synthetic-replacement');
+    const details = alert.mock.calls[0]![2]?.find((button: { onPress?: () => void }) => typeof button.onPress === 'function');
+    expect(details).toBeDefined();
+    await act(async () => { details.onPress(); });
+    expect(alert.mock.calls.at(-1)![1]).toContain('forbidden');
     alert.mockClear();
     await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:edit-save`);
     await vi.waitFor(() => expect(home?.updates).toHaveLength(1));
     await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${entry.ref}:edit-input`)).toBeNull());
     const written = home.updates[0]!;
     expect(openSavedSecretResourceStoredContentV1({ resourceId: written.resourceId, mode: 'plain', storedContent: written.storedContent }))
-        .toMatchObject({ value: 'synthetic-replacement' });
+        .toMatchObject(mode === 'rotate' ? { value: 'synthetic-replacement' } : { name: 'synthetic-replacement' });
     expect(alert).not.toHaveBeenCalled();
 });
 
