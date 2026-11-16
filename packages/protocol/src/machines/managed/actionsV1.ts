@@ -432,7 +432,7 @@ export const ManagedGetInputV1Schema = lazyZodSchema(() => z.union([
 export const ManagedMutationInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision() }));
 export const ManagedBootstrapRetryInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...ManagedMutationInputV1Schema.shape,
-  /** Captured once by this Update/Retry root; never overwrites the Create pin. */
+  /** Home-issued signed Update/Retry snapshot; excluded from requester operands. */
   guestCli: z.optional(GuestCliIdentityV1Schema),
 }));
 export const ManagedRebuildInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), ...DevcontainerRebuildIntentV1Schema.def.shape }));
@@ -622,7 +622,7 @@ export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union(
   z.omit(ManagedAcquireInputV1Schema._zod.def.options[1], { agentStart: true }),
 ]));
 export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject({ input: ManagedAdmissionComputeInputV1Schema, requestId: id(), continuationPresent: mini.boolean(),
-  /** Home source export target list and exact archive hashes, retained with this admission. */
+  /** Home populates this retained snapshot; requester copies have no authority. */
   guestCli: z.optional(GuestCliIdentityV1Schema),
   /** Installed controller attestation after its admitted local placement decision. */
   acquisitionMode: z.optional(z.literal('resource-bound')),
@@ -679,7 +679,10 @@ const managedControllerContextOutputVariants = <Fields extends Record<string, z.
     ...managedControllerContextOutputFields(), ...fields }),
 ] as const;
 /** Context is the restart-safe delivery edge for opaque preset content. */
-export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.union(managedControllerContextOutputVariants({})));
+export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.union(managedControllerContextOutputVariants({
+  /** Account Retry's Home-issued snapshot; the Machine's Create pin remains immutable. */
+  guestCli: z.optional(GuestCliIdentityV1Schema),
+})));
 /** Policy admission retains the same strict context variants and their restart-safe delivery. */
 export const ManagedPolicyAdmissionOutputV1Schema = lazyZodSchema(() => z.union(managedControllerContextOutputVariants({ replayed: z.boolean() })));
 export const ManagedControllerMachineOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema }));

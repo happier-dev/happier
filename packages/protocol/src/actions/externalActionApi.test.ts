@@ -390,13 +390,34 @@ it('binds pre-forward managed admission without admitting prompt custody or dupl
     managedAdmission: { ...managedAdmission, input: { ...compute, agentStart: { initialInput: { text: 'private' } } } } }).success).toBe(false);
 });
 
-it('binds the frozen Update archive pin through the existing signed managed recovery projection', () => {
+it('keeps the Home-issued Update pin in signed recovery while projecting only requester resource operands', () => {
   const input = { homeId: 'home', managedId: 'guest', expectedIntentRevision: 1, guestCli: {
     source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{ target: { os: 'linux', arch: 'x64' },
       sha256: 'a'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64' }],
   } };
   const projection = externalActionApi.projectExternalActionManagedAdmissionV1('machines.managed.bootstrap.retry', input);
-  expect(externalActionApi.ExternalActionManagedAdmissionV1Schema.parse(projection)).toEqual({ actionId: 'machines.managed.bootstrap.retry', input });
+  expect(projection).toEqual({ actionId: 'machines.managed.bootstrap.retry', input: {
+    homeId: input.homeId, managedId: input.managedId, expectedIntentRevision: input.expectedIntentRevision,
+  } });
+  const admitted = externalActionApi.ExternalActionManagedRecoveryAdmissionV1Schema.parse({ actionId: 'machines.managed.bootstrap.retry', input });
+  expect(admitted).toEqual({ actionId: 'machines.managed.bootstrap.retry', input });
+  expect(externalActionApi.projectExternalActionManagedAdmissionOperandV1(admitted))
+    .toEqual(projection);
+  const operationRead = { actionId: 'action.operations.get' as const,
+    input: { homeId: 'home', managedId: 'guest', operationId: 'operation' } };
+  expect(externalActionApi.projectExternalActionManagedAdmissionOperandV1(operationRead)).toEqual(operationRead);
+  const homePin = { ...input.guestCli,
+    payloads: input.guestCli.payloads.map(payload => ({ ...payload, sha256: 'b'.repeat(64) })) };
+  const envelope = { v: 1 as const, requestId: 'retry', target: { kind: 'machine' as const, machineId: 'controller' }, input };
+  const binding = externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.parse({
+    serverIdentityId: 'home', accountId: 'owner', custodianAccountId: 'owner',
+    authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+    machineId: 'controller', installationId: 'installation', actionId: 'machines.managed.bootstrap.retry',
+    target: envelope.target, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    managedAdmission: { actionId: 'machines.managed.bootstrap.retry', input: { ...input, guestCli: homePin } },
+  });
+  expect(externalActionApi.projectExternalActionManagedAdmissionOperandV1(binding.managedAdmission)).toEqual(projection);
+  expect(externalActionApi.readExternalActionManagedRetryGuestCliV1(binding)).toEqual(homePin);
 });
 
 it('admits only closed transport causes on an uncertain Action acknowledgement', () => {

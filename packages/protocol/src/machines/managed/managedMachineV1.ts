@@ -148,7 +148,7 @@ export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, 
   return {
     id: id(), homeId: id(), custodianAccountId: id(),
     enrollmentAccountId: z.optional(id()),
-    /** Original enrollment pins; explicit Update retains its own root input instead. */
+    /** Home-issued original enrollment pin; Update uses its own recovery admission. */
     guestCli: z.optional(GuestCliIdentityV1Schema),
     /** Installed-controller admission provenance for a local Session sandbox. */
     acquisitionMode: z.optional(z.literal('resource-bound')),

@@ -56,7 +56,9 @@ import { DeploymentChildExecutionProofV1Schema } from '../deployments/deployment
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema, ManagedResourceTargetV1Schema, ManagedInspectInputV1Schema, ManagedMutationInputV1Schema, ManagedBootstrapRetryInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedResizeInputV1Schema } from '../machines/managed/actionsV1.js';
-import { isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1, MANAGED_CREATION_MUTATION_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
+import { isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1, MANAGED_CREATION_MUTATION_ACTION_IDS_V1,
+  MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import type { GuestCliIdentityV1 } from '../features/payload/capabilities/guestCliIdentityV1.js';
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { AccountEncryptionModeSchema, type AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
@@ -801,7 +803,10 @@ export function projectExternalActionManagedAdmissionV1(actionId: string, input:
     const { homeId, managedId } = ManagedInspectInputV1Schema.parse(input);
     return { actionId, input: { homeId, managedId } };
   }
-  if (actionId === 'machines.managed.bootstrap.retry') return { actionId, input: ManagedBootstrapRetryInputV1Schema.parse(input) };
+  if (actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
+    const { guestCli: _requesterPayload, ...operands } = ManagedBootstrapRetryInputV1Schema.parse(input);
+    return { actionId, input: operands };
+  }
   if (isManagedCreationMutationActionIdV1(actionId)) {
     return { actionId, input: ManagedMutationInputV1Schema.parse(input) };
   }
@@ -814,6 +819,14 @@ export function projectExternalActionManagedAdmissionV1(actionId: string, input:
     return request.managed ? { actionId, input: { ...request.managed, operationId: request.operationId } } : undefined;
   }
   return undefined;
+}
+
+/** Compare requester operands without reinterpreting Home-owned signed facts as requester choices. */
+export function projectExternalActionManagedAdmissionOperandV1(
+  admission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'],
+): ExternalActionManagedAdmissionV1 | undefined {
+  return admission && ('authority' in admission || admission.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1)
+    ? projectExternalActionManagedAdmissionV1(admission.actionId, admission.input) : admission;
 }
 
 /** Closed routing hints; only the authenticated Home can turn them into custody authority. */
@@ -1600,6 +1613,12 @@ export type ExternalActionExecutionAuthorizationV1 = z.infer<typeof ExternalActi
       & Partial<Pick<ReturnType<typeof createActionExecutor>, 'replayApprovedApprovalRequest'>>;
     requesterHttpProjection?: ExternalActionRequesterHttpProjectionV1;
   }>;
+
+/** Read only an already verified Home binding, never requester Action input. */
+export function readExternalActionManagedRetryGuestCliV1(binding: ExternalActionExecutionAuthorizationBindingV1 | undefined): GuestCliIdentityV1 | undefined {
+  const admission = binding?.managedAdmission;
+  return admission?.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 ? admission.input.guestCli : undefined;
+}
 
 /** Optional authenticated auxiliary arm of the incumbent socket RPC request. */
 export const ExternalActionMachineRpcSourceExecutionV1Schema = lazyZodSchema(() => z.strictObject({
