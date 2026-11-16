@@ -25,7 +25,8 @@ export async function prepareManagedMachinePresetAuthoringV1(
   let incumbent: ManagedMachinePresetV1 | undefined;
   if ('patch' in input && request.approvalReplay !== true) {
     if (!request.invokeChild) return failure('admission_unavailable');
-    const read = await request.invokeChild({ action: 'machines.presets.get', input: { homeId: input.homeId, id: input.id } });
+    const read = await request.invokeChild({ action: 'machines.presets.get', role: 'preset-authoring-read',
+      input: { homeId: input.homeId, id: input.id } });
     if (!read.ok) return read;
     const found = ManagedMachinePresetGetResultV1Schema.safeParse(read.result);
     if (!found.success) return failure('managed_response_invalid');
@@ -55,7 +56,7 @@ export async function prepareManagedMachinePresetAuthoringV1(
   if (!requiresMachineProvisionerEffectReviewV1(descriptor, content.launch.choices)) return null;
   if (!request.invokeChild) return failure('admission_unavailable');
   const controller = value.controller === undefined ? incumbent?.controller : value.controller;
-  const native = await request.invokeChild({ action: 'machines.provisioners.options', input: {
+  const native = await request.invokeChild({ action: 'machines.provisioners.options', role: 'preset-authoring-review', input: {
     homeId: input.homeId, contribution: content.launch.provider,
     ...(controller ? { controller } : {}),
     ...(content.launch.credentials ? { credentials: content.launch.credentials } : {}),
