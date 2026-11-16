@@ -4740,9 +4740,11 @@ export async function verifyExternalActionMachineRpcExecution(
 
     const scmRunStartPurpose = isScmRunStartRpcPurpose(binding.actionId, execution.effectActionId, request.method)
         && (request.event === undefined || request.event === SOCKET_RPC_EVENTS.CALL);
+    // Any Session-routed method spends its own signed root at the addressed
+    // Session; the router admits that Session's access and current publisher.
     const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
     const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
-        && sessionRule?.routeToSessionOwnerDaemon && sessionRule.machineScope === true
+        && sessionRule?.routeToSessionOwnerDaemon
         && (binding.actionId === execution.effectActionId || scmRunStartPurpose)
         && resolveMachineRpcExternalActionEffectV1(sessionRule.method, binding) === execution.effectActionId
         ? request.method.slice(0, separator) : null;

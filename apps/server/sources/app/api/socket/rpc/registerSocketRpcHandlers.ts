@@ -1598,8 +1598,14 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
+            // A signed root admitted for this exact decision was decided once by
+            // resolveCredentialActionAdmissionV1 at verification; only unsigned
+            // credentials and viewers are decided here.
+            const admittedDecisionEffect = verifiedExternalAction !== null
+                && verifiedExternalAction.effectActionId === methodSessionAuthorization?.actionId;
             if ((isRequesterApprovalDecision && requestAuthentication.authority !== 'present_user')
-                || ((isPermissionDecisionMethod && !delegatesQuestionAnswer || method.endsWith(`:${RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND}`))
+                || ((isPermissionDecisionMethod && !delegatesQuestionAnswer && !admittedDecisionEffect
+                    || method.endsWith(`:${RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND}`))
                 && !canCredentialDecideV1({
                     authority: requestAuthentication.authority,
                     grant: verifiedExternalAction && 'grant' in verifiedExternalAction.principal
