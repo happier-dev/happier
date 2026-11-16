@@ -10,6 +10,7 @@ import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracki
 import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { publishSessionProviderBrokerConsumersChangedInTx } from '@/app/providers/brokerConsumerChanges';
 import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
+import { publishSessionAfterCommit } from '@/app/session/publishSessionAfterCommit';
 
 import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSessionTree';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
@@ -184,23 +185,16 @@ export async function deleteSessionWithRecipientsInTx(
             },
             'Session deleted successfully',
         );
-        void Promise.all(recipientCursors.map(publication =>
-            emitSessionDeletedUpdate({
-                sessionId: params.sessionId,
-                accountId: publication.accountId,
-                cursor: publication.resolveCursor(),
-            }),
-        )).catch((error: unknown) => {
-            log(
-                {
-                    module: 'session-delete',
-                    userId: session.accountId,
+        // The delete update joins the Session's fan-out queue, after every push committed
+        // before it (a queued turn push must not land after the delete and restore the row).
+        void publishSessionAfterCommit(params.sessionId, 'Session delete', async () => {
+            await Promise.all(recipientCursors.map(publication =>
+                emitSessionDeletedUpdate({
                     sessionId: params.sessionId,
-                    reason: params.reason,
-                    error,
-                },
-                'Failed to emit one or more delete-session updates',
-            );
+                    accountId: publication.accountId,
+                    cursor: publication.resolveCursor(),
+                }),
+            ));
         });
     });
 

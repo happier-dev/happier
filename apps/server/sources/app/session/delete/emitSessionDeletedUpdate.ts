@@ -18,7 +18,7 @@ export async function emitSessionDeletedUpdate(params: {
         updateSeq: updatePayload.seq,
     }, 'Emitting delete-session update to user-scoped connections');
 
-    eventRouter.emitUpdate({
+    await eventRouter.emitUpdate({
         userId: params.accountId,
         payload: updatePayload,
         recipientFilter: { type: 'user-scoped-only' },

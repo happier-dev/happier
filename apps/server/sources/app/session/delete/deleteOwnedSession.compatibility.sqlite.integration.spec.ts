@@ -180,6 +180,34 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
         expect(emitUpdate).toHaveBeenCalled();
     });
 
+    it("sends the delete update after the Session's earlier queued fan-out", async () => {
+        const session = await db.session.create({ data: { accountId: "owner", tag: crypto.randomUUID(), metadata: "{}" } });
+        const { publishSessionAfterCommit } = await import("@/app/session/publishSessionAfterCommit");
+        const order: string[] = [];
+        let releaseTurnPush!: () => void;
+        const turnPushReleased = new Promise<void>(resolve => { releaseTurnPush = resolve; });
+        // A turn push committed before the delete and still waiting in the Session's fan-out queue.
+        const queuedTurnPush = publishSessionAfterCommit(session.id, "test turn push", async () => {
+            await turnPushReleased;
+            order.push("turn-push");
+        });
+        emitUpdate.mockImplementation(({ payload }: { payload: { body: { t: string } } }) => {
+            order.push(payload.body.t);
+        });
+
+        const { deleteOwnedSession } = await import("./deleteOwnedSession");
+        await expect(deleteOwnedSession({ sessionId: session.id, ownerAccountId: "owner", reason: "user_request" }))
+            .resolves.toEqual({ ok: true });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        // RED (HEAD 7cd8a0b2bc7): ["delete-session"] — the delete overtook the queued push.
+        expect(order).toEqual([]);
+
+        releaseTurnPush();
+        await queuedTurnPush;
+        await publishSessionAfterCommit(session.id, "test drain", async () => {});
+        expect(order).toEqual(["turn-push", "delete-session"]);
+    });
+
     it("preserves released layout-0 deletion for a legacy caller", async () => {
         await db.session.create({
             data: {
