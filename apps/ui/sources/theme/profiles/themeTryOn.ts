@@ -1,0 +1,74 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries/registryContentRefV1';
+import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
+import type { ThemeLibraryMutationResult, ThemeProfileDocument, ThemeProfileLibrary, ThemeProfileMode, ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { randomUUID } from '@/platform/randomUUID';
+
+/** Opaque client-local reference; validity is decided by this owner's current preview. */
+export type PreviewRef = string;
+export type ThemeTryOnOrigin =
+    | Readonly<{ kind: 'agent' | 'editor' }>
+    | Readonly<{ kind: 'store'; listing: Pick<RegistryItemPointerV1, 'sourceId' | 'itemId'>; acquired?: RegistryThemeAcquisitionV1 }>;
+export type ThemeTryOnInput = Readonly<{
+    mode: ThemeProfileMode;
+    origin: ThemeTryOnOrigin;
+    group?: string;
+}> & (Readonly<{ document: ThemeProfileDocument; selection?: ThemeReference | null }>
+    | Readonly<{ document: null; selection: null }>);
+export type ThemeTryOnSnapshot = ThemeTryOnInput & Readonly<{ previewRef: PreviewRef }>;
+export interface ThemeTryOnOwner {
+    begin(input: ThemeTryOnInput): ThemeTryOnSnapshot;
+    replace(previewRef: PreviewRef, input: ThemeTryOnInput): ThemeTryOnSnapshot;
+    read(): ThemeTryOnSnapshot | null;
+    revert(previewRef: PreviewRef): void;
+    keep(previewRef: PreviewRef): Promise<ThemeLibraryMutationResult>;
+    subscribe(listener: () => void): () => void;
+}
+
+/** One overlay, composed once by the device's theme runtime; no library snapshot is retained. */
+export function createThemeTryOnOwner(deps: Readonly<{
+    keep: ThemeProfileLibrary['keep'];
+    select: ThemeProfileLibrary['select'];
+    installStore(snapshot: ThemeTryOnSnapshot): Promise<ThemeLibraryMutationResult>;
+}>): ThemeTryOnOwner {
+    let current: { snapshot: ThemeTryOnSnapshot; keeping?: Promise<ThemeLibraryMutationResult> } | null = null;
+    const listeners = new Set<() => void>();
+    const publish = () => { for (const listener of listeners) listener(); };
+    const requireCurrent = (previewRef: PreviewRef) => {
+        if (!current || current.snapshot.previewRef !== previewRef) {
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_preview_stale', error: 'theme_preview_stale' });
+        }
+        return current;
+    };
+    const begin = (input: ThemeTryOnInput): ThemeTryOnSnapshot => {
+        const snapshot: ThemeTryOnSnapshot = { ...input, previewRef: randomUUID() };
+        current = { snapshot };
+        publish();
+        return snapshot;
+    };
+    return {
+        begin,
+        replace(previewRef, input) { requireCurrent(previewRef); return begin(input); },
+        read: () => current?.snapshot ?? null,
+        revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
+        async keep(previewRef) {
+            const preview = requireCurrent(previewRef);
+            if (!preview.keeping) {
+                preview.keeping = Promise.resolve().then(() => {
+                    const snapshot = preview.snapshot;
+                    if (snapshot.document === null || snapshot.selection !== undefined) {
+                        return deps.select({ reference: snapshot.selection ?? null, mode: snapshot.mode });
+                    }
+                    if (snapshot.origin.kind === 'store') return deps.installStore(snapshot);
+                    return deps.keep({ document: snapshot.document, mode: snapshot.mode });
+                })
+                    .then(result => {
+                        if (current === preview) { current = null; publish(); }
+                        return result;
+                    }).finally(() => { preview.keeping = undefined; });
+            }
+            return preview.keeping;
+        },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    };
+}
