@@ -41,6 +41,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
+import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
@@ -483,12 +484,14 @@ export const DeploymentEnvironmentDraft = React.memo(
         : { title: saveAction.title, disabled: saveAction.disabled, loading: saveAction.loading, testID: saveAction.testID };
     const runsOnKind = onPlatform && platformTarget ? 'platform' : chosen ? 'machine' : null;
     const runsOnTitle = onPlatform && platformTarget ? platformTarget.title : chosen ? machineName(chosen.id) : null;
-    const sourceTitle = source ? source.repository?.repository.nameWithOwner ?? source.name : null;
+    // A saved Source carries no checkout path or Machine, so the summary names it by its name alone (journey-deploy:
+    // "name ~/path on Machine" belongs to a local checkout, which this draft is not given).
+    const sourceTitle = source ? source.name : null;
     const appName = source?.name ?? (projectSelection && 'newProject' in projectSelection ? projectSelection.newProject.name.trim() || null : null);
     const frame = React.useMemo((): DeploymentDraftFrame => ({
       step: draftStep,
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
-      source: sourceTitle ? { title: sourceTitle, note: branch } : null,
+      source: sourceTitle ? { title: sourceTitle, note: null } : null,
       appName,
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
@@ -644,9 +647,10 @@ export const DeploymentEnvironmentDraft = React.memo(
         <Item testID="project-deployments.draft.noMachine.create" title={t('managedMachines.add.createPath')}
           subtitle={t('projects.deployments.noMachineBody')} onPress={() => setCreatingMachine(true)} disabled={!props.lifetime} />} />
     ) : (
-      <View style={styles.machineCard}>
-        {/* A bare section, so the field's row lands on the tile's text column like the title above it. */}
-        <ItemGroup surface="none">
+      <View style={[styles.machineCard, { borderTopWidth: resolveThemeHairlineBorderStyle(theme.colors.border.subtle).borderWidth,
+        borderTopColor: theme.colors.border.subtle }]}>
+        {/* A bare section under the card's hairline (jdF-whereM), with no section spacer of its own. */}
+        <ItemGroup surface="none" header="none">
         <SessionMachineField
           testID="project-deployments.draft.machine"
           serverId={props.lifetime?.scope.serverId ?? ''}
