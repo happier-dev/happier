@@ -247,19 +247,21 @@ type ActionSpec<
   Id extends PreNormalizedActionSpec['id'],
   Input extends z.ZodMiniType,
   Output extends z.ZodMiniType,
+  Placement extends NonNullable<PreNormalizedActionSpec['executionPlacement']> = 'account',
 > = Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema' | 'surfaceBindings'> & Readonly<{
   id: Id;
   inputSchema: Input;
   outputSchema: Output;
   requiredAuthority: NonNullable<PreNormalizedActionSpec['requiredAuthority']>;
+  executionPlacement: Placement;
 }>;
 
 // Keep per-id schema correlations without serializing every schema's implementation
 // into the inferred factory declaration, matching the Execution Run spec boundary.
 export type TeamActionSpecs = readonly [
-  ActionSpec<'teams.credentials.usage.export', typeof TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'], typeof TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1['teams.credentials.usage.export']>,
-  ActionSpec<'teams.members.history.preparation.get', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryReadinessV1Schema>,
-  ActionSpec<'teams.members.history.prepare', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryPreparationResultV1Schema>,
+  ActionSpec<'teams.credentials.usage.export', typeof TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'], typeof TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1['teams.credentials.usage.export'], 'client'>,
+  ActionSpec<'teams.members.history.preparation.get', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryReadinessV1Schema, 'client'>,
+  ActionSpec<'teams.members.history.prepare', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryPreparationResultV1Schema, 'client'>,
   ...ReturnType<typeof teamCredentialActionRow>[],
   ActionSpec<'teams.list', typeof TeamsListInputV1Schema, typeof TeamsPageV1Schema>,
   ActionSpec<'teams.get', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
@@ -339,7 +341,7 @@ export type TeamActionSpecs = readonly [
  * prefix because preview is the pre-authentication transport of the same owner.
  */
 function createTeamActionSpecs(): TeamActionSpecs {
-  return Object.freeze([
+  return Object.freeze<TeamActionSpecs>([
   {
     id: 'teams.credentials.usage.export', approval: {result: 'required'}, title: 'Export Team credential usage',
     description: 'Build CSV file bytes on the keyholding client from the authorized Team credential usage projection, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.',
