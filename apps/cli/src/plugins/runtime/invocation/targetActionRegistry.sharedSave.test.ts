@@ -82,8 +82,11 @@ describe('reviewed shared-save Action admission', () => {
                             ...(scenario === 'replay' ? { artifactId: 'existing-approved-save' } : {}) };
                     },
                 });
-                expect(approvals).toBe(scenario === 'proposedOnly' ? 0 : 1);
-                if (scenario === 'reviewed' || scenario === 'normalized' || scenario === 'mutatedPurpose' || scenario === 'replay') {
+                // A proposed shared save always takes the reviewed current-intent round, even for an
+                // Action whose own policy needs none (W2-PLATFORM-QA-164: Neon connections-save from the CLI).
+                expect(approvals).toBe(1);
+                if (scenario === 'reviewed' || scenario === 'normalized' || scenario === 'mutatedPurpose' || scenario === 'replay'
+                    || scenario === 'proposedOnly') {
                     expect(result).toEqual({ status: 'executed', value: { ref: 'happier:shared-secret:v1:reviewed-resource', resourceRevision: 1 } });
                     expect(admissions.at(-1)).toMatchObject({ id: 'database', purpose: 'data.connection',
                         audience: { teamGrants: ['reviewed-team'] } });
@@ -92,7 +95,7 @@ describe('reviewed shared-save Action admission', () => {
                 } else {
                     expect(result.status).not.toBe('executed');
                     expect(writes).toEqual([]);
-                    if (scenario === 'proposedOnly' || scenario === 'missingPurpose' || scenario === 'wrongAudience' || scenario === 'wrongId') {
+                    if (scenario === 'missingPurpose' || scenario === 'wrongAudience' || scenario === 'wrongId') {
                         expect(result).toMatchObject({ code: 'plugin_secret_save_not_admitted' });
                     } else expect(handlerRuns).toBe(0);
                 }

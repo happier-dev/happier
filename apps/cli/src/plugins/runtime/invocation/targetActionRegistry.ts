@@ -1261,6 +1261,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }
                     : {}),
             });
+            // A proposed shared save is admitted only by the reviewed current-intent round,
+            // so it takes that round even when the Action's own policy needs none.
+            const proposesSharedSave = readReviewedSharedSaveAdmission(preparedInput.input, () => {}) !== undefined;
             const prepared = await executor.prepare({
                     pluginId: invocation.pluginId, localId: invocation.localId, input: preparedInput.input,
                     surface: invocation.surface,
@@ -1269,7 +1272,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
                     signal: lifetime.signal,
                     ...(invocation.replayPlacement ? { replayPlacement: invocation.replayPlacement } : {}),
-                    ...(invocation.requireCurrentIntent === true ? { requireCurrentIntent: true as const } : {}),
+                    ...(invocation.requireCurrentIntent === true || proposesSharedSave ? { requireCurrentIntent: true as const } : {}),
                     ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
                     ...(invocation.requestCurrentIntent ? {
                         requestCurrentIntent: async (request: TargetActionCurrentIntentRequest) => {
