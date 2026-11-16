@@ -94,8 +94,8 @@ test('dependency-backed commands without another class still enter dependency-in
 test('CLI unit script dispatch reserves compiler demand without charging plain focused readers', async () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   for (const [args, expectedClass] of [
-    [['--script=test:unit:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'validation'],
-    [['corepack', 'yarn', '-s', 'test:unit:vitest:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'validation'],
+    [['--script=test:unit:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'focused-validation-cli'],
+    [['corepack', 'yarn', '-s', 'test:unit:vitest:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'focused-validation-cli'],
     [['corepack', 'yarn', '-s', 'test:local'], 'compilation'],
     [['corepack', 'yarn', '-s', 'test:unit'], 'compilation'],
     [['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], 'compilation'],
@@ -120,13 +120,13 @@ test('root Yarn workspace CLI unit requests retain the selected component and va
   const policy = await resolvePackageCommandPolicy(args, { repoRoot: root, cwd: root });
   assert.equal(policy.component, 'apps/cli');
   assert.equal(policy.kind, 'source-test');
-  assert.equal(policy.heavyClass, 'validation');
+  assert.equal(policy.heavyClass, 'focused-validation-cli');
   const metadata = spawnSync(process.execPath, [fileURLToPath(new URL('./remote_commands.mjs', import.meta.url)),
     '--package-policy', root, root, ...args], { encoding: 'utf8' });
   assert.equal(metadata.status, 0, metadata.stderr);
   const native = spawnSync('/bin/sh', ['-c', 'eval "$1"; printf \'%s,%s,%s\' "$policy_component" "$policy_kind" "$policy_heavyClass"', 'policy', metadata.stdout], { encoding: 'utf8' });
   assert.equal(native.status, 0, native.stderr);
-  assert.equal(native.stdout, 'apps/cli,source-test,validation');
+  assert.equal(native.stdout, 'apps/cli,source-test,focused-validation-cli');
 });
 
 test('native runtime worker admits installed source tools without emitting workspace prerequisites', () => {

@@ -87,13 +87,22 @@ export async function refineCompilerSuiteSelection(policy, facts, repoRoot, skip
     policy.heavyClass = 'validation';
     policy.localCompile = '0';
   }
+  // Owner ruling 2026-11-16 ("small suites local"): an explicit selection of
+  // up to ten existing test files is focused in every package. Directories,
+  // missing files and larger selections keep the suite class.
   if (policy.kind === 'source-test' && policy.workerTool === 'vitest' && policy.heavyClass === 'validation'
-    && filters.length === 1 && /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filters[0])
-    && existsSync(resolve(repoRoot, facts.component, filters[0]))) {
-    policy.heavyClass = facts.component === 'apps/ui' ? 'focused-validation-ui'
-      : facts.component === 'apps/cli' ? 'validation' : 'focused-validation';
+    && filters.length <= FOCUSED_TEST_FILE_LIMIT
+    && filters.every(filter => /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filter)
+      && existsSync(resolve(repoRoot, facts.component, filter)))) {
+    policy.heavyClass = FOCUSED_TEST_CLASS_BY_COMPONENT[facts.component] ?? 'focused-validation';
   }
 }
+
+const FOCUSED_TEST_FILE_LIMIT = 10;
+// UI and CLI files peak above the utility calibration; see command_resources.mjs.
+const FOCUSED_TEST_CLASS_BY_COMPONENT = Object.freeze({
+  'apps/ui': 'focused-validation-ui', 'apps/cli': 'focused-validation-cli',
+});
 
 async function readVitestFileFilters(facts, env) {
   let args = facts.vitestArguments;

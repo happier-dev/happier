@@ -24,11 +24,15 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // 2026-11-04 loaded Linux workers, focused UI/CLI/server/package files:
   // largest successful sampled tree RSS 779,072 KiB, rounded without margin.
   // validation-floor-sizing-1104/measurements.json retains all run peaks.
-  'focused-validation': { memoryKiB: Math.ceil(COMMAND_MEMORY_MEASUREMENTS['focused-validation'].maxKiB / (1024 * 1024)) * 1024 * 1024, cpuCores: 1, diskClass: 'validation' },
+  'focused-validation': { memoryKiB: Math.ceil(COMMAND_MEMORY_MEASUREMENTS['focused-validation'].maxKiB / (1024 * 1024)) * 1024 * 1024, cpuCores: 1, diskClass: 'validation', focusedTest: true },
   // 2026-11-05 windows1-linux UI component trees exceeded the
   // utility-only calibration above. Round the measured peak without margin:
   // focused-vitest-reservation-1105/measure-v2.log (2,995,796 KiB RSS).
-  'focused-validation-ui': { memoryKiB: 3 * 1024 * 1024, cpuCores: 1, diskClass: 'validation' },
+  'focused-validation-ui': { memoryKiB: 3 * 1024 * 1024, cpuCores: 1, diskClass: 'validation', focusedTest: true },
+  // CLI files exceed the utility calibration: focused-vitest-reservation-1105
+  // measurements.json, accountArtifactStore.test.ts 1,783,032 KiB live HWM,
+  // rounded to whole GiB without margin.
+  'focused-validation-cli': { memoryKiB: 2 * 1024 * 1024, cpuCores: 1, diskClass: 'validation', focusedTest: true },
   // 2026-11-04 repeated loaded entry-load runs reached 2,361,852 KiB.
   // validation-floor-sizing-1104/measurements.json; round up without margin.
   'entry-loads': { memoryKiB: 3 * 1024 * 1024, cpuCores: 'host', diskClass: 'validation' },
@@ -85,6 +89,12 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   'compilation-cli': { memoryKiB: 15 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
   'compilation-server': { memoryKiB: 16 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
 });
+
+// Owner ruling 2026-11-16 ("small suites local"): focused test runs placed
+// on the invoking machine start without the shared admission queue. Placed
+// workers and explicit admission wrappers keep their admission.
+export const FOCUSED_TEST_ADMISSION_CLASSES = Object.freeze(Object.keys(HEAVYWEIGHT_COMMAND_RESOURCES)
+  .filter(className => HEAVYWEIGHT_COMMAND_RESOURCES[className].focusedTest));
 
 // A host broker outlives catalog edits, so the client resolves the disk shape
 // from its current catalog and sends that on the wire; the broker's own

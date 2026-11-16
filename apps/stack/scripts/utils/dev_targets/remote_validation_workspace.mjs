@@ -49,21 +49,30 @@ async function prepareTypecheckBatch({ repoDir, componentRelativeDirs, batchRead
 }
 
 // Source tests need the same published locale/Shiki assets as Expo, plus the
-// atmosphere core. Run the checkout's producers in one existing admission.
-async function prepareUiSourceAssets(repoDir, env, signal) {
-  const atmosphere = resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
-  const assets = resolve(repoDir, 'apps/ui/scripts/prepareSourceUiAssets.mjs');
-  const steps = [];
-  if (existsSync(atmosphere)) steps.push(
-    `const { buildAtmosphereRenderers } = await import(${JSON.stringify(pathToFileURL(atmosphere).href)}); await buildAtmosphereRenderers({ web: false });`);
-  if (existsSync(assets)) {
-    const uiPackageDir = resolve(repoDir, 'apps/ui');
-    const outputDir = resolve(uiPackageDir, '.expo/hstack/source-assets');
-    steps.push(`const { prepareSourceUiAssets } = await import(${JSON.stringify(pathToFileURL(assets).href)}); await prepareSourceUiAssets({ uiPackageDir: ${JSON.stringify(uiPackageDir)}, outputDir: ${JSON.stringify(outputDir)}, recordPath: ${JSON.stringify(join(outputDir, SOURCE_UI_ASSET_RECORD_FILENAME))} });`);
-  }
+// atmosphere core. Run the checkout's producers in one existing admission. A
+// focused test run placed on this machine starts without the shared admission
+// queue (owner ruling 2026-11-16), so its preparation runs the same producers
+// in this process: they reuse current outputs and compile only what changed.
+async function prepareUiSourceAssets(repoDir, env, signal, focusedTest = false) {
+  const uiPackageDir = resolve(repoDir, 'apps/ui');
+  const outputDir = resolve(uiPackageDir, '.expo/hstack/source-assets');
+  // [module, export, options]: one producer list for both execution forms.
+  const steps = [
+    [resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs'), 'buildAtmosphereRenderers', { web: false }],
+    [resolve(repoDir, 'apps/ui/scripts/prepareSourceUiAssets.mjs'), 'prepareSourceUiAssets',
+      { uiPackageDir, outputDir, recordPath: join(outputDir, SOURCE_UI_ASSET_RECORD_FILENAME) }],
+  ].filter(([module]) => existsSync(module));
   if (!steps.length) return;
+  if (focusedTest) {
+    const producers = await withDependencyConsumption({ installDir: repoDir, env, signal },
+      () => Promise.all(steps.map(([module]) => import(pathToFileURL(module).href))));
+    for (const [index, [, name, options]] of steps.entries()) await producers[index][name](options);
+    return;
+  }
+  const source = steps.map(([module, name, options]) =>
+    `const { ${name} } = await import(${JSON.stringify(pathToFileURL(module).href)}); await ${name}(${JSON.stringify(options)});`);
   const result = await runWorkspaceBuildAdmission({ command: process.execPath,
-    args: ['--input-type=module', '--eval', steps.join('\n')],
+    args: ['--input-type=module', '--eval', source.join('\n')],
     cwd: repoDir, env, signal, admissionClass: 'source-asset', stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0 || result.signal) {
@@ -93,6 +102,7 @@ export async function prepareRemoteValidationWorkspace({
   validationKind = 'runtime',
   requiredTools = '',
   preparationScope = '',
+  focusedTest = false,
   defaultBuildMode = validationKind === 'runtime' ? 'source-dev' : 'strict',
   env = process.env,
   signal,
@@ -113,7 +123,7 @@ export async function prepareRemoteValidationWorkspace({
     if (normalizedComponentPath === 'apps/cli' && requiredTools.split(/\s+/u).includes('go')) {
       await prepareCliSourceNativeCustody(repoDir, env);
     }
-    if (normalizedComponentPath === 'apps/ui') await prepareUiSourceAssets(repoDir, env, signal);
+    if (normalizedComponentPath === 'apps/ui') await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }
   if (validationKind === 'typecheck') {
@@ -233,6 +243,7 @@ export async function runRemoteValidationPreparationCli() {
       componentRelativeDir: readComponentRelativeDir(process.argv.slice(2)),
       validationKind: kind,
       preparationScope,
+      focusedTest: process.argv.includes('--focused-test'),
       requiredTools: process.argv.slice(2).find(value => value.startsWith('--required-tools='))?.slice('--required-tools='.length) ?? '',
       env,
     });

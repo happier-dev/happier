@@ -1162,6 +1162,26 @@ export async function buildAtmosphereRenderers() {
   await assertNativeAdmissionIdle(native);
 });
 
+// Owner ruling 2026-11-16 ("small suites local"): a focused run placed on this
+// machine starts without the shared queue, and so does its preparation.
+test('focused UI source-test preparation runs the producers without an admission slot', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-ui-atmosphere-focused-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
+  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const observed = fixture.path('atmosphere-focused.json');
+  mkdirSync(join(generator, '..'), { recursive: true });
+  writeFileSync(generator, `import { writeFileSync } from 'node:fs';
+export async function buildAtmosphereRenderers(options) {
+  writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ options, pid: process.pid }));
+}
+`);
+  await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'apps/ui',
+    validationKind: 'source-test', focusedTest: true, env: native.env });
+  // No admitted child: the producer ran in the preparing process itself.
+  assert.deepEqual(JSON.parse(readFileSync(observed, 'utf8')), { options: { web: false }, pid: process.pid });
+  await assertNativeAdmissionIdle(native);
+});
+
 test('source-test readers leave cold, current and stale outputs to their producers', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-source-preparation-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, root);

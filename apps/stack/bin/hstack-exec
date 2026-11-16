@@ -416,6 +416,17 @@ run_local() {
   if [ -z "$heavyweight_local_class" ]; then
     heavyweight_local_class=$(heavyweight_command_class "$@" || true)
   fi
+  # Owner ruling 2026-11-16 ("small suites local"): a focused test run placed
+  # on this machine, and its preparation, start without the shared admission
+  # queue. Placed workers and admitted descendants keep their admission.
+  local_focused_test=0
+  local_focused_preparation=
+  if [ -n "$heavyweight_local_class" ] && heavyweight_focused_test_class "$heavyweight_local_class" \
+    && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ] && [ -z "${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}" ] \
+    && [ -z "${HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT-}" ]; then
+    local_focused_test=1
+    local_focused_preparation=--focused-test
+  fi
   # A composite local command consumes the same prepared workspace as a remote
   # payload. Its prerequisite producers must finish before this payload owns
   # admission; otherwise an admitted test/check can wait on a producer's lease
@@ -443,11 +454,19 @@ run_local() {
       node "$local_preparation_script" \
         "--validation-kind=$policy_kind" "--component-relative-dir=$local_preparation_component" \
         "--required-tools=$policy_requiredTools" "--preparation-scope=$policy_preparationScope" \
-        "--repo-dir=$local_preparation_repo" || exit $?
+        "--repo-dir=$local_preparation_repo" ${local_focused_preparation:+"$local_focused_preparation"} || exit $?
     fi
     if [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = targeted-validation ]; then
       printf '[preferred-execution] local validation preparation ready (kind=%s, component=%s)\n' "$policy_kind" "${local_preparation_component:-.}" >&2
     fi
+  fi
+  if [ "$local_focused_test" = 1 ]; then
+    # The run keeps the worker grant admission would give its class.
+    local_focused_cpu=$(heavyweight_cpu_cores "$heavyweight_local_class" "$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)" '' "$(heavyweight_requested_cpu_cores "$@")") || exit 1
+    if [ -z "${HAPPIER_VITEST_GOVERNOR_MAX_WORKERS-}" ]; then HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=$local_focused_cpu; export HAPPIER_VITEST_GOVERNOR_MAX_WORKERS; fi
+    if [ -z "${GOMAXPROCS-}" ]; then GOMAXPROCS=$local_focused_cpu; export GOMAXPROCS; fi
+    printf '[preferred-execution] focused test run (class=%s) starts without the admission queue\n' "$heavyweight_local_class" >&2
+    exec_in_jobs_slice "$@"
   fi
   # CI owns its local executor's capacity. Only automatic local CI execution
   # skips development admission; placed workers and explicit admission

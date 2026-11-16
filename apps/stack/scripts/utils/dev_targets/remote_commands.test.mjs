@@ -1009,6 +1009,8 @@ test('measured native workload reservations round the recorded peak without a bl
     ['focused-validation', 779072],
     // focused-vitest-reservation-1105/measure-v2.log, loaded UI components.
     ['focused-validation-ui', 2995796],
+    // focused-vitest-reservation-1105/measurements.json, CLI file live HWM.
+    ['focused-validation-cli', 1783032],
     ['entry-loads', 2361852],
     // Successful isolated source server build, admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
     ['source-bundle', 11856864],
@@ -1063,7 +1065,7 @@ test('focused source validation uses its measured shape while compiler and suite
   await writeFile(artifact, renderNativeCommandPolicy());
   for (const [component, tail, expected] of [
     ['apps/ui', ['sources/utils/path/resolvePathRelativeToRoot.test.ts'], 'focused-validation-ui'],
-    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts'], 'validation'],
+    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts'], 'focused-validation-cli'],
     ['apps/server', ['sources/app/session/turns/parseSessionTurnState.test.ts'], 'focused-validation'],
     ['packages/channels-protocol', ['src/v1/text.test.ts'], 'focused-validation'],
     ['packages/support', [], 'validation'],
@@ -1323,7 +1325,7 @@ test('focused test selections reserve compilation only for compiler files or com
   await writeFile(artifact, renderNativeCommandPolicy());
   for (const [component, tail, expected] of [
     ['apps/ui', ["sources/components/settings/teams/credentials/TeamCredentialExternalApiScreen.test.tsx"], 'focused-validation-ui'],
-    ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', '-t', 'x'], 'validation'],
+    ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', '-t', 'x'], 'focused-validation-cli'],
     ['apps/ui', ['sources/utils/path/pathUtils.spec.ts'], 'focused-validation-ui'],
     ['apps/ui', ['sources/components/plain.test.tsx'], 'validation'],
     ['apps/cli', ['scripts/build.test.ts'], 'compilation'],

@@ -110,3 +110,29 @@ test('failed dependency publication keeps the installer reason at the launcher',
   assert.match(result.stderr, /ERR_PNPM_PATCH_NOT_APPLIED/);
   assert.equal(result.result.vitestLoads, 0);
 });
+
+// Owner ruling 2026-11-16 ("small suites local"): explicit selections of up to
+// ten existing test files are focused in every package, apps/cli included.
+test('explicit selections of up to ten existing test files take the focused class of their package', async t => {
+  const { resolvePackageCommandPolicy, resolveHeavyweightMemoryFloorKiB } = await import(policyOwner);
+  const ui = ['browseInputBehavior.test.ts', 'browseSegments.test.ts', 'isSafeWorkspaceRelativePath.test.ts',
+    'machinePlatform.test.ts', 'normalizeRepoPathParts.test.ts', 'pathUtils.spec.ts', 'resolvePathRelativeToRoot.test.ts',
+    'routeUtils.dispatch.test.ts', 'routeUtils.test.ts', 'terminalConnectUrl.scheme.test.ts', 'terminalConnectUrl.test.ts',
+  ].map(name => `sources/utils/path/${name}`);
+  for (const [component, tail, expected] of [
+    ['apps/ui', ui.slice(0, 2), 'focused-validation-ui'],
+    ['apps/ui', ui.slice(0, 10), 'focused-validation-ui'],
+    ['apps/ui', ui, 'validation'],
+    ['apps/ui', [ui[0], 'sources/utils/path/missing.test.ts'], 'validation'],
+    ['apps/ui', [ui[0], 'sources/utils/path'], 'validation'],
+    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts'], 'focused-validation-cli'],
+    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts', 'src/api/artifacts/accountArtifactStore.test.ts', '-t', 'x'], 'focused-validation-cli'],
+    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts', 'scripts/build.test.ts'], 'compilation'],
+    ['apps/server', ['sources/app/session/turns/parseSessionTurnState.test.ts'], 'focused-validation'],
+  ]) await t.test(`${component} ${tail.join(" ")} -> ${expected}`, async () => {
+    const policy = await resolvePackageCommandPolicy(['pnpm', '--dir', component, 'exec', 'vitest', 'run', ...tail], { repoRoot: repo, cwd: repo });
+    assert.equal(policy.heavyClass, expected);
+  });
+  // Recorded single-file CLI peak (focused-vitest-reservation-1105: 1,783,032 KiB live HWM) rounds to 2 GiB.
+  assert.equal(resolveHeavyweightMemoryFloorKiB('focused-validation-cli'), 2 * 1024 * 1024);
+});

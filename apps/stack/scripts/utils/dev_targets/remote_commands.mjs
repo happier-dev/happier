@@ -29,7 +29,7 @@ import { resolveRemoteValidationPlacementClass } from './validation_preparation_
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_ADMISSION_OBSERVATION, HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
-import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
+import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
@@ -1279,6 +1279,7 @@ export function renderNativeCommandPolicy() {
     // configured cache reuse; it must not shorten exact or payload connections.
     `placement_probe_connect_timeout_seconds() { printf '%s' '${Math.max(1, Math.floor(DEFAULT_LOAD_PROBE_TTL_MS / 2 / 1000))}'; }`,
     ...renderNativeCpuPolicy(),
+    `heavyweight_focused_test_class() { case "$1" in ${FOCUSED_TEST_ADMISSION_CLASSES.join('|')}) return 0 ;; *) return 1 ;; esac; }`,
     'heavyweight_memory_floor_kib() {',
     '  case "$1" in',
     ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') heavyweight_policy_floor=' + posixQuote(String(value)) + ' ;;'),
