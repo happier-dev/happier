@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, it } from 'vitest';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { exerciseManagedCreatorAccess, exerciseManagedCreatorBirth, exerciseManagedCreatorPublication, exerciseManagedCreatorSetupRecovery, exerciseManagedCreatorControllerProjection, exerciseManagedRequesterRetention, exerciseManagedEnrollmentInstallationContext } from './managedCreatorAccess.testkit';
+import { exerciseManagedCreatorAccess, exerciseManagedCreatorBirth, exerciseManagedCreatorPublication, exerciseManagedCreatorSetupRecovery, exerciseManagedCreatorControllerProjection, exerciseManagedRequesterRetention, exerciseManagedEnrollmentInstallationContext, exerciseManagedBoundSetupRecovery } from './managedCreatorAccess.testkit';
 
 describe('managed creator lifecycle on SQLite', () => {
     let harness: LightSqliteHarness;
@@ -14,6 +14,7 @@ describe('managed creator lifecycle on SQLite', () => {
     it('publishes pre-enrollment progress to the creator and custodian', exerciseManagedCreatorPublication);
     it('admits creation birth only on the exact resulting guest', exerciseManagedCreatorBirth);
     it('recovers setup only on the same requester-owned guest', exerciseManagedCreatorSetupRecovery);
+    it('retains unfinished bound Setup facts across Retry without guest enrollment', exerciseManagedBoundSetupRecovery);
     it('scopes native retention and readiness publication to the exact requester guest', exerciseManagedRequesterRetention);
     it('does not expand acquisition context custody into private native credential binding reads', exerciseManagedEnrollmentInstallationContext);
 });

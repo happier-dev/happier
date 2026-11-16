@@ -1,4 +1,5 @@
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
@@ -14,7 +15,8 @@ import { AcquireResultV1Schema, ProviderObservationV1Schema, projectManagedOpaqu
 import { ManagedAcquireInputV1Schema, ManagedResizeOutputV1Schema, isManagedOpaquePresetReadV1, isManagedPresetAcquireInputV1,
     projectManagedOpaquePresetAcquireResultV1, projectManagedOpaquePresetIntentResultV1,
     projectManagedOpaquePresetResizeResultV1, projectManagedEnrollmentCorrelationV1,
-    type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+    type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineReadV1,
+    type MachineSetupReportInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedOpaquePresetCustodianAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { hydrateManagedOpaquePresetMachineV1, prepareManagedOpaquePresetAcquireV1, prepareManagedOpaquePresetReportV1,
     readManagedOpaquePresetNativeControlResultV1, type ManagedOpaquePresetContentOpenerV1 } from '@happier-dev/cli-common/machines/managed';
@@ -327,6 +329,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         nativeResult?: AcquireResultV1;
         observation?: ProviderObservationV1;
         nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
+        setupSourceFacts?: MachineSetupSourceFactsMapV1;
     }>, signal?: AbortSignal): Promise<ManagedMachinePresetStoredContentV1> {
         if (!machine.preset) throw new ManagedMachineControllerError('credential_unavailable');
         const snapshot = snapshots.get(machine.id);
@@ -343,11 +346,27 @@ export function createManagedPresetHydrator(input: Readonly<{
             ...(input.nativeResult === undefined ? {} : { nativeResult: input.nativeResult }),
             ...(input.observation === undefined ? {} : { observation: input.observation }),
             ...(input.nativeControlResult === undefined ? {} : { nativeControlResult: input.nativeControlResult }),
+            ...(input.setupSourceFacts === undefined ? {} : { setupSourceFacts: input.setupSourceFacts }),
         }));
         if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
         snapshots.set(machine.id, { ...snapshot, content: prepared.content, opened: prepared.opened,
             ...(reviewedFacts === undefined ? {} : { reviewedFacts }) });
         return prepared.content;
+    }
+
+    /** Retry facts use the same admitted private snapshot as provider results.
+     * Never send a hydrated plaintext projection to Home. */
+    async function prepareBoundSetupReport(machine: ManagedMachineFullV1,
+        input: Extract<MachineSetupReportInputV1, { target: unknown }>, signal?: AbortSignal): Promise<MachineSetupReportInputV1> {
+        if (machine.id !== input.managedId || machine.homeId !== input.homeId
+            || machine.preset?.id !== input.presetId || machine.preset.revision !== input.presetRevision) {
+            throw new ManagedMachineControllerError('intent_changed');
+        }
+        if ('bootstrapInstalled' in input) return input;
+        const { sourceFacts, ...report } = input;
+        const content = await preparePresetContentReport(machine,
+            sourceFacts === undefined ? {} : { setupSourceFacts: sourceFacts }, signal);
+        return { ...report, presetContent: { content } };
     }
 
     /**
@@ -485,7 +504,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         return projectManagedEnrollmentCorrelationV1(structural(machine), correlation);
     }
 
-    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareControllerReport, prepareResizeReport,
+    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
         rememberReviewedFacts, readReviewedFacts, isOpaque, structural, projectEnrollmentCorrelation };
 }
 

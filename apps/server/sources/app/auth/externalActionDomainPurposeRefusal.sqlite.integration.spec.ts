@@ -179,6 +179,48 @@ it('names the refusing reviewed-purpose check without changing admission', async
       expect.soft({ actionId, method, path, ...(await verify(root, actionId, method, path, body)) })
         .toEqual({ actionId, method, path, ...expected });
     }
+    const root = await mint('machines.managed.acquire', { homeId });
+    if (typeof root === 'string') throw new Error('Bound Setup acquisition did not mint');
+    const managed = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+      controllerMachineId: machine.id, controllerInstallationId: machine.installationId!,
+      admittedActionRequestId: root.binding.requestId, admittedInput: { acquisitionMode: 'resource-bound' },
+      allocation: 'bound', launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' },
+        schemaVersion: 1, name: 'Bound', choices: {} },
+      resource: { contributionRef: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, value: {} },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+    const report = { homeId, managedId: managed.id, presetId: 'setup', presetRevision: 1,
+      target: { kind: 'bound', controller: { machineId: machine.id, installationId: machine.installationId! } },
+      state: 'running', operation: { operationId: 'bound-setup' } };
+    expect(await verify(root, 'machines.managed.acquire', 'POST', '/v1/machines/setup/report', report))
+      .toEqual({ admitted: true, phase: undefined });
+    for (const changed of [{ managedId: 'another-resource' }, { target: { kind: 'bound', controller: {
+      machineId: 'another-controller', installationId: machine.installationId! } } },
+      { target: { kind: 'bound', controller: { machineId: machine.id, installationId: 'another-installation' } } }]) {
+      expect((await verify(root, 'machines.managed.acquire', 'POST', '/v1/machines/setup/report', { ...report, ...changed })).admitted)
+        .toBe(false);
+    }
+    const spawn = await mint('session.spawn_new', { creationKey: crypto.randomUUID(),
+      executionTarget: { serverId: homeId, machineId: machine.id }, directory: { kind: 'managed' },
+      memoryEnabled: false, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      connectedServices: { v: 2, bindingsByServiceId: {} } });
+    if (typeof spawn === 'string') throw new Error(`Bound Session spawn did not mint: ${spawn}`);
+    const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(),
+      metadata: '{}', encryptionMode: 'plain', managedCreationId: managed.id } });
+    const sessionTarget = { ...report.target, sessionId: session.id };
+    const installed = { homeId, managedId: managed.id, presetId: report.presetId, presetRevision: report.presetRevision,
+      target: sessionTarget, bootstrapInstalled: true };
+    for (const body of [installed, { ...report, target: sessionTarget }]) {
+      expect(await verify(spawn, 'session.spawn_new', 'POST', '/v1/machines/setup/report', body))
+        .toEqual({ admitted: true, phase: undefined });
+    }
+    for (const changed of [{ managedId: 'another-resource' }, { target: { ...sessionTarget, sessionId: 'another-session' } },
+      { target: { ...sessionTarget, controller: { ...sessionTarget.controller, installationId: 'another-installation' } } },
+      { target: report.target }]) {
+      expect((await verify(spawn, 'session.spawn_new', 'POST', '/v1/machines/setup/report', { ...installed, ...changed })).admitted)
+        .toBe(false);
+    }
+    await db.session.update({ where: { id: session.id }, data: { archivedAt: new Date() } });
+    expect((await verify(spawn, 'session.spawn_new', 'POST', '/v1/machines/setup/report', installed)).admitted).toBe(false);
   } finally {
     await app.close();
   }

@@ -73,13 +73,14 @@ describe('admitted Machine setup snapshot lifetime', () => {
     const sources = [preset, { kind: 'direct' as const, setup: {} }];
     const resolvedSources = [{ ...preset, presetContent: { content: { t: 'plain', v: { v: 1, name: 'Creation',
       setup: { scripts: [{ body: `exit ${exitCode}`, affects: 'none' }] } } }, recipientEnvelope: null } }, sources[1]!];
-    const reports: Array<ReturnType<typeof MachineSetupReportInputV1Schema.parse>> = [];
+    const reports: Array<Extract<ReturnType<typeof MachineSetupReportInputV1Schema.parse>, { state: unknown }>> = [];
     // Home transport is the boundary; planning, native tasks, and operation settlement remain real.
     const home = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (new URL(String(url)).pathname === '/v1/machines/setup/resolve') return { status: 200,
         data: { sources: resolvedSources, creation: { managedId: 'creation-machine', preset: { id: 'creation-preset', revision: 1 } } } };
       expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/report');
       const report = MachineSetupReportInputV1Schema.parse(body);
+      if (!('state' in report)) throw new Error('Expected Setup state report');
       reports.push(report);
       if (report.state === 'running' && reportState !== 'running') return { status: 200, data: {} };
       if (reportFailure === 'lost') throw Object.assign(new Error('Connection lost'), { code: 'ECONNRESET' });

@@ -132,6 +132,8 @@ const StoredManagedComputeInputSchema = z.union([
     }),
 ]);
 const StoredManagedAdmissionSchema = z.strictObject({
+    acquisitionMode: z.optional(z.literal('resource-bound')),
+    reuseIdle: z.optional(z.literal(true)),
     bootstrapInstalled: z.optional(z.literal(true)),
     creationScopeRetention: z.optional(ManagedCreationScopeRetentionV1Schema),
     enrollmentAccountId: z.optional(z.string().check(z.minLength(1))),
@@ -153,6 +155,11 @@ const StoredManagedAdmissionSchema = z.strictObject({
 });
 const StoredManagedAdmissionReadSchema = createStoredReadSchema(StoredManagedAdmissionSchema);
 export type StoredManagedAdmission = z.infer<typeof StoredManagedAdmissionSchema>;
+
+/** Installation completion is retained in the existing admission, independently of Setup. */
+export function markManagedBootstrapInstalled(admittedInput: unknown) {
+    return { ...readManagedAdmissionState(admittedInput), bootstrapInstalled: true as const };
+}
 
 /** Migration has already carried legacy private compute facts into the sealed body. */
 export function projectManagedPresetAdmissionForOpaqueStorage(value: unknown,
@@ -204,12 +211,12 @@ export function readManagedAcquisitionIdentity(value: unknown) {
     // additive fields here so they cannot turn a legitimate replay into a conflict.
     const parsed = StoredManagedAdmissionReadSchema.safeParse(value);
     if (!parsed.success) throw new ManagedMachineError('request_conflict');
-    const { computeInput, continuation } = parsed.data;
+    const { computeInput, continuation, acquisitionMode, reuseIdle } = parsed.data;
     // Historical preset requests retained private review facts separately. The
     // signed request digest binds those bytes; replay identity is structural.
     return { computeInput: computeInput?.selection.kind === 'preset'
         ? createStoredReadSchema(StoredManagedOpaquePresetComputeInputSchema).parse(computeInput)
-        : computeInput, continuation };
+        : computeInput, continuation, ...(acquisitionMode ? { acquisitionMode } : {}), ...(reuseIdle ? { reuseIdle } : {}) };
 }
 /** New admission binds the authenticated requester; only historical absence retains custody. */
 export function readManagedEnrollmentAccountId(row: Pick<StoredManagedMachine, 'admittedInput' | 'custodianAccountId'>): string {

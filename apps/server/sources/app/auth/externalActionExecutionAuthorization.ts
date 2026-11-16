@@ -73,7 +73,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvena
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     isMachineDeploymentEnvironmentAccessActionIdV1, isDeploymentPrepareSessionMessageEffectV1,
-    SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+    SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { bindApiSessionSpawnNewInput } from '@happier-dev/protocol/actions/specs/session/lifecycle';
@@ -3749,7 +3749,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             && ['/v1/machines/setup/resolve', '/v1/machines/setup/report'].includes(path)
             || managedRoot.data === 'machines.setup.plan' && path === '/v1/machines/setup/resolve');
         const boundSetup = method === 'POST' && path === '/v1/machines/setup/report'
-            && MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1.some(action => action === managedRoot.data)
+            && getManagedBoundSetupReportActionIdsV1().some(action => action === managedRoot.data)
             ? MachineSetupReportInputV1Schema.safeParse(proof.body) : undefined;
         // Acquisition/recovery above already bound this report to its exact
         // retained resource. Only that root's controller installation can run Setup.

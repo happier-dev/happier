@@ -1,10 +1,15 @@
 import tweetnacl from 'tweetnacl';
 
-import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
+import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { CanonicalCiphertextSchema, ManagedMachinePresetStoredContentCarrierV1Schema,
+  ManagedMachinePresetLaunchNameOverrideV1Schema, type ManagedMachinePresetStoredContentCarrierV1,
+  type ManagedMachinePresetLaunchNameOverrideV1 } from './managedMachinePresetContentCarrierV1.js';
+export { ManagedMachinePresetStoredContentCarrierV1Schema, ManagedMachinePresetLaunchNameOverrideV1Schema,
+  type ManagedMachinePresetStoredContentCarrierV1, type ManagedMachinePresetLaunchNameOverrideV1 } from './managedMachinePresetContentCarrierV1.js';
 import {
   prepareSavedSecretResourceRecipientEnvelopesV1,
   sealSavedSecretResourceRecipientEnvelopeV1,
@@ -25,6 +30,7 @@ import { AcquireResultV1Schema, ProviderObservationV1Schema, MachineProvisionerS
   type AcquireResultV1, type MachineProvisionerSizeV1, type ProviderObservationV1 } from './providerFactsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
 import { MachineSetupV1Schema, type MachineSetupV1 } from './machineSetupV1.js';
+import { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1 } from '../setup/machineSetupSourceFactsV1.js';
 import { ManagedMachinePresetPreparationV1Schema, ManagedMachinePresetPreparedV1Schema,
   type ManagedMachinePresetPreparedV1 } from './managedMachinePresetPreparationV1.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
@@ -111,6 +117,8 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     name: id(),
     launch: z.optional(createValidatedLaunchSnapshotV1Schema(choices)),
     setup: z.optional(MachineSetupV1Schema),
+    /** Target-captured Retry facts; never a reusable author declaration. */
+    setupSourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
     controllerDisplayName: z.optional(id()),
     preparation: z.optional(ManagedMachinePresetPreparationV1Schema),
     /** Provider-owned build/artifact identity; never an author or per-acquire override. */
@@ -230,21 +238,6 @@ export function rewriteManagedMachinePresetSavedSecretReferencesV1(params: Reado
   return next.success ? next.data : null;
 }
 
-function isCanonicalCiphertext(value: string): boolean {
-  try {
-    const decodedLength = readCanonicalPaddedBase64DecodedLength(value);
-    if (decodedLength === null || decodedLength < tweetnacl.secretbox.nonceLength + tweetnacl.secretbox.overheadLength) return false;
-    return encodeBase64(decodeBase64(value, 'base64'), 'base64') === value;
-  } catch {
-    return false;
-  }
-}
-
-const CanonicalCiphertextSchema = lazyZodSchema(() => z.string().check(
-  z.minLength(1),
-  z.refine(isCanonicalCiphertext, { message: 'Expected canonical padded Base64 ciphertext' }),
-));
-
 /** Stored content is always explicitly tagged; no mode is inferred from key presence. */
 export function createManagedMachinePresetStoredContentV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
   return z.discriminatedUnion('t', [
@@ -256,21 +249,6 @@ export function createManagedMachinePresetStoredContentV1Schema<Choices extends 
 export const ManagedMachinePresetStoredContentV1Schema = lazyZodSchema(() =>
   createManagedMachinePresetStoredContentV1Schema(PluginJsonValueV2Schema));
 export type ManagedMachinePresetStoredContentV1 = Readonly<z.infer<typeof ManagedMachinePresetStoredContentV1Schema>>;
-
-/**
- * Public/server carrier for private preset content. It checks only the explicit
- * tag and encrypted transport shape; sealing and opening own private-body validation.
- */
-const OpaquePrivatePresetContentV1Schema = lazyZodSchema(() => z.unknown().check(
-  z.refine(value => value !== undefined, { message: 'Expected private preset content' }),
-));
-export const ManagedMachinePresetStoredContentCarrierV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
-  z.strictObject({ t: z.literal('plain'), v: OpaquePrivatePresetContentV1Schema }),
-  z.strictObject({ t: z.literal('encrypted'), c: CanonicalCiphertextSchema }),
-]));
-export type ManagedMachinePresetStoredContentCarrierV1 = Readonly<
-  z.infer<typeof ManagedMachinePresetStoredContentCarrierV1Schema>
->;
 
 /** Persisted recipient envelopes are Account-scoped; Machine recipients are not a valid shape. */
 export const ManagedMachinePresetRecipientV1Schema = lazyZodSchema(() => z.strictObject({
@@ -304,18 +282,6 @@ export const ManagedMachinePresetRecipientProjectionV1Schema = lazyZodSchema(() 
 })));
 export type ManagedMachinePresetRecipientProjectionV1 = Readonly<
   z.infer<typeof ManagedMachinePresetRecipientProjectionV1Schema>
->;
-
-/**
- * Optional acquire-time private replacement. Its allowed semantic delta is
- * decided only by the narrow creator/resolver pair; the server stores no raw
- * name or setup separately from this existing mode-tagged carrier.
- */
-export const ManagedMachinePresetLaunchNameOverrideV1Schema = lazyZodSchema(() => z.strictObject({
-  content: ManagedMachinePresetStoredContentCarrierV1Schema,
-}));
-export type ManagedMachinePresetLaunchNameOverrideV1 = Readonly<
-  z.infer<typeof ManagedMachinePresetLaunchNameOverrideV1Schema>
 >;
 
 function hasStoredContentTagForMode(
@@ -500,6 +466,7 @@ function replacePresetLaunchName(
   nativeResult: AcquireResultV1 | undefined,
   observation: ProviderObservationV1 | undefined,
   nativeControlResult: ManagedMachinePresetNativeControlResultV1 | undefined,
+  setupSourceFacts?: MachineSetupSourceFactsMapV1,
 ): ManagedMachinePresetContentV1 | null {
   if (!content.launch) return null;
   if (content.reviewedFacts !== undefined && reviewedFacts !== undefined
@@ -520,6 +487,7 @@ function replacePresetLaunchName(
     ...(nextNativeResult === undefined ? {} : { nativeResult: nextNativeResult }),
     ...(nextObservation === undefined ? {} : { observation: nextObservation }),
     ...(nextNativeControlResult === undefined ? {} : { nativeControlResult: nextNativeControlResult }),
+    ...(setupSourceFacts === undefined ? {} : { setupSourceFacts }),
   });
 }
 
@@ -774,6 +742,7 @@ export function sealManagedMachinePresetContentV1(
   if (content.resize !== undefined) throw new Error('managed_preset_author_resize_forbidden');
   if (content.enrollmentIdentity !== undefined) throw new Error('managed_preset_author_enrollment_identity_forbidden');
   if (content.reviewedFacts !== undefined) throw new Error('managed_preset_author_reviewed_facts_forbidden');
+  if (content.setupSourceFacts !== undefined) throw new Error('managed_preset_author_setup_source_facts_forbidden');
   if (content.prepared !== undefined) throw new Error('managed_preset_author_prepared_forbidden');
   if (params.mode === 'plain') {
     return { content: { t: 'plain', v: content }, recipients: [] };
@@ -880,6 +849,7 @@ export type ManagedMachinePresetLaunchNameReplacementParamsV1 =
       observation?: ProviderObservationV1;
       /** Private provider control outcome captured with the admitted snapshot, never accepted by a fresh author seal. */
       nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
+      setupSourceFacts?: MachineSetupSourceFactsMapV1;
     }>
   | Readonly<{
       presetId: string;
@@ -897,6 +867,7 @@ export type ManagedMachinePresetLaunchNameReplacementParamsV1 =
       observation?: ProviderObservationV1;
       /** Private provider control outcome captured with the admitted snapshot, never accepted by a fresh author seal. */
       nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
+      setupSourceFacts?: MachineSetupSourceFactsMapV1;
       randomBytes: (length: number) => Uint8Array;
     }>;
 
@@ -921,6 +892,9 @@ export function replaceManagedMachinePresetLaunchNameV1(
     const nativeControlResult = params.nativeControlResult === undefined ? undefined
       : ManagedMachinePresetNativeControlResultV1Schema.safeParse(params.nativeControlResult);
     if (nativeControlResult !== undefined && !nativeControlResult.success) return null;
+    const setupSourceFacts = params.setupSourceFacts === undefined ? undefined
+      : MachineSetupSourceFactsMapV1Schema.safeParse(params.setupSourceFacts);
+    if (setupSourceFacts !== undefined && !setupSourceFacts.success) return null;
     if (params.mode === 'plain') {
       return replaceManagedMachinePresetExistingContentV1({
         presetId: params.presetId,
@@ -930,7 +904,8 @@ export function replaceManagedMachinePresetLaunchNameV1(
           reviewedFacts === undefined ? undefined : reviewedFacts.data,
           nativeResult === undefined ? undefined : nativeResult.data,
           observation === undefined ? undefined : observation.data,
-          nativeControlResult === undefined ? undefined : nativeControlResult.data),
+          nativeControlResult === undefined ? undefined : nativeControlResult.data,
+          setupSourceFacts === undefined ? undefined : setupSourceFacts.data),
       });
     }
     return replaceManagedMachinePresetExistingContentV1({
@@ -945,7 +920,8 @@ export function replaceManagedMachinePresetLaunchNameV1(
         reviewedFacts === undefined ? undefined : reviewedFacts.data,
         nativeResult === undefined ? undefined : nativeResult.data,
         observation === undefined ? undefined : observation.data,
-        nativeControlResult === undefined ? undefined : nativeControlResult.data),
+        nativeControlResult === undefined ? undefined : nativeControlResult.data,
+        setupSourceFacts === undefined ? undefined : setupSourceFacts.data),
     });
   } catch {
     return null;

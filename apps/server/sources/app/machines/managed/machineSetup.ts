@@ -23,6 +23,9 @@ import {
     readManagedJsonEqualityOperand,
     readManagedEnrollmentAccountId,
     readStoredOpaquePresetLaunch,
+    storeOpaquePresetLaunch,
+    readManagedAdmissionState,
+    markManagedBootstrapInstalled,
 } from './managedRows';
 
 const setupReadSchema = createStoredReadSchema(ManagedMachineSetupV1Schema);
@@ -47,20 +50,26 @@ async function requireTargetInTx(tx: Tx, params: Readonly<{
     return machine;
 }
 
-function requireCreationSetup(row: StoredManagedMachine, input: MachineSetupPresetApplyInputV1) {
-    if (row.homeId !== input.homeId || row.enrolledMachineId !== input.machineId
+function requireCreationTarget(row: StoredManagedMachine, input: MachineSetupPresetApplyInputV1 | MachineSetupReportInputV1) {
+    const targetMatches = 'target' in input
+        ? row.controllerMachineId === input.target.controller.machineId
+            && row.controllerInstallationId === input.target.controller.installationId
+            && readManagedAdmissionState(row.admittedInput).acquisitionMode === 'resource-bound'
+        : row.enrolledMachineId === input.machineId;
+    if (row.homeId !== input.homeId || !targetMatches
         || row.presetId !== input.presetId || row.presetRevision !== input.presetRevision
         || row.creationState !== 'active' || row.archivedAt !== null || row.allocation !== 'bound'
         || row.desired === 'delete') throw new ManagedMachineError('intent_changed');
+}
+
+function requireCreationSetup(row: StoredManagedMachine, input: MachineSetupPresetApplyInputV1 | MachineSetupReportInputV1) {
+    requireCreationTarget(row, input);
     return readSetup(row);
 }
 
 /** Opaque preset setup keeps only lifecycle state; its setup recipe is daemon-private content. */
-function requireOpaqueCreationSetup(row: StoredManagedMachine, input: MachineSetupPresetApplyInputV1) {
-    if (row.homeId !== input.homeId || row.enrolledMachineId !== input.machineId
-        || row.presetId !== input.presetId || row.presetRevision !== input.presetRevision
-        || row.creationState !== 'active' || row.archivedAt !== null || row.allocation !== 'bound'
-        || row.desired === 'delete') throw new ManagedMachineError('intent_changed');
+function requireOpaqueCreationSetup(row: StoredManagedMachine, input: MachineSetupPresetApplyInputV1 | MachineSetupReportInputV1) {
+    requireCreationTarget(row, input);
     return row.machineSetup === null
         ? ManagedOpaqueMachineSetupStateV1Schema.parse({ state: 'pending' })
         : ManagedOpaqueMachineSetupStateV1Schema.parse(row.machineSetup);
@@ -188,51 +197,71 @@ export async function resolveMachineSetup(params: Readonly<{
     });
 }
 
-/** Reports can change only the exact enrolled creation stage and its current operation. */
+/** Reports change the exact admitted target's creation stage and current operation. */
 export async function reportMachineSetup(params: Readonly<{
     actorAccountId: string; custodianAccountId: string; input: MachineSetupReportInputV1;
     admittedMachineRole?: MachineAccessRoleV1;
     creationManagedId?: string;
 }>): Promise<Readonly<{ machine: ManagedMachineV1 }>> {
     const input = MachineSetupReportInputV1Schema.parse(params.input);
-    if (input.state !== 'failed' && input.errorCode !== undefined) throw new ManagedMachineError('invalid_request');
+    if ('state' in input && input.state !== 'failed' && input.errorCode !== undefined) throw new ManagedMachineError('invalid_request');
     return inManagedMachinePublicationTx(input, async tx => {
-        await requireTargetInTx(tx, { ...params, input });
+        if ('target' in input) {
+            if (params.creationManagedId !== input.managedId
+                || await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError('permission_denied');
+        } else await requireTargetInTx(tx, { ...params, input });
         const row = await readManagedMachineInTx(tx, input);
         await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
-        if (readManagedEnrollmentAccountId(row) !== params.custodianAccountId || params.creationManagedId && row.id !== params.creationManagedId) {
+        if (('target' in input ? row.custodianAccountId : readManagedEnrollmentAccountId(row)) !== params.custodianAccountId
+            || params.creationManagedId && row.id !== params.creationManagedId) {
             throw new ManagedMachineError('permission_denied');
         }
-        if (isStoredOpaquePresetMachine(row)) {
-            const setup = requireOpaqueCreationSetup(row, input);
-            const sameOperation = setup.operation?.operationId === input.operation.operationId;
-            if (sameOperation && setup.state === input.state) return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
-            if (input.state === 'running' ? !['pending', 'failed'].includes(setup.state) : setup.state !== 'running' || !sameOperation) {
-                throw new ManagedMachineError('intent_changed');
+        if ('bootstrapInstalled' in input) {
+            requireCreationTarget(row, input);
+            if (readManagedAdmissionState(row.admittedInput).bootstrapInstalled) {
+                return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
             }
-            const next = ManagedOpaqueMachineSetupStateV1Schema.parse({ state: input.state,
-                operation: input.operation, ...(input.state !== 'running' ? { settledAtMs: Date.now() } : {}),
-                ...(input.errorCode ? { errorCode: input.errorCode } : {}) });
             const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision,
                 creationState: 'active', archivedAt: null, allocation: 'bound', desired: { not: 'delete' },
-                enrolledMachineId: input.machineId, machineSetup: { equals: storedSetupEquality(row) } }, data: { machineSetup: next } });
+                admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) },
+            }, data: { admittedInput: markManagedBootstrapInstalled(row.admittedInput) } });
             if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, current);
             return { machine: await projectManagedMachineForActorInTx(tx, current, params.actorAccountId) };
         }
-        const setup = requireCreationSetup(row, input);
+        const opaque = isStoredOpaquePresetMachine(row);
+        const setup = opaque ? requireOpaqueCreationSetup(row, input) : requireCreationSetup(row, input);
+        const stored = opaque ? readStoredOpaquePresetLaunch(row.launch) : undefined;
+        if ('target' in input && (opaque ? input.sourceFacts !== undefined : input.presetContent !== undefined)) {
+            throw new ManagedMachineError('invalid_request');
+        }
+        const override = stored && 'target' in input && input.presetContent !== undefined
+            ? readManagedMachinePresetContentOverrideForModeV1({ mode: stored.contentEncryptionMode, override: input.presetContent })
+            : undefined;
+        if (override === null) throw new ManagedMachineError('account_mode_mismatch');
         const sameOperation = setup.operation?.operationId === input.operation.operationId;
         if (sameOperation && setup.state === input.state) return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
         if (input.state === 'running' ? !['pending', 'failed'].includes(setup.state) : setup.state !== 'running' || !sameOperation) {
             throw new ManagedMachineError('intent_changed');
         }
-        const next = ManagedMachineSetupV1Schema.parse({ setup: setup.setup, state: input.state,
-            operation: input.operation, ...(input.state !== 'running' ? { settledAtMs: Date.now() } : {}),
-            ...(input.errorCode ? { errorCode: input.errorCode } : {}) });
+        const lifecycle = { state: input.state, operation: input.operation,
+            ...(input.state !== 'running' ? { settledAtMs: Date.now() } : {}),
+            ...(input.errorCode ? { errorCode: input.errorCode } : {}) };
+        const next = opaque ? ManagedOpaqueMachineSetupStateV1Schema.parse(lifecycle)
+            : ManagedMachineSetupV1Schema.parse({ ...lifecycle,
+                ...('setup' in setup ? { setup: setup.setup } : {}),
+                ...('sourceFacts' in setup ? { sourceFacts: setup.sourceFacts } : {}),
+                ...('target' in input && input.sourceFacts !== undefined ? { sourceFacts: input.sourceFacts } : {}),
+            });
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision,
             creationState: 'active', archivedAt: null, allocation: 'bound', desired: { not: 'delete' },
-            enrolledMachineId: input.machineId, machineSetup: { equals: readManagedJsonEqualityOperand(row.machineSetup) } }, data: { machineSetup: next } });
+            ...('target' in input ? {} : { enrolledMachineId: input.machineId }),
+            machineSetup: { equals: storedSetupEquality(row) },
+            ...(override === undefined ? {} : { launch: { equals: readManagedJsonEqualityOperand(row.launch) } }),
+        }, data: { machineSetup: next,
+            ...(stored && override ? { launch: storeOpaquePresetLaunch({ ...stored, content: override.content }) } : {}),
+        } });
         if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, current);

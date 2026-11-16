@@ -66,6 +66,23 @@ describe('prepare managed opaque preset acquire', () => {
     expect(prepared).toMatchObject({ content: { t: 'plain', v: { nativeResult } }, opened: { reviewedFacts, nativeResult } });
   });
 
+  it('retains bound Setup Retry facts in the private snapshot and restores them only in the opened target view', () => {
+    const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'bound-target', homeId: 'home', custodianAccountId: 'account',
+      preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, allocation: 'bound',
+      creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { state: 'failed' } });
+    const setup = { scripts: [{ body: 'first' }, { body: 'unfinished' }] };
+    const sourceFacts = { 'accountPreset:preset:1': { pendingScripts: [1] } };
+    const prepared = prepareManagedOpaquePresetReportV1({ machine, content: { ...base, v: { ...base.v, setup } },
+      opened: { ...base.v, setup }, recipients: [], accountId: 'account',
+      randomBytes: length => new Uint8Array(length).fill(3), setupSourceFacts: sourceFacts,
+      nativeResult: { kind: 'bound', resource: { contributionRef: base.v.launch.provider, schemaVersion: 1, value: { id: 'bound-target' } } } });
+    expect(prepared).toMatchObject({ content: { t: 'plain', v: { setupSourceFacts: sourceFacts } } });
+    expect(prepared && hydrateManagedOpaquePresetMachineV1({ machine, opened: prepared.opened }))
+      .toMatchObject({ machineSetup: { state: 'failed', setup, sourceFacts } });
+    expect(machine.machineSetup).not.toHaveProperty('sourceFacts');
+  });
+
   it('retains a migrated no-review native identity and Delete outcome inside the sealed snapshot', () => {
     const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'legacy-machine', homeId: 'home', custodianAccountId: 'account',
       preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, allocation: 'bound',

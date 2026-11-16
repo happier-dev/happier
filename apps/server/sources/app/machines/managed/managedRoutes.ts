@@ -1,5 +1,6 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
+import { isSessionSpawnNewActionIdV1, getManagedBoundSetupReportActionIdsV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
 import { isManagedEnrollmentRecoveryChildV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -202,6 +203,18 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     app.post('/v1/machines/setup/report', { preHandler: app.authenticate,
         schema: { body: MachineSetupReportInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } },
         async (request, reply) => respond(reply, async () => {
+            if ('target' in request.body) {
+                const { custodianAccountId } = requireManagedControllerProof(request,
+                    request.body.target.controller.machineId, getManagedBoundSetupReportActionIdsV1());
+                const binding = request.externalActionExecutionAuthorizationBinding;
+                // HTTP purpose already binds acquisition or Session reports to
+                // this row, and Retry to its retained input.
+                const creationManagedId = binding?.actionId === 'machines.managed.acquire' || binding && isSessionSpawnNewActionIdV1(binding.actionId)
+                    ? request.body.managedId
+                    : binding?.managedAdmission?.actionId === 'machines.managed.bootstrap.retry'
+                        ? binding.managedAdmission.input.managedId : undefined;
+                return reportMachineSetup({ actorAccountId: request.userId, custodianAccountId, input: request.body, creationManagedId });
+            }
             const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.setup.apply']);
             return reportMachineSetup({ actorAccountId: request.userId, custodianAccountId, input: request.body,
                 admittedMachineRole: request.externalActionExecutionAuthorizationBinding?.admittedMachineRole,

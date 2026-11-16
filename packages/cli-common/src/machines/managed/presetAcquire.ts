@@ -11,6 +11,7 @@ import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV
     MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { AcquireResultV1, ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 
 export type ManagedOpaquePresetContentOpenerV1 = (content: ManagedMachinePresetStoredContentV1) =>
   ManagedMachinePresetContentV1 | null | Promise<ManagedMachinePresetContentV1 | null>;
@@ -60,6 +61,7 @@ export function prepareManagedOpaquePresetReportV1(params: Readonly<{
     nativeResult?: AcquireResultV1;
     observation?: ProviderObservationV1;
     nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
+    setupSourceFacts?: MachineSetupSourceFactsMapV1;
 }>): Readonly<{ content: ManagedMachinePresetStoredContentV1; opened: ManagedMachinePresetContentV1 }> | null {
     if (params.accountId !== params.machine.custodianAccountId) return null;
     const content = ManagedMachinePresetStoredContentV1Schema.safeParse(params.content);
@@ -78,20 +80,23 @@ export function prepareManagedOpaquePresetReportV1(params: Readonly<{
             launchName: params.opened.launch.name, ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
             ...(nativeResult === undefined ? {} : { nativeResult }),
             ...(params.observation === undefined ? {} : { observation: params.observation }),
-            ...(params.nativeControlResult === undefined ? {} : { nativeControlResult: params.nativeControlResult }) })
+            ...(params.nativeControlResult === undefined ? {} : { nativeControlResult: params.nativeControlResult }),
+            ...(params.setupSourceFacts === undefined ? {} : { setupSourceFacts: params.setupSourceFacts }) })
         : params.accountKey === undefined ? null : replaceManagedMachinePresetLaunchNameV1({ presetId: params.machine.preset.id,
             mode, content: content.data, recipients: params.recipients, accountId: params.accountId, accountKey: params.accountKey,
             launchName: params.opened.launch.name, ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
             ...(nativeResult === undefined ? {} : { nativeResult }),
             ...(params.observation === undefined ? {} : { observation: params.observation }),
             ...(params.nativeControlResult === undefined ? {} : { nativeControlResult: params.nativeControlResult }),
+            ...(params.setupSourceFacts === undefined ? {} : { setupSourceFacts: params.setupSourceFacts }),
             randomBytes: params.randomBytes });
     if (!replaced) return null;
     const opened = ManagedMachinePresetContentV1Schema.safeParse({ ...params.opened, launch: params.opened.launch,
         ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
         ...(nativeResult === undefined ? {} : { nativeResult }),
         ...(params.observation === undefined ? {} : { observation: params.observation }),
-        ...(params.nativeControlResult === undefined ? {} : { nativeControlResult: params.nativeControlResult }) });
+        ...(params.nativeControlResult === undefined ? {} : { nativeControlResult: params.nativeControlResult }),
+        ...(params.setupSourceFacts === undefined ? {} : { setupSourceFacts: params.setupSourceFacts }) });
     return opened.success ? { content: replaced, opened: opened.data } : null;
 }
 
@@ -135,7 +140,8 @@ export function hydrateManagedOpaquePresetMachineV1(params: Readonly<{
 }>): ManagedMachineFullV1 | null {
     if (!params.opened.launch) return null;
     const machineSetup = params.machine.machineSetup === undefined ? undefined
-        : params.opened.setup === undefined ? null : { ...params.machine.machineSetup, setup: params.opened.setup };
+        : params.opened.setup === undefined ? null : { ...params.machine.machineSetup, setup: params.opened.setup,
+            ...(params.opened.setupSourceFacts === undefined ? {} : { sourceFacts: params.opened.setupSourceFacts }) };
     if (machineSetup === null) return null;
     // Native identity and detailed observations are sealed with the admitted
     // snapshot. They are restored only in this local keyholding projection;

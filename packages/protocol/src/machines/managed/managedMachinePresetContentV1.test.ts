@@ -76,6 +76,25 @@ function unavailableRecipientCensus(accountId: string) {
 }
 
 describe('managed machine preset content envelope', () => {
+  it('keeps Setup Retry facts encrypted under the existing snapshot key and refuses a wrong-mode rewrite', () => {
+    const accountKey = new Uint8Array(32).fill(71);
+    const randomBytes = randomBytesFactory(10);
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'bound-setup', mode: 'e2ee', content,
+      recipientCensus: [recipientCensus('owner', accountKey)], randomBytes });
+    const sourceFacts = { 'private-source': { pendingScripts: [1] } };
+    const rewritten = replaceManagedMachinePresetLaunchNameV1({ presetId: 'bound-setup', mode: 'e2ee',
+      content: sealed.content, recipients: sealed.recipients, accountId: 'owner', accountKey,
+      launchName: content.launch.name, setupSourceFacts: sourceFacts, randomBytes });
+    expect(rewritten?.t).toBe('encrypted');
+    expect(JSON.stringify(rewritten)).not.toContain('private-source');
+    expect(openManagedMachinePresetContentV1({ presetId: 'bound-setup', mode: 'e2ee', content: rewritten,
+      recipients: sealed.recipients, accountId: 'owner', accountKey })).toMatchObject({ setupSourceFacts: sourceFacts });
+    expect(replaceManagedMachinePresetLaunchNameV1({ presetId: 'bound-setup', mode: 'plain',
+      content: sealed.content, launchName: content.launch.name, setupSourceFacts: sourceFacts })).toBeNull();
+    expect(() => sealManagedMachinePresetContentV1({ presetId: 'author', mode: 'plain',
+      content: { ...content, setupSourceFacts: sourceFacts } })).toThrow();
+  });
+
   it('requires at least one private preset body alongside its name', () => {
     expect(ManagedMachinePresetContentV1Schema.safeParse({ v: 1, name: 'empty' }).success).toBe(false);
   });
@@ -92,6 +111,7 @@ describe('managed machine preset content envelope', () => {
         adminAccessAtCreation: 'ask', administrator: { username: 'private-migration-admin' },
       },
       reviewedFacts,
+      setupSourceFacts: { 'private-source': { pendingScripts: [1] } },
       nativeResult: {
         kind: 'bound',
         resource: {

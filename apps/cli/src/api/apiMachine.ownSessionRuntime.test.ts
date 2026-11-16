@@ -451,7 +451,9 @@ describe('ApiMachine own Session Account read custody', () => {
           creation: { managedId: 'managed', preset: { id: retained.presetId, revision: retained.presetRevision } } } };
       }
       expect(String(url)).toMatch(/\/v1\/machines\/setup\/report$/u);
-      const state = MachineSetupReportInputV1Schema.parse(body).state;
+      const report = MachineSetupReportInputV1Schema.parse(body);
+      if (!('state' in report)) throw new Error('Expected Setup state report');
+      const { state } = report;
       if (scenario === 'report-fallback-retry' && state === 'succeeded' && !succeededReportFailed) {
         succeededReportFailed = true;
         return { status: 503, data: { error: 'temporarily_unavailable' } };

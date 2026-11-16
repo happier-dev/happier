@@ -12,6 +12,7 @@ import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV
 import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
 import { DevcontainerChildProjectionV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
 import { MachineSetupV1Schema } from './machineSetupV1.js';
+import { MachineSetupSourceFactsMapV1Schema } from '../setup/machineSetupSourceFactsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
@@ -50,6 +51,7 @@ export const ManagedMachineRefReadV1Schema = lazyDefinition(() => z._default(z.n
 /** Setup belongs to the immutable admitted preset snapshot, independently of Join. */
 export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
   setup: MachineSetupV1Schema,
+  sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
   state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped']),
   operation: z.optional(z.strictObject({ operationId: id() })),
   /** Server settlement clock; replay never substitutes a reader's clock. */

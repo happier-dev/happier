@@ -1658,6 +1658,36 @@ describe('opaque managed preset admission', () => {
         })).rejects.toMatchObject({ code: 'credential_unavailable' });
         expect(native.effects()).toBe(0);
     });
+    it('seals bound Setup Retry facts before reporting and restores them after reopening the admitted snapshot', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-e2ee-bound-setup', machineId: 'team-e2ee-bound-setup-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Private Setup target', choices: {} }, allocation: 'bound' });
+        const snapshot = retainTeamMemberReviewedSnapshot(carrier, {
+            provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private Setup target', choices: {} },
+            AcquireResultV1Schema.parse({ kind: 'bound', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' },
+                schemaVersion: 1, value: { resource: 'private-target' } } }));
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        const hydrator = createManagedPresetHydrator({ credentials: { token: carrier.token,
+            encryption: { type: 'dataKey', machineKey: carrier.memberKey, publicKey: carrier.memberPublicKey } },
+            serverUrl: 'https://home.example' });
+        const admitted = await openManagedPresetCarrier({ machine: carrier.admission.machine, presetContent: snapshot }, hydrator);
+        const sourceFacts = { 'private-source': { pendingScripts: [1] } };
+        const report = await hydrator.prepareBoundSetupReport(admitted.machine, {
+            homeId: admitted.machine.homeId, managedId: admitted.machine.id,
+            presetId: admitted.machine.preset!.id, presetRevision: admitted.machine.preset!.revision,
+            target: { kind: 'bound', controller }, state: 'failed', operation: { operationId: 'setup' }, sourceFacts,
+        });
+        expect(report).not.toHaveProperty('sourceFacts');
+        expect(JSON.stringify(report)).not.toContain('private-source');
+        if (!('target' in report) || !('presetContent' in report) || !report.presetContent) throw new Error('Bound Setup report must retain private content');
+        expect(openManagedMachinePresetContentV1({ presetId: 'team-e2ee-preset', mode: 'e2ee',
+            content: report.presetContent.content, recipients: snapshot.recipients, accountId: 'team-member', accountKey: carrier.memberKey }))
+            .toMatchObject({ setupSourceFacts: sourceFacts });
+        await expect(hydrator.prepareBoundSetupReport(admitted.machine, { ...report, managedId: 'another-target' }))
+            .rejects.toMatchObject({ code: 'intent_changed' });
+    });
     it('seals Team E2EE resize facts before the controller report and public action output', async () => {
         const privateLaunchName = 'Private Team resize launch name';
         const privateNativeResult = 'Private resize native stderr';

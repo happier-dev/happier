@@ -38,7 +38,7 @@ import {
     requireManagedControllerInTx,
     readManagedMachineInTx,
     type StoredManagedMachine,
-    readManagedAdmissionState, readManagedCurrentRequestId, readManagedEnrollmentAccountId,
+    readManagedAdmissionState, readManagedCurrentRequestId, readManagedEnrollmentAccountId, markManagedBootstrapInstalled,
     readManagedJsonEqualityOperand,
     inManagedMachinePublicationTx,
     readManagedController, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, requireManagedHomeInTx, resolveManagedMachineRoleInTx,
@@ -803,7 +803,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision, creationState: row.creationState }, data: {
                 allocation: "bound", resource: projected.resource,
                 ...factsUpdate,
-                ...(canonical.bootstrapInstalled ? { admittedInput: { ...readManagedAdmissionState(row.admittedInput), bootstrapInstalled: true } } : {}),
+                ...(canonical.bootstrapInstalled ? { admittedInput: markManagedBootstrapInstalled(row.admittedInput) } : {}),
                 // Binding settles acquisition custody; a late report must retain an outstanding Delete's handle.
                 ...(row.allocation === 'may-exist' && current.submittedNativeEffect?.intent !== 'delete'
                     ? { nativeOperationRef: getActivePrismaRuntime().DbNull } : {}),

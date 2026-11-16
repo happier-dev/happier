@@ -7,7 +7,7 @@ import { decodeBase64 } from 'privacy-kit';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { isManagedOpaquePresetReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { expect } from 'vitest';
-import { db } from '@/storage/db';
+import { db, getActivePrismaRuntime } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { cancelManagedCreation, getManagedMachine, listManagedMachines } from './managedRead';
@@ -20,6 +20,10 @@ import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { readExternalActionManagedAcquireResourceInTx } from '@/app/auth/externalActionManagedAdmission';
+import { sealManagedMachinePresetContentV1, replaceManagedMachinePresetLaunchNameV1,
+    openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { storeOpaquePresetLaunch, readStoredOpaquePresetLaunch } from './managedRows';
 
 export async function exerciseManagedAcquireRootResource() {
     const { homeId, custodian, creator, stranger, controller, row, create } = await createCreatorFixture();
@@ -250,13 +254,16 @@ export async function exerciseManagedCreatorSetupRecovery() {
     await db.machineGrant.create({ data: { principalKind: 'account', machineId: guest.id, accountId: stranger.id,
         accessLevel: 'admin', createdByAccountId: creator.id } });
     const setup = { scripts: [{ body: 'echo admitted' }] };
+    const admittedLaunch = { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'native' },
+        account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'private-company-connection' } }] };
     await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound', enrolledMachineId: guest.id,
         resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: randomUUID() } },
-        launch: { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'native' },
-            account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'private-company-connection' } }] },
+        launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+            content: { t: 'plain', v: { v: 1, name: launch.name, launch: admittedLaunch, setup } } }),
         bootstrapCredentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap' },
-        machineSetup: { setup, state: 'failed' } } });
-    const source = { kind: 'accountPreset' as const, presetId: row.presetId!, presetRevision: row.presetRevision!, setup };
+        machineSetup: { state: 'failed' } } });
+    const source = { kind: 'accountPresetOpaque' as const, presetId: row.presetId!, presetRevision: row.presetRevision!,
+        contentEncryptionMode: 'plain' as const };
     const params = { actorAccountId: creator.id, custodianAccountId: creator.id };
     expect(await resolveMachineSetup({ ...params, input: { homeId, machineId: guest.id, purpose: 'creationOrigin', candidates: [source] } }))
         .toMatchObject({ creation: { managedId: row.id } });
@@ -267,12 +274,109 @@ export async function exerciseManagedCreatorSetupRecovery() {
         .rejects.toMatchObject({ code: 'permission_denied' });
     const running = await reportMachineSetup({ ...params, input: { ...input, state: 'running' } });
     expect(running).toMatchObject({ machine: { machineSetup: { state: 'running' } } });
-    expect(running.machine.launch).not.toHaveProperty('credentials');
+    expect(running.machine).not.toHaveProperty('launch');
     expect(running.machine).not.toHaveProperty('bootstrapCredentialRef');
     await reportMachineSetup({ ...params, input: { ...input, state: 'failed', errorCode: 'setup_failed' } });
     const skipped = await skipManagedMachineSetup({ actorAccountId: creator.id, input: { homeId, managedId: row.id, expectedIntentRevision: 0 } });
     const skippedMachine = isManagedOpaquePresetReadV1(skipped) ? skipped.machine : skipped;
     expect(skippedMachine).toMatchObject({ id: row.id, enrolledMachineId: guest.id, machineSetup: { state: 'skipped' } });
-    expect(skippedMachine.launch).not.toHaveProperty('credentials');
+    expect(skippedMachine).not.toHaveProperty('launch');
     expect(skippedMachine).not.toHaveProperty('bootstrapCredentialRef');
+}
+
+export async function exerciseManagedBoundSetupRecovery() {
+    const { homeId, custodian, creator, stranger, controller, launch, row } = await createCreatorFixture();
+    const setup = { scripts: [{ body: 'first' }, { body: 'unfinished' }] };
+    await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound',
+        admittedInput: { enrollmentAccountId: creator.id, acquisitionMode: 'resource-bound' },
+        resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: randomUUID() } },
+        machineSetup: { setup, state: 'pending' } } });
+    const params = { actorAccountId: creator.id, custodianAccountId: custodian.id, creationManagedId: row.id };
+    const input = { homeId, managedId: row.id, presetId: row.presetId!, presetRevision: row.presetRevision!,
+        target: { kind: 'bound' as const, controller: { machineId: controller.id, installationId: controller.installationId! } },
+        operation: { operationId: randomUUID() } };
+    await expect(reportMachineSetup({ ...params, actorAccountId: stranger.id, input: { ...input, state: 'running' } }))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    await expect(reportMachineSetup({ ...params, creationManagedId: randomUUID(), input: { ...input, state: 'running' } }))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    const app = createAuthenticatedTestApp();
+    // Authentication is the HTTP boundary; the report route and database owner remain real.
+    app.addHook('preHandler', async (request: FastifyRequest) => {
+        request.externalActionExecutionAuthorized = true;
+        request.externalActionExecutionMachineId = controller.id;
+        request.externalActionExecutionCustodianAccountId = custodian.id;
+        request.externalActionExecutionRequestId = row.admittedActionRequestId;
+        request.externalActionEffectActionId = 'machines.managed.acquire';
+        request.externalActionExecutionAuthorizationBinding = ExternalActionExecutionAuthorizationV1Schema.parse({
+            v: 1, token: 'fixture-bound-setup', binding: {
+                serverIdentityId: homeId, accountId: creator.id, custodianAccountId: custodian.id,
+                authentication: { kind: 'account', tokenEpoch: creator.tokenEpoch }, accountEncryptionMode: creator.encryptionMode,
+                machineId: controller.id, installationId: controller.installationId, actionId: 'machines.managed.acquire',
+                requestId: row.admittedActionRequestId, target: { kind: 'machine', machineId: controller.id },
+                requestEnvelopeDigest: 'a'.repeat(43),
+            },
+        }).binding;
+    });
+    registerManagedMachineRoutes(app);
+    try {
+        const response = await app.inject({ method: 'POST', url: '/v1/machines/setup/report',
+            headers: { 'x-test-user-id': creator.id }, payload: { ...input, state: 'running' } });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().machine.machineSetup).toMatchObject({ state: 'running' });
+    } finally { await app.close(); }
+    const sourceFacts = { 'accountPreset:preset:1': { pendingScripts: [1] } };
+    await reportMachineSetup({ ...params, input: { ...input, state: 'failed', errorCode: 'setup_failed', sourceFacts } });
+    const stored = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+    expect(stored.enrolledMachineId).toBeNull();
+    expect(stored.machineSetup).toMatchObject({ state: 'failed', sourceFacts });
+    const retry = { ...input, operation: { operationId: randomUUID() } };
+    const running = await reportMachineSetup({ ...params, input: { ...retry, state: 'running' } });
+    expect(running.machine.machineSetup).toMatchObject({ state: 'running', sourceFacts });
+    await expect(reportMachineSetup({ ...params, input: { ...input, state: 'succeeded' } }))
+        .rejects.toMatchObject({ code: 'intent_changed' });
+    const settled = await reportMachineSetup({ ...params, input: { ...retry, state: 'succeeded', sourceFacts: {} } });
+    expect(settled.machine.machineSetup).toMatchObject({ state: 'succeeded', sourceFacts: {} });
+    const accountKey = new Uint8Array(32).fill(73);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
+    const randomBytes = (length: number) => new Uint8Array(length).fill(19);
+    const sealed = sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'e2ee',
+        content: { v: 1, name: 'Private bound Setup', launch, setup },
+        recipientCensus: [{ account: { kind: 'account', accountId: custodian.id, name: 'Controller', firstName: 'Controller',
+            lastName: null, username: null, avatarUrl: null }, readiness: { status: 'available',
+            contentPublicKey: encodeBase64(publicKey, 'base64'), contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
+            envelopeStatus: 'missing' }], randomBytes });
+    await db.managedMachine.update({ where: { id: row.id }, data: {
+        launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', ...sealed, recipients: [...sealed.recipients] }), machineSetup: { state: 'pending' } } });
+    await reportMachineSetup({ ...params, input: { ...input, state: 'running' } });
+    await expect(reportMachineSetup({ ...params, input: { ...input, state: 'failed', sourceFacts } }))
+        .rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(reportMachineSetup({ ...params, input: { ...input, state: 'failed', presetContent: {
+        content: { t: 'plain', v: { v: 1, name: 'Wrong mode', launch, setup, setupSourceFacts: sourceFacts } } } } }))
+        .rejects.toMatchObject({ code: 'account_mode_mismatch' });
+    const replacement = replaceManagedMachinePresetLaunchNameV1({ presetId: input.presetId, mode: 'e2ee',
+        content: sealed.content, recipients: sealed.recipients, accountId: custodian.id, accountKey,
+        launchName: launch.name, setupSourceFacts: sourceFacts, randomBytes });
+    if (!replacement) throw new Error('Could not seal bound Retry facts');
+    const failed = await reportMachineSetup({ ...params, input: { ...input, state: 'failed',
+        errorCode: 'setup_failed', presetContent: { content: replacement } } });
+    expect(failed.machine.machineSetup).toMatchObject({ state: 'failed' });
+    expect(JSON.stringify(failed)).not.toContain('pendingScripts');
+    const encrypted = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+    expect(encrypted.machineSetup).not.toHaveProperty('sourceFacts');
+    const retained = readStoredOpaquePresetLaunch(encrypted.launch);
+    expect(retained.recipients).toEqual(sealed.recipients);
+    expect(openManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'e2ee', content: retained.content,
+        recipients: retained.recipients, accountId: custodian.id, accountKey })).toMatchObject({ setupSourceFacts: sourceFacts });
+    // Installation completion is independent of Setup: no-Setup presets must
+    // retain the incumbent Retry marker without inventing a Setup lifecycle.
+    await db.managedMachine.update({ where: { id: row.id }, data: { machineSetup: getActivePrismaRuntime().DbNull } });
+    const installed = { homeId, managedId: row.id, presetId: input.presetId, presetRevision: input.presetRevision,
+        target: { ...input.target, sessionId: randomUUID() }, bootstrapInstalled: true as const };
+    for (let attempt = 0; attempt < 2; attempt++) {
+        await reportMachineSetup({ ...params, input: installed });
+    }
+    const completed = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+    expect(completed.admittedInput).toMatchObject({ bootstrapInstalled: true, acquisitionMode: 'resource-bound' });
+    expect(completed.machineSetup).toBeNull();
+    expect(completed.launch).toEqual(encrypted.launch);
 }

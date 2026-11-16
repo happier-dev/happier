@@ -377,10 +377,14 @@ export const MachineSetupReportInputV1Schema = lazyZodSchema(() => z.union([
   operation: z.strictObject({ operationId: id() }), errorCode: z.optional(z.string().check(z.minLength(1))),
   })),
   z.strictObject({ homeId: id(), managedId: id(), presetId: id(), presetRevision: revision(),
-    target: z.strictObject({ kind: z.literal('bound'), controller: ManagedControllerV1Schema }),
+    target: z.strictObject({ kind: z.literal('bound'), controller: ManagedControllerV1Schema, sessionId: z.optional(id()) }),
     state: z.enum(['running', 'succeeded', 'failed']), operation: z.strictObject({ operationId: id() }),
     errorCode: z.optional(id()), sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
     presetContent: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+  }),
+  z.strictObject({ homeId: id(), managedId: id(), presetId: id(), presetRevision: revision(),
+    target: z.strictObject({ kind: z.literal('bound'), controller: ManagedControllerV1Schema, sessionId: id() }),
+    bootstrapInstalled: z.literal(true),
   }),
 ]));
 export type MachineSetupReportInputV1 = z.infer<typeof MachineSetupReportInputV1Schema>;

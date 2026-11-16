@@ -135,7 +135,12 @@ import { DISCUSSION_ACTION_IDS_V1 } from '../discussions/idsV1.js';
 import { SESSION_READ_STATE_ACTION_IDS_V1 } from '../sessions/readState/idsV1.js';
 import { SESSION_ATTENTION_SET_ACTION_ID } from '../sessions/organization/attentionActionIdsV1.js';
 import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionIdsV1.js';
-import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
+import { MANAGED_MACHINE_ACTION_IDS_V1, MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
+
+/** Cross-domain Setup continuation; the managed leaf never imports the Action catalog. */
+export function getManagedBoundSetupReportActionIdsV1() {
+  return [...MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1, SESSION_SPAWN_NEW_ACTION_ID_V1] as const;
+}
 import { MACHINE_PRESET_ACTION_IDS_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { PROJECT_WORKER_ACTION_IDS_V1 } from './specs/projectWorkersActionIdsV1.js';
 import { ACTION_OPERATION_ACTION_IDS_V1 } from './operations/actionIdsV1.js';
