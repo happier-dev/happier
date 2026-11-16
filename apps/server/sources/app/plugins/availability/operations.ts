@@ -2,6 +2,7 @@ import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/
 import { readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
 import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations } from './intentReadRows';
 import { updateIntentRow } from './intentWriteRows';
+import { trimNativeHeap } from '@/utils/runtime/nativeHeapTrim';
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod/mini";
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -1683,6 +1684,9 @@ export type PluginAvailabilityOperations = Readonly<{
     }>): Promise<PluginAvailabilityUiArtifactRemoveActionOutputV1>;
 }>;
 
+/** Manifest-carrying writer claims in flight in this process (see claimCollectionWriters). */
+let manifestClaimsInFlight = 0;
+
 export function createPluginAvailabilityOperations(options: Readonly<{
     resolveHostingCapability?: () => Awaitable<PluginUiArtifactHostingCapabilityV1>;
     resolveServerIdentityId?: () => Promise<string>;
@@ -2378,6 +2382,10 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         const input = parseOperationInput(PluginAvailabilityCollectionWritersClaimActionInputV1Schema, params.input);
         const { prepare } = input;
         const pluginId = 'manifest' in input ? input.manifest.id : input.pluginId;
+        // A daemon's first connect sends every bundled manifest body; the engine's
+        // arenas keep that transient memory. Return it once the burst settles.
+        const carriesBody = 'manifest' in input;
+        if (carriesBody) manifestClaimsInFlight += 1;
         try {
             return await inTx(async (tx) => {
                 // Reuse the list reader's body-free identities for rejoins. The
@@ -2571,6 +2579,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             }, { isolationLevel: "ReadCommitted", transactionClass: "plugin-availability.collection-writers-claim" });
         } catch (error) {
             throw intentTransitionError(error);
+        } finally {
+            if (carriesBody && --manifestClaimsInFlight === 0) trimNativeHeap();
         }
     }
 
