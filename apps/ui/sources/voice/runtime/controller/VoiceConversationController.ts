@@ -681,9 +681,10 @@ export function createVoiceConversationController(
         } catch (error) {
           await nextConnection.close({ code: 'error' }).catch(() => {});
           if (!owns(attempt)) return;
-          const { failureCause } = readSafeVoiceRuntimeFailureFacts(error);
-          if (failureCause) {
-            await settleReconnectFailure(attempt, readSafeVoiceRuntimeFailureCode(error) ?? 'voice_connection_failed', undefined, failureCause);
+          const code = readSafeVoiceRuntimeFailureCode(error);
+          if (code) {
+            const { failureCause } = readSafeVoiceRuntimeFailureFacts(error);
+            await settleReconnectFailure(attempt, code, undefined, failureCause);
             return;
           }
           continue;

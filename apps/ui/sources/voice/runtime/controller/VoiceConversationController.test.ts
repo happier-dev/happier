@@ -756,6 +756,7 @@ describe('VoiceConversationController', () => {
       attemptId: 1,
       code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
       diagnosticReason: reason,
+      failureCause: { phase: 'voice.runtime', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
