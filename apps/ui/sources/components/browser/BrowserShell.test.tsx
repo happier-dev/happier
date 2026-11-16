@@ -473,6 +473,41 @@ await import('./BrowserShell');
 await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 
 describe('BrowserShell', () => {
+  it('removes failed navigation progress without announcing success, then completes a successful retry', async () => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const { applyBrowserControlEvent } = await import('@/sync/domains/browser/control/reducer');
+    let state = await createShellState();
+    const navigation = { browserSessionId: 'browser_session_1', viewId: 'view_1', occurredAt: 2_000 };
+    state = applyBrowserControlEvent(state, {
+      ...navigation, kind: 'navigationStarted', eventId: 'load-started', pendingUrl: 'https://preview.happier.test/next',
+    });
+    state = applyBrowserControlEvent(state, {
+      ...navigation, kind: 'loadingProgressChanged', eventId: 'load-progress', loadingProgress: 0.4,
+    });
+    const render = () => <BrowserShell browserSessionId="browser_session_1" platform="web" state={state}
+      onCommand={vi.fn()} testID="browser-shell" />;
+    const screen = await renderScreen(render());
+    const progress = () => screen.findAllHostsByTestId('browser-shell-load-progress');
+    expect(progress()[0]?.props.accessibilityValue).toMatchObject({ now: 40 });
+
+    state = applyBrowserControlEvent(state, {
+      ...navigation, kind: 'navigationFailed', eventId: 'load-failed', errorCode: 'navigation_failed',
+    });
+    await screen.update(render());
+    expect(progress()).toHaveLength(0);
+
+    state = applyBrowserControlEvent(state, {
+      ...navigation, kind: 'navigationStarted', eventId: 'retry-started', pendingUrl: 'https://preview.happier.test/next',
+    });
+    await screen.update(render());
+    expect(progress()[0]?.props.accessibilityValue).toMatchObject({ now: 0 });
+    state = applyBrowserControlEvent(state, {
+      ...navigation, kind: 'navigationFinished', eventId: 'retry-finished', currentUrl: 'https://preview.happier.test/next',
+    });
+    await screen.update(render());
+    expect(progress()[0]?.props.accessibilityValue).toMatchObject({ now: 100 });
+  });
+
   it('offers the streamed public-page escape and hides Machine loopback', async () => {
     const { BrowserShell } = await import('./BrowserShell');
     const { selectBrowserOpenExternalAvailability } = await import('@/sync/domains/browser/actions/openExternal');

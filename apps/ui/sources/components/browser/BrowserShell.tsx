@@ -883,7 +883,7 @@ export function BrowserShell(props: Readonly<{
                 <BrowserLoadProgressBar
                     testID={`${testID}-load-progress`}
                     progress={activeView?.loadingProgress ?? null}
-                    loading={activeView?.loadingState === 'loading'}
+                    loadingState={activeView?.loadingState ?? 'idle'}
                 />
                 {showLaunchpad && firstUseConnecting ? (
                     <BrowserFirstUseConnecting

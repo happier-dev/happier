@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { BrowserNavigationLoadingStateV1 } from '@happier-dev/protocol/browser/events/v1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Animated, {
     runOnJS,
@@ -58,11 +59,11 @@ type Phase = 'hidden' | 'loading' | 'settling';
  * page is ready it runs to the end and fades — it settles, it does not blink off. No glow, and no
  * second loading signal on top of a page that is already painting. The fill is a transform, so the
  * motion stays on the compositor. Reduced motion: the line appears at the reported width and
- * disappears on ready, with no travel.
+ * disappears on ready, with no travel. Failed or idle navigation removes the line without a finish.
  */
 export function BrowserLoadProgressBar(props: Readonly<{
     progress: number | null;
-    loading: boolean;
+    loadingState: BrowserNavigationLoadingStateV1;
     reducedMotion?: boolean;
     testID?: string;
 }>): React.ReactElement | null {
@@ -71,18 +72,20 @@ export function BrowserLoadProgressBar(props: Readonly<{
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const testID = props.testID ?? 'browser-load-progress';
-    const [phase, setPhase] = React.useState<Phase>(props.loading ? 'loading' : 'hidden');
-    const fill = useSharedValue(props.loading ? INITIAL_SLIVER : 0);
+    const loading = props.loadingState === 'loading';
+    const ready = props.loadingState === 'ready';
+    const [phase, setPhase] = React.useState<Phase>(loading ? 'loading' : 'hidden');
+    const fill = useSharedValue(loading ? INITIAL_SLIVER : 0);
     const opacity = useSharedValue(1);
 
     const hide = React.useCallback(() => setPhase('hidden'), []);
     // Whether the line on screen belongs to the current load. A load that begins after the last one
     // finished (or while its line is still fading) starts a fresh line from the sliver; reusing the
     // finished line would show a full bar for a page that has only just started.
-    const lineBelongsToLoadRef = React.useRef(props.loading);
+    const lineBelongsToLoadRef = React.useRef(loading);
 
     React.useEffect(() => {
-        if (props.loading) {
+        if (loading) {
             setPhase('loading');
             opacity.value = 1;
             if (!lineBelongsToLoadRef.current) {
@@ -102,8 +105,8 @@ export function BrowserLoadProgressBar(props: Readonly<{
             return;
         }
         lineBelongsToLoadRef.current = false;
-        setPhase((current) => (current === 'hidden' ? current : 'settling'));
-    }, [fill, opacity, props.loading, props.progress, reducedMotion]);
+        setPhase((current) => (current === 'hidden' || !ready ? 'hidden' : 'settling'));
+    }, [fill, loading, opacity, props.progress, ready, reducedMotion]);
 
     React.useEffect(() => {
         if (phase !== 'settling') return;
@@ -131,7 +134,7 @@ export function BrowserLoadProgressBar(props: Readonly<{
         transform: [{ scaleX: fill.value }],
     }));
 
-    if (phase === 'hidden') {
+    if (phase === 'hidden' || (!loading && !ready)) {
         return null;
     }
 
@@ -139,7 +142,7 @@ export function BrowserLoadProgressBar(props: Readonly<{
         <HappierProgress
             testID={testID}
             label={t('common.loading')}
-            value={props.loading ? props.progress ?? undefined : 1}
+            value={loading ? props.progress ?? undefined : 1}
             theme={presentationTheme}
             pointerEvents="none"
             style={stylesheet.track}
