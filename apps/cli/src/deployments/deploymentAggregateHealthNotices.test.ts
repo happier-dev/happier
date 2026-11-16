@@ -27,6 +27,7 @@ import { createCliHealthCheckSourceSnapshotReader } from '@/session/actions/work
 import { assembleAutomationRuntime } from '@/plugins/runtime/composition/automationAssembly';
 import { createStablePluginEventsBroker } from '@/plugins/runtime/invocation/services/events';
 import { HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1 } from '@happier-dev/protocol/plugins/events/hostV1';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 
 // HTTP is the only mocked system boundary; aggregation, publication, C1 encoding,
 // retention, encryption and read/recovery remain real.
@@ -71,6 +72,12 @@ describe('P40 aggregate to one C1 Environment health condition', () => {
             } : row };
         });
         http.post.mockImplementation(async (url: string, input: unknown) => {
+            if (new URL(url).pathname === '/v1/machines/read-batch') {
+                const { machineIds } = MachineReadBatchRequestV1Schema.parse(input);
+                return { status: 200, data: MachineReadBatchResponseV1Schema.parse({
+                    results: machineIds.map(machineId => ({ machineId, status: 'not_found' })),
+                }) };
+            }
             if (new URL(url).pathname === '/v3/automations/query') {
                 savedSourceReads++;
                 if (sourceUnavailable) throw Object.assign(new Error('Saved source unavailable'), { code: 'health_source_access_unavailable' });
