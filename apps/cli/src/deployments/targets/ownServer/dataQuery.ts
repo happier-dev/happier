@@ -1,3 +1,4 @@
+import { admitPsqlInput as admitSharedPsqlInput, PostgresqlInputError } from '@happier-dev/databases/postgresql';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
 import type { DeploymentDataQueryInputV1, DeploymentDataQuerySuccessV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
@@ -51,206 +52,20 @@ export function ownServerReadOnlyRoleGuardSql(engine: 'postgresql' | 'mysql',
 );`;
 }
 
-/** One incremental lexical owner for psql input, not SQL authorization. */
-function psqlInputScanner(mode: 'query' | 'dump') {
-    const identifier = (char: string) => /[a-zA-Z0-9_$\u0080-\uFFFF]/.test(char);
-    let quote: "'" | '"' | undefined;
-    let escapeString = false;
-    let dollar: string | undefined;
-    let block = 0;
-    let lineComment = false;
-    let ended = false;
-    let statementEnd: number | undefined;
-    let hasSql = false;
-    let pending = '';
-    let position = 0;
-    let previous = '';
-    let beforePrevious = '';
-    let physicalLineStart = true;
-    let directive: { name: string; phase: 'command' | 'key' | 'afterKey'; keySeen: boolean } | undefined;
-    let word = '';
-    let quotedSetting: string | undefined;
-    let depth = 0;
-    let firstWord = true;
-    let copy = false;
-    let copyBinary = false;
-    let copyWords = 0;
-    let copyDirection: 'FROM' | 'TO' | undefined;
-    let copyStdin = false;
-    let copyData: 'header' | 'rows' | undefined;
-    let dataLine: string | undefined = '';
-    let set = false;
-    let standardStrings = false;
-    let standardStringsOn = false;
-    const token = (value: string, quoted = false) => {
-        const upper = value.toUpperCase();
-        if (firstWord) {
-            copy = !quoted && upper === 'COPY';
-            if (copy && mode === 'query') refuse('unsupported_action', 'unsupported_native_result');
-            set = mode === 'dump' && !quoted && upper === 'SET'; firstWord = false; return;
-        }
-        if (set && upper === 'STANDARD_CONFORMING_STRINGS') standardStrings = true;
-        else if (standardStrings && upper !== 'TO') {
-            if (!['ON', 'TRUE', '1'].includes(upper)) refuse('unsupported_action', 'psql_lexical_setting');
-            standardStringsOn = true;
-        }
-        if (!copy || quoted) return;
-        if (copyDirection) {
-            if (upper === 'PROGRAM') refuse('unsupported_action', 'psql_copy_program');
-            copyStdin = copyDirection === 'FROM' && upper === 'STDIN';
-            copyDirection = undefined;
-        } else if (depth === 0 && (upper === 'FROM' || upper === 'TO')) copyDirection = upper;
-        if ((copyWords++ === 0 && upper === 'BINARY') || (copyStdin && (upper === 'CSV' || upper === 'BINARY'))) copyBinary = true;
-    };
-    const flushWord = () => { if (word) { token(word); word = ''; } };
-    return {
-        write(chunk: string, final = false) {
-            if (chunk.includes('\0')) refuse('unsupported_action', 'psql_binary_input');
-            pending += chunk;
-            let index = 0;
-            const advance = (count = 1) => {
-                for (const char of pending.slice(index, index + count)) {
-                    beforePrevious = previous; previous = char;
-                    if (char === '\n') physicalLineStart = true;
-                    else if (!/[ \t\r]/.test(char)) physicalLineStart = false;
-                }
-                index += count;
-                position += count;
-            };
-            while (index < pending.length) {
-                const char = pending[index]!;
-                const next = pending[index + 1];
-                if (directive) {
-                    if (char === '\n') {
-                        if (!directive.keySeen) refuse('unsupported_action', 'psql_client_command');
-                        directive = undefined;
-                    } else if (directive.phase === 'command') {
-                        if (/[a-z]/.test(char)) {
-                            directive.name += char;
-                            if (!['restrict', 'unrestrict'].some(name => name.startsWith(directive!.name))) refuse('unsupported_action', 'psql_client_command');
-                        } else if (/[ \t]/.test(char) && ['restrict', 'unrestrict'].includes(directive.name)) directive.phase = 'key';
-                        else refuse('unsupported_action', 'psql_client_command');
-                    } else if (directive.phase === 'key' && /[a-zA-Z0-9]/.test(char)) directive.keySeen = true;
-                    else if (/[ \t\r]/.test(char) && directive.keySeen) directive.phase = 'afterKey';
-                    else refuse('unsupported_action', 'psql_client_command');
-                    advance(); continue;
-                }
-                if (copyData) {
-                    if (copyData === 'header') {
-                        if (char === '\n') { copyData = 'rows'; dataLine = ''; }
-                        else if (!/[ \t\r]/.test(char)) refuse('unsupported_action', 'unsupported_copy_input');
-                    } else if (char === '\n') {
-                        if (dataLine === '\\.' || dataLine === '\\.\r') copyData = undefined;
-                        dataLine = '';
-                    } else if (dataLine !== undefined) {
-                        const candidate = dataLine + char;
-                        dataLine = '\\.\r'.startsWith(candidate) ? candidate : undefined;
-                    }
-                    advance(); continue;
-                }
-                if (lineComment) { if (char === '\n' || char === '\r') lineComment = false; advance(); continue; }
-                if (block) {
-                    if (!next && !final && (char === '/' || char === '*')) break;
-                    if (char === '/' && next === '*') { block++; advance(2); }
-                    else if (char === '*' && next === '/') { block--; advance(2); }
-                    else advance();
-                    continue;
-                }
-                if (dollar) {
-                    if (!final && dollar.startsWith(pending.slice(index)) && pending.length - index < dollar.length) break;
-                    if (pending.startsWith(dollar, index)) { advance(dollar.length); dollar = undefined; }
-                    else advance();
-                    continue;
-                }
-                if (quote) {
-                    if (!next && !final && (char === quote || (escapeString && char === '\\'))) break;
-                    if (quote === "'" && escapeString && char === '\\') { advance(next ? 2 : 1); continue; }
-                    if (char === quote) {
-                        if (next === quote) { quotedSetting = undefined; advance(2); }
-                        else {
-                            quote = undefined;
-                            if (quotedSetting !== undefined) token(quotedSetting, true);
-                            quotedSetting = undefined;
-                            advance();
-                        }
-                    } else {
-                        if (quotedSetting !== undefined) {
-                            const candidate = quotedSetting + char;
-                            quotedSetting = ['STANDARD_CONFORMING_STRINGS', 'ON', 'TRUE', '1', 'TO']
-                                .some(value => value.startsWith(candidate.toUpperCase())) ? candidate : undefined;
-                        }
-                        advance();
-                    }
-                    continue;
-                }
-                if (word && identifier(char)) { word += char; advance(); continue; }
-                flushWord();
-                if (!next && !final && /[-/:$]/.test(char)) break;
-                if (char === '-' && next === '-') { lineComment = true; advance(2); continue; }
-                if (char === '/' && next === '*') { block = 1; advance(2); continue; }
-                if (/\s/.test(char)) { advance(); continue; }
-                if (char === '\\') {
-                    if (mode !== 'dump' || !physicalLineStart) refuse('unsupported_action', 'psql_client_command');
-                    directive = { name: '', phase: 'command', keySeen: false };
-                    advance(); continue;
-                }
-                if (char === ':' && previous !== ':' && /[a-zA-Z_{]/.test(next ?? '')) refuse('unsupported_action', 'unquoted_query_parameter');
-                if (char === ';') {
-                    if (mode === 'query') { statementEnd ??= position; ended = true; }
-                    else {
-                        if (standardStrings && !standardStringsOn) refuse('unsupported_action', 'psql_lexical_setting');
-                        if (copyStdin) {
-                            if (copyBinary) refuse('unsupported_action', 'unsupported_copy_input');
-                            copyData = 'header';
-                        }
-                        firstWord = true; copy = false; copyBinary = false; copyWords = 0; copyStdin = false; copyDirection = undefined;
-                        set = false; standardStrings = false; standardStringsOn = false; depth = 0;
-                    }
-                    advance(); continue;
-                }
-                if (ended) refuse('unsupported_action', 'unsupported_multi_result');
-                hasSql = true;
-                if (char === "'" || char === '"') {
-                    quote = char;
-                    quotedSetting = set ? '' : undefined;
-                    escapeString = char === "'" && /e/i.test(previous) && !identifier(beforePrevious);
-                    advance();
-                } else if (char === '$' && !identifier(previous)) {
-                    const remaining = pending.slice(index);
-                    const tag = /^\$(?:[a-zA-Z_\u0080-\uFFFF][a-zA-Z0-9_\u0080-\uFFFF]*)?\$/.exec(remaining)?.[0];
-                    if (tag) { dollar = tag; advance(tag.length); }
-                    else if (!final && /^\$[a-zA-Z0-9_\u0080-\uFFFF]*$/.test(remaining)) break;
-                    else advance();
-                } else if (identifier(char)) { word = char; advance(); }
-                else { if (char === '(') depth++; else if (char === ')') depth--; advance(); }
-            }
-            pending = pending.slice(index);
-            if (final) {
-                flushWord();
-                if (directive && !directive.keySeen) refuse('unsupported_action', 'psql_client_command');
-                if (copyData === 'rows' && (dataLine === '\\.' || dataLine === '\\.\r')) copyData = undefined;
-                if (!hasSql || quote || dollar || block || copyData) refuse('invalid_action_input', 'incomplete_sql_input');
-            }
-        },
-        get statementEnd() { return statementEnd; },
-    };
+/** Legacy deployment callers retain PluginError while the shared dialect owns
+ * every lexical decision for native query and dump input. */
+function rethrowNativePsqlInputError(error: unknown): never {
+    if (error instanceof PostgresqlInputError) refuse(error.code, error.reason);
+    throw error;
 }
-
-/** Query mode returns the one statement for native CSV framing. Dump mode
- * preserves every admitted byte; its streaming form retains lexical state only. */
 export function admitPsqlInput(sql: string, mode: 'query' | 'dump'): string;
 export function admitPsqlInput(sql: AsyncIterable<Uint8Array>, mode: 'dump'): Promise<void>;
 export function admitPsqlInput(sql: string | AsyncIterable<Uint8Array>, mode: 'query' | 'dump'): string | Promise<void> {
-    const scanner = psqlInputScanner(mode);
     if (typeof sql === 'string') {
-        scanner.write(sql, true);
-        return mode === 'query' ? sql.slice(0, scanner.statementEnd) : sql;
+        try { return admitSharedPsqlInput(sql, mode); }
+        catch (error) { return rethrowNativePsqlInputError(error); }
     }
-    return (async () => {
-        const decoder = new TextDecoder('utf-8', { fatal: true });
-        for await (const chunk of sql) scanner.write(decoder.decode(chunk, { stream: true }));
-        scanner.write(decoder.decode(), true);
-    })();
+    return admitSharedPsqlInput(sql, 'dump').catch(rethrowNativePsqlInputError);
 }
 
 /** The response owner supplies the complete envelope budget. Measure each row
