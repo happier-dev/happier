@@ -129,7 +129,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
                 const chunk = groups.slice(start, start + GROUP_CHUNK_SIZE);
                 const first = start === 0;
                 const last = start + GROUP_CHUNK_SIZE >= groups.length;
-                add(`${keyPrefix}:${chunk[0]!.id}`, () => (
+                add(`${keyPrefix}:${chunk[0]!.group.id}`, () => (
                     <GroupRows
                         context={context}
                         groups={chunk}

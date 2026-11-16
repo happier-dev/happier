@@ -14356,7 +14356,7 @@ const italian: TeamsTranslationRoot = {
                     deliveryMode: 'Consegna',
                 },
                 limitsTitle: 'Massimali in questo periodo',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "richiesta" : "richieste"} · ${tokens} ${tokenCount === 1 ? "token" : "token"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "richiesta" : "richieste"} · ${tokens} ${tokenCount === 1 ? "token" : "token"}`,
             },
             activity: {
                 title: 'Attivit\u00e0',

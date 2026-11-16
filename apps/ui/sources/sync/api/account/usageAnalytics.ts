@@ -842,11 +842,12 @@ function buildTotalsFromResponse(
     totals: ProtocolUsageAnalyticsTotals,
     activeDays: number | null,
     costMode: UsageCostMode,
+    totalTokens = resolveUsageMeasuredTokens(totals.tokens).total,
 ): UsageTotals {
     const totalCost = resolveAnalyticsCost(totals.cost, costMode);
 
     return {
-        totalTokens: resolveUsageMeasuredTokens(totals.tokens).total,
+        totalTokens,
         totalCost,
         tokenBreakdown: {
             input: totals.tokens.input,
@@ -854,7 +855,7 @@ function buildTotalsFromResponse(
             reasoning: totals.tokens.reasoning,
             cacheRead: totals.tokens.cacheRead,
             cacheWrite: totals.tokens.cacheWrite,
-            total: resolveUsageMeasuredTokens(totals.tokens).total,
+            total: totalTokens,
         },
         costBreakdown: {
             total: totalCost,
@@ -1643,9 +1644,9 @@ export function buildUsageAnalyticsViewModel(
             const categoryTokens = source.tokenCategories ?? resolveUsageTokenCategories(source.totals.tokens, null);
             const displayTotals = { ...source.totals, tokens: {
                 ...(categoryTokens ?? createEmptyUsageTokens()), total: source.totals.tokens.total,
-                measured: resolveUsageMeasuredTokens(source.totals.tokens),
             } };
-            return buildTotalsFromResponse(displayTotals, insights().activeDays, filters.costMode);
+            return buildTotalsFromResponse(displayTotals, insights().activeDays, filters.costMode,
+                resolveUsageMeasuredTokens(source.totals.tokens).total);
         });
         const trend = memoizeViewSection(() => buildTrendFromResponse(source.series, filters.costMode));
         const modelTimeline = memoizeViewSection(() => buildTimelineFromResponse(source.modelTimeline, costPresentation()));

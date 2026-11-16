@@ -17,7 +17,7 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 // process.
 
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { DaemonProviderModelProjectionRpcRequestV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonProviderModelProjectionRequestV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 
 import { act } from 'react-test-renderer';
@@ -303,12 +303,12 @@ describe('useTeamsDirectory', () => {
         const home = modelAccount.home;
         const { serverId } = await modelAccount.restore({ accountId: 'account', currentAccount: true,
             serverIdentityId: 'srv_team_models', features: createRootLayoutFeaturesResponse({ features: {
-                teams: { enabled: true, credentialResources: { enabled: true } },
+                teams: { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } },
                 providers: { enabled: true },
             } }) });
         // The Home offers models; the exact execution daemon selects their delivery route.
         modelRpc.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, request => {
-            const input = DaemonProviderModelProjectionRpcRequestV1Schema.parse(request.payload);
+            const input = DaemonProviderModelProjectionRequestV1Schema.parse(request.payload);
             return createProviderModelProjectionFixture({ agentTargetKey: input.agentTargetKey,
                 groups: [], teamCredentialResources: input.teamCredentialResources?.map(resource => ({
                     ...resource,

@@ -2273,7 +2273,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // than leaving its bodies reading until some later read.
                     if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
                         queuedProgress = null;
-                        await progressContent?.catch(() => undefined);
+                        await Promise.resolve(progressContent).catch(() => undefined);
                         const shown = entry.getSnapshot().value;
                         const batch = shown ? decodeUsageQueryResource(shown) : undefined;
                         if (batch?.results.some(slice => slice.pending)) {

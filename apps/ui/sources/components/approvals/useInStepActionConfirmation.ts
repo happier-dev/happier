@@ -2,16 +2,14 @@ import * as React from 'react';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
+import type { ActionConfirmationReviewInput } from './ActionConfirmationReview';
 
 type PresentUserActionConfirmation = NonNullable<
   ActionExecutorDeps['presentUserActionConfirmation']
 >;
 
 /** The receiving executor's carried review, waiting on the step's own primary press. */
-export type InStepActionConfirmation = Readonly<{
-  actionId: string;
-  actionArgs: unknown;
-  preview: unknown;
+export type InStepActionConfirmation = ActionConfirmationReviewInput & Readonly<{
   /** The review's consequence sentence, when it carries one; the step shows it in place of its own description. */
   summary: string | null;
 }>;

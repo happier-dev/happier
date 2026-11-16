@@ -427,22 +427,24 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         ...(section.resolveCandidates ? {
             resolveCandidates: async (search: string, signal: AbortSignal) => {
                 const candidates = await section.resolveCandidates!(search, signal);
-                setResolvedNames((current) => {
+                setResolvedPrincipals((current) => {
                     // Copy-on-first-change: unchanged names keep their identity so the
                     // rows around them are not rebuilt by a search that found nothing new.
                     const base = current.scopeKey === scopeKey ? current.values : {};
-                    let next: Record<string, SessionAccessPrincipalPresentation> | null = null;
+                    let next: Record<string, SessionAccessPrincipalSummaryV1> | null = null;
                     for (const candidate of candidates) {
-                        if ((next ?? base)[candidate.principal.key] === candidate.principal) continue;
-                        next ??= { ...base };
-                        next[candidate.principal.key] = candidate.principal;
+                        const summary = candidate.principalSummary;
+                        if (!summary || (next ?? base)[candidate.principal.key] === summary) continue;
+                        const updated: Record<string, SessionAccessPrincipalSummaryV1> = next ?? { ...base };
+                        updated[candidate.principal.key] = summary;
+                        next = updated;
                     }
                     return next === null ? current : { scopeKey, values: next };
                 });
                 return candidates;
             },
         } : {}),
-    })), [directory.sections]);
+    })), [directory.sections, scopeKey]);
 
     const defaultGrant = creationDecision?.defaultGrant;
     const differsFromDefault = primaryTeamId === null

@@ -766,7 +766,7 @@ function updatePrivateResource(
     'resourceId' | 'expectedRevision' | 'nextName' | 'nextValue' | 'nextSource'
   > & Partial<Pick<Parameters<typeof updateSavedSecretResource>[0], 'onApprovalSucceeded' | 'onApprovalFailed'>>,
 ) {
-  return runTeamAction({
+  return runTeamAction<ReturnType<(typeof PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1)['secrets.update']['parse']>>({
     scope,
     actionId: 'secrets.update',
     input: {

@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
+import type { ActionConfirmationReviewInput } from './ActionConfirmationReview';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DeploymentTemplateInstantiationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -296,7 +297,7 @@ describe('native confirmation of a carried executor review', () => {
       bindings: [], generatedSecrets: [], domains: [], firstRunSetup: true,
     });
     const agentSummary = getActionSpec('deployments.templates.instantiate').inputHints?.description;
-    const input = { actionId: 'deployments.templates.instantiate', actionArgs: {}, preview: { summary: agentSummary, deploymentReview: review } };
+    const input = { actionId: 'deployments.templates.instantiate', actionArgs: {}, preview: { summary: agentSummary, deploymentReview: review } } satisfies ActionConfirmationReviewInput;
     const screen = await renderScreen(<ModalProvider />);
     const answer = confirmActionReview({ ...input, title: 'Install status?', summary: null,
       confirmLabel: 'Install', irreversible: false, serverId: 'home' });
@@ -347,7 +348,7 @@ describe('native confirmation of a carried executor review', () => {
       const callsBefore = vi.mocked(Modal.show).mock.calls.length;
       const input = { actionId: 'account.delete', actionArgs: {}, preview: { summary: 'Delete the receiving Account and its saved data.' },
         title: 'Delete Account?', summary: null, confirmLabel: 'Delete Account', irreversible: true, serverId: null,
-        typedConfirmation: { text: 'DELETE', placeholder: 'DELETE' } };
+        typedConfirmation: { text: 'DELETE', placeholder: 'DELETE' } } satisfies Parameters<typeof confirmActionReview>[0];
       const answer = confirmActionReview(input);
       try {
         await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());

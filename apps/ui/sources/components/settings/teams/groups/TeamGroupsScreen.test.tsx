@@ -122,7 +122,7 @@ describe('TeamGroupsScreen', () => {
             body: {
                 items: Array.from({ length: 25 }, (_, index) => teamGroupFixture({
                     id: `group-${index}`,
-                    name: `Group ${index}`,
+                    name: `Group ${String(index).padStart(2, '0')}`,
                 })),
                 nextCursor: null,
             },

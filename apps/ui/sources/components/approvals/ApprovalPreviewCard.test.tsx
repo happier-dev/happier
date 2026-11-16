@@ -81,7 +81,8 @@ describe('ApprovalPreviewCard administrator access (P-M6)', () => {
         expect(screen.findByTestId('approvals.preview.permission')).not.toBeNull();
         await screen.pressByTestIdAsync('approvals.preview.permission.action');
         const pushed = String(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0]);
-        expect(pushed).toContain('/vps/security');
+        expect(pushed).toContain('/vps?');
+        expect(pushed).toContain('tab=security');
         expect(pushed).toContain('serverId=server-a');
         await screen.unmount();
     });

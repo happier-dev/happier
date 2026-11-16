@@ -39,7 +39,7 @@ import { ResourceProposalOperandFacts } from './resourceProposal/ResourceProposa
 import { readResourceProposalTitle } from './resourceProposal/resourceProposalLabels';
 
 export type ApprovalReviewFactsInput = Readonly<{
-  actionId: string;
+  actionId: ApprovalRequest['actionId'];
   actionArgs: unknown;
   preview: unknown;
   status?: ApprovalRequest['status'];

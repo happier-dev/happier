@@ -750,7 +750,9 @@ describe('Saved Secret operations through their real Account and Action owners',
             diagnosticCode: 'native_unavailable', title: t('secretsSettings.vaultInstall', { provider: source.title }),
         }));
         installed = true;
-        await act(async () => screen.root.findByType(SurfaceStateCard).props.action.onPress());
+        const retry = screen.root.findByType(SurfaceStateCard).props.action;
+        if (!retry) throw new Error('The unavailable vault must offer its retry action');
+        await act(async () => { await retry.onPress(); });
         await vi.waitFor(() => expect(screen.findByTestId('vault-vault-only')).not.toBeNull());
         expect(screen.findByTestId('vault-account')?.props.value).toBe('unconfigured.invalid');
         expect(screen.getTextContent()).toContain('Private');

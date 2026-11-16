@@ -14164,7 +14164,7 @@ const german: TeamsTranslationRoot = {
                     deliveryMode: 'Zustellung',
                 },
                 limitsTitle: 'Obergrenzen in diesem Zeitraum',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "Anfrage" : "Anfragen"} · ${tokens} ${tokenCount === 1 ? "Token" : "Tokens"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "Anfrage" : "Anfragen"} · ${tokens} ${tokenCount === 1 ? "Token" : "Tokens"}`,
             },
             activity: {
                 title: 'Aktivit\u00e4t',

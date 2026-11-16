@@ -39,6 +39,11 @@ describe('describeAccountPostAuthResultReason', () => {
             .toBe('settingsAccount.accountServiceOAuth.errors.expired.body');
     });
 
+    it('presents an Account-mode mismatch as a recoverable Home link failure', () => {
+        expect(describeAccountPostAuthResultReason(failure({ code: { source: 'directory', code: 'label_mode_mismatch' } }), context))
+            .toBe('settingsAccount.accountServiceOAuth.errors.homeLink.body');
+    });
+
     it('applies the recovery-specific reasons over the failure body', () => {
         expect(describeAccountPostAuthResultReason(failure({ recovery: 'reauthenticate_account' }), context))
             .toBe('settingsAccount.accountServiceDiscoveryUnavailableDescription');

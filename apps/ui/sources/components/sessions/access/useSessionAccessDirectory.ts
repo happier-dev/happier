@@ -1,7 +1,6 @@
 import * as React from 'react';
-import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import type { SessionAccessPrincipalSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
-import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams/groupLabel';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
@@ -13,7 +12,6 @@ import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { listTeamGroups } from '@/sync/ops/teams/teamGroupOperations';
 import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
-import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
@@ -32,13 +30,7 @@ export type SessionAccessDirectoryTeamContext = Readonly<{
     externalSharingPolicy?: TeamExternalSharingPolicyV1;
 }>;
 
-type DirectoryCandidateRow = SessionAccessCandidateRowModel & Readonly<{
-    /** Retain the Home's safe display facts so local viewer-profile changes do not erase them. */
-    accountProfile?: AccountDisplayProfileV1;
-    /** The opaque Group label is retained only for the canonical local opener. */
-    groupName?: TeamGroupNameProjectionV1;
-    groupTeamName?: string;
-}>;
+type DirectoryCandidateRow = SessionAccessCandidateRowModel;
 
 type Page = Readonly<{
     rows: readonly DirectoryCandidateRow[];
@@ -100,19 +92,22 @@ function teamMemberRows(
 ): readonly DirectoryCandidateRow[] {
     return memberships
         .filter((membership) => membership.status === 'active')
-        .map((membership) => ({
-            principal: projectSessionAccessPrincipal({
+        .map((membership) => {
+            const principalSummary: SessionAccessPrincipalSummaryV1 = {
                 kind: 'account', accountId: membership.accountId,
                 name: membership.account.name,
                 username: membership.account.username,
                 firstName: membership.account.firstName,
                 lastName: membership.account.lastName,
                 avatarUrl: membership.account.avatarUrl,
-            }, viewer),
-            accountProfile: membership.account,
-            teamMembership: { teamId: membership.teamId, teamMembershipId: membership.id, accountId: membership.accountId },
-            addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION,
-        }));
+            };
+            return {
+                principalSummary,
+                principal: projectSessionAccessPrincipal(principalSummary, viewer),
+                teamMembership: { teamId: membership.teamId, teamMembershipId: membership.id, accountId: membership.accountId },
+                addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION,
+            };
+        });
 }
 
 function narrow(rows: readonly SessionAccessCandidateRowModel[], query: string): readonly SessionAccessCandidateRowModel[] {
@@ -187,8 +182,8 @@ export function useSessionAccessDirectory(input: Readonly<{
     const groupLabelInputs = React.useMemo(() => [
         ...teamGroups.rows.map((group) => ({ id: group.id, name: group.name })),
         ...groupRows(groupPage ?? EMPTY_GROUP_PAGE).flatMap((row) =>
-            row.principal.ref.kind === 'group' && row.groupName !== undefined
-                ? [{ id: row.principal.ref.groupId, name: row.groupName }]
+            row.principalSummary?.kind === 'group'
+                ? [{ id: row.principalSummary.groupId, name: row.principalSummary.name }]
                 : []),
     ], [groupPage, teamGroups.rows]);
     const openedGroupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope, groups: groupLabelInputs });
@@ -241,17 +236,11 @@ export function useSessionAccessDirectory(input: Readonly<{
             const current = operation(row.principal.key);
             // A loaded directory page remains its Home's answer. The viewer's own display fields
             // can refresh locally without querying or borrowing the focused Home's Profile.
-            const principal = row.principal.ref.kind === 'group' && row.groupName !== undefined
-                ? projectSessionAccessPrincipal({
-                    kind: 'group',
-                    teamId: row.principal.ref.teamId,
-                    groupId: row.principal.ref.groupId,
-                    name: row.groupName,
-                    teamName: row.groupTeamName ?? '',
-                }, viewer, openedGroupDisplayNames.get(row.principal.ref.groupId))
-                : row.principal.ref.kind === 'account' && row.principal.ref.accountId === scope.accountId
-                    ? presentSharePrincipal({ ref: row.principal.ref, profile: row.accountProfile,
-                        viewerProfile, viewerAccountId: scope.accountId })
+            const summary = row.principalSummary;
+            const principal = summary?.kind === 'group'
+                ? projectSessionAccessPrincipal(summary, viewer, openedGroupDisplayNames.get(summary.groupId))
+                : summary?.kind === 'account' && summary.accountId === scope.accountId
+                    ? projectSessionAccessPrincipal(summary, viewer)
                     : row.principal;
             const samePrincipal = principal.displayName === row.principal.displayName
                 && principal.secondaryLabel === row.principal.secondaryLabel
@@ -286,11 +275,12 @@ export function useSessionAccessDirectory(input: Readonly<{
         if (outcome.kind !== 'succeeded') throw new Error(outcome.failure.kind);
         return {
             rows: outcome.value.items.map((team) => {
-                const projected = projectSessionAccessPrincipal({ kind: 'team', teamId: team.id, name: team.name });
+                const principalSummary = { kind: 'team' as const, teamId: team.id, name: team.name };
+                const projected = projectSessionAccessPrincipal(principalSummary);
                 const summary = teamStandingSummary(team);
                 const principal = summary ? { ...projected, secondaryLabel: summary,
                     accessibilityLabel: `${projected.displayName}, ${summary}` } : projected;
-                return { principal, addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION };
+                return { principal, principalSummary, addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION };
             }),
             teamContexts: outcome.value.items.map((team) => ({
                 teamId: team.id,
@@ -329,13 +319,13 @@ export function useSessionAccessDirectory(input: Readonly<{
         if (!outcome) return { ...source, failed: true };
         if (outcome.kind !== 'succeeded') return { ...source, failed: true };
         const nextRows = outcome.value.items.map((group) => {
-            const principal = projectSessionAccessPrincipal({
-                kind: 'group', teamId: group.teamId, groupId: group.id, name: group.name, teamName: source.team.name,
-            }, viewer, openedGroupDisplayNames.get(group.id));
+            const principalSummary = {
+                kind: 'group' as const, teamId: group.teamId, groupId: group.id, name: group.name, teamName: source.team.name,
+            };
+            const principal = projectSessionAccessPrincipal(principalSummary, viewer, openedGroupDisplayNames.get(group.id));
             return {
                 principal,
-                groupName: group.name,
-                groupTeamName: source.team.name,
+                principalSummary,
                 teamGroup: { teamId: group.teamId, teamGroupId: group.id },
                 addition: { kind: 'allowed' as const },
                 operation: IDLE_OPERATION,
@@ -458,7 +448,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             const next: Page = {
                 rows: page.rows.map((principal) => ({
                     principal: projectSessionAccessPrincipal(principal, viewer),
-                    accountProfile: principal,
+                    principalSummary: principal,
                     addition: { kind: 'allowed' as const },
                     operation: IDLE_OPERATION,
                 })),
@@ -548,7 +538,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                         const seen = new Set(previous.rows.map((row) => row.principal.key));
                         const rows = page.rows.map((principal) => ({
                             principal: projectSessionAccessPrincipal(principal, viewer),
-                            accountProfile: principal,
+                            principalSummary: principal,
                             addition: { kind: 'allowed' as const },
                             operation: IDLE_OPERATION,
                         }));
@@ -669,14 +659,18 @@ export function useSessionAccessDirectory(input: Readonly<{
         const directoryError = { code: 'session_access_directory_failed', message: t('errors.operationFailed'), retryable: true } as const;
         if (teamAddress) {
             const accountRows = teamMemberRows(teamMembers.rows, viewer);
-            const groupCandidateRows: readonly SessionAccessCandidateRowModel[] = teamGroups.rows.map((group) => ({
-                principal: projectSessionAccessPrincipal({
-                    kind: 'group', teamId: group.teamId, groupId: group.id, name: group.name,
+            const groupCandidateRows: readonly SessionAccessCandidateRowModel[] = teamGroups.rows.map((group) => {
+                const principalSummary = {
+                    kind: 'group' as const, teamId: group.teamId, groupId: group.id, name: group.name,
                     teamName: contextTeams.find((team) => team.teamId === group.teamId)?.name ?? '',
-                }, viewer, openedGroupDisplayNames.get(group.id)),
-                teamGroup: { teamId: group.teamId, teamGroupId: group.id },
-                addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION,
-            }));
+                };
+                return {
+                    principalSummary,
+                    principal: projectSessionAccessPrincipal(principalSummary, viewer, openedGroupDisplayNames.get(group.id)),
+                    teamGroup: { teamId: group.teamId, teamGroupId: group.id },
+                    addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION,
+                };
+            });
             const scoped: SessionAccessDirectorySectionModel[] = [{
                 kind: 'account' as const, title: t('session.access.people'), candidates: accountRows,
                 status: teamMembers.status === 'error' ? 'error' as const : teamMembers.status === 'loading' ? 'loading' as const : teamMembers.status === 'loading_more' ? 'refreshing' as const : 'idle' as const,

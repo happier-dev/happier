@@ -29,7 +29,7 @@ function labelRequest(key: string, value: string): LabelRequests['requests'][num
 
 function recipient(accountId: string, contentPublicKey: Uint8Array) {
     return {
-        account: { kind: 'account' as const, accountId, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+        account: { kind: 'account' as const, accountId, name: null, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
         readiness: {
             status: 'available' as const,
             contentPublicKey: encodeBase64(contentPublicKey, 'base64'),
@@ -319,7 +319,7 @@ describe('private label client', () => {
                 };
             },
             decryptEncryptionKey: async (encryptedDataKey: string) => await encryption.decryptEncryptionKey(encryptedDataKey),
-        };
+        } satisfies Parameters<typeof createPrivateLabelClientForAccountContext>[0];
         const client = createPrivateLabelClientForAccountContext(context);
         const binding = { entity: 'account_home', field: 'label', id: 'home-1' } as const;
 
@@ -406,7 +406,7 @@ describe('captured Action private-label opener', () => {
         const open = createPrivateLabelActionOpener({ accountId: 'owner', serverId: 'captured-home',
             assertCurrent: () => { if (!current) throw Object.assign(new Error('retired'), { code: 'action_account_scope_changed' }); },
             request: async () => { throw new Error('opening must not request another Home'); },
-            resolveAccountEncryption: async () => ({ accountMode: 'e2ee', encryption }),
+            resolveAccountEncryption: async () => ({ accountMode: 'e2ee' as const, encryption }),
         });
         await expect(open({ binding, label, readPolicy: { kind: 'team-resource' } }, { surface: 'ui', serverId: 'captured-home' }))
             .resolves.toBe('Work credential');

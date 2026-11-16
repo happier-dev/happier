@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
 installDisconnectedServerSocketBoundary();
@@ -12,9 +13,12 @@ beforeAll(async () => {
     await loadSyncSingletonForTests();
 }, 600_000);
 
+const tokenLabel = sealPrivateLabelV1({ mode: 'plain',
+    binding: { entity: 'account_api_token', field: 'label', id: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }, value: 'CI deploy' });
+
 const token = {
     tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d',
-    label: 'CI deploy',
+    label: projectPrivateLabelForRecipientV1({ stored: tokenLabel, recipientAccountId: 'account-a' }),
     displayPrefix: 'hap_v1_dd03e74b',
     createdAt: '2026-08-22T12:00:00.000Z',
     lastUsedAt: null,
@@ -112,7 +116,7 @@ describe('current-Account API-token Action transport', () => {
     it('sends the complete optional encryption arm through the one create route and never retries', async () => {
         const input = {
             tokenId: token.tokenId,
-            label: token.label,
+            label: tokenLabel,
             encryption: {
                 access: {
                     v: 1 as const,
@@ -170,7 +174,7 @@ describe('current-Account API-token Action transport', () => {
     it('maps all four Action inputs to their scoped routes without an Account selector and preserves the one-time create bearer only in its result', async () => {
         const client = await loadClient();
 
-        await expect(client.createCurrentAccountApiToken({ tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt }))
+        await expect(client.createCurrentAccountApiToken({ tokenId: token.tokenId, label: tokenLabel, expiresAt: token.expiresAt }))
             .resolves.toEqual(created);
         await expect(client.listCurrentAccountApiTokens({})).resolves.toEqual({ tokens: [token] });
         await expect(client.revokeCurrentAccountApiToken({ tokenId: token.tokenId })).resolves.toEqual({ revoked: true });
@@ -183,7 +187,7 @@ describe('current-Account API-token Action transport', () => {
             '/v1/auth/api-tokens/revoke-all',
         ]);
         expect(client.transport.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-            { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt },
+            { tokenId: token.tokenId, label: tokenLabel, expiresAt: token.expiresAt },
             {},
             { tokenId: token.tokenId },
             {},
@@ -209,7 +213,7 @@ describe('current-Account API-token Action transport', () => {
 
     it('distinguishes pre-dispatch refusal from response loss after issuing every token mutation', async () => {
         const refused = await loadClient({ credentialsError: new Error('credential store unavailable') });
-        await expect(refused.createCurrentAccountApiToken({ tokenId: token.tokenId, label: token.label })).resolves.toEqual({
+        await expect(refused.createCurrentAccountApiToken({ tokenId: token.tokenId, label: tokenLabel })).resolves.toEqual({
             ok: false,
             errorCode: 'network_error',
             error: 'network_error',
@@ -225,7 +229,7 @@ describe('current-Account API-token Action transport', () => {
             errorCode: 'network_error',
             error: 'network_error',
         });
-        await expect(client.createCurrentAccountApiToken({ tokenId: token.tokenId, label: token.label })).resolves.toEqual({
+        await expect(client.createCurrentAccountApiToken({ tokenId: token.tokenId, label: tokenLabel })).resolves.toEqual({
             ok: false,
             errorCode: 'outcome_unknown',
             error: 'outcome_unknown',
@@ -253,7 +257,7 @@ describe('current-Account API-token Action transport', () => {
             statusForPath: () => status,
         });
 
-        await expect(client.createCurrentAccountApiToken({ tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt }))
+        await expect(client.createCurrentAccountApiToken({ tokenId: token.tokenId, label: tokenLabel, expiresAt: token.expiresAt }))
             .resolves.toEqual({ ok: false, errorCode, error: errorCode });
     });
 });

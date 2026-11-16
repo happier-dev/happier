@@ -19,7 +19,7 @@ import type {
 import type { SavedSecretGrantDraft } from './savedSecretGrantDraft';
 
 export function savedSecretAudiencePresentations(
-    audience: SavedSecretCatalogAudienceV1 | undefined,
+    audience: SavedSecretCatalogAudienceV1 | null | undefined,
     viewerAccountId: string,
     viewerProfile: AccountDisplayProfileV1 | null,
     openedGroupDisplayNames: ReadonlyMap<string, string | null> = new Map(),

@@ -7452,7 +7452,7 @@ describe('usage query captured Resource adapter', () => {
         const contributions = ['shared', 'other'].filter(id => !query.filters?.sessionIds || query.filters.sessionIds.includes(id))
           .map(id => ({ ...workContribution, id: `usage-${id}`, sessionId: id, eventCount: 1 }));
         return Response.json({ ...value, contributions, totals: { eventCount: contributions.length,
-          tokens: Object.fromEntries(Object.entries(value.totals.tokens).map(([key, count]) => [key, count === null ? null : count * contributions.length])),
+          tokens: Object.fromEntries(Object.entries(value.totals.tokens).map(([key, count]) => [key, typeof count === 'number' ? count * contributions.length : count])),
           cost: { reportedUsd: contributions.length, estimatedUsd: 0, currency: 'USD' } } });
       }
       const sessionId = request.path === '/v2/sessions/shared' ? 'shared'

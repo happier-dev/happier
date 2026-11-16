@@ -227,7 +227,7 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
                             testID="lost-access-use-key"
                             size="large"
                             title={t('connect.restoreWithSecretKeyInstead')}
-                            action={() => router.push('/restore/manual')}
+                            action={async () => router.push('/restore/manual')}
                         />
                     </View>
                 </View>

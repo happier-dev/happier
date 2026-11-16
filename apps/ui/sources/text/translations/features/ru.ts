@@ -14387,7 +14387,7 @@ const russian: TeamsTranslationRoot = {
                     deliveryMode: 'Доставка',
                 },
                 limitsTitle: 'Ограничения за этот период',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount % 10 === 1 && requestCount % 100 !== 11 ? "запрос" : requestCount % 10 >= 2 && requestCount % 10 <= 4 && (requestCount % 100 < 12 || requestCount % 100 > 14) ? "запроса" : "запросов"} · ${tokens} ${tokenCount % 10 === 1 && tokenCount % 100 !== 11 ? "токен" : tokenCount % 10 >= 2 && tokenCount % 10 <= 4 && (tokenCount % 100 < 12 || tokenCount % 100 > 14) ? "токена" : "токенов"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount % 10 === 1 && requestCount % 100 !== 11 ? "запрос" : requestCount % 10 >= 2 && requestCount % 10 <= 4 && (requestCount % 100 < 12 || requestCount % 100 > 14) ? "запроса" : "запросов"} · ${tokens} ${tokenCount !== null && tokenCount % 10 === 1 && tokenCount % 100 !== 11 ? "токен" : tokenCount !== null && tokenCount % 10 >= 2 && tokenCount % 10 <= 4 && (tokenCount % 100 < 12 || tokenCount % 100 > 14) ? "токена" : "токенов"}`,
             },
             activity: {
                 title: '\u0410\u043a\u0442\u0438\u0432\u043d\u043e\u0441\u0442\u044c',

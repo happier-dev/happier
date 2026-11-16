@@ -1,5 +1,6 @@
 import type { EffectiveSessionAccessLevelV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type { SessionAccessPrincipalSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import type { SessionAccessLevelV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
 import type { SessionBotTemplateSource } from '@/components/sessions/bots/templates/openBotTemplate';
 
@@ -34,6 +35,8 @@ export type SessionAccessGrantRowModel = ShareGrantRowModel & Readonly<{
     requiredByTeamPolicy: boolean;
 }>;
 export type SessionAccessCandidateRowModel = ShareCandidateRowModel & Readonly<{
+    /** Retain the authorized source so selected labels use the same local opener. */
+    principalSummary?: SessionAccessPrincipalSummaryV1;
     teamMembership?: Readonly<{ teamId: string; teamMembershipId: string; accountId: string }>;
     teamGroup?: Readonly<{ teamId: string; teamGroupId: string }>;
 }>;

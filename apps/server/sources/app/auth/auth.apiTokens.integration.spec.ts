@@ -146,7 +146,7 @@ describe("auth (API tokens)", () => {
             data: {
                 publicKey: Buffer.from(signing.publicKey).toString("hex"),
                 encryptionMode: "e2ee",
-                contentPublicKey: content.publicKey,
+                contentPublicKey: Buffer.from(content.publicKey),
                 contentPublicKeySig: signAccountContentKeyBindingV1({
                     accountSigningSecretKey: signing.secretKey,
                     contentPublicKey: content.publicKey,
@@ -497,7 +497,7 @@ describe("auth (API tokens)", () => {
             // changing the Account mode under the evidence test.
             db.account.create({ data: {
                 publicKey: Buffer.from(actorSigning.publicKey).toString("hex"), encryptionMode: "e2ee",
-                contentPublicKey: actorContent.publicKey,
+                contentPublicKey: Buffer.from(actorContent.publicKey),
                 contentPublicKeySig: signAccountContentKeyBindingV1({
                     accountSigningSecretKey: actorSigning.secretKey,
                     contentPublicKey: actorContent.publicKey,

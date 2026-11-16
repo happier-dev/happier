@@ -44,6 +44,7 @@ export type ShareSheetTranslations = Readonly<{
         levels: Readonly<{ canUse: string }>;
         help: Readonly<{ use: string }>;
         description: string;
+        footnote: string;
         searchPlaceholder: string;
     }>;
     tasks: Readonly<{

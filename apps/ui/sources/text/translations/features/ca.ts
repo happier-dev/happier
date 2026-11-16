@@ -14377,7 +14377,7 @@ const catalan: TeamsTranslationRoot = {
                     deliveryMode: 'Lliurament',
                 },
                 limitsTitle: 'Límits en aquest període',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "sol·licitud" : "sol·licituds"} · ${tokens} ${tokenCount === 1 ? "token" : "tokens"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "sol·licitud" : "sol·licituds"} · ${tokens} ${tokenCount === 1 ? "token" : "tokens"}`,
             },
             activity: {
                 title: 'Activitat',

@@ -3,22 +3,12 @@ import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveSessionAccessPrincipals } from '@/sync/api/session/sessionAccessApi';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import {
-  presentSharePrincipal,
-  sharePrincipalKey,
-} from './sharePrincipalPresentation';
+import { sharePrincipalKey } from './sharePrincipalPresentation';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
+import { openTeamGroupNameProjection } from '@/sync/ops/teams/teamGroupLabels';
+import { projectSessionAccessPrincipal } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 
 const NO_NAMES: ReadonlyMap<string, string> = new Map();
-
-function principalRef(
-  principal: Awaited<ReturnType<typeof resolveSessionAccessPrincipals>>[number],
-): PrincipalRefV1 {
-  return principal.kind === 'account'
-    ? { kind: 'account', accountId: principal.accountId }
-    : principal.kind === 'team'
-      ? { kind: 'team', teamId: principal.teamId }
-      : { kind: 'group', teamId: principal.teamId, groupId: principal.groupId };
-}
 
 /**
  * Display names for exact principals, keyed by `sharePrincipalKey`, through the existing authorized
@@ -42,16 +32,14 @@ export async function readSharePrincipalNames(
     });
     const names = new Map<string, string>();
     for (const principal of principals) {
-      const ref = principalRef(principal);
-      const presentation = presentSharePrincipal({
-        ref,
-        name: principal.name,
-        ...(principal.kind === 'account' ? { profile: principal } : {}),
-        ...(principal.kind === 'group' ? { teamName: principal.teamName } : {}),
-        viewerAccountId: scope.accountId,
-      });
+      const openedGroupDisplayName = principal.kind === 'group'
+        ? await openTeamGroupNameProjection({ client: createPrivateLabelClient(scope),
+            groupId: principal.groupId, name: principal.name, signal })
+        : undefined;
+      if (principal.kind === 'group' && openedGroupDisplayName === null) continue;
+      const presentation = projectSessionAccessPrincipal(principal, { accountId: scope.accountId }, openedGroupDisplayName);
       names.set(
-        sharePrincipalKey(ref),
+        presentation.key,
         principal.kind === 'group'
           ? presentation.accessibilityLabel
           : presentation.displayName,

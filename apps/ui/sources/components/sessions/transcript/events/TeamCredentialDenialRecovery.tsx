@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
+import { useOpenedTeamCredentialDisplayNames } from '@/components/settings/teams/credentials/teamCredentialPrivateLabels';
 import { presentSessionTeamCredentialDenial } from '@/components/sessions/presentation/sessionTeamCredentialDenialPresentation';
 import { useSessionModelPickerEntry } from '@/components/sessions/presentation/useSessionModelPickerEntry';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
@@ -32,11 +33,15 @@ export function TeamCredentialDenialRecovery(props: Readonly<{
     const resourceId = props.issue.teamCredential?.resourceId ?? null;
     const accountId = viewerScope?.accountId ?? null;
     const scopeServerId = viewerScope ? resolveServerProfileScopeIdForIdentifier(viewerScope.serverId) : null;
-    const readName = React.useCallback((): string | null => (resourceId && accountId && scopeServerId
-        ? readTeamCredentialResourceCatalogs({ serverId: scopeServerId, accountId })
-            .find((resource) => resource.id === resourceId)?.displayName ?? null
-        : null), [accountId, resourceId, scopeServerId]);
-    const credentialName = React.useSyncExternalStore(subscribeTeamsSnapshots, readName, readName);
+    const scope = React.useMemo(() => accountId && scopeServerId ? { serverId: scopeServerId, accountId } : null,
+        [accountId, scopeServerId]);
+    const readResource = React.useCallback(() => resourceId && scope
+        ? readTeamCredentialResourceCatalogs(scope).find((resource) => resource.id === resourceId) ?? null
+        : null, [resourceId, scope]);
+    const resource = React.useSyncExternalStore(subscribeTeamsSnapshots, readResource, readResource);
+    const resources = React.useMemo(() => resource ? [resource] : [], [resource]);
+    const openedNames = useOpenedTeamCredentialDisplayNames({ scope, resources });
+    const credentialName = resourceId ? openedNames[resourceId] ?? null : null;
     const denial = presentSessionTeamCredentialDenial({ issue: props.issue, resolveResourceDisplayName: () => credentialName });
     if (!denial) return null;
     const unavailable = !picker.offered && !canSendMessages;

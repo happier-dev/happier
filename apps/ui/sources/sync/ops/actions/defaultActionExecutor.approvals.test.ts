@@ -31,6 +31,7 @@ import { DiscussionDocEditProposalContentV1Schema } from '@happier-dev/protocol/
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -70,8 +71,11 @@ installDisconnectedServerSocketBoundary((socket) => {
             ? await decisionReceiver(payload.params) : event === SOCKET_RPC_EVENTS.CALL && rpcResponder ? await rpcResponder(payload) : rpcResult };
     });
 });
+const apiTokenLabel = sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'account_api_token', field: 'label',
+    id: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }, value: 'CI deploy' });
 const apiTokenSummary = {
-    tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'CI deploy', displayPrefix: 'hap_v1_dd03e74b',
+    tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: projectPrivateLabelForRecipientV1({
+        stored: apiTokenLabel, recipientAccountId: 'account-ada' }), displayPrefix: 'hap_v1_dd03e74b',
     createdAt: '2026-08-22T12:00:00.000Z', lastUsedAt: null, expiresAt: '2026-11-20T12:00:00.000Z',
     hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
     parentTokenId: null, activeChildCount: 0, embedConfig: null,
@@ -2022,7 +2026,7 @@ describe('createDefaultActionExecutor approvals', () => {
     });
     it('routes current-Account API-token Actions through their scoped transport with no caller-selected Account', async () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
-        const input = { tokenId: apiTokenSummary.tokenId, label: apiTokenSummary.label, expiresAt: apiTokenSummary.expiresAt };
+        const input = { tokenId: apiTokenSummary.tokenId, label: apiTokenLabel, expiresAt: apiTokenSummary.expiresAt };
         homes.answer(homeId, '/v1/auth/api-tokens/create', { body: { token, apiToken: apiTokenSummary } });
         homes.answer(homeId, '/v1/auth/api-tokens/list', { body: { tokens: [apiTokenSummary] } });
         homes.answer(homeId, '/v1/auth/api-tokens/revoke', { body: { revoked: true } });

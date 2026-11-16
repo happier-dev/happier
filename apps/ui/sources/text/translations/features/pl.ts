@@ -14375,7 +14375,7 @@ const polish: TeamsTranslationRoot = {
                     deliveryMode: 'Dostarczanie',
                 },
                 limitsTitle: 'Limity w tym okresie',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "żądanie" : requestCount % 10 >= 2 && requestCount % 10 <= 4 && (requestCount % 100 < 12 || requestCount % 100 > 14) ? "żądania" : "żądań"} · ${tokens} ${tokenCount === 1 ? "token" : tokenCount % 10 >= 2 && tokenCount % 10 <= 4 && (tokenCount % 100 < 12 || tokenCount % 100 > 14) ? "tokeny" : "tokenów"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "żądanie" : requestCount % 10 >= 2 && requestCount % 10 <= 4 && (requestCount % 100 < 12 || requestCount % 100 > 14) ? "żądania" : "żądań"} · ${tokens} ${tokenCount === 1 ? "token" : tokenCount !== null && tokenCount % 10 >= 2 && tokenCount % 10 <= 4 && (tokenCount % 100 < 12 || tokenCount % 100 > 14) ? "tokeny" : "tokenów"}`,
             },
             activity: {
                 title: 'Aktywno\u015b\u0107',

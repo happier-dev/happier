@@ -88,7 +88,7 @@ function MachineAdminAccessPreview(props: Readonly<{ request?: ApprovalSummaryIn
             title={t('machinePresets.setup.tab.permissionChange')}
             description={t('machinePresets.setup.tab.permissionChangeHelp', { machine: name ?? t('common.unknown') })}
             action={{ label: t('machinePresets.setup.tab.separateUsersInstead'), onPress: () => router.push(machinePageHref({
-                door, target: { machineId: input.machineId, ...((props.serverId ?? input.serverId) ? { serverId: (props.serverId ?? input.serverId)! } : {}) }, page: 'security',
+                door, target: { machineId: input.machineId, ...((props.serverId ?? input.serverId) ? { serverId: (props.serverId ?? input.serverId)! } : {}) }, tab: { id: 'security' },
             }) as never) }} />
     );
 }

@@ -17,7 +17,13 @@ import {
 
 export type AccountEncryptionMigrationPrivateLabelCandidate =
     | Readonly<{
-        entity: 'account_api_token' | 'account_directory_home';
+        entity: 'account_api_token';
+        field: 'label';
+        id: string;
+        label: PrivateLabelReadV1;
+    }>
+    | Readonly<{
+        entity: 'account_directory_home';
         field: 'label';
         id: string;
         label: PrivateLabelReadV1;

@@ -14340,7 +14340,7 @@ const japanese: TeamsTranslationRoot = {
                     deliveryMode: '受け渡し方法',
                 },
                 limitsTitle: 'この期間の上限',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "リクエスト" : "リクエスト"} · ${tokens} ${tokenCount === 1 ? "トークン" : "トークン"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "リクエスト" : "リクエスト"} · ${tokens} ${tokenCount === 1 ? "トークン" : "トークン"}`,
             },
             activity: {
                 title: '\u30a2\u30af\u30c6\u30a3\u30d3\u30c6\u30a3',

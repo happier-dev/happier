@@ -47,7 +47,9 @@ export type DeploymentTargetLinkChoiceV1 = Readonly<{
     title: string;
     content: NonNullable<DeploymentEnvironmentDetailV1['targetLinks'][number]['content']>;
 }>;
-type UiDeploymentReadTransport = DeploymentReadTransportV1 & Readonly<{
+type UiDeploymentReadTransport = Omit<DeploymentReadTransportV1, 'readEnvironment'> & Readonly<{
+    readEnvironment: (scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1)
+        => Promise<DeploymentReadResultV1<DeploymentEnvironmentDetailV1>>;
     readTargetLinks: (scope: DeploymentReadScopeV1,
         targetLinks: readonly DeploymentTargetLinkChoiceV1['targetLink'][], options: DeploymentReadOptionsV1)
         => Promise<DeploymentReadResultV1<readonly DeploymentTargetLinkChoiceV1[]>>;

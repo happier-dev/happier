@@ -14334,7 +14334,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                     deliveryMode: '交付方式',
                 },
                 limitsTitle: '這段期間的上限',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "次請求" : "次請求"} · ${tokens} ${tokenCount === 1 ? "個權杖" : "個權杖"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "次請求" : "次請求"} · ${tokens} ${tokenCount === 1 ? "個權杖" : "個權杖"}`,
             },
             activity: {
                 title: '\u6d3b\u52d5',

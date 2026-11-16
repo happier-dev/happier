@@ -108,7 +108,7 @@ export function createManagedIdentityProviderClient(scope: ServerAccountScope): 
                     expectedInput: parsedInput.data,
                     ...(options?.signal ? { signal: options.signal } : {}),
                     onSucceeded: async (value) => await options?.onApprovalSucceeded?.(value),
-                    onFailed: options?.onApprovalFailed,
+                    onFailed: (code, failure) => options?.onApprovalFailed?.(code, failure),
                 });
                 options?.onApprovalPending?.(approval);
                 return {

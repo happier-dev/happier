@@ -6,6 +6,8 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/references';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+
 import type { DecryptedArtifact } from './artifactTypes';
 
 /**
@@ -69,7 +71,7 @@ export function buildDiscussionRequesterApprovalArtifact(input: Readonly<{
             serverIdentityId, accountId: executionAccountId, custodianAccountId: executionAccountId,
             machineId: 'machine-1', installationId: 'installation', actionId, requestId: 'action-1', target,
             authentication: { kind: 'account', tokenEpoch: 0 },
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'action-1', target, input: actionArgs }),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'action-1', target, input: projectNativeJsonValueForTransport(actionArgs) }),
             sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-1', actionRequestAttributionV1 },
             sessionActionSource: { machineId: 'machine-1', installationId: 'installation' },
         } },
@@ -80,7 +82,7 @@ export function buildDiscussionRequesterApprovalArtifact(input: Readonly<{
     };
     const requesterConfirmation = buildApprovalRequesterConfirmationV1({ context, actionId, input: actionArgs });
     if (!requesterConfirmation && (input.requesterAccountId ?? 'bob') !== executionAccountId) throw new Error('Expected the admitted requester confirmation');
-    const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input: actionArgs, context, targetSessionId: botSessionId, requesterConfirmation });
+    const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input: actionArgs, context, targetSessionId: botSessionId, requesterConfirmation: requesterConfirmation ?? undefined });
     if (!executionOriginV1) throw new Error('Expected the signed original Bot execution origin');
     const open = ApprovalRequestV2Schema.parse({
         v: 2, status: 'open', createdAtMs: 10, updatedAtMs: 10,

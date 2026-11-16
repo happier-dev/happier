@@ -11,14 +11,10 @@ import { Modal } from '@/modal';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
-import { ApprovalReviewFacts } from './ApprovalReviewFacts';
+import { ApprovalReviewFacts, type ApprovalReviewFactsInput } from './ApprovalReviewFacts';
 
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
-export type ActionConfirmationReviewInput = Readonly<{
-  actionId: string;
-  actionArgs: unknown;
-  preview: unknown;
-}>;
+export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'>;
 
 type TypedConfirmation = Readonly<{ text: string; placeholder?: string; instruction?: string }>;
 

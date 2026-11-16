@@ -71,6 +71,7 @@ export function describeAccountServiceFailure(code: AccountServiceFailureCode): 
                 case 'assertion_expired':
                 case 'assertion_clock_skew':
                 case 'descriptor_revision_conflict':
+                case 'label_mode_mismatch':
                     return oauthError('homeLink');
                 case 'approval_rejected':
                     return homeEnrollmentFailure(t('connect.pairingRejectedBody'));

@@ -63,7 +63,7 @@ const RECOVERY = 'transcript-event-runtime-issue-recovery';
 const catalogResource = TeamCredentialResourceCatalogEntryV1Schema.parse({
   id: RESOURCE_ID,
   teamId: 'team-a',
-  displayName: CREDENTIAL_NAME,
+  displayName: { content: { t: 'plain', v: CREDENTIAL_NAME }, recipientEnvelope: null, legacyPlaintext: true },
   resourceRevision: 1,
   readiness: { kind: 'available' },
   recoveryAction: null,
@@ -196,7 +196,7 @@ describe('MessageView Team credential denial row', () => {
       const composer = mountComposer(true);
       try {
         const screen = await renderRow(projectFailure(teamIssueMeta), viewer);
-        expect(screen.getTextContent()).toContain(CREDENTIAL_NAME);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(CREDENTIAL_NAME));
         expect(screen.getTextContent()).toContain(
           'teams.credentials.recovery.chooseAnother',
         );
@@ -206,6 +206,7 @@ describe('MessageView Team credential denial row', () => {
         });
         expect(composer.openActionChip).toHaveBeenCalledExactlyOnceWith(
           SESSION_MODEL_PICKER_CHIP_KEY,
+          undefined,
         );
       } finally {
         await act(async () => composer.unregister());
@@ -240,7 +241,7 @@ describe('MessageView Team credential denial row', () => {
       await act(async () => {
         seedCatalog(viewers.owner.accountId);
       });
-      expect(screen.getTextContent()).toContain(CREDENTIAL_NAME);
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain(CREDENTIAL_NAME));
     } finally {
       await act(async () => composer.unregister());
     }

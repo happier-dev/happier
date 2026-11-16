@@ -14402,7 +14402,7 @@ const french: TeamsTranslationRoot = {
                     deliveryMode: 'Distribution',
                 },
                 limitsTitle: 'Plafonds sur cette période',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "requête" : "requêtes"} · ${tokens} ${tokenCount === 1 ? "jeton" : "jetons"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "requête" : "requêtes"} · ${tokens} ${tokenCount === 1 ? "jeton" : "jetons"}`,
             },
             activity: {
                 title: 'Activit\u00e9',

@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { t } from '@/text';
 import { reconcileSessionAccessDraftForHome } from '@/sync/domains/session/access/sessionAccessDraftReconciliation';
 
@@ -195,10 +196,10 @@ describe('useNewSessionAccessDraftController', () => {
 
     it('edits only the synchronized creation draft and removes a draft row without acknowledgement', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'acme', name: 'Acme',
-                policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         let latest: Controller | null = null;
         let draft: SessionInitialAccessDraftV1 | null = null;
@@ -261,14 +262,16 @@ describe('useNewSessionAccessDraftController', () => {
     it('discovers Groups from member Teams that are not already present in the access draft', async () => {
         runTeamActionMock
             .mockResolvedValueOnce({
-                kind: 'succeeded', value: { items: [{
+                kind: 'succeeded', value: { items: [teamSummaryFixture({
                     id: 'team-new', name: 'New Team',
-                    policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
-                }], nextCursor: null },
+                    policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }),
+                })], nextCursor: null },
             } as never)
             .mockResolvedValueOnce({
                 kind: 'succeeded',
-                value: { items: [{ id: 'group-new', teamId: 'team-new', name: 'New Group' }], nextCursor: null },
+                value: { items: [{ id: 'group-new', teamId: 'team-new', name: { kind: 'available', label: {
+                    content: { t: 'plain', v: 'New Group' }, recipientEnvelope: null, legacyPlaintext: true,
+                } } }], nextCursor: null },
             } as never);
         let latest: Controller | null = null;
         await renderScreen(<Probe
@@ -285,14 +288,16 @@ describe('useNewSessionAccessDraftController', () => {
         expect(candidates.map((candidate) => candidate.principal.ref)).toEqual([
             { kind: 'group', teamId: 'team-new', groupId: 'group-new' },
         ]);
+        await act(async () => { latest!.actions.addPrincipal(candidates[0]!.principal.ref); });
+        await vi.waitFor(() => expect(latest!.model.grants[0]?.principal.displayName).toBe('New Group'));
     });
 
     it('offers an ungranted Team and applies its required floor only after reviewed confirmation', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-required', name: 'Required Team',
-                policy: { sessionCreationPolicy: 'team_required', externalSharingPolicy: 'team_admins_only' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_required', externalSharingPolicy: 'team_admins_only' }),
+            })], nextCursor: null },
         } as never);
         let latest: Controller | null = null;
         let draft: SessionInitialAccessDraftV1 | null = null;
@@ -320,10 +325,10 @@ describe('useNewSessionAccessDraftController', () => {
 
     it('derives the required Team floor for a restored context, not only an in-editor change', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-required', name: 'Required Team',
-                policy: { sessionCreationPolicy: 'team_required', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_required', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         let latest: Controller | null = null;
         let draft: SessionInitialAccessDraftV1 | null = null;
@@ -343,10 +348,10 @@ describe('useNewSessionAccessDraftController', () => {
 
     it('raises a Team-credential visibility grant to the required Edit floor instead of locking View', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-required', name: 'Required Team',
-                policy: { sessionCreationPolicy: 'team_required', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_required', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         const credentialSeeded: SessionInitialAccessDraftV1 = { grants: [{
             subject: { kind: 'team', teamId: 'team-required' }, accessLevel: 'view', canApprovePermissions: false,
@@ -363,10 +368,10 @@ describe('useNewSessionAccessDraftController', () => {
 
     it('does not revive a removed team_default row when the same draft is restored', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-default', name: 'Default Team',
-                policy: { sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         let latest: Controller | null = null;
         let draft: SessionInitialAccessDraftV1 | null = null;
@@ -382,10 +387,10 @@ describe('useNewSessionAccessDraftController', () => {
 
     it('proposes Edit access for a team_default context but preserves an explicit private override', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-default', name: 'Default Team',
-                policy: { sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         let latest: Controller | null = null;
         let draft: SessionInitialAccessDraftV1 | null = null;
@@ -420,16 +425,16 @@ describe('useNewSessionAccessDraftController', () => {
     it('keeps Team context choices on the canonical Team cursor as more candidates load', async () => {
         runTeamActionMock
             .mockResolvedValueOnce({
-                kind: 'succeeded', value: { items: [{
+                kind: 'succeeded', value: { items: [teamSummaryFixture({
                     id: 'team-first', name: 'First Team',
-                    policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
-                }], nextCursor: 'team-page-two' },
+                    policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }),
+                })], nextCursor: 'team-page-two' },
             } as never)
             .mockResolvedValueOnce({
-                kind: 'succeeded', value: { items: [{
+                kind: 'succeeded', value: { items: [teamSummaryFixture({
                     id: 'team-second', name: 'Second Team',
-                    policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
-                }], nextCursor: null },
+                    policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }),
+                })], nextCursor: null },
             } as never);
         let latest: Controller | null = null;
         await renderScreen(<Probe initial={null} availability="available" onReady={(controller) => { latest = controller; }} />);
@@ -446,10 +451,10 @@ describe('useNewSessionAccessDraftController', () => {
 
     it('surfaces a blocked draft choice instead of leaving its explanation control inert', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-required', name: 'Required Team',
-                policy: { sessionCreationPolicy: 'team_required', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_required', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         const seeded: SessionInitialAccessDraftV1 = { grants: [{
             subject: { kind: 'team', teamId: 'team-required' }, accessLevel: 'edit', canApprovePermissions: false,
@@ -589,10 +594,10 @@ describe('useNewSessionAccessDraft repository currentness', () => {
 
     it('tracks Team-context currentness independently from access currentness', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-local', name: 'Local Team',
-                policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' }),
+            })], nextCursor: null },
         } as never);
         let latest: NewSessionAccessDraftState | null = null;
         // Team candidates are picker detail, so this case drives the open
@@ -874,10 +879,10 @@ describe('useNewSessionAccessDraft repository currentness', () => {
 
     it('uses the server creation decision instead of a conflicting directory policy', async () => {
         runTeamActionMock.mockResolvedValue({
-            kind: 'succeeded', value: { items: [{
+            kind: 'succeeded', value: { items: [teamSummaryFixture({
                 id: 'team-local', name: 'Directory Required',
-                policy: { sessionCreationPolicy: 'team_required', externalSharingPolicy: 'team_admins_only' },
-            }], nextCursor: null },
+                policy: teamPolicyFixture({ sessionCreationPolicy: 'team_required', externalSharingPolicy: 'team_admins_only' }),
+            })], nextCursor: null },
         } as never);
         const profile = await upsertServerProfile({ name: 'Decision authority Home', serverUrl: 'https://decision-authority.example.test' });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({

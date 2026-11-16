@@ -28,7 +28,7 @@ export type TerminalConnectEntryResult = 'opened' | 'expired' | 'update_required
 
 /** Opening a pasted link retains custody and navigates without approving or putting secrets in history. */
 export async function openTerminalConnectApproval(request: ParsedTerminalConnectUrl, options: Readonly<{
-    navigate: (href: string) => void;
+    navigate: (href: ReturnType<typeof terminalConnectResumeHref> | '/scan/terminal') => void;
     refreshAuth: () => Promise<void>;
 }>): Promise<TerminalConnectEntryResult> {
     const state = resolveTerminalConnectLinkState(request);

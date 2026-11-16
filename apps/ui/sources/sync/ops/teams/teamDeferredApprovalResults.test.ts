@@ -153,7 +153,8 @@ describe('natively confirmed Team mutation results', () => {
             homes.answer(serverId, path, { body: operation === 'create'
                 ? { invitation: teamInvitationRowFixture(), joinUrl: `https://deferred-team.test/join/${token}` }
                 : { replacement: teamInvitationRowFixture({ id: 'invitation-2' }), joinUrl: `https://deferred-team.test/join/${token}` } });
-            const pending = await pendingConfirmation(() => operation === 'create'
+            const pending = await pendingConfirmation<Awaited<ReturnType<typeof createTeamInvitation>>
+                | Awaited<ReturnType<typeof reissueTeamInvitation>>>(() => operation === 'create'
                 ? createTeamInvitation({ scope, address, role: 'member', historyAccess: 'from_membership', recipientEmail: null,
                     requestKey: 'key-create', signal: lifetime.signal })
                 : reissueTeamInvitation({ scope, address, invitationId: 'invitation-1', recipientEmail: null,

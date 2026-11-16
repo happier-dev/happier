@@ -235,7 +235,7 @@ const teamLoader = createScopedSnapshotLoader<TeamTarget>({
     },
     // Home defaults are part of teams.get, so the same demanded projection must refresh.
     matchesWake: (event) => isHomeAdministrationAccountChange(event)
-        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true,
 });
 
 /**

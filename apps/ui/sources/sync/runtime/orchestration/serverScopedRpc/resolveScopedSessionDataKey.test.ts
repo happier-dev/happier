@@ -70,7 +70,7 @@ describe('resolveScopedSessionDataKey', () => {
       targetServerUrl: 'https://server-a.test', token: 't', timeoutMs: 1000 } as unknown as Parameters<typeof resolveScopedSessionEncryption>[0]['context'];
     // The Account currentness owner answers readiness (or refuses with it); this resolver only consumes it.
     const readAccountCurrentness = readiness === undefined ? undefined : async () => {
-      if ('refused' in readiness) throw new AccountEncryptionCurrentnessReadinessError(readiness.refused);
+      if (readiness.refused !== undefined) throw new AccountEncryptionCurrentnessReadinessError(readiness.refused);
       return { recipientEnvelopeReadiness: readiness.observed } as unknown as import('@happier-dev/sync-client').AccountEncryptionIdentity;
     };
     const failure = await resolveScopedSessionEncryption({ context, sessionId: 'team-session', admittedSession: {

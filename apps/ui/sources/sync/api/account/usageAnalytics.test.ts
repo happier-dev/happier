@@ -271,6 +271,17 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(buildUsageAnalyticsViewModel([point], baseState).costPresentation?.source).toBe('none');
         expect(buildUsageAnalyticsViewModel([{ ...point, cost: { total: 0 } }], baseState).costPresentation?.source).toBe('legacy_total_synthesized');
     });
+    it('keeps an unknown aggregate unknown when disjoint category measurements are available', () => {
+        const source = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
+            tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+            cost: { reportedUsd: 1, estimatedUsd: null, currency: 'USD' } },
+            tokenCategories: { input: 70, output: 15, cacheRead: 30, cacheWrite: 0, reasoning: 5, total: 120 } });
+        const view = buildUsageAnalyticsViewModel(source, baseState);
+        expect(view.hero.totalTokens).toBeNull();
+        expect(view.overview.totalTokens).toBeNull();
+        expect(view.efficiency.costPerMtokUsd).toBeNull();
+        expect(view.composition.total).toBe(120);
+    });
     it('uses server disjoint categories without re-adding cached input or reasoning', () => {
         const source: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
             tokens: { input: 100, output: 20, cacheRead: 30, cacheWrite: 0, reasoning: 5, total: 120 },

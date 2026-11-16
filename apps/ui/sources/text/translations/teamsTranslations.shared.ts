@@ -1021,7 +1021,7 @@ export const english = {
                     deliveryMode: 'Delivery',
                 },
                 limitsTitle: 'Limits in this period',
-                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number }) => `${requests} ${requestCount === 1 ? "request" : "requests"} · ${tokens} ${tokenCount === 1 ? "token" : "tokens"}`,
+                sliceSummary: ({ requests, tokens, requestCount, tokenCount }: { requests: string; tokens: string; requestCount: number; tokenCount: number | null }) => `${requests} ${requestCount === 1 ? "request" : "requests"} · ${tokens} ${tokenCount === 1 ? "token" : "tokens"}`,
             },
             activity: {
                 title: 'Activity',

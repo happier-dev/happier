@@ -75,7 +75,7 @@ describe('buildAccountEncryptionPrivateLabelsDirective', () => {
         const opened = await Promise.all(items.map(async item => {
             const envelope = item.label.recipients[0]?.envelope;
             const dataKey = envelope ? await targetEncryption.decryptEncryptionKey(envelope.encryptedDataKey) : null;
-            return dataKey ? openPrivateLabelV1({ binding: binding(item.entity, item.id), label: item.label, dataKey,
+            return dataKey ? openPrivateLabelV1({ binding: { entity: item.entity, field: item.field, id: item.id }, label: item.label, dataKey,
                 readPolicy: { kind: 'account-owned', contentEncryptionMode: 'e2ee' } }) : null;
         }));
         expect(opened).toEqual(['Private 0', 'Private 1']);

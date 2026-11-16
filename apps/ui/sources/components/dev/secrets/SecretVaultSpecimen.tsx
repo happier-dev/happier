@@ -45,7 +45,7 @@ function useStaticChoice(): SavedSecretVaultChoice {
         id: entry.item.id, title: entry.item.title, fieldCount: FIELDS.filter(other => other.item.id === entry.item.id).length,
     }])).values()];
     return { account: 'maya@example.com', setAccount: NOOP, commit: NOOP, current: true, state: { status: 'ready', fields: FIELDS },
-        reload: NOOP, vaults, vault, setVaultId, items, dirty: true,
+        reload: NOOP, vaults, vault, setVaultId, items, dirty: true, machineChoice: null, needsMachine: false,
         target: { contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' }, account: 'maya@example.com', vaultId: vault.id } };
 }
 
