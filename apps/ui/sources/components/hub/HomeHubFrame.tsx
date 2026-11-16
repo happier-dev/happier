@@ -15,7 +15,8 @@ export function HomeHubFrame(props: Readonly<Pick<GlassSurfaceProps, 'children' 
     const destinationKey = useDestinationInstanceKey();
     const visible = useDestinationVisibility();
     return (
-        <PluginSurfaceFocusEligibilityProvider active={props.focused} presentationActive={destinationKey !== null ? visible : props.focused}>
+        <PluginSurfaceFocusEligibilityProvider active={props.focused} currentUiContextActive={props.focused}
+            presentationActive={destinationKey !== null ? visible : props.focused}>
             <GlassSurface ref={paneBoundaryRef} noCoat plane surfaceGroup="content" finishRole={null}
                 style={props.style} onLayout={props.onLayout}>
                 <PopoverScope boundaryRef={paneBoundaryRef}>

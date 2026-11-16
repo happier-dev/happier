@@ -9,6 +9,8 @@ import { PluginReactNativeSurface } from '@/components/plugins/reactNative/Plugi
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { HomeHubFrame } from './HomeHubFrame';
+import { Pressable, Text } from 'react-native';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 // The viewport is a platform boundary; Home framing, focus owners and the native renderer stay real.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -39,6 +41,25 @@ function HomePluginSurface() {
 afterAll(async () => { await fixture?.dispose(); });
 
 describe('HomeHubFrame phone presentation', () => {
+    it('allows the focused standalone Home picker commands and withdraws them when Home loses focus', async () => {
+        function Picker() {
+            const [selected, setSelected] = React.useState(false);
+            const commands = useCurrentUiContextLocalCommands([
+                { key: 'select', title: 'Select widget', invoke: () => setSelected(true) },
+            ], { unbound: 'local' });
+            return <Pressable testID="home-picker-command" onPress={() => { void commands.invoke('select'); }}>
+                <Text testID="home-picker-selection">{selected ? 'selected' : 'empty'}</Text>
+            </Pressable>;
+        }
+        const screen = await renderScreen(<HomeHubFrame focused><Picker /></HomeHubFrame>);
+        try {
+            await screen.pressByTestIdAsync('home-picker-command');
+            expect(screen.findHostByTestId('home-picker-selection')?.props.children).toBe('selected');
+            await screen.update(<HomeHubFrame focused={false}><Picker key="inactive" /></HomeHubFrame>);
+            await screen.pressByTestIdAsync('home-picker-command');
+            expect(screen.findHostByTestId('home-picker-selection')?.props.children).toBe('empty');
+        } finally { await screen.unmount(); }
+    });
     it.each([390, 500])('makes the visible native widget input interactive at %s without a surrounding workspace owner', async width => {
         const screen = await renderScreen(<HomeHubFrame focused style={{ width }}><HomePluginSurface /></HomeHubFrame>);
         try {
