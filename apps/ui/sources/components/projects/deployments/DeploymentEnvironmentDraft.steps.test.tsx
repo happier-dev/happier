@@ -304,6 +304,9 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(frames.length).toBeGreaterThan(0); });
       // A Compose file runs on a Machine only, yet Where still reads as targets: the Machine, then More platforms last.
       expect(tiles()?.props.options.map((option: { id: string }) => option.id)).toEqual(['machine', 'plugins']);
+      // The chosen target leads across its row; each card's body sits under its title row (jdF-whereM).
+      expect(tiles()?.props.options.map((option: { span?: string }) => option.span ?? null)).toEqual(['row', null]);
+      expect(tiles()?.props.descriptionPlacement).toBe('below');
       // The away Machine says so inside its tile, and Where cannot continue on it.
       expect(screen.findByTestId('project-deployments.draft.machineAway')).not.toBeNull();
       expect(frames[frames.length - 1]!.primary.disabled).toBe(true);

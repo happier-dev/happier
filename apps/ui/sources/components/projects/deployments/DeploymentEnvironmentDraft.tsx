@@ -41,6 +41,9 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
+import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
+import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
@@ -414,10 +417,13 @@ export const DeploymentEnvironmentDraft = React.memo(
     const recommendedId = recommendation.evidence.length > 0 ? recommendation.target?.id ?? null : null;
     const recommendationReason = recommendedId ? deploymentRecommendationDescription(recommendation) : null;
     const stepTiles: Array<SelectionTile<string>> = stepped ? [
-      ...targetTiles.filter(tile => tile.id !== PLUGINS_TILE).map((tile): SelectionTile<string> => tile.id === recommendedId
-        ? { ...tile, badge: t('newApp.deploy.recommended'),
-          subtitle: [recommendationReason, tile.subtitle].filter(Boolean).join('\n') }
-        : tile),
+      // The chosen target leads the grid across its row (journey-deploy where); the others keep two columns beneath.
+      ...targetTiles.filter(tile => tile.id !== PLUGINS_TILE).map((tile): SelectionTile<string> => ({
+        ...tile,
+        ...(tile.id === recommendedId ? { badge: t('newApp.deploy.recommended'),
+          subtitle: [recommendationReason, tile.subtitle].filter(Boolean).join('\n') } : {}),
+        ...(tile.id === targetKey ? { span: 'row' as const } : {}),
+      })),
       { id: PLUGINS_TILE, icon: 'plus', title: t('newApp.deploy.morePlatforms'), subtitle: t('newApp.deploy.morePlatformsBody') },
     ] : targetTiles;
     // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
@@ -651,6 +657,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           awayMachinesChoosable
           onSelectMachine={(machine) => setMachineId(machine.id)}
         />
+        {chosen && props.lifetime ? <MachineCardFacts serverId={props.lifetime.scope.serverId} machineId={chosen.id} /> : null}
         {machineAway ? (
           <BareSectionContent>
             <Text testID="project-deployments.draft.machineAway" variant="meta" style={{ color: theme.colors.text.secondary }}>
@@ -672,6 +679,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               onChange={chooseTarget}
               minimumColumns={1}
               maximumColumns={props.phone ? 1 : 2}
+              descriptionPlacement="below"
               renderOptionFooter={({ option }) => option.id === MACHINE_TILE ? machineCard : null}
             />
             </BareSectionContent>
@@ -1015,6 +1023,23 @@ const styles = StyleSheet.create((theme) => ({
   hiddenStep: { display: 'none' },
   machineCard: { gap: theme.space.s4 },
 }));
+
+/**
+ * The chosen Machine's facts in its Where card (journey-deploy whereM), each only when its owner reports it: free
+ * memory from the Machine's resource summary. Runs and Docker have no owner read here yet, so they are not drawn.
+ */
+function MachineCardFacts(props: Readonly<{ serverId: string; machineId: string }>) {
+  const resources = useMachineResourceSummary({ serverId: props.serverId, machineId: props.machineId });
+  const available = resources?.kind === 'reporting' ? resources.summary?.memory.availableBytes ?? null : null;
+  if (available === null) return null;
+  return (
+    <BareSectionContent>
+      <FieldLayout label={t('newApp.deploy.factMemory')} columns>
+        <FieldValue value={t('newApp.deploy.factMemoryFree', { free: formatHappierDataBytes(available, { kind: 'memory' }) })} />
+      </FieldLayout>
+    </BareSectionContent>
+  );
+}
 
 function DeploymentCopyProvisionEditor(props: Readonly<{
   targetLinkId: string;

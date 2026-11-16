@@ -140,6 +140,8 @@ type Copy = Readonly<{
     cantRun: (p: Name) => string;
     cantRunUnnamed: string;
     cantRunStored: string;
+    factMemory: string;
+    factMemoryFree: (p: Readonly<{ free: string }>) => string;
   }>;
 }>;
 
@@ -308,6 +310,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Can’t run ${name}`,
       cantRunUnnamed: 'Can’t run this app',
       cantRunStored: 'They build from a repository, and this app has none.',
+      factMemory: 'Memory',
+      factMemoryFree: ({ free }) => `${free} free`,
     },
   },
   ca: {
@@ -457,6 +461,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `No pot executar ${name}`,
       cantRunUnnamed: 'No pot executar aquesta app',
       cantRunStored: 'Construeixen des d’un repositori, i aquesta app no en té.',
+      factMemory: 'Memòria',
+      factMemoryFree: ({ free }) => `${free} lliures`,
     },
   },
   de: {
@@ -606,6 +612,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Kann ${name} nicht ausführen`,
       cantRunUnnamed: 'Kann diese App nicht ausführen',
       cantRunStored: 'Sie bauen aus einem Repository, und diese App hat keins.',
+      factMemory: 'Arbeitsspeicher',
+      factMemoryFree: ({ free }) => `${free} frei`,
     },
   },
   es: {
@@ -755,6 +763,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `No puede ejecutar ${name}`,
       cantRunUnnamed: 'No puede ejecutar esta app',
       cantRunStored: 'Compilan desde un repositorio, y esta app no tiene.',
+      factMemory: 'Memoria',
+      factMemoryFree: ({ free }) => `${free} libres`,
     },
   },
   fr: {
@@ -904,6 +914,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Ne peut pas exécuter ${name}`,
       cantRunUnnamed: 'Ne peut pas exécuter cette app',
       cantRunStored: 'Elles construisent depuis un dépôt, et cette app n’en a pas.',
+      factMemory: 'Mémoire',
+      factMemoryFree: ({ free }) => `${free} libres`,
     },
   },
   it: {
@@ -1053,6 +1065,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Non può eseguire ${name}`,
       cantRunUnnamed: 'Non può eseguire questa app',
       cantRunStored: 'Compilano da un repository, e questa app non ne ha.',
+      factMemory: 'Memoria',
+      factMemoryFree: ({ free }) => `${free} liberi`,
     },
   },
   ja: {
@@ -1202,6 +1216,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `${name} を実行できません`,
       cantRunUnnamed: 'このアプリを実行できません',
       cantRunStored: 'リポジトリからビルドしますが、このアプリにはありません。',
+      factMemory: 'メモリ',
+      factMemoryFree: ({ free }) => `空き ${free}`,
     },
   },
   pl: {
@@ -1351,6 +1367,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Nie może uruchomić ${name}`,
       cantRunUnnamed: 'Nie może uruchomić tej aplikacji',
       cantRunStored: 'Budują z repozytorium, a ta aplikacja go nie ma.',
+      factMemory: 'Pamięć',
+      factMemoryFree: ({ free }) => `${free} wolne`,
     },
   },
   pt: {
@@ -1500,6 +1518,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Não consegue executar ${name}`,
       cantRunUnnamed: 'Não consegue executar esta app',
       cantRunStored: 'Compilam a partir de um repositório, e esta app não tem.',
+      factMemory: 'Memória',
+      factMemoryFree: ({ free }) => `${free} livres`,
     },
   },
   ru: {
@@ -1649,6 +1669,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `Не может запустить ${name}`,
       cantRunUnnamed: 'Не может запустить это приложение',
       cantRunStored: 'Они собирают из репозитория, а у этого приложения его нет.',
+      factMemory: 'Память',
+      factMemoryFree: ({ free }) => `свободно ${free}`,
     },
   },
   'zh-Hans': {
@@ -1794,6 +1816,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `无法运行 ${name}`,
       cantRunUnnamed: '无法运行此应用',
       cantRunStored: '它们从仓库构建，而此应用没有仓库。',
+      factMemory: '内存',
+      factMemoryFree: ({ free }) => `可用 ${free}`,
     },
   },
   'zh-Hant': {
@@ -1939,6 +1963,8 @@ export const newAppTranslations: Readonly<
       cantRun: ({ name }) => `無法執行 ${name}`,
       cantRunUnnamed: '無法執行此應用',
       cantRunStored: '它們從儲存庫建置，而此應用沒有儲存庫。',
+      factMemory: '記憶體',
+      factMemoryFree: ({ free }) => `可用 ${free}`,
     },
   },
 };

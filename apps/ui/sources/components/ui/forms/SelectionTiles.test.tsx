@@ -314,6 +314,44 @@ describe('SelectionTiles', () => {
     expect(await tileWidth(220)).toBe(400);
   });
 
+  it('lets the option a choice leads with span its row, and sets descriptions under the title row when asked (journey-deploy where)', async () => {
+    const { SelectionTiles } = await import('./SelectionTiles');
+    const options = [
+      { id: 'machine', title: 'A machine', subtitle: 'One of your Machines runs it', span: 'row' as const },
+      { id: 'more', title: 'More platforms', subtitle: 'Turn on another plugin' },
+      { id: 'other', title: 'Other', subtitle: 'Another target' },
+    ];
+    const screen = await renderScreen(
+      <SelectionTiles options={options} value="machine" onChange={vi.fn()} maximumColumns={2}
+        descriptionPlacement="below" testIdPrefix="where" />,
+    );
+    const grid = screen.tree.findByType('View' as never);
+    await act(async () => {
+      grid.props.onLayout?.({ nativeEvent: { layout: { width: 600, height: 300, x: 0, y: 0 } } });
+    });
+    const widthOf = (id: string) => {
+      const pressable = screen.tree.findAll((node) => node.props?.testID === `where:${id}` && typeof node.props?.style === 'function')[0]!;
+      const resolved = pressable.props.style({ pressed: false });
+      return Object.assign({}, ...(Array.isArray(resolved) ? resolved.filter(Boolean) : [resolved])).width;
+    };
+    expect(widthOf('machine'), 'the spanning tile takes the row').toBe(600);
+    expect(widthOf('more'), 'the rest keep the grid').toBe((600 - 10) / 2);
+    // The description is the card's body under the title row, not the title column beside the icon.
+    const description = screen.tree.findAll((node) => node.props?.testID === 'where:machine:description');
+    expect(description.length).toBeGreaterThan(0);
+    await screen.unmount();
+  });
+
+  it('keeps every existing card the same when neither option is used', async () => {
+    const { SelectionTiles } = await import('./SelectionTiles');
+    const screen = await renderScreen(
+      <SelectionTiles options={[{ id: 'a', title: 'A', subtitle: 'first' }, { id: 'b', title: 'B', subtitle: 'second' }]}
+        value={null} onChange={vi.fn()} testIdPrefix="plain" />,
+    );
+    expect(screen.tree.findAll((node) => node.props?.testID === 'plain:a:description')).toHaveLength(0);
+    await screen.unmount();
+  });
+
   it('lays a sheet choice out as cells of one sheet: no outlines or gaps, hairlines between columns and rows, one per line when narrow', async () => {
     const { SelectionTiles } = await import('./SelectionTiles');
     const options = [

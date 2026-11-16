@@ -56,6 +56,8 @@ export interface SelectionTile<T extends string> {
     previewEdge?: 'solid' | 'dashed';
     /** Overrides the `testIdPrefix:id` test id of this tile. */
     testID?: string;
+    /** Card tiles: take the whole row (the choice a group leads with); the others keep the grid beneath it. */
+    span?: 'row';
 }
 
 export type SelectionTileFooterRenderer<T extends string> = (params: Readonly<{
@@ -95,6 +97,8 @@ type SelectionTilesBaseProps<T extends string> = {
     subtitleLines?: number;
     /** Card variant: `sheet` draws the options as cells of the section sheet they sit on, not as separate tiles. */
     surface?: 'tiles' | 'sheet';
+    /** Card variant: `below` sets each description, and the footer, under the title row at the card's full width. */
+    descriptionPlacement?: 'beside' | 'below';
     renderOptionFooter?: SelectionTileFooterRenderer<T>;
 };
 
