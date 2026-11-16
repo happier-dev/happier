@@ -38,6 +38,7 @@ describe('New app draft (projects.starters.create operands)', () => {
       destinationParentPath: '/home/alice/src',
       destinationDirectoryName: 'rye-co-orders',
       repository: {
+        providerKind: 'github',
         owner: 'alice',
         name: 'rye-co-orders',
         visibility: 'private',

@@ -1,4 +1,4 @@
-import type { ProjectStarterCreateInputV1, ProjectStarterCreateResumeV1 } from '@happier-dev/protocol/projects/starters/createV1';
+import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1, type ProjectStarterCreateInputV1, type ProjectStarterCreateResumeV1 } from '@happier-dev/protocol/projects/starters/createV1';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
@@ -80,7 +80,7 @@ export function buildStarterCreateInput(
     description,
     destinationParentPath: projectCheckoutParentPath(facts.homeDir),
     destinationDirectoryName: name,
-    repository: { owner: facts.owner, name, visibility: 'private' },
+    repository: { providerKind: DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1, owner: facts.owner, name, visibility: 'private' },
   };
 }
 

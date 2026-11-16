@@ -8,14 +8,22 @@ export type ProjectSourcesActionInputById = {
         serverId: string;
         machineId: string;
         requestKey: string;
-        starterId: string;
         description: string;
         destinationParentPath: string;
         destinationDirectoryName: string;
         repository: {
             owner: string;
             name: string;
+            providerKind?: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown' | undefined;
             visibility?: 'private' | 'public' | undefined;
+        };
+        starterId?: string | undefined;
+        source?: undefined | {
+            kind: 'scratch';
+        } | {
+            kind: 'starter';
+            starterId: string;
+            sourceId?: string | undefined;
         };
         starterSourceId?: string | undefined;
         resume?: undefined | {
@@ -38,7 +46,7 @@ export type ProjectSourcesActionInputById = {
                 };
                 protocol: 'auto' | 'https' | 'ssh';
             };
-            commit: string;
+            commit?: string | undefined;
             sourceId?: string | undefined;
         };
     };
@@ -237,8 +245,6 @@ export type ProjectSourcesActionResultById = {
         projectId: string;
         sourceId: string;
         repositoryUrl: string;
-        starterId: string;
-        commit: string;
         workspace: {
             serverId: string;
             workspaceId: string;
@@ -250,6 +256,8 @@ export type ProjectSourcesActionResultById = {
             directory: string;
             initialMessage: string;
         };
+        starterId?: string | undefined;
+        commit?: string | undefined;
     } | {
         kind: 'failed' | 'partial';
         phase: 'account' | 'checkout' | 'project' | 'publish' | 'source' | 'starter';
@@ -283,7 +291,7 @@ export type ProjectSourcesActionResultById = {
                 };
                 protocol: 'auto' | 'https' | 'ssh';
             };
-            commit: string;
+            commit?: string | undefined;
             sourceId?: string | undefined;
         };
         remediation?: undefined | {
