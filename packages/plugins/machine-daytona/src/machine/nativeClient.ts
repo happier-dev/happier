@@ -15,8 +15,11 @@ const executionSchema = defineProtocolObject({ exitCode: defineProtocolNumber({ 
 const outputSchema = defineProtocolObject({ exitCode: defineProtocolNumber({ integer: true }), stdoutBase64: defineProtocolString(), stderrBase64: defineProtocolString() }, open);
 type Acquisition = MachineProvisionerAcquireResultV1<DaytonaResource, DaytonaOperation>;
 type Destruction = MachineProvisionerDestroyResultV1<DaytonaOperation>;
-class NativeError extends Error {
+export class NativeError extends Error {
   constructor(readonly code: string, readonly status?: number) { super(code); }
+}
+export function requireDaytonaHttpSuccess(response: Response): void {
+  if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'daytona_http_' + response.status, response.status);
 }
 const code = (error: unknown) => error instanceof NativeError ? error.code : 'daytona_unavailable';
 const pending = (operation: DaytonaOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
@@ -27,7 +30,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
     const response = await request(url, { method, signal, redirect: 'error',
       headers: { 'content-type': bytes ? 'application/octet-stream' : 'application/json' },
       ...(bytes ? { body: new Uint8Array(bytes) } : body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'daytona_http_' + response.status, response.status);
+    requireDaytonaHttpSuccess(response);
     if (response.status === 204) return null;
     try { return await response.json() as unknown; } catch { throw new NativeError('daytona_invalid_response'); }
   }
