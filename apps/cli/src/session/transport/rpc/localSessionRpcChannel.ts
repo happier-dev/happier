@@ -736,6 +736,11 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     }
     // Held while the connection lives: its daemon releasing it, or the daemon process ending, closes it.
     response.once('close', release);
+    // Peer admission can finish after this connection's close event.
+    if (response.destroyed) {
+      release();
+      return;
+    }
     response.writeHead(200, { 'content-type': 'application/json' });
     response.flushHeaders();
     return;

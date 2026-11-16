@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { captureProcessBirthWitness } from '@/daemon/processIdentity';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { rm } from 'node:fs/promises';
 import { join, resolve as resolvePath } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -159,7 +159,8 @@ type InProcessHost = Readonly<{ process: EventEmitter; exit: ReturnType<typeof v
 /** In-process hosts still serving at the end of a test (a real host is its own process). */
 const liveInProcessHosts = new Set<InProcessHost>();
 
-async function createHarness(startupFailure?: Error) {
+async function createHarness(startupFailure?: Error,
+  readTrustedCaller: Parameters<typeof startSessionHost>[0]['readTrustedCaller'] = () => captureProcessBirthWitness(process.pid)) {
   peerHelper.path ??= resolvePeerHelper();
   const releaseSessions: Array<() => void> = [];
   const hostedEnvironments: Array<Readonly<Record<string, string | undefined>>> = [];
@@ -188,7 +189,7 @@ async function createHarness(startupFailure?: Error) {
         await Promise.race([new Promise<void>((resolve) => { releaseSessions.push(resolve); }), termination.whenTerminated]);
         termination.dispose();
       },
-      readTrustedCaller: () => captureProcessBirthWitness(process.pid),
+      readTrustedCaller,
       preloadSessionRunner: async () => { census.runnerPreloads += 1; },
       process: hostProcess,
       exit: hostExit,
@@ -738,6 +739,31 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     expect(census.hostLaunches - launchesBefore).toBe(2);
     harness.releaseAll();
     await b.record.hostedSession!.observed;
+  });
+
+  it('ends an idle prestarted host when the intent disconnects during daemon admission', { timeout: 120_000 }, async () => {
+    let admissionStarted!: () => void;
+    const started = new Promise<void>(resolve => { admissionStarted = resolve; });
+    let finishAdmission!: () => void;
+    const admitted = new Promise<void>(resolve => { finishAdmission = resolve; });
+    const harness = await createHarness(undefined, async () => {
+      admissionStarted();
+      await admitted;
+      return captureProcessBirthWitness(process.pid);
+    });
+    const intent = new AbortController();
+    const held = harness.sessionHost.prestart(intent.signal);
+    await started;
+    expect(hostSockets.size).toBe(1);
+    const serverSocket = [...hostSockets][0]!;
+    const serverClosed = once(serverSocket, 'close');
+    intent.abort();
+    await held;
+    await serverClosed;
+    expect(serverSocket.destroyed).toBe(true);
+    finishAdmission();
+    await harness.hosts[0]!.host.whenEnded;
+    expect(harness.hosts[0]!.exit).toHaveBeenCalledWith(0);
   });
 
   it('ends an idle prestarted host when its daemon goes away (the hold connection breaks)', { timeout: 120_000 }, async () => {
