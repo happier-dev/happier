@@ -2,7 +2,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 function parseArgs(argv) {
   const kv = new Map();
@@ -93,41 +93,36 @@ export const EMBEDDED_FEATURE_BUILD_POLICY_RAW = Object.freeze({
 `;
 }
 
-async function main() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const repoRoot = resolve(here, '..', '..', '..');
-  const { flags, kv } = parseArgs(process.argv.slice(2));
+/** The generated module's path inside a repository. */
+export const EMBEDDED_FEATURE_POLICIES_OUTPUT = 'packages/protocol/src/features/embeddedFeaturePolicies.generated.ts';
 
-  const policyDir = String(kv.get('--policy-dir') ?? '').trim() || join(repoRoot, '.github', 'feature-policy');
-  const outPath = String(kv.get('--out') ?? '').trim() || join(repoRoot, 'packages', 'protocol', 'src', 'features', 'embeddedFeaturePolicies.generated.ts');
-  const requirePolicies = String(process.env.HAPPIER_REQUIRE_FEATURE_POLICY ?? '').trim() === '1';
-
-  const defaultEnv = normalizePolicyEnv(process.env.HAPPIER_EMBEDDED_POLICY_ENV) ?? 'preview';
-
-  const previewPath = join(policyDir, 'preview.json');
-  const productionPath = join(policyDir, 'production.json');
+/**
+ * Render the module from `policyDir` and write it when it differs. Build
+ * captures call this against their own repository root, so the module always
+ * follows the policy files of the bytes being built.
+ * @returns {Promise<{ outPath: string, changed: boolean }>}
+ */
+export async function writeEmbeddedFeaturePolicies({ repoRoot, policyDir = join(repoRoot, '.github', 'feature-policy'),
+  outPath = join(repoRoot, EMBEDDED_FEATURE_POLICIES_OUTPUT), env = process.env, check = false }) {
+  const requirePolicies = String(env.HAPPIER_REQUIRE_FEATURE_POLICY ?? '').trim() === '1';
+  const defaultEnv = normalizePolicyEnv(env.HAPPIER_EMBEDDED_POLICY_ENV) ?? 'preview';
 
   let preview;
   let production;
   try {
-    preview = await loadPolicy(previewPath, 'preview');
-    production = await loadPolicy(productionPath, 'production');
+    preview = await loadPolicy(join(policyDir, 'preview.json'), 'preview');
+    production = await loadPolicy(join(policyDir, 'production.json'), 'production');
   } catch (error) {
     if (requirePolicies) throw error;
     preview = { allowRaw: '', denyRaw: '' };
     production = { allowRaw: '', denyRaw: '' };
   }
 
-  const source = renderModuleSource({
-    preview,
-    production,
-    defaultEnv,
-  });
-
+  const source = renderModuleSource({ preview, production, defaultEnv });
   const previous = await readFile(outPath, 'utf8').catch(() => null);
-  if (previous === source) return;
+  if (previous === source) return { outPath, changed: false };
 
-  if (flags.has('--check')) {
+  if (check) {
     throw new Error(
       '[protocol] embedded feature-policy compiler input is stale. Run node packages/protocol/scripts/generate-embedded-feature-policies.mjs to refresh it.',
     );
@@ -135,9 +130,20 @@ async function main() {
 
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, source, 'utf8');
+  return { outPath, changed: true };
 }
 
-main().catch((error) => {
+async function main() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = resolve(here, '..', '..', '..');
+  const { flags, kv } = parseArgs(process.argv.slice(2));
+  await writeEmbeddedFeaturePolicies({ repoRoot,
+    policyDir: String(kv.get('--policy-dir') ?? '').trim() || undefined,
+    outPath: String(kv.get('--out') ?? '').trim() || undefined,
+    check: flags.has('--check') });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

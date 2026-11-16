@@ -300,18 +300,11 @@ export async function ensureUiWorkspacePackagesBuilt({
   });
   if (source) {
     if (publicationMode !== 'live') throw new Error('Source Expo preparation cannot publish package artifacts');
-    // Source worker compilation owns freshness and retained outputs separately
-    // from installed dependency admission.
+    // Source worker bundles and the atmosphere worklet are prepared with the
+    // locale/Shiki assets (prepareSourceUiAssets), keyed by their source inputs.
     const { resolveUiPostinstallTasks } = await import('../tools/resolveUiPostinstallTasks.mjs');
     const tasks = resolveUiPostinstallTasks({ env });
     const retainLastGreen = env[WORKSPACE_BUILD_MODE_ENV] !== 'strict';
-    const { buildPasswordKdfWorker } = await import('../tools/password/buildPasswordKdfWorker.mjs');
-    const { buildCryptoWorker } = await import('../tools/crypto/buildCryptoWorker.mjs');
-    const { buildAtmosphereRenderers } = await import('../tools/atmosphere/buildAtmosphereRenderers.mjs');
-    if (tasks.includes('vendor-password-kdf-worker')) await buildPasswordKdfWorker({ uiDirectory: uiPackageDir, retainLastGreen });
-    if (tasks.includes('vendor-crypto-worker')) await buildCryptoWorker({ uiDirectory: uiPackageDir, retainLastGreen });
-    if (tasks.includes('prepare-atmosphere-renderers')) await buildAtmosphereRenderers({ uiDirectory: uiPackageDir,
-      web: tasks.includes('vendor-password-kdf-worker'), retainLastGreen });
     const { buildUiSourceAsset } = await import('../tools/sourceAsset.mjs');
     if (tasks.includes('vendor-tiptap-webview-bundle')) {
       const { buildTiptapWebViewBundle } = await import('../tools/tiptap/buildTiptapWebViewBundle.mjs');

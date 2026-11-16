@@ -1,6 +1,12 @@
 import { build } from 'esbuild';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
+
+/** Absolute source files an esbuild result consumed (its metafile inputs). */
+export function readBuildInputPaths(...results) {
+    return [...new Set(results.flatMap(result => Object.keys(result.metafile?.inputs ?? {})))]
+        .filter(path => !path.startsWith('<') && !/^[a-z-]+:/.test(path)).map(path => resolve(path)).sort();
+}
 
 /** Source compilation owns its last-green files, independently of installation. */
 export async function buildUiSourceAsset({ outputs, retainLastGreen = false, build }) {
@@ -23,7 +29,7 @@ export async function buildUiSourceAsset({ outputs, retainLastGreen = false, bui
 /** Public workers work in both split and single-bundle Expo, web and Tauri. */
 export async function buildUiSourceWorker({ entryPoint, outputFile, alias, retainLastGreen = false }) {
     const built = await buildUiSourceAsset({ outputs: [outputFile], retainLastGreen, build: async () => {
-        const result = await build({ entryPoints: [entryPoint], alias,
+        const result = await build({ entryPoints: [entryPoint], alias, metafile: true,
             bundle: true, platform: 'browser', format: 'iife', target: ['es2020'], minify: true, write: false });
         const contents = result.outputFiles[0].text;
         const previous = await readFile(outputFile, 'utf8').catch(error => {
@@ -34,7 +40,7 @@ export async function buildUiSourceWorker({ entryPoint, outputFile, alias, retai
             await mkdir(dirname(outputFile), { recursive: true });
             await writeFile(outputFile, contents);
         }
-        return { outputFile, bytes: result.outputFiles[0].contents.byteLength };
+        return { outputFile, bytes: result.outputFiles[0].contents.byteLength, inputPaths: readBuildInputPaths(result) };
     } });
     return { outputFile, ...built };
 }

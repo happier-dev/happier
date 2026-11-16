@@ -3,12 +3,13 @@ import { execFile, spawn } from 'node:child_process';
 import { createWriteStream, existsSync } from 'node:fs';
 import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { BuildInputDriftError, mountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs, SERVER_GENERATED_CLIENT_STAMP, SERVER_GENERATED_CLIENTS } from '../utils/fs/workspaceBuildInputs.mjs';
+import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs, SERVER_GENERATED_CLIENT_STAMP, SERVER_GENERATED_CLIENTS } from '../utils/fs/workspaceBuildInputs.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 
@@ -22,9 +23,11 @@ import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
  * that description to the capture it already makes from its own checkout:
  * - every tracked capture input has its revision blob shipped, so later
  *   checkout edits and mirror lag are repaired from Git objects;
- * - untracked authored paths are dropped; ignored generated outputs stay only
- *   while they were generated from the revision's own sources, otherwise their
- *   generator regenerates them in the capture (deriveRevisionGeneratedInputs);
+ * - untracked paths are dropped, except the build's declared generated inputs
+ *   (isSourceGeneratedInput) and files a package declares as shipped; generated
+ *   inputs stay only while they were generated from the revision's own sources,
+ *   otherwise their generator regenerates them in the capture
+ *   (deriveRevisionGeneratedInputs);
  * - overlay paths keep the checkout's bytes, which must equal their declared digest.
  *
  * A descriptor is gzip(JSON header, "\n", raw blob bytes in header order). A
@@ -249,7 +252,7 @@ async function writeRevisionEntry(target, mode, bytes) {
  * @returns {Promise<string[]>} the revision capture's path list
  */
 export async function applySourceRevision({ captureDir, sourceDir, files, ownerDirs = [], descriptor, env = process.env, signal }) {
-  const untracked = new Set(descriptor.untracked);
+  const shipped = await readDeclaredShippedPaths(captureDir, ownerDirs);
   const result = new Set();
   const drift = [];
   for (const path of files) {
@@ -263,8 +266,8 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     }
     const entry = descriptor.tree[path];
     if (!entry) {
-      if (untracked.has(path)) await rm(target, { force: true, recursive: true });
-      else if (bytes !== null) result.add(path);
+      if (bytes !== null && isRevisionKeptUntrackedPath(path, shipped)) result.add(path);
+      else await rm(target, { force: true, recursive: true });
       continue;
     }
     if (bytes && gitBlobId(bytes) === entry[1]) { result.add(path); continue; }
@@ -290,9 +293,32 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
   return [...result].sort();
 }
 
+/** Explicit `files` entries of each owner package (from the capture's manifests):
+ * a package can ship an ignored generated file such as its API surface. */
+export async function readDeclaredShippedPaths(captureDir, ownerDirs) {
+  const shipped = new Set();
+  for (const dir of ownerDirs) {
+    const owner = dir.replaceAll('\\', '/').replace(/\/$/, '');
+    if (!owner) continue;
+    const manifest = await readFile(join(captureDir, owner, 'package.json'), 'utf8').then(JSON.parse, () => null);
+    for (const entry of Array.isArray(manifest?.files) ? manifest.files : []) {
+      if (typeof entry === 'string' && entry && !/[*?{}[\]]/.test(entry)) shipped.add(`${owner}/${entry.replace(/\/$/, '')}`);
+    }
+  }
+  return shipped;
+}
+
+/** The untracked paths a revision capture keeps. */
+export function isRevisionKeptUntrackedPath(path, shipped) {
+  if (isSourceGeneratedInput(path)) return true;
+  const parts = path.split('/');
+  for (let length = parts.length; length > 0; length -= 1) if (shipped.has(parts.slice(0, length).join('/'))) return true;
+  return false;
+}
+
 /** A path whose change changes what a revision's generators produce. */
 export function isRevisionGeneratorInput(path) {
-  return SERVER_GENERATED_CLIENTS.some(({ schema }) => schema === path);
+  return SERVER_GENERATED_CLIENTS.some(({ schema }) => schema === path) || path.startsWith('.github/feature-policy/');
 }
 
 async function readStaleServerGeneratedClients(captureDir) {
@@ -313,10 +339,36 @@ async function readStaleServerGeneratedClients(captureDir) {
  * ran Machine.*Bytes clients, P2022). A capture keeps a checkout client only
  * while the generator's stamp names the capture's (revision's) schema; otherwise
  * the server's own generator regenerates every client inside the capture from
- * the revision's schema. Matching clients cost three small reads.
- * @returns {Promise<string[]>} the regenerated client directories
+ * the revision's schema. Matching clients cost three small reads. Protocol's
+ * embedded feature-policy module follows the same rule through its generator.
+ * @returns {Promise<string[]>} the regenerated outputs
  */
 export async function deriveRevisionGeneratedInputs({ captureDir, sourceDir, env = process.env, signal }) {
+  const regenerated = await deriveEmbeddedFeaturePolicies({ captureDir, env, signal });
+  return [...regenerated, ...await deriveServerGeneratedClients({ captureDir, sourceDir, env, signal })];
+}
+
+/** Protocol's own generator renders the module from the capture's policy files and
+ * writes only a differing module: a matching one costs two small reads. */
+async function deriveEmbeddedFeaturePolicies({ captureDir, env, signal }) {
+  const generator = join(captureDir, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
+  const source = await readFile(generator, 'utf8').catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+  if (source === null) return [];
+  let changed;
+  if (source.includes('export async function writeEmbeddedFeaturePolicies')) {
+    ({ changed } = await (await import(pathToFileURL(generator).href)).writeEmbeddedFeaturePolicies({ repoRoot: captureDir, env }));
+  } else {
+    // Revisions before the generator exported its writer: the same generator's CLI.
+    const before = await readFile(join(captureDir, EMBEDDED_FEATURE_POLICIES_OUTPUT), 'utf8').catch(() => null);
+    await run(process.execPath, [generator], { cwd: captureDir, env, signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true });
+    changed = before !== await readFile(join(captureDir, EMBEDDED_FEATURE_POLICIES_OUTPUT), 'utf8').catch(() => null);
+  }
+  if (!changed) return [];
+  console.error(`[source-revision] regenerated ${EMBEDDED_FEATURE_POLICIES_OUTPUT} from the captured feature policy`);
+  return [EMBEDDED_FEATURE_POLICIES_OUTPUT];
+}
+
+async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal }) {
   const stale = await readStaleServerGeneratedClients(captureDir);
   if (!stale.length) return [];
   const started = performance.now();

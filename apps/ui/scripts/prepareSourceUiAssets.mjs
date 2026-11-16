@@ -60,6 +60,38 @@ export async function prepareSourceUiAssets(options) {
     finally { await preparation.close(); }
 }
 
+/** The git-ignored worker bundles and worklet core, from their own source compilers,
+ * selected by the same task policy as installation. */
+async function readSourceWorkerSpecs() {
+    const { resolveUiPostinstallTasks } = await import('../tools/resolveUiPostinstallTasks.mjs');
+    const tasks = resolveUiPostinstallTasks({ env: process.env });
+    const web = tasks.includes('vendor-password-kdf-worker');
+    const worker = (build) => async ({ uiPackageDir, outputPath }) => {
+        const built = await build({ uiDirectory: uiPackageDir, outputFile: outputPath });
+        return { outputPath, assetPaths: [], inputPaths: built.inputPaths };
+    };
+    // One compiler emits both atmosphere targets beside the candidate.
+    const atmosphere = async ({ uiPackageDir, outputPath }) => {
+        const { buildAtmosphereRenderers } = await import('../tools/atmosphere/buildAtmosphereRenderers.mjs');
+        const built = await buildAtmosphereRenderers({ uiDirectory: uiPackageDir, outputDirectory: dirname(outputPath), web });
+        return { outputPath, assetPaths: [], inputPaths: built.inputPaths };
+    };
+    const specs = [];
+    if (tasks.includes('prepare-atmosphere-renderers')) {
+        specs.push({ generate: atmosphere, source: SOURCE_UI_ASSET_OUTPUT_PATHS.atmosphereWorklet, candidate: 'backdropWorkletCore.generated.js' });
+        if (web) specs.push({ generate: atmosphere, source: SOURCE_UI_ASSET_OUTPUT_PATHS.atmosphereWorker, candidate: 'happier-atmosphere-worker.js' });
+    }
+    if (web) {
+        const { buildPasswordKdfWorker } = await import('../tools/password/buildPasswordKdfWorker.mjs');
+        specs.push({ generate: worker(buildPasswordKdfWorker), source: SOURCE_UI_ASSET_OUTPUT_PATHS.passwordKdfWorker, candidate: 'happier-password-kdf-worker.js' });
+    }
+    if (tasks.includes('vendor-crypto-worker')) {
+        const { buildCryptoWorker } = await import('../tools/crypto/buildCryptoWorker.mjs');
+        specs.push({ generate: worker(buildCryptoWorker), source: SOURCE_UI_ASSET_OUTPUT_PATHS.cryptoWorker, candidate: 'happier-crypto-worker.js' });
+    }
+    return specs;
+}
+
 async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, retainedRecordPath = recordPath,
     deferPublication = false, preparation }) {
     const { prepareLocaleAssets } = await import('./prepareLocaleAssets.mjs');
@@ -67,6 +99,7 @@ async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, 
     const specs = [
         { generate: prepareLocaleAssets, source: SOURCE_UI_ASSET_OUTPUT_PATHS.locales, candidate: 'locales.js' },
         { generate: generateShikiGrammarAssets, source: SOURCE_UI_ASSET_OUTPUT_PATHS.shiki, candidate: 'shiki.js' },
+        ...await readSourceWorkerSpecs(),
     ];
     const assets = [];
     const publications = [];
@@ -89,10 +122,14 @@ async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, 
         const previousIdentity = previous ? await identity(previous.inputPaths) : undefined;
         let result;
         let reused = false;
-        if (previous && previous.fingerprint === previousIdentity && await Promise.all(
-            [publicationPath, ...previous.assetPaths].map(path => access(path).then(() => true, () => false)),
-        ).then(present => present.every(Boolean))) {
-            await writeChanged(candidatePath, await readFile(publicationPath, 'utf8'));
+        const exists = path => access(path).then(() => true, () => false);
+        // A finite export recaptures its project each time; its retained candidate
+        // is the same verified output when the publication is not there yet.
+        const reusable = previous && previous.fingerprint === previousIdentity
+            && await Promise.all(previous.assetPaths.map(exists)).then(present => present.every(Boolean))
+            ? (await exists(publicationPath) ? publicationPath : await exists(candidatePath) ? candidatePath : null) : null;
+        if (reusable) {
+            if (reusable !== candidatePath) await writeChanged(candidatePath, await readFile(reusable, 'utf8'));
             result = { ...previous, outputPath: candidatePath };
             reused = true;
         } else {

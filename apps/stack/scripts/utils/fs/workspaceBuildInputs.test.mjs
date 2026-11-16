@@ -231,7 +231,11 @@ test('source UI input capture excludes prepared inventories while retaining thei
   await mkdir(fixture.path('apps/ui'), { recursive: true });
   await writeFile(fixture.path('apps/ui/package.json'), JSON.stringify({ name: 'fixture-ui' }));
   const consumer = 'sources/text/localeBundleLoaders.web.ts';
-  const outputs = [...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS), `sources/${SOURCE_UI_ASSET_RECORD_FILENAME}`];
+  // Worker bundles and the worklet core are prepared from captured sources too;
+  // a checkout copy may come from another lane's uncommitted worker edit.
+  const outputs = [...new Set([...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS), `sources/${SOURCE_UI_ASSET_RECORD_FILENAME}`,
+    'public/happier-crypto-worker.js', 'public/happier-password-kdf-worker.js', 'public/happier-atmosphere-worker.js',
+    'sources/components/atmosphere/backdropWorkletCore.generated.js'])];
   for (const path of [consumer, ...outputs]) {
     await mkdir(dirname(fixture.path('apps/ui', path)), { recursive: true });
     await writeFile(fixture.path('apps/ui', path), 'export {};\n');

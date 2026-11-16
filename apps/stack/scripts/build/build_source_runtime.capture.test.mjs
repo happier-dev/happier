@@ -245,7 +245,7 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
   await writeFile(join(repoDir, 'packages/protocol/src/shared.ts'), 'export const version = "other-lane";');
   await writeFile(join(repoDir, 'packages/protocol/src/other-lane.ts'), 'export const other = "other-lane";');
   await rm(join(repoDir, 'packages/protocol/src/kept.ts'));
-  // This Stack's own declared edit, and an ignored generated output.
+  // This Stack's own declared edit, and an ignored file no producer declares.
   const overlayPath = 'apps/server/sources/main.light.ts';
   const overlayText = 'export const version = "my-overlay";';
   await writeFile(join(repoDir, overlayPath), overlayText);
@@ -264,7 +264,7 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
   await writeFile(join(repoDir, 'apps/cli/assets/bundled-plugin-manifests/example.json'), '{"version":"other-lane"}');
   const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared'), revision });
   const expected = { ...committed, [overlayPath]: overlayText, 'packages/protocol/src/other-lane.ts': null,
-    'packages/protocol/src/generated/out.ts': 'export const generated = true;' };
+    'packages/protocol/src/generated/out.ts': null };
   for (const component of ['server', 'daemon']) {
     const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: fixture.path(component), sharedSourceInputs: shared });
     const leaks = [];
@@ -330,4 +330,79 @@ test('revision capture derives generated server clients from the revision schema
   const clean = await capture('clean');
   assert.deepEqual(await readGeneratedClientFields(clean.repoDir), { default: ['id'], sqlite: ['id'], mysql: ['id'] });
   assert.equal(await generatorRuns(), 1, 'matching checkout clients add no generation');
+});
+
+// Same class as the Prisma clients: protocol's embedded feature-policy module is
+// generated from tracked .github/feature-policy files and git-ignored.
+test('revision capture derives the embedded feature-policy module from the revision policy files', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-policy-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  await gitIn('init', '--quiet');
+  const generated = 'packages/protocol/src/features/embeddedFeaturePolicies.generated.ts';
+  await writeFile(join(repoDir, '.gitignore'), `node_modules/\n${generated}\n`);
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  for (const [directory, name, dependencies] of [['apps/server', '@happier-dev/server', { '@happier-dev/protocol': 'workspace:*' }],
+    ['packages/protocol', '@happier-dev/protocol', {}]]) {
+    await mkdir(join(repoDir, directory), { recursive: true });
+    await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module', dependencies }));
+  }
+  await mkdir(join(repoDir, 'apps/server/sources'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export { EMBEDDED_FEATURE_BUILD_POLICY_RAW } from "../../../packages/protocol/src/features/embeddedFeaturePolicies.generated";');
+  // The real generator, as committed at the revision.
+  const generator = 'packages/protocol/scripts/generate-embedded-feature-policies.mjs';
+  await mkdir(join(repoDir, 'packages/protocol/scripts'), { recursive: true });
+  await writeFile(join(repoDir, generator), await readFile(fileURLToPath(new URL(`../../../../${generator}`, import.meta.url))));
+  const policy = allow => JSON.stringify({ buildPolicy: { allow, deny: [] } });
+  await mkdir(join(repoDir, '.github/feature-policy'), { recursive: true });
+  await writeFile(join(repoDir, '.github/feature-policy/preview.json'), policy(['committed.feature']));
+  await writeFile(join(repoDir, '.github/feature-policy/production.json'), policy([]));
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'rev');
+  // Another lane's uncommitted policy edit, generated into the shared checkout.
+  await writeFile(join(repoDir, '.github/feature-policy/preview.json'), policy(['other-lane.feature']));
+  await promisify(execFile)(process.execPath, [join(repoDir, generator)], { env: { ...process.env, HAPPIER_EMBEDDED_POLICY_ENV: '' } });
+  assert.match(await readFile(join(repoDir, generated), 'utf8'), /other-lane\.feature/);
+  const revision = await resolveSourceRevision({ repoDir, outputDir: fixture.path('revisions') });
+  const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared'), revision });
+  const captured = await captureSourceWebBuildInputs({ repoDir, component: 'server', outputDir: fixture.path('server'), sharedSourceInputs: shared });
+  const text = await readFile(join(captured.repoDir, generated), 'utf8');
+  assert.match(text, /committed\.feature/);
+  assert.doesNotMatch(text, /other-lane/);
+  assert.match(await readFile(join(repoDir, generated), 'utf8'), /other-lane\.feature/, 'the checkout keeps its own module');
+});
+
+// Stray ignored files (AppleDouble resource forks, temporary configs) are not
+// build inputs: a revision capture and its fingerprint keep only tracked files,
+// the declared overlay and the build's declared generated inputs.
+test('revision capture drops stray ignored files and keeps declared generated inputs', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-strays-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  await gitIn('init', '--quiet');
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules/\napps/server/generated/\n._*\n*.tmp.json\n');
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  await mkdir(join(repoDir, 'apps/server/sources'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export const main = true;');
+  await installServerGeneratorFixture(repoDir);
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'rev');
+  await generateServerClients(repoDir);
+  const capture = async name => {
+    const revision = await resolveSourceRevision({ repoDir, outputDir: fixture.path(`revisions-${name}`) });
+    const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path(`shared-${name}`), revision });
+    return await captureSourceWebBuildInputs({ repoDir, component: 'server', outputDir: fixture.path(`server-${name}`), sharedSourceInputs: shared });
+  };
+  const before = await capture('before');
+  const strays = ['apps/server/sources/._main.light.ts', 'apps/server/tsconfig.lane.tmp.json'];
+  await writeFile(join(repoDir, strays[0]), Buffer.from([0, 5, 22, 7]));
+  await writeFile(join(repoDir, strays[1]), '{}');
+  const after = await capture('after');
+  assert.deepEqual(strays.filter(path => after.files.includes(path)), [], 'stray ignored files are not captured');
+  assert.ok(after.files.includes('node_modules/.prisma/client/index.js'), 'declared generated inputs stay');
+  assert.ok(after.files.includes('apps/server/generated/sqlite-client/index.js'));
+  assert.equal(after.inputIdentity, before.inputIdentity, 'stray ignored files do not change the build identity');
 });

@@ -8,6 +8,8 @@ import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGr
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceRuntimeDependencyIdentity } from '../../build/source_author_inputs.mjs';
+import { EMBEDDED_FEATURE_POLICIES_OUTPUT } from '../../../../../packages/protocol/scripts/generate-embedded-feature-policies.mjs';
+export { EMBEDDED_FEATURE_POLICIES_OUTPUT };
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
@@ -20,6 +22,17 @@ export const SERVER_GENERATED_CLIENTS = Object.freeze([
   { schema: 'apps/server/prisma/mysql/schema.prisma', client: 'apps/server/generated/mysql-client' },
 ]);
 export const SERVER_GENERATED_CLIENT_STAMP = '.happier-source-schema.sha256';
+// UI postinstall vendors these from installed packages into the served public tree.
+const UI_VENDORED_PUBLIC_ROOTS = ['apps/ui/public/monaco', 'apps/ui/public/pdfjs'];
+
+/** Untracked inputs a source build consumes, each with a named producer. A
+ * revision capture keeps no other untracked byte: stray ignored files (resource
+ * forks, temporary configs) are neither inputs nor part of the build identity. */
+export function isSourceGeneratedInput(path) {
+  return isSourceServerGeneratedInput(path) || path === EMBEDDED_FEATURE_POLICIES_OUTPUT
+    || UI_VENDORED_PUBLIC_ROOTS.some(root => path.startsWith(`${root}/`))
+    || /^apps\/ui\/public\/pierre-diff-worker[^/]*\.js$/.test(path);
+}
 
 export function isSourceServerGeneratedInput(path) {
   return SERVER_GENERATED_INPUT_ROOTS.some(root => path.startsWith(`${root}/`));
@@ -201,6 +214,8 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
       excludeGeneratedPluginArtifacts: path.startsWith('packages/plugins/'),
       sourceRoots: component === 'daemon' && path === 'apps/ui' ? ['scripts'] : SOURCE_ROOTS,
       additionalInputPaths: root === repoDir ? ['apps/cli/scripts/buildPublication.mjs',
+        // Protocol's embedded feature-policy module is generated from these.
+        '.github/feature-policy',
         // The guest CLI's SEA compiler reads the pin from its captured repo.
         ...(component === 'daemon' ? ['.node-version', 'apps/stack/scripts/build/build_source_runtime.mjs'] : []),
         // Captured Stack tooling imports this shared CLI admission policy.

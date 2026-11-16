@@ -15,7 +15,7 @@ import { run } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
-import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 /**
  * QA source Stacks run a revision tree from source (owner 2026-11-14: one shared
@@ -157,11 +157,13 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
       await requestBaseArchive({ revision: descriptor.revision, path: archivePath, signal });
     }
     await extractRevision({ repoDir, revision: descriptor.revision, outputDir: staging, archivePath });
-    // Only the ignored generated inputs the runtime consumes come from the checkout;
-    // a Stack's new (untracked) overlay file is its own, never the shared base's.
-    const excluded = new Set([...descriptor.untracked, ...Object.keys(descriptor.overlay)]);
+    // Only the declared generated inputs the runtime consumes come from the checkout
+    // (never stray ignored files); a Stack's new (untracked) overlay file is its own,
+    // never the shared base's.
+    const shipped = await readDeclaredShippedPaths(staging, [...new Set(inputs.flatMap(input => input.workspaceDirs))]);
     await captureBuildInputFiles({ sourceDir: repoDir, captureDir: staging, readPaths: async () => [...new Set(inputs.flatMap(input => input.files))]
-      .filter(path => !Object.hasOwn(descriptor.tree, path) && !excluded.has(path)) });
+      .filter(path => !Object.hasOwn(descriptor.tree, path) && !Object.hasOwn(descriptor.overlay, path)
+        && isRevisionKeptUntrackedPath(path, shipped)) });
     // Those generated inputs follow the revision's sources, not the checkout's.
     await deriveRevisionGeneratedInputs({ captureDir: staging, sourceDir: repoDir, env, signal });
     await rm(baseDir, { recursive: true, force: true });

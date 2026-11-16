@@ -49,10 +49,8 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   // Source replication must not delete it between daemon and UI compilation.
   'packages/plugin-sdk/fixtures/qa-plugin-authoring/created/qa-*/.happier-plugin',
   'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js',
-  // The atmosphere worklet core is compiled by esbuild from installed
-  // dependencies; UI source-test preparation is its one producer on a replica.
-  'apps/ui/sources/components/atmosphere/backdropWorkletCore.generated.js',
-  // References and their .expo bundles must be produced on the same host.
+  // Prepared UI outputs (references with their .expo bundles, worker bundles and
+  // the atmosphere worklet core) are produced on each host from its sources.
   ...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS).map(path => `apps/ui/${path}`),
   // Prisma clients and the docs static export are generated on each target.
   // Keep these package-owned outputs local without excluding authored generated sources.
