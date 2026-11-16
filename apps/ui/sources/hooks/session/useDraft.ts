@@ -142,7 +142,7 @@ export function useDraft(
         if (!active || !draftScope || !accountLifetime || !resolvedSessionId) return;
         return followSignal(presented, (isPresented) => {
             if (!isPresented || !isDraftOwnerCurrent()) return;
-            fireAndForget(sync.materializeExistingSessionDraft(resolvedSessionId, accountLifetime), {
+            fireAndForget(sync.materializeExistingSessionDraft(resolvedSessionId, accountLifetime, 'held'), {
                 tag: 'useDraft.materializeExistingSessionDraft',
             });
         });

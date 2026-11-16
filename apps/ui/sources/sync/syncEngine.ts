@@ -3921,6 +3921,8 @@ class Sync {
         materializeExistingSessionDraft = async (
             sessionId: string,
             accountLifetime: ServerAccountScopeLifetime,
+            /** `held`: the Session is shown again; the replica this runtime read is current. */
+            demand: 'read' | 'held' = 'read',
         ): Promise<void> => {
             if (isDemoModeActive() || !accountLifetime.isCurrent()) return;
             const capturedDraftScope = accountLifetime.scope;
@@ -3945,7 +3947,7 @@ class Sync {
                     if (areServerAccountScopesEqual(getActiveServerAccountScope(), scope)) {
                         await this.prepareSessionDraftRepositoryRuntime();
                         if (!accountLifetime.isCurrent()) return;
-                        await materializeExactSessionDraft(scope, address);
+                        await materializeExactSessionDraft(scope, address, undefined, demand);
                         return;
                     }
                     await migrateLegacySessionDrafts(scope);

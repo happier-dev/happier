@@ -997,6 +997,8 @@ export class SessionDraftRepository {
      */
     private readonly flushRequestedDuringFlight = new Set<string>();
     private readonly exactReadInFlight = new Map<string, Readonly<{ runtime: RepositoryRuntime; invalidationRevision?: number; promise: Promise<void> }>>();
+    /** Exact replicas read under a runtime; a replaced runtime (scope, credentials, reconnect owner) reads again. */
+    private readonly exactMaterialized = new Map<string, RepositoryRuntime>();
     private readonly observedTombstoneRevisions = new Map<string, number>();
     /**
      * Per scope, the exact addresses the last finished collection census (or gap retry) could not
@@ -2570,7 +2572,13 @@ export class SessionDraftRepository {
         if (this.storage.flush) await this.flushStorage(params.scope);
     }
 
-    materializeExact(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV2, invalidationRevision?: number): Promise<void> {
+    /**
+     * `held` is a revisit's demand (a Session shown again): a replica this runtime already read stays
+     * current, because socket wakes and the changes catch-up materialize every newer revision.
+     * Every other caller (explicit Actions, wakes with a revision) reads the current authority.
+     */
+    materializeExact(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV2, invalidationRevision?: number,
+        demand: 'read' | 'held' = 'read'): Promise<void> {
         const runtime = this.syncRuntime(scope);
         if (!runtime) return this.storage.prepare?.() ?? Promise.resolve();
         const key = this.replicaListenerKey(scope, address);
@@ -2579,6 +2587,9 @@ export class SessionDraftRepository {
         if (sameRuntime && (invalidationRevision === undefined || invalidationRevision <= (current.invalidationRevision ?? -1))) {
             return current.promise;
         }
+        if (demand === 'held' && invalidationRevision === undefined && !current && this.exactMaterialized.get(key) === runtime) {
+            return Promise.resolve();
+        }
         const read = () => this.materializeExactWithScopedRuntime({
             scope,
             address,
@@ -2586,7 +2597,7 @@ export class SessionDraftRepository {
             runtime,
             isCurrent: () => this.isCurrentRuntime(runtime),
             flushRebasedLocalMutations: () => this.flushSessionDraft({ scope, address }).then(() => undefined),
-        });
+        }).then(() => { if (this.isCurrentRuntime(runtime)) this.exactMaterialized.set(key, runtime); });
         // A newer socket revision requires a read captured after the earlier
         // demand settles. Serialize it so an older present response cannot land
         // after a fresh tombstone; duplicate wakes share this same follow-up.

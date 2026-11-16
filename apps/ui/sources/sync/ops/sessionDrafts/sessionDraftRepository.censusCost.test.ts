@@ -167,4 +167,25 @@ describe('draft census request cost after remote cleanup', () => {
             expect(http.read()).toEqual({});
         } finally { vi.useRealTimers(); }
     });
+
+    it('serves a revisited Session draft from its held replica and re-reads it only for a newer pushed revision', async () => {
+        const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
+            getSessionContext: () => null, randomBytes: length => new Uint8Array(length) });
+        const http = countTransportRequests(async (path: string) => {
+            if (path.endsWith('/read')) return Response.json({ status: 'absent' });
+            throw new Error(`Unexpected request: ${path}`);
+        }, (path: string) => path);
+        const repository = createSessionDraftRepository({ storage: memoryStorage(), scope, cipher,
+            transport: createApiSessionDraftsTransport({ request: http.request }), syncEnabled: true });
+        const address = { kind: 'session' as const, sessionId: 'revisited-session' };
+        // Opening the Session and returning to it twice: drafts changes arrive by socket wake or catch-up.
+        for (let visit = 0; visit < 3; visit++) await repository.materializeExact(scope, address, undefined, 'held');
+        const reads = () => Object.values(http.read()).reduce((sum, count) => sum + count, 0);
+        expect(reads()).toBe(1);
+        await repository.materializeExact(scope, address, 2);
+        expect(reads()).toBe(2);
+        // An explicit read (an Action appending to the draft) still reads the current authority.
+        await repository.materializeExact(scope, address);
+        expect(reads()).toBe(3);
+    });
 });
