@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { deploymentTargetFitFieldsV1 } from '@happier-dev/protocol/deployments/deployShapeV1';
 import { DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkMetadataV1Schema, DeploymentTargetLinkMemberV1Schema, DeploymentTargetSourceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { PluginActionIconV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -67,6 +68,7 @@ export type DeploymentDataTargetV1 = Omit<Extract<DeploymentTargetContributionV1
 export type DeploymentTargetV1 = DeploymentRuntimeTargetV1 | DeploymentDataTargetV1;
 
 const normalizedFields = () => ({
+    ...deploymentTargetFitFieldsV1(),
     v: z.literal(1), id, source: DeploymentTargetSourceV1Schema, targetKind: id,
     title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema), icon: PluginActionIconV2Schema,
     targetSchema: PluginJsonSchemaV2Schema, linkSchema: PluginJsonSchemaV2Schema,
