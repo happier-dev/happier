@@ -955,6 +955,7 @@ const artifactsBrowserTranslations = { ja: {
         kindLabel: '種類',
         sourceLabel: '出所',
         kinds: {
+            home: 'ドキュメントとファイル',
             all: 'すべての種類',
             document: 'ドキュメント',
             prompt: 'プロンプト',
@@ -1085,6 +1086,8 @@ const artifactsBrowserTranslations = { ja: {
         },
         savedToday: ({ count }) => `今日 ${count} 件保存`,
         noMatch: ({ query }) => `「${query}」に一致するアーティファクトはありません`,
+        homeEmpty: '作成または共有したドキュメント、PDF、ファイルがここに表示されます',
+        showAllKinds: 'すべての種類を表示',
         storage: {
             meter: ({ used, limit }) => `${limit} 中 ${used}`,
             a11y: ({ used, limit }) => `アーティファクトの保存容量：${limit} 中 ${used} 使用`,

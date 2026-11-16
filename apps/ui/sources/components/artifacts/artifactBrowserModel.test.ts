@@ -274,6 +274,42 @@ describe('artifactBrowserModel', () => {
         expect([...countArtifactBrowserKinds(rows)]).toEqual([['document', 2], ['board', 1]]);
     });
 
+    it('lists by default only what lives in Artifacts; every other kind stays one filter or search away (owner 11-16)', () => {
+        const rows = [
+            artifact('doc', { title: 'Plan' }),
+            artifact('pdf', { title: 'Spec.pdf', mime: 'application/pdf' }),
+            artifact('received', { title: 'Their notes' }, { access: 'view' }),
+            artifact('workflow', { kind: 'workflow-definition.v1', title: 'Morning triage' }),
+            artifact('shared-workflow', { kind: 'workflow-definition.v1', title: 'Shared triage' }, { access: 'view' }),
+            artifact('prompt', { kind: 'prompt_doc.v2', title: 'Code review' }),
+            artifact('shared-prompt', { kind: 'prompt_doc.v2', title: 'Shared review' }, { access: 'view' }),
+            artifact('board', { kind: 'work-board.v1', title: 'Q4 launch' }),
+            artifact('role', { kind: 'role.v1', title: 'Reviewer' }),
+            artifact('profile', { kind: 'launch-profile.v1', title: 'Fast', profileId: 'profile-7' }),
+            // A launch profile without its profile opens in the Artifacts view, so Artifacts is where it lives.
+            artifact('orphan-profile', { kind: 'launch-profile.v1', title: 'Orphan' }),
+            // Nothing lists memories (each opens as its own page), so Artifacts stays where they are found.
+            artifact('memory', { kind: 'memory_doc.v1', title: 'Bot memory' }),
+            artifact('shared-memory', { kind: 'memory_doc.v1', title: 'Team memory' }, { access: 'view' }),
+            artifact('locked', null, { isDecrypted: false } as Partial<DecryptedArtifact>),
+        ];
+        const keys = (filter: Partial<Parameters<typeof projectArtifactBrowserRows>[1]>) => projectArtifactBrowserRows(rows,
+            { query: '', kind: 'home', sort: 'title_asc', ...filter }).map(row => row.key).sort();
+        expect(keys({})).toEqual(['doc', 'locked', 'memory', 'orphan-profile', 'pdf', 'received', 'shared-memory']);
+        // The kind filter still reaches each one, and All shows the whole library.
+        expect(keys({ kind: 'workflow' })).toEqual(['shared-workflow', 'workflow']);
+        expect(keys({ kind: 'prompt' })).toEqual(['prompt', 'shared-prompt']);
+        expect(keys({ kind: 'all' })).toHaveLength(rows.length);
+        // Search finds everything, whatever lives elsewhere.
+        expect(keys({ query: 'triage' })).toEqual(['shared-workflow', 'workflow']);
+        expect(keys({ query: 'review' })).toEqual(['prompt', 'role', 'shared-prompt']);
+        // A folder holding only kinds that live elsewhere is left out of the default tree; an empty one stays a place to file into.
+        const folders = { v: 1 as const, folders: [{ id: 'f-flows', name: 'Flows', parentId: null }, { id: 'f-empty', name: 'Empty', parentId: null }],
+            artifactHeadersById: { workflow: { folderId: 'f-flows' } } };
+        const tree = projectArtifactBrowserTree(rows, { query: '', kind: 'home', sort: 'title_asc' }, { folders });
+        expect(tree.filter(node => node.kind === 'branch').map(node => node.key)).toEqual(['folder:f-empty']);
+    });
+
     it('counts only listed artifacts as saved since a moment, so today never exceeds the total', () => {
         const rows = [
             artifact('old', { title: 'Old notes' }, { createdAt: 5 }),

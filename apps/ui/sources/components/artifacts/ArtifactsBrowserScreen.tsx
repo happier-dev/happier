@@ -35,6 +35,7 @@ import { Typography } from '@/constants/Typography';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifacts, useArtifactsLoaded, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { createPersistentUiState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { useArtifactInventoryRead } from './useArtifactInventoryRead';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { t } from '@/text';
@@ -55,6 +56,7 @@ import {
     readArtifactProvenance,
     resolveArtifactOpenRoute,
     type ArtifactBrowserKind,
+    type ArtifactBrowserKindFilter,
     type ArtifactBrowserRow,
     type ArtifactBrowserSort,
 } from './artifactBrowserModel';
@@ -80,6 +82,17 @@ const PAGE_MIN_WIDTH_PX = 560;
 
 /** Cards, a list, or the personal folder tree (EC D49): three presentations of the same library. */
 type BrowserPresentation = 'grid' | 'list' | 'folders';
+
+/**
+ * The kind this device last chose, device-local beside the collection spaces (never a setting); unset lists what lives
+ * in Artifacts. Search still spans every kind.
+ */
+const browserKindChoice = createPersistentUiState<ArtifactBrowserKindFilter>('artifacts-browser-kind-v1', readArtifactKind);
+const BROWSER_KIND_CHOICE_KEY = 'kind';
+
+function setBrowserKind(kind: ArtifactBrowserKindFilter): void {
+    browserKindChoice.set(BROWSER_KIND_CHOICE_KEY, kind);
+}
 
 function sortLabel(sort: ArtifactBrowserSort): string {
     switch (sort) {
@@ -138,7 +151,7 @@ export function ArtifactsBrowser(props: Readonly<{
     const phoneBack = usePhoneDestinationBack('artifacts:back');
     const { artifacts, loaded, loadFailed, usage } = props;
     const [query, setQuery] = React.useState('');
-    const [kind, setKind] = React.useState<ArtifactBrowserKind | 'all'>('all');
+    const kind = usePersistentUiStateValue(browserKindChoice, BROWSER_KIND_CHOICE_KEY) ?? 'home';
     const [sort, setSort] = React.useState<ArtifactBrowserSort>('updated_desc');
     const [view, setView] = useLocalSettingMutable('artifactsBrowserViewV1');
     // A phone lists by default (dense, scannable); cards lead only where two fit side by side (tablet, desktop).
@@ -209,13 +222,13 @@ export function ArtifactsBrowser(props: Readonly<{
                 create={create}
                 search={search}
                 // A phone's title opens the library's choices (kind and order), as every main screen's title does.
-                titleFilters={phoneLayout && !firstVisit ? { kind, onKindChange: setKind, counts, sort, onSortChange: setSort } : null}
+                titleFilters={phoneLayout && !firstVisit ? { kind, onKindChange: setBrowserKind, counts, sort, onSortChange: setSort } : null}
                 // A phone's view switch sits with the count, below the choices (lab A1p keeps the search a full row).
                 viewSwitch={firstVisit ? null : viewSwitch}
                 toolbar={firstVisit ? null : (
                     <BrowserToolbar
                         kind={kind}
-                        onKindChange={setKind}
+                        onKindChange={setBrowserKind}
                         counts={counts}
                         sort={sort}
                         onSortChange={setSort}
@@ -255,6 +268,14 @@ export function ArtifactsBrowser(props: Readonly<{
             subtitle={t('artifacts.browser.loadFailedBody')}
             primaryAction={{ label: t('common.retry'), onPress: props.onRetry }}
         />
+    ) : kind === 'home' && !query.trim() && !partial ? (
+        // Everything here lives in its own place (Workflows, Prompts…): say what this page keeps and offer the rest.
+        <EmptyState
+            testID="artifacts:homeEmpty"
+            layout="line"
+            title={t('artifacts.browser.homeEmpty')}
+            primaryAction={{ label: t('artifacts.browser.showAllKinds'), onPress: () => setBrowserKind('all'), testID: 'artifacts:homeEmpty:showAll' }}
+        />
     ) : partial ? (
         // The unread remainder could still match: not a definitive answer until the full list has been read.
         <EmptyState testID="artifacts:noMatchSoFar" layout="line" title={t('artifacts.browser.noMatchSoFar', { query: query.trim() || artifactKindFilterLabel(kind) })} />
@@ -281,6 +302,8 @@ export function ArtifactsBrowser(props: Readonly<{
                         onOpenArtifact={openArtifact}
                         onArtifactDeleted={rowCommands.deleted}
                     />
+                    {/* Under any folders left to file into, the same line the List and Grid views give when nothing matches. */}
+                    {rows.length === 0 ? empty : null}
                     </ItemGroup>
                 </PageContentColumn>
             </ItemList>
@@ -510,10 +533,14 @@ function ArtifactViewSwitch(props: Readonly<{
     );
 }
 
-/** The kinds the library can narrow to: only kinds that hold something; a kind that empties keeps its choice until changed. */
-function useArtifactKindOptions(counts: ReadonlyMap<ArtifactBrowserKind, number>, kind: ArtifactBrowserKind | 'all') {
+/**
+ * What the library can show: what lives here (the default), everything, then each kind that holds something; a kind
+ * that empties keeps its choice until changed.
+ */
+function useArtifactKindOptions(counts: ReadonlyMap<ArtifactBrowserKind, number>, kind: ArtifactBrowserKindFilter) {
     const { theme } = useUnistyles();
     return React.useMemo(() => [
+        { id: 'home', label: artifactKindFilterLabel('home') },
         { id: 'all', label: artifactKindFilterLabel('all') },
         ...ARTIFACT_BROWSER_KINDS.filter((candidate) => (counts.get(candidate) ?? 0) > 0 || candidate === kind)
             .map((candidate) => ({
@@ -524,8 +551,8 @@ function useArtifactKindOptions(counts: ReadonlyMap<ArtifactBrowserKind, number>
     ], [counts, kind, theme.colors.text.secondary]);
 }
 
-function readArtifactKind(id: string): ArtifactBrowserKind | 'all' {
-    return ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all';
+function readArtifactKind(id: unknown): ArtifactBrowserKindFilter {
+    return id === 'all' ? 'all' : ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'home';
 }
 
 function readArtifactSort(id: string): ArtifactBrowserSort {
@@ -533,8 +560,8 @@ function readArtifactSort(id: string): ArtifactBrowserSort {
 }
 
 type ArtifactTitleFiltersProps = Readonly<{
-    kind: ArtifactBrowserKind | 'all';
-    onKindChange: (kind: ArtifactBrowserKind | 'all') => void;
+    kind: ArtifactBrowserKindFilter;
+    onKindChange: (kind: ArtifactBrowserKindFilter) => void;
     counts: ReadonlyMap<ArtifactBrowserKind, number>;
     sort: ArtifactBrowserSort;
     onSortChange: (sort: ArtifactBrowserSort) => void;
@@ -599,8 +626,8 @@ function ArtifactTitleFilters(props: ArtifactTitleFiltersProps) {
 }
 
 function BrowserToolbar(props: Readonly<{
-    kind: ArtifactBrowserKind | 'all';
-    onKindChange: (kind: ArtifactBrowserKind | 'all') => void;
+    kind: ArtifactBrowserKindFilter;
+    onKindChange: (kind: ArtifactBrowserKindFilter) => void;
     counts: ReadonlyMap<ArtifactBrowserKind, number>;
     sort: ArtifactBrowserSort;
     onSortChange: (sort: ArtifactBrowserSort) => void;

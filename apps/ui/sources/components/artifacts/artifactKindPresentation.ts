@@ -1,7 +1,7 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import type { ArtifactBrowserKind, ArtifactViewKind } from './artifactBrowserModel';
+import type { ArtifactBrowserKind, ArtifactBrowserKindFilter, ArtifactViewKind } from './artifactBrowserModel';
 
 /** Each kind's mark: the same glyph its own destination uses (Boards, Workflows, Prompts, Roles, Launch profiles). */
 export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactViewKind, IconName>> = {
@@ -47,9 +47,10 @@ export function artifactKindFact(kind: ArtifactViewKind, language: string | null
         : { label: artifactKindLabel(kind), icon: ARTIFACT_KIND_ICONS[kind] };
 }
 
-/** A kind's filter name ("Boards"). */
-export function artifactKindFilterLabel(kind: ArtifactBrowserKind | 'all'): string {
+/** A kind's filter name ("Boards"), or the default's ("Documents & files"). */
+export function artifactKindFilterLabel(kind: ArtifactBrowserKindFilter): string {
     switch (kind) {
+        case 'home': return t('artifacts.browser.kinds.home');
         case 'all': return t('artifacts.browser.kinds.all');
         case 'document': return t('artifacts.browser.kinds.document');
         case 'pdf': return t('files.kind.pdf');

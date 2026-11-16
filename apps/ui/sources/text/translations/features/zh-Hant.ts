@@ -955,6 +955,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
         kindLabel: '類型',
         sourceLabel: '來源',
         kinds: {
+            home: '文件與檔案',
             all: '所有類型',
             document: '文件',
             prompt: '提示詞',
@@ -1085,6 +1086,8 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
         },
         savedToday: ({ count }) => `今天儲存了 ${count} 個`,
         noMatch: ({ query }) => `沒有符合「${query}」的成品`,
+        homeEmpty: '你建立或分享的文件、PDF 與檔案會顯示在這裡',
+        showAllKinds: '顯示所有類型',
         storage: {
             meter: ({ used, limit }) => `${used} / ${limit}`,
             a11y: ({ used, limit }) => `成品儲存空間：已用 ${used} / ${limit}`,

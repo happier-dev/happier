@@ -88,6 +88,19 @@ async function renderRows(artifacts: readonly DecryptedArtifact[]) {
     return screen;
 }
 
+/** Choose through the kind chip's own filter contract (its popover list is the shared SelectionList). */
+async function chooseKind(screen: Awaited<ReturnType<typeof renderRows>>, id: string) {
+    const chip = kindChip(screen);
+    expect(chip.props.filter.options.map((option: { id: string }) => option.id)).toContain(id);
+    await act(async () => { chip.props.filter.onChange(id); });
+}
+
+function kindChip(screen: Awaited<ReturnType<typeof renderRows>>): ReactTestInstance {
+    const chip = screen.findAll(node => node.props.filter?.testID === 'artifacts:kind').at(0);
+    expect(chip).toBeDefined();
+    return chip!;
+}
+
 function rowMenu(screen: Awaited<ReturnType<typeof renderRows>>, id: string): ReactTestInstance {
     // Drive the real Collection row-action contract; its menu presentation is shared across surfaces.
     const row = screen.findAll(node => node.props.testID === `artifacts:row:${id}`
@@ -258,6 +271,7 @@ describe('Artifacts browser folders view', () => {
             pinnedInSessions: false, readsNeedsYou: false }, body: undefined, bodyVersion: undefined });
         const screen = await renderRows([document, board]);
         expect(screen.findByTestId('artifacts:folders:row:artifact:document')).toBeNull();
+        await chooseKind(screen, 'all');
         await screen.pressByTestIdAsync('artifacts:view:folders');
         await vi.waitFor(() => expect(screen.findByTestId('artifacts:folders:row:artifact:document')).not.toBeNull());
         expect(screen.findByTestId('artifacts:folders:row:artifact:board')).not.toBeNull();
@@ -327,6 +341,8 @@ describe('Artifacts browser row operations', () => {
             ...(kind === 'work-board.v1' ? { pinnedInSessions: false, readsNeedsYou: false } : {}) },
             body: undefined, bodyVersion: undefined });
         const screen = await renderRows([artifact]);
+        // Boards and Prompts live in their own places: reach them through the kind filter.
+        await chooseKind(screen, 'all');
         const menu = rowMenu(screen, artifact.id);
         expect(menu.props.secondaryActions.map((item: { id: string }) => item.id)).toContain('share');
         expect(screen.findHostByTestId(`artifacts:row:${artifact.id}:previewBody`)).not.toBeNull();
@@ -443,6 +459,7 @@ describe('Artifacts browser row operations', () => {
         disposeHome = served.dispose;
         getStorage().getState().addArtifact(artifact);
         const screen = await renderRows([artifact]);
+        await chooseKind(screen, 'workflow');
         const menu = rowMenu(screen, artifact.id);
         expect(menu.props.secondaryActions.map((item: { id: string }) => item.id)).toEqual(['open', 'history']);
         await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'open'); });
@@ -598,6 +615,10 @@ describe('Artifacts browser recovery', () => {
                 await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:collection:stage'), 'onLayout', {
                     nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } } }); });
                 // The rows stay usable under one plain "still loading" line; the count is not a final total.
+                // Prompts live in Prompts, so the default list waits for the rest rather than claiming it is empty.
+                expect(screen.findHostByTestId('artifacts:row:11111111-1111-4111-8111-000000000001')).toBeNull();
+                expect(screen.findByTestId('artifacts:homeEmpty')).toBeNull();
+                await chooseKind(screen, 'all');
                 expect(screen.findHostByTestId('artifacts:row:11111111-1111-4111-8111-000000000001')).not.toBeNull();
                 expect(screen.findByTestId('artifacts:pending')).not.toBeNull();
                 expect(screen.getTextContent()).not.toContain('artifacts.countPlural');
@@ -656,6 +677,45 @@ describe('Artifacts browser recovery', () => {
         await act(async () => getStorage().setState(state => ({ localSettings: { ...state.localSettings, uiMultiPanePanelsEnabled: true } })));
         await screen.update(element());
         expect(screen.root.findAllByType(ArtifactView)).toEqual([viewer]);
+    });
+
+    it('lists what lives in Artifacts by default; other kinds stay a kind choice away, remembered on this device, and search spans them all (owner 11-16)', async () => {
+        const document = artifactFixture('doc', { title: 'Plan', header: { title: 'Plan' } });
+        const workflow = artifactFixture('workflow', { access: 'view', title: 'Review flow', header: { kind: 'workflow-definition.v1', title: 'Review flow' } });
+        const prompt = artifactFixture('prompt', { title: 'Code review', header: { kind: 'prompt_doc.v2', title: 'Code review' } });
+        const screen = await renderRows([document, workflow, prompt]);
+        expect(screen.findHostByTestId('artifacts:row:doc')).not.toBeNull();
+        expect(screen.findHostByTestId('artifacts:row:workflow')).toBeNull();
+        expect(screen.findHostByTestId('artifacts:row:prompt')).toBeNull();
+        expect(kindChip(screen).props.filter.selectedId).toBe('home');
+        expect(kindChip(screen).props.filter.options.map((option: { id: string }) => option.id)).toEqual(['home', 'all', 'document', 'prompt', 'workflow']);
+        await chooseKind(screen, 'workflow');
+        expect(screen.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
+        expect(screen.findHostByTestId('artifacts:row:doc')).toBeNull();
+        await screen.unmount();
+
+        // The choice is this device's: reopening keeps it.
+        const reopened = await renderRows([document, workflow, prompt]);
+        expect(kindChip(reopened).props.filter.selectedId).toBe('workflow');
+        expect(reopened.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
+        await chooseKind(reopened, 'home');
+        // A search finds what lives elsewhere too.
+        await reopened.pressByTestIdAsync('artifacts:search:toggle');
+        await act(async () => { invokeTestInstanceHandler(reopened.findHostByTestId('artifacts:search'), 'onChangeText', 'review'); });
+        expect(reopened.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
+        expect(reopened.findHostByTestId('artifacts:row:prompt')).not.toBeNull();
+        expect(reopened.findHostByTestId('artifacts:row:doc')).toBeNull();
+    });
+
+    it('says what the page keeps when everything lives elsewhere and shows every kind on request', async () => {
+        const workflow = artifactFixture('workflow', { title: 'Review flow', header: { kind: 'workflow-definition.v1', title: 'Review flow' } });
+        const screen = await renderRows([workflow]);
+        expect(screen.findByTestId('artifacts:empty')).toBeNull();
+        expect(screen.findByTestId('artifacts:homeEmpty')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('artifacts.browser.homeEmpty');
+        await screen.pressByTestIdAsync('artifacts:homeEmpty:showAll');
+        expect(screen.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
+        expect(kindChip(screen).props.filter.selectedId).toBe('all');
     });
 
     it('names a code document by its language, as its own page does, rather than as a plain document', async () => {

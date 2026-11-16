@@ -147,6 +147,17 @@ export function opensInArtifactView(artifact: Pick<DecryptedArtifact, 'id' | 'he
     return resolveArtifactOpenRoute(artifact) === artifactViewRoute(artifact.id);
 }
 
+/**
+ * Whether Artifacts is where this artifact lives (owner 11-16): it opens in the Artifacts view. A kind whose open route
+ * is its own page lives there instead, so a new kind with its own page leaves the default list by itself. Memory opens
+ * as its own page but nothing lists memories, so Artifacts stays the place they are found.
+ */
+export function artifactLivesInArtifacts(artifact: Pick<ArtifactBrowserArtifact, 'id' | 'header' | 'rawHeader'> & Pick<DecryptedArtifact, 'sourceServerId'>): boolean {
+    const header = artifact.rawHeader ?? artifact.header ?? {};
+    return getArtifactUseTargetV1({ artifactId: artifact.id, header, body: null }).kind === 'memory'
+        || resolveArtifactOpenRoute(artifact) === artifactViewRoute(artifact.id);
+}
+
 /** Opened private source metadata, never public preview content or caller authority. */
 export type ArtifactProvenance = Readonly<ArtifactWorkspaceSourceV1>;
 
@@ -358,7 +369,9 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
 }
 
 export type ArtifactBrowserSort = 'updated_desc' | 'created_desc' | 'title_asc';
-export type ArtifactBrowserFilter = Readonly<{ query: string; kind: ArtifactBrowserKind | 'all'; sort: ArtifactBrowserSort }>;
+/** `home` (the default) lists what lives in Artifacts; `all` the whole library; a kind only that kind. */
+export type ArtifactBrowserKindFilter = ArtifactBrowserKind | 'all' | 'home';
+export type ArtifactBrowserFilter = Readonly<{ query: string; kind: ArtifactBrowserKindFilter; sort: ArtifactBrowserSort }>;
 
 export type ArtifactBrowserRow<T extends ArtifactBrowserArtifact = DecryptedArtifact> = Readonly<{
     key: string;
@@ -374,7 +387,7 @@ export type ArtifactBrowserOrganization = Readonly<{
     collapsedFolderIds?: ReadonlySet<string>;
 }>;
 
-/** Listed kinds in the chosen order, searched through title and private organization. */
+/** Listed kinds in the chosen order, searched through title and private organization; a search spans every kind but a chosen one. */
 export function projectArtifactBrowserRows<T extends ArtifactBrowserArtifact>(
     artifacts: readonly T[],
     filter: ArtifactBrowserFilter,
@@ -386,7 +399,7 @@ export function projectArtifactBrowserRows<T extends ArtifactBrowserArtifact>(
     for (const artifact of artifacts) {
         const kind = classifyArtifactBrowserKind(artifact);
         if (kind === null) continue;
-        if (filter.kind !== 'all' && kind !== filter.kind) continue;
+        if (filter.kind === 'home' ? !needle && !artifactLivesInArtifacts(artifact) : filter.kind !== 'all' && kind !== filter.kind) continue;
         let placement: ReturnType<typeof resolveArtifactOrganizationHeaderV1> = {};
         let organizationError: ArtifactBrowserRow<T>['organizationError'];
         if (organization.folders) {

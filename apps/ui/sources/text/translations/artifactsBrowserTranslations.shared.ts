@@ -8,6 +8,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
     kindLabel: string;
     sourceLabel: string;
     kinds: Readonly<{
+        home: string;
         all: string;
         document: string;
         prompt: string;
@@ -136,6 +137,8 @@ export type ArtifactsBrowserTranslations = Readonly<{
     }>;
     savedToday: (params: Readonly<{ count: number }>) => string;
     noMatch: (params: Readonly<{ query: string }>) => string;
+    homeEmpty: string;
+    showAllKinds: string;
     storage: Readonly<{
         meter: (params: Readonly<{ used: string; limit: string }>) => string;
         a11y: (params: Readonly<{ used: string; limit: string }>) => string;
@@ -211,6 +214,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         kindLabel: 'Kind',
         sourceLabel: 'Source',
         kinds: {
+            home: 'Documents & files',
             all: 'All kinds',
             document: 'Documents',
             prompt: 'Prompts',
@@ -341,6 +345,8 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         },
         savedToday: ({ count }) => `${count} saved today`,
         noMatch: ({ query }) => `No artifacts match “${query}”`,
+        homeEmpty: 'Documents, PDFs and files you create or share appear here',
+        showAllKinds: 'Show all kinds',
         storage: {
             meter: ({ used, limit }) => `${used} of ${limit}`,
             a11y: ({ used, limit }) => `Artifact storage, ${used} of ${limit} used`,

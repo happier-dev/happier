@@ -955,6 +955,7 @@ const artifactsBrowserTranslations = { pl: {
         kindLabel: 'Rodzaj',
         sourceLabel: 'Źródło',
         kinds: {
+            home: 'Dokumenty i pliki',
             all: 'Wszystkie rodzaje',
             document: 'Dokumenty',
             prompt: 'Prompty',
@@ -1085,6 +1086,8 @@ const artifactsBrowserTranslations = { pl: {
         },
         savedToday: ({ count }) => `Zapisane dziś: ${count}`,
         noMatch: ({ query }) => `Brak artefaktów pasujących do „${query}”`,
+        homeEmpty: 'Tu pojawiają się dokumenty, pliki PDF i inne pliki, które tworzysz lub udostępniasz',
+        showAllKinds: 'Pokaż wszystkie rodzaje',
         storage: {
             meter: ({ used, limit }) => `${used} z ${limit}`,
             a11y: ({ used, limit }) => `Miejsce na artefakty: użyto ${used} z ${limit}`,

@@ -955,6 +955,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
         kindLabel: '类型',
         sourceLabel: '来源',
         kinds: {
+            home: '文档和文件',
             all: '所有类型',
             document: '文档',
             prompt: '提示词',
@@ -1085,6 +1086,8 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
         },
         savedToday: ({ count }) => `今天保存了 ${count} 个`,
         noMatch: ({ query }) => `没有与“${query}”匹配的工件`,
+        homeEmpty: '你创建或共享的文档、PDF 和文件会显示在这里',
+        showAllKinds: '显示所有类型',
         storage: {
             meter: ({ used, limit }) => `${used} / ${limit}`,
             a11y: ({ used, limit }) => `工件存储：已用 ${used} / ${limit}`,

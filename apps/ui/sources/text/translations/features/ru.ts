@@ -955,6 +955,7 @@ const artifactsBrowserTranslations = { ru: {
         kindLabel: 'Тип',
         sourceLabel: 'Источник',
         kinds: {
+            home: 'Документы и файлы',
             all: 'Все типы',
             document: 'Документы',
             prompt: 'Промпты',
@@ -1085,6 +1086,8 @@ const artifactsBrowserTranslations = { ru: {
         },
         savedToday: ({ count }) => `Сегодня сохранено: ${count}`,
         noMatch: ({ query }) => `Нет артефактов по запросу «${query}»`,
+        homeEmpty: 'Здесь появляются документы, PDF и файлы, которые вы создаёте или которыми делитесь',
+        showAllKinds: 'Показать все типы',
         storage: {
             meter: ({ used, limit }) => `${used} из ${limit}`,
             a11y: ({ used, limit }) => `Хранилище артефактов: использовано ${used} из ${limit}`,
