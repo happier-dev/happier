@@ -2422,7 +2422,12 @@ describe('ordinary Account managed Action origination', () => {
             presetId: preset.id, presetRevision: 1, launch: selected.input.selection.launch, allocation: 'bound',
             resource: { contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'first' } },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
-        const input = ManagedAcquireInputV1Schema.parse({ ...selected.input,
+        // Opaque preset admission cannot inspect its sealed launch. Exercise the
+        // one-off launch admission that owns the provider schema refusal.
+        const input = ManagedAcquireInputV1Schema.parse(refusalCode === 'provider_unavailable' ? {
+            ...selected.input, selection: { ...selected.input.selection,
+                launch: { ...selected.input.selection.launch, schemaVersion: 2 } },
+        } : {
             selection: { kind: 'preset', homeId, id: preset.id, revision: 1 }, controller: selected.controller,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
@@ -2441,6 +2446,9 @@ describe('ordinary Account managed Action origination', () => {
                 headers: { authorization: `Bearer ${selected.token}` }, payload: sealed });
             expect(response.statusCode, response.body).toBe(409);
             expect(response.json(), response.body).toMatchObject({ code: refusalCode === 'preset_limit_reached' ? refusalCode : 'target_unavailable' });
+            expect(response.json(), JSON.stringify({ body: response.json(), witnesses: records.filter(record => record.requestId === selected.requestId) })).toMatchObject({ failureCause: {
+                phase: 'machines.managed.acquire', errorCode: refusalCode,
+            } });
             expect(await db.managedMachine.count({ where: { admittedActionRequestId: selected.requestId } })).toBe(0);
             const witnesses = records.filter(record => record.phase === 'placement_refusal' && record.requestId === selected.requestId);
             expect(witnesses).toContainEqual(expect.objectContaining({ refusalBranch: 'managed_acquire_unavailable', refusalCode }));

@@ -801,18 +801,21 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     refusalBranch: cause.code === 'credential_scope_denied'
                         ? 'managed_credential_scope_denied' : 'managed_acquire_unavailable',
                     refusalCode: cause.code,
+                    failureCause: projectActionFailureCauseV1(cause, 'machines.managed.acquire'),
                     requestId: request.envelope.requestId, machineId,
                 });
                 if (error instanceof ManagedMachineError) {
                     if (request.envelope.v === 1) return { kind: 'response', prepared: prepareExternalActionResponseEnvelopeV1({
                         v: 1, actionId: request.actionId, requestId: request.envelope.requestId,
-                        execution: { ok: false, errorCode: error.code, error: error.code } }) };
+                        execution: { ok: false, errorCode: error.code, error: error.code,
+                            failureCause: projectActionFailureCauseV1(error, 'machines.managed.acquire') } }) };
                     return createPlacementError({
                         code: error.code === 'permission_denied' ? 'credential_scope_denied'
                             : error.code === 'preset_limit_reached' ? 'preset_limit_reached' : 'target_unavailable',
                         refusalBranch: error.code === 'permission_denied'
                             ? 'managed_credential_scope_denied' : 'managed_acquire_unavailable',
                         refusalCode: error.code,
+                        failureCause: projectActionFailureCauseV1(error, 'machines.managed.acquire'),
                         requestId: request.envelope.requestId, machineId,
                     });
                 }
