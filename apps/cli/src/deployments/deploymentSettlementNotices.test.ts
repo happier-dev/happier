@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { readOwnedNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
@@ -72,6 +73,21 @@ describe('settlement notice admission and arrival cost', () => {
       ] } });
     const environment = createDeploymentEnvironmentDetailV1();
     const receipt = createDeploymentReceiptDetailV1();
+    // Sanitized receipt identity/order from COR3R-163/startfirst/receipts.json.
+    receipt.deployment.id = 'cmwigsovw01n1mcqikeuk9ziy';
+    receipt.deployment.requestedAtMs = 1794785248509;
+    receipt.content.commitSubject = 'Fix startup readiness';
+    const restored = structuredClone(receipt);
+    restored.deployment.id = 'cmwigr32001lymcqi1hlq4ub0';
+    restored.deployment.requestedAtMs = 1794785173561;
+    const previous = structuredClone(restored);
+    previous.deployment.id = 'prior-good';
+    previous.deployment.requestedAtMs--;
+    if (restored.content.sourceIntent.kind !== 'repository' || previous.content.sourceIntent.kind !== 'repository')
+      throw new Error('Expected repository receipt fixtures');
+    restored.content.sourceIntent.sha = 'b'.repeat(40);
+    previous.content.sourceIntent.sha = 'c'.repeat(40);
+    let history = [receipt, restored, previous];
     const admitted = { environment: structuredClone(environment), receipt: structuredClone(receipt) };
     const link = environment.targetLinks[0].targetLink;
     link.activeDeploymentId = receipt.deployment.id;
@@ -95,6 +111,15 @@ describe('settlement notice admission and arrival cost', () => {
       if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200,
         data: createAccountEncryptionCurrentnessFixture({ mode }) };
+      if (path === '/v1/machines' || path === '/v1/machines/machine-a') {
+        const machine = { id: 'machine-a', active: true,
+        revokedAt: null, replacedByMachineId: null, managedMachineRef: null, dataEncryptionKey: null,
+        metadata: createMachineContentCodec(mode === 'plain' ? { encryptionMode: 'plain' }
+          : { encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey: machineKey }).encodeStored({
+          host: 'production-host', displayName: 'Production server', platform: 'linux', happyCliVersion: 'test',
+          homeDir: '/home/production', happyHomeDir: '/home/production/.happier' }) };
+        return { status: 200, data: path === '/v1/machines' ? [machine] : { machine } };
+      }
       if (advanceDuringNoticeRead) { receipt.deployment.revision++; advanceDuringNoticeRead = false; }
       if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...rows.values()]) };
       const row = rows.get(path.split('/')[3]!);
@@ -122,6 +147,7 @@ describe('settlement notice admission and arrival cost', () => {
       serverHttpBaseUrl: baseUrl, machineId: environment.environment.controllerMachineId!,
       async readEnvironment() { environmentReads++; return structuredClone(environment); },
       async readReceipt() { receiptReads++; return structuredClone(receipt); },
+      async *readBuildHistory() { yield* history; },
       async writeTransition() { throw new Error('Notices cannot settle deployments'); },
       runtime: { async acquire() { throw new Error('Notices cannot acquire native effects'); } } };
     const publish = createDeploymentSettlementNotices(host);
@@ -135,32 +161,52 @@ describe('settlement notice admission and arrival cost', () => {
     };
     receipt.deployment.state = 'failed'; receipt.deployment.revision++;
     receipt.content.ownServer = { ...receipt.content.ownServer!, rollbackTarget: {
-      deploymentId: 'prior-good', revision: { kind: 'repository', sha: 'a'.repeat(40) },
+      deploymentId: restored.deployment.id, revision: { kind: 'repository', sha: 'b'.repeat(40) },
     } };
+    link.activeDeploymentId = restored.deployment.id;
     await arrive(false);
     expect(mutations).toBe(1);
     const store = createCredentialedAccountArtifactStore(credentials);
     const failedArtifact = await runWithServerHttpBaseUrl(baseUrl,
       () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
-    expect(failedArtifact && readOwnedNoticeArtifactV1(failedArtifact, 'account-owner')).toMatchObject({
+    expect.soft(failedArtifact && readOwnedNoticeArtifactV1(failedArtifact, 'account-owner')).toMatchObject({
       page: { deploymentId: receipt.deployment.id },
-      recoveryChoices: [{ actionId: 'deployments.rollback', label: expect.stringContaining('aaaaaaa'),
+      recoveryChoices: [{ actionId: 'deployments.rollback', label: expect.stringContaining('ccccccc'),
         input: { serverId: host.serverId, environmentId: environment.environment.id,
           targetLinkId: link.id, deploymentId: 'prior-good', contentArtifactId: environment.environment.contentArtifactId } }],
     });
-    receipt.deployment.state = 'succeeded'; receipt.deployment.revision++;
+    const failedNotice = failedArtifact && readOwnedNoticeArtifactV1(failedArtifact, 'account-owner');
+    expect.soft(failedNotice).toHaveProperty('body', expect.stringContaining('Fix startup readiness'));
+    expect.soft(failedNotice).toHaveProperty('body', expect.stringContaining('Production server'));
+    expect.soft(failedNotice).toHaveProperty('body', expect.not.stringContaining(receipt.deployment.id));
+    expect.soft(failedNotice).toHaveProperty('body', expect.not.stringContaining('machine-a'));
+    // Restoration is historical evidence, not an eligible rollback destination.
+    history = [receipt, restored];
     await arrive();
-    expect(mutations).toBe(2);
+    const restoredArtifact = await runWithServerHttpBaseUrl(baseUrl,
+      () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
+    expect(restoredArtifact && readOwnedNoticeArtifactV1(restoredArtifact, 'account-owner')).not.toHaveProperty('recoveryChoices');
+    // A distinct retained receipt of the serving revision is also a no-op.
+    previous.content.sourceIntent.sha = restored.content.sourceIntent.sha;
+    history = [receipt, restored, previous];
+    await arrive();
+    expect(mutations, 'same-revision rollback remains absent').toBe(2);
+    receipt.deployment.state = 'succeeded'; receipt.deployment.revision++;
+    link.activeDeploymentId = receipt.deployment.id;
+    await arrive();
+    expect(mutations).toBe(3);
     const artifact = await runWithServerHttpBaseUrl(baseUrl, () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
     expect(artifact && readOwnedNoticeArtifactV1(artifact, 'account-owner')).toMatchObject({ healthPhase: 'recovered' });
     await arrive();
     await arrive();
-    expect(mutations, 'equal settled arrivals publish nothing and do not reopen Source content').toBe(2);
+    expect(mutations, 'equal settled arrivals publish nothing and do not reopen Source content').toBe(3);
     receipt.deployment.state = 'failed'; receipt.deployment.revision++;
     receipt.content.ownServer.rollbackTarget = null;
+    history = [receipt];
+    link.activeDeploymentId = undefined;
     advanceDuringNoticeRead = true;
     await arrive();
-    expect(mutations, 'an admitted private notice may finish after the receipt revision changes').toBe(3);
+    expect(mutations, 'an admitted private notice may finish after the receipt revision changes').toBe(4);
     const lateArtifact = await runWithServerHttpBaseUrl(baseUrl,
       () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
     const firstFailure = lateArtifact && readOwnedNoticeArtifactV1(lateArtifact, 'account-owner');

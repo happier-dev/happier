@@ -7,8 +7,8 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
-import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
-import { deploymentNoticeRollbackChoice } from './deploymentNoticeRecovery';
+import { deploymentNoticeRollbackChoice, readDeploymentNoticeHistory } from './deploymentNoticeRecovery';
+import { readDeploymentNoticeMachineLabels } from './deploymentNoticeLabels';
 import type { AccountNoticeRecoveryChoiceV1 } from '@happier-dev/protocol/activity/accountNoticeRecoveryV1';
 import { createCommittedServiceHealthDelivery } from '@/notifications/activity/committedServiceHealthDelivery';
 import { observeNativeWorkload } from './healthChecks/readNativeWorkload';
@@ -168,6 +168,7 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     const deliver = createCommittedServiceHealthDelivery(input);
     const cleanups: Array<() => void> = [];
     let admittedEnvironment: DeploymentEnvironmentDetailV1 | null = null;
+    let receiptHistory: readonly DeploymentReceiptDetailV1[] = [];
     const serviceRows = input.serviceRows ?? input.nativeWorkload?.rows;
     const readRows = () => (input.nativeWorkload?.handles ?? input.handles).flatMap(handle => {
         const row = serviceRows?.read(handle);
@@ -182,22 +183,12 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
             input: { serverId: input.serverId, environmentId: deployment.service.environmentId,
                 deploymentId: deployment.deploymentId, targetLinkId, machineId: deployment.service.machineId,
                 installationId: deployment.installationId, service: deployment.service, expectedGeneration: row.generation } });
-        const rollback = deploymentNoticeRollbackChoice(environment, input.recoveryReceipt);
+        const rollback = deploymentNoticeRollbackChoice(environment, input.recoveryReceipt, receiptHistory);
         if (rollback) choices.push(rollback);
         return choices.length ? { recoveryChoices: choices } : {};
     };
-    const readMachineLabels = async (machineIds: readonly string[], signal: AbortSignal) => {
-        try {
-            const machines = await listCurrentAccountMachines({ credentials: input.credentials, token: input.credentials.token,
-                serverHttpBaseUrl: input.serverHttpBaseUrl, machineIds, signal });
-            return new Map(machines.filter(machine => machine.label !== machine.id).map(machine => [machine.id, machine.label]));
-        } catch (error) {
-            if (!signal.aborted) logger.infoFile('[deploymentHealth] Machine names unavailable', {
-                errorCode: error instanceof Error && 'code' in error ? error.code : 'machine_names_unavailable',
-            });
-            return new Map<string, string>();
-        }
-    };
+    const readMachineLabels = (machineIds: readonly string[], signal: AbortSignal) => readDeploymentNoticeMachineLabels({
+        credentials: input.credentials, token: input.credentials.token, serverHttpBaseUrl: input.serverHttpBaseUrl, machineIds, signal });
     const readAlertDelivery = async () => {
         const source = await input.readHealthAlertSource?.(createHealthCheckSourceInstanceIdV1({
             kind: 'environment', environmentId: input.environment.environment.id,
@@ -222,8 +213,9 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
         }
         const native = input.nativeWorkload;
         if (!admittedEnvironment || !native || environment.controllerMachineId !== input.machineId) return;
+        receiptHistory = await readDeploymentNoticeHistory(native.receipts(fresh, controller.signal));
         const owned = await observeNativeWorkload({ environment: fresh,
-            receipts: native.receipts(fresh, controller.signal), signal: controller.signal, observedAtMs: Date.now(),
+            receipts: (async function* () { yield* receiptHistory; })(), signal: controller.signal, observedAtMs: Date.now(),
             ...(native.edge ? { edge: native.edge } : {}),
             local: { machineId: input.machineId, installationId: native.installationId,
                 rows: native.rows,

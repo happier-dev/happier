@@ -8,9 +8,10 @@ import type { OwnServerDeploymentRequest, OwnServerDeploymentTargetHostInput } f
 import { createHealthCheckSourceInstanceIdV1, type HealthAlertIdentityV1,
   type HealthCheckSourceConfigV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createCliHealthCheckSourceReader } from '@/session/actions/workflowTriggers';
-import type { DeploymentBackupRunInputV1 } from '@happier-dev/deployments';
+import { projectDeploymentReceiptHistoryEntryV1, type DeploymentBackupRunInputV1 } from '@happier-dev/deployments';
 import { projectSavedHealthAlertSelection } from './healthChecks/readSavedHealthCheckSource';
-import { deploymentNoticeRollbackChoice } from './deploymentNoticeRecovery';
+import { deploymentNoticeRollbackChoice, readDeploymentNoticeHistory } from './deploymentNoticeRecovery';
+import { readDeploymentNoticeMachineLabels } from './deploymentNoticeLabels';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
@@ -133,8 +134,14 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
       if (!current) return;
       const { environment, receipt, link } = current;
       const recovered = receipt.deployment.state === 'succeeded';
-      // The rollout owner captures the eligible incumbent before attempting effects.
-      const rollbackChoice = receipt.deployment.state === 'failed' ? deploymentNoticeRollbackChoice(environment, receipt) : null;
+      const [history, labels] = await Promise.all([
+        receipt.deployment.state === 'failed' ? readDeploymentNoticeHistory(host.readBuildHistory?.({
+          environmentId: environment.environment.id, targetLinkId: link.id, environment, context })) : [],
+        readDeploymentNoticeMachineLabels({ credentials: host.credentials, token: host.credentials.token,
+          serverHttpBaseUrl: host.serverHttpBaseUrl, machineIds: receipt.content.machineResults.map(row => row.machineId), signal }),
+      ]);
+      const rollbackChoice = receipt.deployment.state === 'failed' ? deploymentNoticeRollbackChoice(environment, receipt, history) : null;
+      const deploymentLabel = projectDeploymentReceiptHistoryEntryV1(receipt).historyTitle;
       const healthyIncumbent = link.activeDeploymentId !== undefined && link.members.length > 0 && link.members.every(member =>
         receipt.content.machineResults.some(row => row.machineId === member.machineId && row.installationId === member.installationId
           && row.currentDeploymentId === link.activeDeploymentId && row.health === 'healthy'));
@@ -151,10 +158,10 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
         type: !recovered && environment.environment.protection === 'production'
           && (receipt.deployment.state === 'outcome_unknown' || !healthyIncumbent) ? 'blocked' : 'update',
         healthPhase: recovered ? 'recovered' : 'open', resolved: false,
-        body: [`Deployment: ${receipt.deployment.id}. Outcome: ${receipt.deployment.state}.`,
+        body: [`${deploymentLabel ? `Deployment: ${deploymentLabel}` : 'Deployment'}. Outcome: ${receipt.deployment.state}.`,
           ...(delivery.kind === 'unavailable' ? [`Off-app alert settings are unavailable (${delivery.code}).`] : []),
           ...[...receipt.content.machineResults].sort((left, right) => left.machineId.localeCompare(right.machineId)).map(row =>
-            `Machine ${row.machineId}: ${row.health}${row.restoration ? `; restoration ${row.restoration}` : ''}.`),
+            `${labels.get(row.machineId) ?? 'Machine name unavailable'}: ${row.health}${row.restoration ? `; restoration ${row.restoration}` : ''}.`),
         ].join(' '), signal,
       }));
       if (delivery.kind === 'available') await deliver({ receipt: committed, signal,

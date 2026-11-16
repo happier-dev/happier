@@ -99,7 +99,7 @@ import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorizatio
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceLauncherStartRequestV1Schema, LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import {  } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createRunnerManagedServiceEndpointProjectionBinding } from './createRunnerManagedServiceInvocationOwner';
@@ -999,7 +999,12 @@ describe('managed-services SVC09 owner', () => {
             manifestFingerprint: 'exact-a', configInputDigests: [], physicalProjectName: 'fixture', toolVersion: 'fixture',
             services: ['app', 'worker'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
             bindings: [], ownServer: environment.content.ownServer, images: [] },
-            rollbackTarget: { deploymentId: 'previous-good', revision: { kind: 'repository', sha: 'b'.repeat(40) } } };
+            rollbackTarget: { deploymentId: receipt.deployment.id, revision: { kind: 'repository', sha: 'a'.repeat(40) } } };
+        const previous = structuredClone(receipt);
+        previous.deployment.id = 'previous-good';
+        previous.deployment.requestedAtMs--;
+        if (previous.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+        previous.content.sourceIntent.sha = 'b'.repeat(40);
         let receiptReads = 0;
         // Team access is decided by the canonical authenticated Source read;
         // its admitted Environment facts do not change the C1 recipient.
@@ -1084,7 +1089,7 @@ describe('managed-services SVC09 owner', () => {
                 serverHttpBaseUrl, machineId: 'machine-a', environment, handles: aggregate ? [] : handles, readEnvironment,
                 recoveryReceipt: receipt, serviceRows: owner.machineServiceRows,
                 ...(aggregate ? { nativeWorkload: { installationId: 'installation-a', handles, rows: owner.machineServiceRows, edge,
-                    async *receipts() { receiptReads++; yield receipt; } } } : {}) });
+                    async *receipts() { receiptReads++; yield receipt; yield previous; } } } : {}) });
             attachment = attach();
             await attachment.settled();
             if (!aggregate) expect(readEnvironment, 'one Environment admission at attachment').toHaveBeenCalledTimes(1);
@@ -1111,7 +1116,7 @@ describe('managed-services SVC09 owner', () => {
                 { actionId: 'deployments.restart', label: 'Restart service', input: {
                     machineId: 'machine-a', environmentId: environment.environment.id,
                     deploymentId: handle.deploymentId, expectedGeneration: handle.instanceId, service: handle.identity } },
-                { actionId: 'deployments.rollback', input: { deploymentId: 'previous-good' } },
+                ...(aggregate ? [{ actionId: 'deployments.rollback', input: { deploymentId: 'previous-good' } }] : []),
             ] });
             expect(readHeader()).toHaveProperty('body', expect.stringContaining('Production server'));
             expect(readHeader()).toHaveProperty('body', expect.stringContaining('app'));
@@ -8485,9 +8490,7 @@ describe('Project Local Services control composition', () => {
                         const settings = normalizeActionsSettingsV1(rawSettings);
                         const executor = createActionExecutor({
                             ...createUnavailableActionTransportDeps(),
-                            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(
-                                actionId, settings, { surface: context.surface ?? null, authority: context.authority },
-                            ),
+                            readActionsSettings: () => settings,
                             runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({
                                 featureGate: gate, ingress, routes: { actionRoutes: routes },
                             }),
