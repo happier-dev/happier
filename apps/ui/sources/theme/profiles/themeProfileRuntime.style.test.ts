@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { FontFamilies } from '@/constants/Typography';
+import { BUNDLED_FONTS } from '@/constants/bundledFonts';
 import * as stylesheet from '../css/themeStylesheet';
 import * as cssParser from '../css/cssTreeBoundary';
 import { Appearance } from 'react-native';
@@ -186,6 +187,15 @@ describe('theme runtime style selection', () => {
         expect(runtime.registered.light.borderRadius).toEqual(lightTheme.borderRadius);
         expect(runtime.registered.light.typography.fontFamily).toBeNull();
         expect(rootFontVariable('--happier-font-default-regular')).toBe('');
+    });
+
+    it('publishes each loaded face of a bundled typeface to its web weight variable', () => {
+        const runtime = createRegisteredThemes();
+        applyThemeRuntimeSelection({ themePreference: 'light', themeProfiles: noProfiles, systemTheme: 'light',
+            platform: 'web', unistylesRuntime: runtime.adapter, recordBreadcrumb: () => {},
+            style: { fontFamily: BUNDLED_FONTS.plexMono.faces.regular.family },
+        });
+        expect(rootFontVariable('--happier-font-default-semiBold')).toContain(BUNDLED_FONTS.plexMono.faces.semiBold.family);
     });
 
     it('leaves the full app untouched when no style is passed', () => {

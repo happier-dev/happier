@@ -5,6 +5,7 @@ import {
     themeFontFamilyVariableName,
 } from '@/constants/Typography';
 import { runtimeWebFontFaceFamily } from '@/platform/installWebFontFaces';
+import { resolveBundledTypefaceFace } from '@/constants/bundledFonts';
 
 import type { ThemeStyleScales } from './themeStyleScales';
 
@@ -42,7 +43,7 @@ export function applyThemeFontFamilyVariables(
         }
         rootStyle.setProperty(name, [
             quoteFamily(runtimeWebFontFaceFamily(weight)),
-            quoteFamily(typography.fontFamily),
+            quoteFamily(resolveBundledTypefaceFace(typography.fontFamily, weight) ?? typography.fontFamily),
             getHappierFontFamily('default', weight),
         ].join(', '));
     }

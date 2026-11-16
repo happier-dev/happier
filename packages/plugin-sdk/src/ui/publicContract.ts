@@ -223,6 +223,7 @@ type PluginUiHostApiSurfaceTypographyMetricV1 = {
     fontSize: number;
     lineHeight: number;
     fontWeight: string;
+    fontFamily?: string;
 };
 
 /** SDK-local declaration projection of the Protocol-owned semantic theme. */

@@ -4,7 +4,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ScrollView, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   flattenWidgetLayoutWidgetsV1,
   readBuiltinWidgetDescriptorV1,
@@ -119,6 +119,7 @@ export type UsageWidgetPageProps = Readonly<{
 export function UsageWidgetPage(
   props: UsageWidgetPageProps,
 ): React.ReactElement {
+  const { theme } = useUnistyles();
   const scrollRef = React.useRef<ScrollView | null>(null);
   const [scrollTracker] = React.useState(() => createScrollViewNearViewportTracker(scrollRef, false, { initialViewportHeight: 0 }));
   const viewer = useActiveServerAccountScope();
@@ -165,7 +166,7 @@ export function UsageWidgetPage(
       <CurrentUiContextCommandsProvider authority={authority} active={page.isCurrent}>
       <PluginUiScrollActivityProvider tracker={scrollTracker}>
       {/* The page's shared data and chart text (SVG labels too) draws in the app's own face, not the browser default. */}
-      <HappierUiTypographyProvider typography={readPluginUiHostTypography()}>
+      <HappierUiTypographyProvider typography={readPluginUiHostTypography(theme)}>
       <ScrollView
         ref={scrollRef}
         onScroll={scrollTracker.onScroll}

@@ -11,6 +11,9 @@ import { getThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTok
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 
 import { shadowLevelStyle } from '@/shadowElevation';
+import { applyThemeStyleScales, resolveThemeStyleScales } from '@/theme/themeStyleScales';
+import { BUNDLED_FONTS } from '@/constants/bundledFonts';
+import { PluginUiHostApiSurfaceThemeV1Schema } from '@happier-dev/protocol/plugins/ui/surfaceContext';
 
 import {
     PLUGIN_UI_THEME_COLOR_TOKEN_IDS,
@@ -32,6 +35,30 @@ function builtInProfile(index: number): ThemeProfileV1 {
 }
 
 describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
+    it('refreshes shared text role faces from the selected bundled family', () => {
+        const base = themeFor(null);
+        const styled = applyThemeStyleScales(base, resolveThemeStyleScales({ fontFamily: BUNDLED_FONTS.plexMono.faces.regular.family }));
+        expect(readPluginUiHostTypography(styled).body.fontFamily).toContain(BUNDLED_FONTS.plexMono.faces.regular.family);
+        expect(readPluginUiHostTypography(styled).weights?.semiBold.fontFamily).toContain(BUNDLED_FONTS.plexMono.faces.semiBold.family);
+        expect(projectPluginUiTheme(styled).typography.title.fontFamily).toBe(BUNDLED_FONTS.plexMono.faces.semiBold.family);
+        expect(readPluginUiHostTypography(base).body.fontFamily).not.toContain(BUNDLED_FONTS.plexMono.faces.regular.family);
+    });
+    it('projects resolved profile corners and typeface without changing independent appearance preferences', () => {
+        const base = themeFor(null, 'dark');
+        const styled = applyThemeStyleScales(base, resolveThemeStyleScales({
+            radius: 'round', fontFamily: 'Example Sans', monoFontFamily: 'Example Mono',
+            density: 'compact', finish: 'flat',
+        }));
+        const projected = PluginUiHostApiSurfaceThemeV1Schema.parse(projectPluginUiTheme(styled));
+        expect(projected.radii.control).toBe(styled.borderRadius.md);
+        expect(projected.radii.panel).toBe(styled.borderRadius.xl);
+        expect(projected.typography.body.fontFamily).toBe('Example Sans');
+        expect(projected.typography.title.fontFamily).toBe('Example Sans');
+        expect(projected.typography.code.fontFamily).toBe('Example Mono');
+        expect(projected.spacing.medium).toBe(styled.space.s12);
+        expect(projected.typography.body.fontSize).toBe(projectPluginUiTheme(base).typography.body.fontSize);
+        expect(projected.surfaceFinish?.card).toBeNull();
+    });
     it('retains same-realm and SDK theme inputs across Unistyles wrapper replacement, without losing profile geometry', async () => {
         const theme = themeFor(null, 'dark');
         const palette = await renderHook((input: typeof theme) => usePluginUiHostPalette(new Proxy(input, {})), { initialProps: theme });

@@ -11,6 +11,8 @@ import type { TextStyle } from 'react-native';
 
 import { HAPPIER_TYPE_SCALE, HAPPIER_TYPE_WEIGHT } from '@happier-dev/plugin-ui/presentation';
 import { getMonoFont, Typography } from '@/constants/Typography';
+import { resolveBundledTypefaceFace } from '@/constants/bundledFonts';
+import { DEFAULT_THEME_STYLE_SCALES } from '@/theme/themeStyleScales';
 import { resolveThemeCardEdge, resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { resolveAttentionStateColors } from '@/components/ui/status/StatusPill';
@@ -91,17 +93,18 @@ function readTextStyleMetric(
  * stable: title takes heading, caption takes micro; body, reading and label
  * take their same-named roles. Same-realm facts expose all eight roles.
  */
-function projectTypeRoleMetric(role: HappierTypeRole) {
+function projectTypeRoleMetric(role: HappierTypeRole, family: string | null) {
     const style = Typography.variant(role);
     return Object.freeze({
         fontSize: readTextStyleMetric(style, 'fontSize'),
         lineHeight: readTextStyleMetric(style, 'lineHeight'),
         fontWeight: HAPPIER_TYPE_WEIGHT[HAPPIER_TYPE_SCALE[role].weight],
+        ...(family ? { fontFamily: resolveBundledTypefaceFace(family, HAPPIER_TYPE_SCALE[role].weight) ?? family } : {}),
     });
 }
 
-function projectTypeRoleStyle(role: HappierTypeRole): HappierTypeRoleStyle {
-    const style: TextStyle = Typography.variant(role);
+function projectTypeRoleStyle(role: HappierTypeRole, themeFamily: string | null): HappierTypeRoleStyle {
+    const style: TextStyle = Typography.variant(role, undefined, themeFamily);
     return Object.freeze({
         fontSize: readTextStyleMetric(style, 'fontSize'),
         lineHeight: readTextStyleMetric(style, 'lineHeight'),
@@ -123,34 +126,39 @@ function projectFontFace(style: TextStyle): HappierFontFace {
     });
 }
 
-let hostTypography: HappierUiTypography | null = null;
+const hostTypography = new WeakMap<Theme['typography'], HappierUiTypography>();
 
 /**
  * The same-realm host fact: the real role styles (family, tracking, tabular
  * figures and the heading step) every shared plugin text owner renders with
- * when a plugin surface is mounted inside the app. Platform-selected, not
- * theme-dependent, so it is computed once — on first use, never at import.
+ * when a plugin surface is mounted inside the app. The current theme's typography
+ * owns the family; equal reads retain the published provider value.
  */
-export function readPluginUiHostTypography(): HappierUiTypography {
-    hostTypography ??= Object.freeze({
-        display: projectTypeRoleStyle('display'),
-        title: projectTypeRoleStyle('title'),
-        heading: projectTypeRoleStyle('heading'),
-        label: projectTypeRoleStyle('label'),
-        body: projectTypeRoleStyle('body'),
-        reading: projectTypeRoleStyle('reading'),
-        meta: projectTypeRoleStyle('meta'),
-        micro: projectTypeRoleStyle('micro'),
+export function readPluginUiHostTypography(theme?: Pick<Theme, 'typography'>): HappierUiTypography {
+    const typography = theme?.typography ?? DEFAULT_THEME_STYLE_SCALES.typography;
+    const cached = hostTypography.get(typography);
+    if (cached) return cached;
+    const family = typography.fontFamily;
+    const projected = Object.freeze({
+        display: projectTypeRoleStyle('display', family),
+        title: projectTypeRoleStyle('title', family),
+        heading: projectTypeRoleStyle('heading', family),
+        label: projectTypeRoleStyle('label', family),
+        body: projectTypeRoleStyle('body', family),
+        reading: projectTypeRoleStyle('reading', family),
+        meta: projectTypeRoleStyle('meta', family),
+        micro: projectTypeRoleStyle('micro', family),
         // The face per weight of the configuration-page anatomy (`HAPPIER_PAGE_TEXT`).
         weights: Object.freeze({
-            regular: projectFontFace(Typography.default('regular')),
-            medium: projectFontFace(Typography.default('medium')),
-            semiBold: projectFontFace(Typography.default('semiBold')),
-            bold: projectFontFace(Typography.default('bold')),
+            regular: projectFontFace(Typography.default('regular', family)),
+            medium: projectFontFace(Typography.default('medium', family)),
+            semiBold: projectFontFace(Typography.default('semiBold', family)),
+            bold: projectFontFace(Typography.default('bold', family)),
         }),
         mono: projectFontFace(Typography.mono('regular')),
     });
-    return hostTypography;
+    hostTypography.set(typography, projected);
+    return projected;
 }
 
 /**
@@ -267,15 +275,15 @@ export function projectPluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['sp
             pill: PLUGIN_UI_PILL_RADIUS,
         }),
         typography: Object.freeze({
-            body: projectTypeRoleMetric('body'),
-            reading: projectTypeRoleMetric('reading'),
-            label: projectTypeRoleMetric('label'),
-            title: projectTypeRoleMetric('heading'),
-            caption: projectTypeRoleMetric('micro'),
+            body: projectTypeRoleMetric('body', theme.typography.fontFamily),
+            reading: projectTypeRoleMetric('reading', theme.typography.fontFamily),
+            label: projectTypeRoleMetric('label', theme.typography.fontFamily),
+            title: projectTypeRoleMetric('heading', theme.typography.fontFamily),
+            caption: projectTypeRoleMetric('micro', theme.typography.fontFamily),
             code: Object.freeze({
                 fontSize: readTextStyleMetric(code, 'fontSize'),
                 lineHeight: readTextStyleMetric(code, 'lineHeight'),
-                fontFamily: getMonoFont(),
+                fontFamily: theme.typography.monoFontFamily ?? getMonoFont(),
             }),
         }),
     });

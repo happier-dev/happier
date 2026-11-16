@@ -371,6 +371,35 @@ describe('defineUiSurface', () => {
     mount.unmount();
   });
 
+  it('updates shared text from a pushed resolved typeface and restores it on reset', async () => {
+    const initial = createSurfaceContext();
+    let publish: ((context: SurfaceContext) => void) | undefined;
+    const hostApi = createHostApiStub(initial, {
+      watchContext: async (listener) => {
+        publish = listener;
+        return { dispose() {} };
+      },
+    });
+    const renderSurface = defineUiSurface(AuthorSurface);
+    const mount = await mountThroughReactNativeWebAsync(
+      renderSurface(createRenderContext(initial, hostApi)) as ReactElement,
+    );
+    const text = mount.container.querySelector<HTMLElement>('[data-testid="author-text"]')!;
+    const before = text.style.fontFamily;
+    await act(async () => {
+      publish?.({ ...initial, theme: { ...initial.theme,
+        typography: { ...initial.theme.typography,
+          body: { ...initial.theme.typography.body, fontFamily: 'Example Sans' },
+        },
+      } });
+    });
+    // jsdom resolves RNW's default font shorthand ahead of this inline longhand.
+    expect(text.style.fontFamily).toBe('Example Sans');
+    await act(async () => { publish?.(initial); });
+    expect(text.style.fontFamily).toBe(before);
+    mount.unmount();
+  });
+
   it('consumes a host-installed Resource lifetime without exposing it to the author surface', async () => {
     resourceAuthorContext = undefined;
     const surface = createSurfaceContext();

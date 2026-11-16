@@ -1587,7 +1587,7 @@ export function DeclarativePluginSurface(props: Readonly<{
     // The declarative renderer is same-realm: its shared text owners read the
     // host's real type roles and page colours, exactly as an executable plugin surface does.
     const typedSurface = (
-        <HappierUiTypographyProvider typography={readPluginUiHostTypography()}>
+        <HappierUiTypographyProvider typography={readPluginUiHostTypography(theme)}>
             <HappierUiPaletteProvider palette={hostPalette}>{renderedSurface}</HappierUiPaletteProvider>
         </HappierUiTypographyProvider>
     );

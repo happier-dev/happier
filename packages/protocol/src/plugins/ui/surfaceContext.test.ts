@@ -98,6 +98,12 @@ describe('plugin UI surface context', () => {
 
     expect(PluginUiSurfaceContextV1Schema.safeParse(surface).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).toEqual(surface);
+    const withTypeface = { ...surface, theme: { ...surface.theme, typography: {
+      ...surface.theme.typography,
+      body: { ...surface.theme.typography.body, fontFamily: 'IBMPlexMono-Regular' },
+      title: { ...surface.theme.typography.title, fontFamily: 'IBMPlexMono-SemiBold' },
+    } } };
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse(withTypeface).theme.typography).toEqual(withTypeface.theme.typography);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...surface, mountId: 'physical-renderer-instance' }))
       .toHaveProperty('mountId', 'physical-renderer-instance');
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).not.toHaveProperty('mountId');

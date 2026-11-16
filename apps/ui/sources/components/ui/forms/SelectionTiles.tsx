@@ -186,8 +186,10 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
     const pageTheme = React.useMemo(() => props.variant === 'action' ? projectPluginUiTheme(theme) : undefined, [props.variant, theme]);
     const pageColors = React.useMemo(() => props.variant === 'action' ? projectPluginUiHostPalette(theme) : undefined, [props.variant, theme]);
     if (props.variant === 'action') {
-        return <AppActionSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph}
-            renderOptionFooter={footer ? renderOptionFooter : undefined} listPresentation={listPresentation} theme={pageTheme} pageColors={pageColors} />;
+        return <HappierUiTypographyProvider typography={readPluginUiHostTypography(theme)}>
+            <AppActionSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph}
+                renderOptionFooter={footer ? renderOptionFooter : undefined} listPresentation={listPresentation} theme={pageTheme} pageColors={pageColors} />
+        </HappierUiTypographyProvider>;
     }
     return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} renderOptionFooter={footer ? renderOptionFooter : undefined}
         renderOptionAccessory={accessory ? renderOptionAccessory : undefined} />;
@@ -200,9 +202,7 @@ function AppActionSelectionTiles<T extends string>(props: HappierActionSelection
     const pageDensity = resolvePageRowDensityInput({ preferred: density.preferred, requested: density.resolved, requestedExplicitly: density.requested });
     const pageRowMetrics = resolvePageRowMetrics({ ...pageDensity });
     return (
-        <HappierUiTypographyProvider typography={readPluginUiHostTypography()}>
-            <HappierSelectionTiles {...props} pageRowMetrics={pageRowMetrics} textScale={Platform.OS === 'web' ? 1 : uiFontScale} />
-        </HappierUiTypographyProvider>
+        <HappierSelectionTiles {...props} pageRowMetrics={pageRowMetrics} textScale={Platform.OS === 'web' ? 1 : uiFontScale} />
     );
 }
 

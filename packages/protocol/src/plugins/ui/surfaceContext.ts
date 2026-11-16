@@ -121,27 +121,32 @@ const PluginUiHostApiSurfaceThemeTypographyV1Schema = lazyZodSchema(() => z.stri
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    fontFamily: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   /** Reading prose (a detail's body, a story step): a step above `body`, the dense row meta line. */
   reading: z.strictObject({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    fontFamily: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   label: z.strictObject({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    fontFamily: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   title: z.strictObject({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    fontFamily: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   caption: z.strictObject({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    fontFamily: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   code: z.strictObject({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,

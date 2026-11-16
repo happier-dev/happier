@@ -13238,6 +13238,17 @@ Read [runtime ownership](runtime-core.md) before changing runtime core, the plug
 
 - The host runtime owns session/turn lifecycle, prompt custody, transcript writes and work-state; plugins contribute through the single `activate(api)` ABI and the public `packages/plugin-sdk/` seam only.
 
+### Theme-selected typography (unreleased 0.3)
+
+The app's bundled-font catalog owns the families loaded at boot and the face selected
+for each text weight. Native Text and TextInput, web font variables, and same-realm
+plugin typography consume that owner. Explicit mono and logo styles retain their faces.
+The public V1 theme snapshot carries an optional `fontFamily` on body, reading, label,
+title and caption metrics; code retains its independent mono family. Omitted fields
+preserve existing inputs. The Host context and nested metric objects remain closed;
+older strict development readers require matching source under the unpublished 0.3
+direct cut. This presentation addition changes no authority, stored format or wire epoch.
+
 ### SCM operation environment (unreleased 0.3)
 
 The existing in-process SCM `BackendRuntimeServices` can provide

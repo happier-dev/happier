@@ -18,7 +18,7 @@ import { HAPPIER_TYPE_WEIGHT, resolveHappierTypeScale, type HappierTypeEmphasis 
  */
 export function resolveHappierTypeRoleStyle(
   role: HappierTypeRole,
-  _theme: HappierUiTheme | null,
+  theme: HappierUiTheme | null,
   typography: HappierUiTypography | null,
   emphasis?: HappierTypeEmphasis,
 ): HappierPortableStyle {
@@ -37,11 +37,16 @@ export function resolveHappierTypeRoleStyle(
     };
   }
   const metric = resolveHappierTypeScale(role, Platform.OS, emphasis);
+  const projected = role === 'display' || role === 'title' || role === 'heading'
+    ? theme?.typography.title : role === 'meta' || role === 'micro'
+      ? theme?.typography.caption : theme?.typography[role];
+  const family = projected?.fontFamily ?? theme?.typography.body.fontFamily;
   return {
     fontSize: metric.fontSize,
     lineHeight: metric.lineHeight,
     fontWeight: HAPPIER_TYPE_WEIGHT[metric.weight],
     letterSpacing: metric.letterSpacing,
+    ...(family ? { fontFamily: family } : {}),
   };
 }
 
