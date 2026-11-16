@@ -126,7 +126,8 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
       ? await deps.prepareBotTemplateUpdate({ input: params.input,
         invokeChild: invokePreparationChild,
         context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
-    : await deps.prepareHostReviewedChildren?.({ actionId, input: params.input, context,
+    : await deps.prepareHostReviewedChildren?.({ actionId, input: params.input, context, invokeChild: invokePreparationChild,
+      ...(params.approvalReplay ? { approvalReplay: true as const } : {}),
       ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}) }));
   if (prepared && 'ok' in prepared) return prepared;
   let approvalPreview = prepared?.approvalPreview;

@@ -2324,6 +2324,9 @@ export type ManagedMachinesActionInputById = {
                     when?: unknown;
                     supportsAgentNativeSandbox?: boolean | undefined;
                 };
+                effectReview?: undefined | {
+                    requiredWhen: unknown;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -11357,6 +11360,9 @@ export type ManagedMachinesActionResultById = {
                     when?: InputPredicate | undefined;
                     supportsAgentNativeSandbox?: boolean | undefined;
                 };
+                effectReview?: undefined | {
+                    requiredWhen: InputPredicate;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -12926,6 +12932,9 @@ export type ManagedMachinesActionResultById = {
                         when?: InputPredicate | undefined;
                         supportsAgentNativeSandbox?: boolean | undefined;
                     };
+                    effectReview?: undefined | {
+                        requiredWhen: InputPredicate;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -13875,6 +13884,9 @@ export type ManagedMachinesActionResultById = {
                     kind: 'controller-local' | 'remote';
                     when?: InputPredicate | undefined;
                     supportsAgentNativeSandbox?: boolean | undefined;
+                };
+                effectReview?: undefined | {
+                    requiredWhen: InputPredicate;
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -15319,6 +15331,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -16246,6 +16261,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -18263,6 +18281,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -19190,6 +19211,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -20523,6 +20547,9 @@ export type ManagedMachinesActionResultById = {
                         when?: InputPredicate | undefined;
                         supportsAgentNativeSandbox?: boolean | undefined;
                     };
+                    effectReview?: undefined | {
+                        requiredWhen: InputPredicate;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -21511,6 +21538,9 @@ export type ManagedMachinesActionResultById = {
                         when?: InputPredicate | undefined;
                         supportsAgentNativeSandbox?: boolean | undefined;
                     };
+                    effectReview?: undefined | {
+                        requiredWhen: InputPredicate;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -22468,6 +22498,9 @@ export type ManagedMachinesActionResultById = {
                     kind: 'controller-local' | 'remote';
                     when?: InputPredicate | undefined;
                     supportsAgentNativeSandbox?: boolean | undefined;
+                };
+                effectReview?: undefined | {
+                    requiredWhen: InputPredicate;
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -23912,6 +23945,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -24839,6 +24875,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -26856,6 +26895,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -27783,6 +27825,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -37852,6 +37897,9 @@ export type ManagedMachinesActionResultById = {
                     when?: InputPredicate | undefined;
                     supportsAgentNativeSandbox?: boolean | undefined;
                 };
+                effectReview?: undefined | {
+                    requiredWhen: InputPredicate;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -39295,6 +39343,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -40222,6 +40273,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -42239,6 +42293,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -43166,6 +43223,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -44540,6 +44600,9 @@ export type ManagedMachinesActionResultById = {
                     when?: InputPredicate | undefined;
                     supportsAgentNativeSandbox?: boolean | undefined;
                 };
+                effectReview?: undefined | {
+                    requiredWhen: InputPredicate;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -45983,6 +46046,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -46910,6 +46976,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -48927,6 +48996,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -49854,6 +49926,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -51155,6 +51230,9 @@ export type ManagedMachinesActionResultById = {
                     when?: InputPredicate | undefined;
                     supportsAgentNativeSandbox?: boolean | undefined;
                 };
+                effectReview?: undefined | {
+                    requiredWhen: InputPredicate;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -52598,6 +52676,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -53525,6 +53606,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -55542,6 +55626,9 @@ export type ManagedMachinesActionResultById = {
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
                                 };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -56469,6 +56556,9 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'controller-local' | 'remote';
                                     when?: InputPredicate | undefined;
                                     supportsAgentNativeSandbox?: boolean | undefined;
+                                };
+                                effectReview?: undefined | {
+                                    requiredWhen: InputPredicate;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {

@@ -8,13 +8,16 @@ type PreparationIdentity = Readonly<{ presetRevision: number; cliIdentity: strin
   credentialConfigurations: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'] }>;
 
 export function createManagedMachinePresetPreparationBindingV1(params: PreparationIdentity & Readonly<{
-  content: Pick<ManagedMachinePresetContentV1, 'setup'> & {
+  content: Pick<ManagedMachinePresetContentV1, 'setup' | 'authorEffectReview'> & {
     launch: NonNullable<ManagedMachinePresetContentV1['launch']>;
   };
 }>): ManagedMachinePresetPreparationBindingV1 {
   const { name: _name, ...launch } = params.content.launch;
   return { presetRevision: params.presetRevision,
-    configuration: { launch, ...(params.content.setup === undefined ? {} : { setup: params.content.setup }) },
+    configuration: { launch, ...(params.content.setup === undefined ? {} : { setup: params.content.setup }),
+      ...(params.content.authorEffectReview === undefined ? {} : {
+        reviewedEffectDigest: params.content.authorEffectReview.reviewedEffectDigest,
+      }) },
     cliIdentity: params.cliIdentity,
     credentialConfigurations: params.credentialConfigurations };
 }
@@ -33,7 +36,7 @@ export function readManagedMachinePresetPreparationV1(params: PreparationIdentit
   const prepared = content.prepared;
   if (prepared === undefined) return { kind: 'cold', reason: 'unprepared' };
   if (content.launch === undefined || !sameStrictJsonValue(prepared.binding,
-    createManagedMachinePresetPreparationBindingV1({ ...params, content: { launch: content.launch, setup: content.setup } }),
+    createManagedMachinePresetPreparationBindingV1({ ...params, content: { ...content, launch: content.launch } }),
     { omitUndefinedObjectMembers: true })) return { kind: 'cold', reason: 'stale' };
   if (prepared.status !== 'ready') return { kind: 'cold', reason: prepared.status };
   if (prepared.cliBinaryPath === undefined) return { kind: 'cold', reason: 'unprepared' };

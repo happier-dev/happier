@@ -17,6 +17,22 @@ const binaryPath = '/opt/happier/cli/current/happier';
 const artifact = { contributionRef: content.launch.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 
 describe('preset preparation freshness', () => {
+  it('keeps an old prepared image cold after author reapproval changes the contents at the same source path', () => {
+    const source = { ...content, launch: { ...content.launch,
+      choices: { workspaceFolder: '/workspace', configPath: '/workspace/.devcontainer/devcontainer.json' } },
+      authorEffectReview: { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64), effects: [] } };
+    const binding = createManagedMachinePresetPreparationBindingV1({ content: source, ...current });
+    const ready = { ...source, prepared: { operationId: 'build-1', status: 'ready' as const,
+      binding, artifact, cliBinaryPath: binaryPath } };
+    expect(readManagedMachinePresetPreparationV1({ content: ready, ...current })).toMatchObject({ kind: 'warm' });
+    // Keep the same path and operational revision basis: only newly approved
+    // executable source contents changed, so revision equality cannot hide drift.
+    const revised = { ...ready, authorEffectReview: { ...source.authorEffectReview,
+      reviewedEffectDigest: 'b'.repeat(64) } };
+    expect(readManagedMachinePresetPreparationV1({ content: revised, ...current }))
+      .toEqual({ kind: 'cold', reason: 'stale' });
+  });
+
   it('keeps legacy ready artifacts without an actual installed CLI path cold', () => {
     const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
     expect(readManagedMachinePresetPreparationV1({ content: { ...content,

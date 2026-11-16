@@ -12,6 +12,7 @@ import { prepareCliDeploymentAlertDefaults } from './cliActionDeps/deploymentDef
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
 import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
+import { prepareCliManagedMachinePresetAuthoring } from '@/machines/managed/presetAuthoring';
 import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
 import { prepareDeploymentTargetEnablementRetention } from '@/deployments/targetEnablementRetention';
 import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
@@ -1077,6 +1078,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(params.prepareDeploymentTeardown ? { prepareDeploymentTeardown: params.prepareDeploymentTeardown } : {}),
     ...(params.prepareDeploymentEnvironmentCreate ? { prepareDeploymentEnvironmentCreate: params.prepareDeploymentEnvironmentCreate } : {}),
     prepareHostReviewedChildren: async request => {
+      const presetAuthoring = await prepareCliManagedMachinePresetAuthoring(request, {
+        credentials: params.credentials, serverUrl: todoHomeBaseUrl,
+      });
+      if (presetAuthoring) return presetAuthoring;
       const sourceMove = request.actionId === PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 ? await prepareCliProjectSourceTeamMove(request, {
         accountId: homeAccountId,
         credentialAuthorityKind: readAuthTokenProvenance(decodeJwtPayload(params.token), { allowLegacyHome: true })?.provenance.kind ?? 'none',

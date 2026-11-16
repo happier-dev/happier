@@ -118,6 +118,8 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
     when: z.optional(InputPredicateSchema),
     supportsAgentNativeSandbox: z.optional(z.boolean()),
   })),
+  /** Native source effects that the author reviews when saving a reusable preset. */
+  effectReview: z.optional(z.strictObject({ requiredWhen: InputPredicateSchema })),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
   actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), resize: z.optional(local()), snapshot: z.optional(local()), renew: z.optional(local()) }),
@@ -149,6 +151,10 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
     actions: z.strictObject({ build: local(), inspect: local(), destroy: local() }),
   })),
 }).check(z.superRefine((descriptor, context) => {
+  if (descriptor.effectReview && readInputPredicatePaths(descriptor.effectReview.requiredWhen)
+    .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
+    context.addIssue({ code: 'custom', path: ['effectReview', 'requiredWhen'], message: 'Effect review predicates require declared launch selector paths.' });
+  }
   if (descriptor.sessionPlacement?.when && readInputPredicatePaths(descriptor.sessionPlacement.when)
     .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
     context.addIssue({ code: 'custom', path: ['sessionPlacement', 'when'], message: 'Session placement predicates require declared launch selector paths.' });
@@ -185,6 +191,11 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   }
 })));
 export type MachineProvisionerContributionV1 = z.infer<typeof MachineProvisionerContributionV1Schema>;
+
+/** The declaration owns which launch variants need source effects admitted by their author. */
+export function requiresMachineProvisionerEffectReviewV1(provisioner: Pick<MachineProvisionerContributionV1, 'effectReview'>, launchInput: unknown): boolean {
+  return provisioner.effectReview !== undefined && evaluateInputPredicate(provisioner.effectReview.requiredWhen, launchInput);
+}
 
 /** Placement is declared by the provider, independently of billing and transport. */
 export function readMachineProvisionerSessionPlacementV1(provisioner: MachineProvisionerContributionV1, launchInput: unknown): NonNullable<MachineProvisionerContributionV1['sessionPlacement']> | null {

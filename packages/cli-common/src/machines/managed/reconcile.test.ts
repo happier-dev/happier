@@ -232,6 +232,34 @@ describe('portable managed reconciliation', () => {
         expect(roles).toEqual(['inspect']);
     });
 
+    it.each(['cold-source', 'prepared-image'] as const)('uses the stored author source authority for %s acquisition', async mode => {
+        const authorDigest = 'a'.repeat(64);
+        const instanceDigest = 'b'.repeat(64);
+        const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({
+            launch: machine.launch, controller: machine.controller, optionStatus: 'current',
+            billing: provisioner.billing, retentionCapabilities: provisioner.retention, prerequisites: [],
+            retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
+            reviewedEffectDigest: instanceDigest,
+        });
+        const run = boundary({ ...machine, reviewedFacts });
+        const acquired: unknown[] = [];
+        await reconcileManagedMachine({ ...run.input,
+            createNative: (...args) => {
+                const native = run.input.createNative(...args);
+                return { ...native,
+                    readReviewedEffectDigest: () => mode === 'cold-source' ? authorDigest : undefined,
+                    invoke: async (role, body, io) => {
+                        if (role !== 'acquire') return native.invoke(role, body, io);
+                        acquired.push(body);
+                        return { kind: 'bound', resource };
+                    },
+                };
+            },
+        });
+        expect(acquired).toEqual([{ managedId: machine.id, launch: machine.launch.choices,
+            ...(mode === 'cold-source' ? { reviewedEffectDigest: authorDigest } : {}) }]);
+    });
+
     it.each(['initial', 'continued', 'unreviewed'] as const)(
         'passes only the admitted effect digest to native acquisition (%s)', async mode => {
             const digest = 'a'.repeat(64);

@@ -29,6 +29,7 @@ export type MachineProvisionerContributionV1 = Readonly<{
   /** Qualified whole browser API/bootstrap path; absence does not qualify browser acquisition. */
   browserReachable?: boolean;
   sessionPlacement?: canonical.MachineProvisionerContributionV1['sessionPlacement'];
+  effectReview?: canonical.MachineProvisionerContributionV1['effectReview'];
   prerequisites: readonly Readonly<{ kind: 'managedDependency' | 'systemTool'; id: string | PluginContributionRef }>[];
   billing: Readonly<{ location: 'local' | 'cloud' | 'unknown'; stoppedBilling: 'billed' | 'not-billed' | 'unknown'; storageCharges?: readonly MachineProvisionerPriceV1[] }>;
   retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; guestLocalStop?: canonical.MachineProvisionerContributionV1['retention']['guestLocalStop']; finiteOnly?: boolean; deletionNotices?: readonly MachineProvisionerDeletionNoticeV1[]; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;
@@ -77,6 +78,7 @@ export type MachineProvisionerSnapshotResultV1 = canonical.MachineProvisionerSna
 export const MachineProvisionerSnapshotResultV1Schema: ProtocolComposableSchema<MachineProvisionerSnapshotResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerSnapshotResultV1Schema);
 export const MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1 = /* @__PURE__ */ projectProtocolValue(canonical.MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1);
 export const readMachineProvisionerResizeCapabilityV1 = /* @__PURE__ */ projectProtocolValue(canonical.readMachineProvisionerResizeCapabilityV1);
+export const requiresMachineProvisionerEffectReviewV1 = /* @__PURE__ */ projectProtocolValue(canonical.requiresMachineProvisionerEffectReviewV1);
 export const readMachineProvisionerResizeRequirementsV1 = /* @__PURE__ */ projectProtocolValue(canonical.readMachineProvisionerResizeRequirementsV1);
 export const managedMachineResizeRequiresRestartV1 = /* @__PURE__ */ projectProtocolValue(canonical.managedMachineResizeRequiresRestartV1);
 export const MachineProvisionerSizeV1Schema: ProtocolComposableSchema<MachineProvisionerSizeV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerSizeV1Schema);

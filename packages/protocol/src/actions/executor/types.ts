@@ -1450,6 +1450,9 @@ export type ActionExecutorDeps = Readonly<{
    */
   prepareHostReviewedChildren?: (request: Readonly<{ actionId: ActionId; input: unknown;
     context: ActionExecutorContext; machineRuntimeDemand?: ActionMachineRuntimeDemandV1;
+    invokeChild?: HostReviewedChildPortV1['invoke'];
+    /** Existing approval owner verified this exact persisted input. */
+    approvalReplay?: true;
   }>) => Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult | null>;
   prepareBotTemplateInstantiation?: (request: HostReviewedChildrenPreparationRequestV1) =>
     Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult>;

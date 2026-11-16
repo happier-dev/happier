@@ -57,3 +57,7 @@ export type DevcontainerLaunch = ProtocolSchemaOutput<typeof DevcontainerLaunchS
 export type DevcontainerReviewQuery = ProtocolSchemaOutput<typeof DevcontainerReviewQuerySchema>;
 export type DevcontainerResource = ProtocolSchemaOutput<typeof DevcontainerResourceSchema>;
 export type DevcontainerNativeOperation = ProtocolSchemaOutput<typeof DevcontainerNativeOperationSchema>;
+/** One declaration drives both author Save review and native acquisition. */
+export const DEVCONTAINER_EFFECT_REVIEW_REQUIREMENT = {
+  requiredWhen: { op: 'not', predicate: { op: 'eq', path: 'configuration.kind', value: 'image' } },
+} as const;

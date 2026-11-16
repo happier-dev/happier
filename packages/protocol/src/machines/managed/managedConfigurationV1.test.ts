@@ -10,9 +10,28 @@ import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicy
 import { ManagedAcquireInputV1Schema, ManagedAdmissionInputV1Schema, ManagedErrorV1Schema, resolveManagedAcquireReviewV1 } from './actionsV1.js';
 import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
 import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '../../plugins/contributions/machineProvisioners.js';
+import * as machineProvisioners from '../../plugins/contributions/machineProvisioners.js';
 import { createPluginJsonSchemaZodValueAdapter } from '../../plugins/actions/jsonSchemaValidation.js';
 
 describe('managed preset executable selection', () => {
+  it('uses the provider declared input predicate to require source effect review', () => {
+    const descriptor = {
+      id: 'container', title: 'Container', icon: 'cube', resourceKind: 'container', schemaVersion: 1,
+      platforms: ['linux'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+      retention: { supportedIntents: ['delete'] },
+      actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+      launchSchema: { type: 'object', properties: { source: { type: 'string', enum: ['image', 'file'] } },
+        required: ['source'], additionalProperties: false },
+      resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
+      effectReview: { requiredWhen: { op: 'eq', path: 'source', value: 'file' } },
+    };
+    const provisioner = MachineProvisionerContributionV1Schema.parse(descriptor);
+    expect(machineProvisioners.requiresMachineProvisionerEffectReviewV1(provisioner, { source: 'file' })).toBe(true);
+    expect(machineProvisioners.requiresMachineProvisionerEffectReviewV1(provisioner, { source: 'image' })).toBe(false);
+    expect(MachineProvisionerContributionV1Schema.safeParse({ ...descriptor,
+      effectReview: { requiredWhen: { op: 'truthy', path: 'undeclared' } } }).success).toBe(false);
+  });
+
   it('binds computed native effects to acquisition facts without putting the digest in saved operands', () => {
     const choices = z.strictObject({ image: z.string() });
     const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1,

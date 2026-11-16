@@ -4399,17 +4399,38 @@ remain on the existing managed Machine owners.
 
 Devcontainer presets save only the author operands accepted by the options
 Action: image and setup script, runtime, workspace and file or inline build
-configuration. Saving or editing these operands does not require a controller or
-native acquisition. Image-only acquisition can use the saved operands without a
+configuration. Image-only saves do not require a controller or native review.
+The provisioner's `effectReview.requiredWhen` declaration uses the existing
+launch-input predicate contract to identify sources that require review; hosts
+consume the canonical evaluator rather than interpreting provider ids or fields.
+Image-only acquisition can use the saved operands without a
 native review digest: they fully specify child setup, and image metadata cannot
 add Dev Containers hooks. Acquire observes the image through the existing native
 review owner and retains those executable facts for reconciliation; this is not
 requester-supplied approval authority. If an acquisition carries an admitted
 digest, image drift still refuses it. Advanced file and inline sources require
-an admitted digest before any native configuration runs. Delegated Team members
-cannot supply that digest; advanced delegated creation remains unavailable.
+an admitted digest before any native configuration runs.
 
-For reviewed acquisition, native options compute the effect review and its
+For these sources, the author's ordinary preset Save or source revision captures
+native options and discloses their effect review before approval, whether Prepare
+is enabled or disabled. The exact approved source review is stored privately as
+`authorEffectReview` in the existing mode-tagged preset content. Fresh author
+operands cannot supply that field; canonical native capture adds it to the
+carrier that the ordinary approval signs. A source edit requires a new author
+review. Recipient repair and operational preparation preserve the existing
+source receipt. The saved revision and normal update CAS remain the record
+binding; the receipt has no separate revision ledger.
+
+Creating from a Team preset is the member's consent to its sealed policy. Cold
+acquisition consumes the author's stored digest, including when Prepare is off;
+the daemon never recaptures approval for the member. Native source drift still
+refuses acquisition. Preparation compares the source review before building and
+includes its digest in the existing preparation configuration binding, so changed
+contents at the same file path invalidate an old artifact. Prepared acquisition
+uses the approved physical artifact without comparing its image digest to the
+different source digest. Member instance names do not change the source receipt.
+
+For a directly reviewed one-off acquisition, native options compute the effect review and its
 digest once for the selected operands. The receipt builder puts only the digest
 in `reviewedFacts.reviewedEffectDigest`, outside the saved launch choices; the
 ordinary acquisition approval signs those facts with the request. The controller

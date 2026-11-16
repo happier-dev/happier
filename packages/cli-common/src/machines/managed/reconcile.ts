@@ -5,7 +5,7 @@ import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/mach
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
-    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -18,7 +18,7 @@ export { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdent
 export { bindManagedMachineRoleCredentials, captureManagedMachineRoleCredentialConfigurationsV1,
     projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1 } from './roleCredentials.js';
 
-export type ManagedNativeRole = keyof MachineProvisionerContributionV1['actions'] | 'exec' | 'putFile' | 'stream' | 'reconcile' | 'cleanup' | 'nativeCredentialApply';
+export type ManagedNativeRole = MachineProvisionerRoleV1;
 /** The live byte channel of the `stream` role, for the life of its invocation. */
 export type ManagedNativeChannelIO = Readonly<{
     onOutput(output: Readonly<{ stream: 'stdout' | 'stderr'; data: Uint8Array }>): void;
@@ -46,6 +46,8 @@ export type ManagedReconciliationHome = Readonly<{
 export type ManagedReconciliationNative = Readonly<{
     bootstrapCredentialKind?: 'ssh' | 'native-token';
     optionsInputSchema?: PluginJsonSchemaV2;
+    /** Opaque presets consume their author's source receipt; undefined deliberately excludes instance-fact fallback. */
+    readReviewedEffectDigest?: () => string | undefined;
     prepareRoles(): Promise<void>;
     invoke: ManagedNativeInvocation;
 }>;
@@ -296,6 +298,8 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     }
     const native = input.createNative(() => machine, () => credentialRevision);
     const invoke = native.invoke;
+    const readReviewedEffectDigest = () => native.readReviewedEffectDigest
+        ? native.readReviewedEffectDigest() : machine.reviewedFacts?.reviewedEffectDigest;
     const bootstrapCredentialKind = native.bootstrapCredentialKind;
     const continueRetainedAcquisition = !machine.enrolledMachineId && machine.allocation !== 'unsubmitted'
         && provisioner?.reconciliation?.continueAcquire === true;
@@ -332,10 +336,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         if (!submitted.submitted) return machine;
         let result: AcquireResultV1;
         try {
+            const reviewedEffectDigest = readReviewedEffectDigest();
             result = AcquireResultV1Schema.parse(await invoke('acquire', { managedId: machine.id, launch: machine.launch.choices,
-                ...(machine.reviewedFacts?.reviewedEffectDigest === undefined ? {} : {
-                    reviewedEffectDigest: machine.reviewedFacts.reviewedEffectDigest,
-                }),
+                ...(reviewedEffectDigest === undefined ? {} : { reviewedEffectDigest }),
                 ...(bootstrapPublicKey ? { bootstrapPublicKey } : {}),
                 ...(guestHostPublicKey === undefined ? {} : { guestHostPublicKey }) }));
         } catch (error) {
@@ -368,11 +371,10 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         observation: { observedAt: Date.now(), availability: 'unavailable', reason: 'bootstrap.incomplete' } }, null);
     try {
         if (continueRetainedAcquisition) {
+            const reviewedEffectDigest = readReviewedEffectDigest();
             const continued = AcquireResultV1Schema.parse(await invoke('acquire', {
                 managedId: machine.id, launch: machine.launch.choices, resource: boundResource.value,
-                ...(machine.reviewedFacts?.reviewedEffectDigest === undefined ? {} : {
-                    reviewedEffectDigest: machine.reviewedFacts.reviewedEffectDigest,
-                }),
+                ...(reviewedEffectDigest === undefined ? {} : { reviewedEffectDigest }),
             }));
             if (continued.kind !== 'bound') throw acquisitionFailure(continued);
             if (!pluginJsonValuesEqual(continued.resource, machine.resource)) throw new ManagedMachineControllerError('resource_mismatch');

@@ -1,12 +1,12 @@
 import { PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import { compareMachineHosts, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { MachineProvisionerSizeV1Schema, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerSizeV1Schema, requiresMachineProvisionerEffectReviewV1, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
 import { access } from 'node:fs/promises';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerNativeOperationSchema } from './schemas.js';
+import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerNativeOperationSchema, DEVCONTAINER_EFFECT_REVIEW_REQUIREMENT } from './schemas.js';
 import type { DevcontainerLaunch, DevcontainerResource, DevcontainerNativeOperation, DevcontainerReviewQuery } from './schemas.js';
 import { assertDevcontainerEffectReview, devcontainerComposeProjectName, readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './effectReview.js';
 import { devcontainerNativeFlags } from './configuration.js';
@@ -295,7 +295,7 @@ export function createDevcontainerProvider(input: Readonly<{
       // Image presets fully specify the child setup; image metadata cannot add
       // Dev Containers hooks. Only advanced sources need admitted native review.
       // Still retain locally observed executable facts for exact reconciliation.
-      if (query.configuration?.kind !== 'image' && !reviewedEffectDigest) return { kind: 'rejected' as const, code: 'invalid_request' as const };
+      if (requiresMachineProvisionerEffectReviewV1({ effectReview: DEVCONTAINER_EFFECT_REVIEW_REQUIREMENT }, query) && !reviewedEffectDigest) return { kind: 'rejected' as const, code: 'invalid_request' as const };
       let launch: DevcontainerLaunch;
       try {
         launch = (await readDevcontainerEffectReview(nativeInput, query)).launch;

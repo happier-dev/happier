@@ -7,6 +7,7 @@ import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { DEVCONTAINER_PLUGIN } from './manifest.js';
 import { installDockerRuntime } from './machine/runtimeRepair.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
+import { requiresMachineProvisionerEffectReviewV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 // The answering controller's OS is an external boundary; recipe support stays
 // with the setup planner rather than being duplicated in this provider.
@@ -16,6 +17,16 @@ vi.mock('node:os', async importOriginal => {
 });
 
 describe('Devcontainer public-author declaration', () => {
+  it('requires native review for advanced sources while keeping hostless image authoring available', () => {
+    const provisioner = DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners.find(entry => entry.id === 'devcontainer');
+    if (!provisioner) throw new Error('Missing Devcontainer provisioner');
+    expect(requiresMachineProvisionerEffectReviewV1(provisioner, { configuration: { kind: 'image', image: 'example:latest' } })).toBe(false);
+    for (const launch of [
+      { workspaceFolder: '/workspace', configPath: '/workspace/.devcontainer/devcontainer.json' },
+      { workspaceFolder: '/workspace', configPath: '/workspace/.devcontainer/devcontainer.json', configuration: { kind: 'file' } },
+      { workspaceFolder: '/workspace', configuration: { kind: 'inline', config: '{"image":"example:latest"}' } },
+    ]) expect(requiresMachineProvisionerEffectReviewV1(provisioner, launch)).toBe(true);
+  });
   it.each([['amd64', 'x64'], ['arm64', 'arm64']] as const)('projects the inspected %s image target for the clean CLI supplier', async (nativeArch, arch) => {
     const services = { exec: { run: async () => ({ stdout: Buffer.from(JSON.stringify([{ Id: 'sha256:base',
       Os: 'linux', Architecture: nativeArch, Config: { User: 'developer', WorkingDir: '/workspace' } }])),

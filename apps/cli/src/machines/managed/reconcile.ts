@@ -1,5 +1,6 @@
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
-import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1, type ManagedNativeChannelIO } from '@happier-dev/cli-common/machines/managed';
+import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
+    readManagedOpaquePresetAcquireEffectDigestV1, type ManagedNativeChannelIO } from '@happier-dev/cli-common/machines/managed';
 import { captureManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed/reconcile';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { generateKeyPair, randomBytes, randomUUID } from 'node:crypto';
@@ -672,7 +673,11 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
             const optionsAction = contribution.definition.actions.options;
             const optionsInputSchema = optionsAction ? params.input.runtimeRegistry.contributes.actionsById?.get(
                 buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId: optionsAction }))?.admittedTarget?.declaration.inputSchema : undefined;
-            return { bootstrapCredentialKind, invoke, optionsInputSchema, prepareRoles: async () => {
+            return { bootstrapCredentialKind, invoke, optionsInputSchema,
+                ...(params.hydrator?.isOpaque(readMachine()) ? { readReviewedEffectDigest: () => {
+                    const content = params.hydrator?.readPresetDefinition(readMachine());
+                    return content === undefined ? undefined : readManagedOpaquePresetAcquireEffectDigestV1(content);
+                } } : {}), prepareRoles: async () => {
                 for (const localId of [contribution.definition.actions.acquire, contribution.definition.actions.bootstrap,
                     ...(contribution.definition.bootstrapTransport ? [contribution.definition.bootstrapTransport.exec, contribution.definition.bootstrapTransport.putFile] : [])]) {
                     await roleCredentialAuthorization(localId);

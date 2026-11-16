@@ -25,6 +25,29 @@ const prepared = { operationId: 'prepare-1', binding, status: 'ready' as const, 
   cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: content.setup };
 
 describe('private prepared preset content', () => {
+  it('retains source author approval beside the different prepared physical launch review', () => {
+    const effectReview = { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64), effects: [] };
+    const sealed = preset.sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content });
+    const reviewed = preset.captureManagedMachinePresetAuthorEffectReviewV1({ presetId: 'preset', mode: 'plain',
+      content: sealed.content, optionProjection: { kind: 'ready', launch: content.launch.choices,
+        nativeFacts: {}, prices: [], effectReview } });
+    const execution = { launch: { ...content.launch, choices: { image: 'approved-prepared-artifact' } },
+      binaryPath: '/opt/happier/cli/current/happier' };
+    const facts = { launch: execution.launch, optionStatus: 'unavailable' as const,
+      billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },
+      retentionCapabilities: { supportedIntents: ['start', 'delete'] }, prerequisites: [],
+      retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+    const selected = preset.replaceManagedMachinePresetLaunchNameV1({ presetId: 'preset', mode: 'plain',
+      content: reviewed, launchName: content.launch.name, preparationExecution: execution, reviewedFacts: facts });
+    const opened = preset.openManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: selected });
+    expect(opened).toMatchObject({ launch: content.launch, preparationExecution: execution,
+      reviewedFacts: facts, authorEffectReview: effectReview });
+    expect(opened?.reviewedFacts).not.toHaveProperty('reviewedEffectDigest');
+    expect(preset.replaceManagedMachinePresetLaunchNameV1({ presetId: 'preset', mode: 'plain',
+      content: selected, launchName: content.launch.name,
+      reviewedFacts: { ...facts, launch: content.launch } })).toBeNull();
+  });
+
   it('requires the admitted connected-account configuration revision in the private binding', () => {
     const credentialConfigurations = [{ account: { service: { pluginId: 'test.service', localId: 'compute' },
       accountId: 'provider-one' }, revision: 'configuration-1' }];

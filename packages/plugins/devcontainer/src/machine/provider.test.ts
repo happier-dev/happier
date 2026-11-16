@@ -9,6 +9,9 @@ import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema, type Devcontai
 import { DEVCONTAINER_PLUGIN, DEVCONTAINER_RECONCILIATION_SCHEMAS } from '../manifest.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { prepareManagedMachinePresetAuthoringV1, readManagedOpaquePresetAcquireEffectDigestV1 } from '../../../../cli-common/src/machines/managed/index.js';
+import { MachinePresetActionInputSchemasV1 } from '../../../../protocol/src/machines/managed/machinePresetActionsV1.js';
+import { openManagedMachinePresetRecipientProjectionV1, openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1, replaceManagedMachinePresetLaunchNameV1 } from '../../../../protocol/src/machines/managed/managedMachinePresetContentV1.js';
 
 // The Lima boot marker is an OS boundary; configuration files stay real.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -164,6 +167,48 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
 }
 
 describe('Devcontainer native roles', () => {
+  it.each([false, true])('creates a delegated Team devcontainer.json from the author Save receipt (Prepare=%s)', async enabled => {
+    const authorNative = native();
+    const { reviewedEffectDigest: _digest, ...choices } = launch;
+    const contribution = { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: 'devcontainer' };
+    const descriptor = DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners.find(entry => entry.id === contribution.localId);
+    if (!descriptor) throw new Error('Expected Devcontainer declaration');
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: {
+      v: 1, name: 'Team source', preparation: { enabled },
+      launch: { provider: contribution, schemaVersion: 1, name: 'Author name', choices },
+    } });
+    let authorOptions = 0;
+    const saved = await prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.create',
+      input: { id: 'team-preset', homeId: 'home', owner: { kind: 'team', teamId: 'team' }, teamAcquireDelegated: true,
+        contentEncryptionMode: 'plain', content: sealed.content, recipients: [],
+        controller: { machineId: 'author-controller', installationId: 'author-installation' } },
+      context: { runtimeAccountId: 'author' },
+      invokeChild: async () => {
+        authorOptions += 1;
+        const review = await readDevcontainerEffectReview(authorNative.tools, choices);
+        return { ok: true, result: { base: { launch: choices, effectReview: review.effectReview },
+          dimensions: { size: [], image: [], location: [], network: [], duration: [] } } };
+      },
+    }, {
+      custody: { accountId: 'author', open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
+        withE2eeAccountKey: () => null },
+      readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon', descriptor }],
+      randomBytes: length => new Uint8Array(length),
+    });
+    if (!saved || 'ok' in saved) throw new Error(`Author Save failed: ${JSON.stringify(saved)}`);
+    const reviewed = MachinePresetActionInputSchemasV1['machines.presets.create'].parse(saved.input);
+    const memberContent = replaceManagedMachinePresetLaunchNameV1({ presetId: 'team-preset', mode: 'plain',
+      content: reviewed.content, launchName: 'Member name' });
+    if (!memberContent) throw new Error('Expected member name override');
+    const member = openManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: memberContent });
+    if (!member?.launch) throw new Error('Expected saved Team launch');
+    const memberNative = native();
+    const acquired = await memberNative.provider.acquire({ ...DevcontainerReviewQuerySchema.parse(member.launch.choices),
+      reviewedEffectDigest: readManagedOpaquePresetAcquireEffectDigestV1(member) }, 'managed-a');
+    expect(acquired.kind).toBe('bound');
+    expect(authorOptions).toBe(1);
+    expect(member.authorEffectReview?.reviewedEffectDigest).toBe(launch.reviewedEffectDigest);
+  });
   it.each(['docker', 'podman'] as const)('uses the host branch only for confirmed Lima bridge DNS failure (%s)', async runtime => {
     await onLima();
     for (const [bridgeDnsExit, hostDnsExit, expectedHost] of [[2, 0, true], [0, 0, false], [2, 2, false], [127, 0, false]] as const) {

@@ -2,6 +2,7 @@ export * from './controllerErrors.js';
 export * from './presetOrigination.js';
 export * from './presetAcquire.js';
 export * from './presetPreparation.js';
+export * from './presetAuthoring.js';
 export * from './presetPreparationBuildInput.js';
 export * from './presetPreparationOperation.js';
 export * from './opaquePresetReviewedChild.js';

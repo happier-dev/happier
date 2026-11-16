@@ -12475,11 +12475,14 @@ parser tolerance does not establish managed wake support against an older Home.
 ## Devcontainer preset operands and acquisition review (unreleased 0.3)
 
 Devcontainer launch choices now use the provider's author-input schema and omit
-native `reviewedEffectDigest`. Native options compute that digest at use; the
-canonical receipt builder captures it in `reviewedFacts.reviewedEffectDigest`,
-which the existing acquisition approval signature binds. Native acquire receives
-it separately from launch operands and retains the provider's effect-time drift
-check. Full native effect descriptions stay transient.
+native `reviewedEffectDigest`. Provisioners declare `effectReview.requiredWhen`
+through the existing input predicate schema. The author Save admission captures
+native source effects once in private `authorEffectReview`, whether Prepare is
+enabled or disabled. Cold preset acquisition consumes this stored digest;
+prepared acquisition uses the bound physical artifact. Members never recapture
+author approval. One-off acquisition retains its existing transient options and
+`reviewedFacts.reviewedEffectDigest` receipt. Native acquire receives the admitted
+digest separately from launch operands and retains its effect-time drift check.
 
 Matching Protocol, SDK, UI, Home and controller declarations must reload
 together; older strict development readers reject the new optional review-fact

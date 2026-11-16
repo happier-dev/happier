@@ -78,6 +78,68 @@ function unavailableRecipientCensus(accountId: string) {
 }
 
 describe('managed machine preset content envelope', () => {
+  it.each(['plain', 'e2ee'] as const)('retains the %s author source review through member naming and operational updates', mode => {
+    const presetId = 'author-reviewed-preset';
+    const authorKey = new Uint8Array(32).fill(42);
+    const memberKey = new Uint8Array(32).fill(43);
+    const randomBytes = randomBytesFactory(120);
+    const effectReview = { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64), effects: [] };
+    const sealed = mode === 'plain'
+      ? sealManagedMachinePresetContentV1({ presetId, mode, content })
+      : sealManagedMachinePresetContentV1({ presetId, mode, content, randomBytes,
+        recipientCensus: [recipientCensus('author', authorKey), recipientCensus('member', memberKey)] });
+    const auth = mode === 'plain' ? { presetId, mode } : { presetId, mode,
+      recipients: sealed.recipients, accountId: 'author', accountKey: authorKey, randomBytes };
+    const optionProjection = { kind: 'ready' as const, launch: content.launch.choices,
+      nativeFacts: {}, prices: [], effectReview };
+    const approved = managedPresetContent.captureManagedMachinePresetAuthorEffectReviewV1({ ...auth,
+      content: sealed.content, optionProjection });
+    expect(approved).not.toBeNull();
+    if (!approved) return;
+    expect(managedPresetContent.captureManagedMachinePresetAuthorEffectReviewV1({ ...auth,
+      content: approved, optionProjection: { ...optionProjection, effectReview: { ...effectReview,
+        reviewedEffectDigest: 'b'.repeat(64) } } })).toBeNull();
+    expect(managedPresetContent.captureManagedMachinePresetAuthorEffectReviewV1({ ...auth,
+      content: sealed.content, optionProjection: { ...optionProjection, launch: { image: 'different' } } })).toBeNull();
+    const projection = projectManagedMachinePresetForRecipientV1({ content: approved,
+      recipients: sealed.recipients, recipientAccountId: 'member' });
+    const override = mode === 'plain'
+      ? createManagedMachinePresetAcquireOverrideV1({ presetId, mode, projection, launchName: 'Member container' })
+      : createManagedMachinePresetAcquireOverrideV1({ presetId, mode, projection, launchName: 'Member container',
+        accountId: 'member', accountKey: memberKey, randomBytes });
+    expect(override).not.toBeNull();
+    if (!override) return;
+    const opened = mode === 'plain'
+      ? openManagedMachinePresetContentV1({ presetId, mode, content: override.content })
+      : openManagedMachinePresetContentV1({ presetId, mode, content: override.content,
+        recipients: sealed.recipients, accountId: 'member', accountKey: memberKey });
+    expect(opened).toMatchObject({ launch: { name: 'Member container' }, authorEffectReview: effectReview });
+    expect(opened).not.toHaveProperty('reviewedFacts');
+    expect(resolveManagedMachinePresetAcquireOverrideV1({ baseContent: { ...content, authorEffectReview: effectReview },
+      overrideContent: opened })).toEqual({ launchName: 'Member container' });
+    expect(resolveManagedMachinePresetAcquireOverrideV1({ baseContent: { ...content, authorEffectReview: effectReview },
+      overrideContent: { ...opened, authorEffectReview: { ...effectReview, reviewedEffectDigest: 'b'.repeat(64) } } })).toBeNull();
+    const operational = replaceManagedMachinePresetLaunchNameV1({ ...auth, content: approved,
+      launchName: content.launch.name, reviewedFacts });
+    expect(openManagedMachinePresetContentV1({ ...auth, content: operational }))
+      .toMatchObject({ reviewedFacts, authorEffectReview: effectReview });
+    expect(() => sealManagedMachinePresetContentV1({ presetId, mode: 'plain',
+      content: { ...content, authorEffectReview: effectReview } })).toThrow('managed_preset_author_effect_review_forbidden');
+    const authorProjection = projectManagedMachinePresetForRecipientV1({ content: approved,
+      recipients: sealed.recipients, recipientAccountId: 'author' });
+    const replaced = mode === 'plain'
+      ? managedPresetContent.replaceManagedMachinePresetAuthorContentV1({ presetId, mode, projection: authorProjection,
+        content: { ...content, launch: { ...content.launch, choices: { image: 'new-source' } } } })
+      : managedPresetContent.replaceManagedMachinePresetAuthorContentV1({ presetId, mode, projection: authorProjection,
+        content: { ...content, launch: { ...content.launch, choices: { image: 'new-source' } } },
+        accountId: 'author', accountKey: authorKey, randomBytes,
+        recipientCensus: [recipientCensus('author', authorKey), recipientCensus('member', memberKey)] });
+    expect(replaced).not.toBeNull();
+    if (!replaced) return;
+    expect(openManagedMachinePresetContentV1({ ...auth, content: replaced.content,
+      ...(mode === 'plain' ? {} : { recipients: replaced.recipients }) })).not.toHaveProperty('authorEffectReview');
+  });
+
   it('keeps Setup Retry facts encrypted under the existing snapshot key and refuses a wrong-mode rewrite', () => {
     const accountKey = new Uint8Array(32).fill(71);
     const randomBytes = randomBytesFactory(10);

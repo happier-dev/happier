@@ -17,6 +17,11 @@ import type { ManagedMachinePresetPreparationExecutionV1 } from '@happier-dev/pr
 export type ManagedOpaquePresetContentOpenerV1 = (content: ManagedMachinePresetStoredContentV1) =>
   ManagedMachinePresetContentV1 | null | Promise<ManagedMachinePresetContentV1 | null>;
 
+/** The prepared artifact has its own executable identity; its source digest stays with the source receipt. */
+export function readManagedOpaquePresetAcquireEffectDigestV1(content: ManagedMachinePresetContentV1): string | undefined {
+    return content.preparationExecution === undefined ? content.authorEffectReview?.reviewedEffectDigest : undefined;
+}
+
 export type PreparedManagedOpaquePresetAcquireV1 = Readonly<{
     /** The authenticated carrier that the host later reseals with its immutable review. */
     content: ManagedMachinePresetStoredContentV1;

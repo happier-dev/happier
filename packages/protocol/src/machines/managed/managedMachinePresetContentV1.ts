@@ -38,6 +38,8 @@ import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerRebuildResultV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachinePoolIdV1Schema } from '../pools/v1.js';
+import { DevcontainerEffectReviewV1Schema } from './devcontainerV1.js';
+import type { MachineProvisionerSelectionProjectionV1 } from '../../plugins/contributions/machineProvisioners.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
@@ -133,6 +135,8 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     preparationExecution: z.optional(createManagedMachinePresetPreparationExecutionV1Schema(choices)),
     /** Private admission identity; an acquire override, not a reusable author declaration. */
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
+    /** Author-approved source effects, captured before Save approval; independent of per-instance facts. */
+    authorEffectReview: z.optional(DevcontainerEffectReviewV1Schema),
     /** Daemon-captured immutable admission review; author writes are rejected by the fresh-seal owner. */
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(choices)),
     /** Provider payload captured by the keyholding daemon; Home sees only structural lifecycle state. */
@@ -145,6 +149,8 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     resize: z.optional(MachineProvisionerSizeV1Schema),
   }).check(z.refine(content => content.launch !== undefined || content.setup !== undefined,
     { message: 'A Preset requires launch or setup content.' }))
+    .check(z.refine(content => content.authorEffectReview === undefined || content.launch !== undefined,
+      { message: 'Author effect review requires the sealed source launch.' }))
     .check(z.refine(content => {
       if (content.preparationExecution === undefined) return true;
       if (content.launch === undefined || content.reviewedFacts === undefined) return false;
@@ -503,6 +509,7 @@ function parseManagedMachinePresetAuthorContentV1(content: unknown): ManagedMach
   if (parsed.resize !== undefined) throw new Error('managed_preset_author_resize_forbidden');
   if (parsed.enrollmentIdentity !== undefined) throw new Error('managed_preset_author_enrollment_identity_forbidden');
   if (parsed.reviewedFacts !== undefined) throw new Error('managed_preset_author_reviewed_facts_forbidden');
+  if (parsed.authorEffectReview !== undefined) throw new Error('managed_preset_author_effect_review_forbidden');
   if (parsed.setupSourceFacts !== undefined) throw new Error('managed_preset_author_setup_source_facts_forbidden');
   if (parsed.prepared !== undefined) throw new Error('managed_preset_author_prepared_forbidden');
   return parsed;
@@ -619,6 +626,33 @@ function replaceManagedMachinePresetExistingContentV1(
   return content === null ? null : sameStrictJsonValue(content, opened.content)
     ? stored.data
     : sealEncryptedPresetContent(presetId, content, opened.dataKey, params.randomBytes);
+}
+
+export type ManagedMachinePresetAuthorEffectReviewCaptureParamsV1 = (
+  | Omit<Extract<ManagedMachinePresetExistingContentReplacementV1, { mode: 'plain' }>, 'replace'>
+  | Omit<Extract<ManagedMachinePresetExistingContentReplacementV1, { mode: 'e2ee' }>, 'replace'>
+) & Readonly<{
+  /** The selected provider's canonical native options projection, read before ordinary Save approval. */
+  optionProjection: MachineProvisionerSelectionProjectionV1;
+}>;
+
+/**
+ * Capture source effects into the exact carrier presented for author approval.
+ * This is not an acquire overlay: an admitted receipt cannot be replaced, and
+ * ordinary author edits discard it before capturing their new source review.
+ */
+export function captureManagedMachinePresetAuthorEffectReviewV1(
+  params: ManagedMachinePresetAuthorEffectReviewCaptureParamsV1,
+): ManagedMachinePresetStoredContentV1 | null {
+  const projection = params.optionProjection;
+  if (projection.kind !== 'ready' || projection.effectReview === undefined) return null;
+  return replaceManagedMachinePresetExistingContentV1({ ...params, replace: content => {
+    if (content.launch === undefined || !sameStrictJsonValue(content.launch.choices, projection.launch)) return null;
+    if (content.authorEffectReview !== undefined
+      && !sameStrictJsonValue(content.authorEffectReview, projection.effectReview)) return null;
+    const next = ManagedMachinePresetContentV1Schema.safeParse({ ...content, authorEffectReview: projection.effectReview });
+    return next.success ? next.data : null;
+  } });
 }
 
 export type ManagedMachinePresetAuthorContentReplacementParamsV1 =

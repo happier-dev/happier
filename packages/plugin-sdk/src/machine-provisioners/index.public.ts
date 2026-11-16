@@ -59,6 +59,7 @@ export {
   MACHINE_PROVISIONER_DIMENSIONS_V1,
   MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1,
   readMachineProvisionerResizeCapabilityV1,
+  requiresMachineProvisionerEffectReviewV1,
   readMachineProvisionerResizeRequirementsV1,
   managedMachineResizeRequiresRestartV1,
   projectMachineProvisionerSelectionV1,

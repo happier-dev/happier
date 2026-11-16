@@ -8,12 +8,14 @@ import type { LazyActionAccountContext } from './actionAccountContext';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectConnectedAccountHostAccessScopes, type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
-import { bindManagedMachineRoleCredentials, ManagedMachineControllerError, projectManagedMachineRolePurposeBindingsV1,
+import { bindManagedMachineRoleCredentials, ManagedMachineControllerError, projectManagedMachineRolePurposeBindingsV1, prepareManagedMachinePresetAuthoringV1,
     readManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { readUiConnectedAccountActionFormOptions } from '@/sync/ops/connectedAccounts/connectedAccountFormOptions';
+import { captureManagedMachinePresetCustodyV1 } from '@/sync/ops/machines/managedMachinePresetCustody';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 
 /** Exact effects demand one selected declaration; chooser discovery retains the family inventory. */
 export async function readUiManagedProvisioners(account: LazyActionAccountContext,
@@ -58,6 +60,21 @@ export async function prepareUiManagedProvisionerAdmission(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     account: LazyActionAccountContext | undefined,
 ): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
+    if (request.actionId === 'machines.presets.create' || request.actionId === 'machines.presets.update') {
+        if (!account) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+        const custody = await captureManagedMachinePresetCustodyV1({ account, signal: request.context.signal });
+        if (!custody) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+        try {
+            return await prepareManagedMachinePresetAuthoringV1(request, {
+                custody: { accountId: custody.accountId, open: params => custody.open(params),
+                    withE2eeAccountKey: operation => custody.mode === 'e2ee' ? custody.withAccountKey(operation) : null },
+                readSelectedProvisioners: async pluginId => {
+                    const selected = await readUiManagedProvisioners(account, pluginId);
+                    return 'ok' in selected ? null : selected;
+                }, randomBytes: getRandomBytes,
+            });
+        } finally { custody.dispose(); }
+    }
     if (request.actionId === 'machines.provisioners.check' || request.actionId === 'machines.provisioners.options') {
         const actionId = request.actionId;
         const input = ManagedMachineActionInputSchemasV1[actionId].parse(request.input);

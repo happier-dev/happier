@@ -5,6 +5,7 @@ import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.
 import { z } from '../../zodRuntimePolicy.js';
 import { createValidatedLaunchSnapshotV1Schema } from './managedMachineV1.js';
 import { MachineSetupV1Schema } from './machineSetupV1.js';
+import { DevcontainerEffectReviewV1Schema } from './devcontainerV1.js';
 import { MachineProvisionerNativeCauseV1Schema, ManagedNativeOperationReferenceV1Schema } from './providerFactsV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
@@ -28,7 +29,9 @@ export type ManagedMachinePresetPreparationExecutionV1 = Readonly<
 /** Names and operational writes do not alter the image's authored configuration. */
 export const ManagedMachinePresetPreparationConfigurationV1Schema = lazyZodSchema(() => {
   const { name: _name, ...launch } = createValidatedLaunchSnapshotV1Schema(PluginJsonValueV2Schema).shape;
-  return z.strictObject({ launch: z.strictObject(launch), setup: z.optional(MachineSetupV1Schema) });
+  return z.strictObject({ launch: z.strictObject(launch), setup: z.optional(MachineSetupV1Schema),
+    /** Source contents may change while the authored file path remains identical. */
+    reviewedEffectDigest: z.optional(DevcontainerEffectReviewV1Schema.shape.reviewedEffectDigest) });
 });
 
 /** Credential selections remain in the canonical launch; the supplier supplies its CLI identity. */

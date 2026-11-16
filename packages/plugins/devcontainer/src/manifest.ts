@@ -12,7 +12,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
-import { DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema } from './machine/schemas.js';
+import { DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema, DEVCONTAINER_EFFECT_REVIEW_REQUIREMENT } from './machine/schemas.js';
 import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
 import { DockerRuntimeRepairInputSchema, dockerRuntimeRepairSources, installDockerRuntime, type DockerRuntimeRepairInput } from './machine/runtimeRepair.js';
 import { createDevcontainerPreparation, devcontainerPreparationOperation, resolveDevcontainerPreparationInput, DevcontainerPreparationInputSchema, DevcontainerPreparedImageSchema, DevcontainerPreparationOperationSchema } from './machine/preparation.js';
@@ -75,6 +75,7 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   // Arbitrary images and authored devcontainers do not guarantee the kernel
   // privileges needed by an Agent's nested native sandbox.
   sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: false },
+  effectReview: DEVCONTAINER_EFFECT_REVIEW_REQUIREMENT,
   prerequisites: [],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
   retention: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
