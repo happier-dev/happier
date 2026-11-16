@@ -1,4 +1,4 @@
-import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
+import { resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { deploymentRecommendationDescription } from './deploymentRecommendationDescription';
 import { projectDeploymentConfigurePreflightV1 } from './deploymentPreflightWarnings';
@@ -234,10 +234,8 @@ export const DeploymentEnvironmentDraft = React.memo(
         : definitionKind ? { from: definitionKind } : { kind: 'repository' }),
       explicitTarget: targetKey !== MACHINE_TILE ? { id: targetKey, targetClass: 'platform' } : undefined,
       targets: [{ id: MACHINE_TILE, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
-        : chosen && answers(chosen) ? 'available' : 'unavailable',
-        accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs },
-        ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const,
-          accepts: target.accepts, needs: target.needs }))],
+        : chosen && answers(chosen) ? 'available' : 'unavailable' },
+        ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const }))],
     });
     const offeredPlatformTargets = platformTargets.filter(target => recommendation.offeredTargetIds.includes(target.key));
     const onPlatform = recommendation.target?.targetClass === 'platform';
@@ -533,14 +531,15 @@ export const DeploymentEnvironmentDraft = React.memo(
     // One notice per cause: a chosen Machine that stopped answering is said once, by its own notice, in place of the
     // target refusal and the setup failure that both come from it (journey-deploy revFail).
     const awayMachine = chosen !== null && !answers(chosen) ? chosen : null;
+    // The shared notice line (SurfaceStateCard size="line"), placed at the Machine it concerns.
     const machineAwayNotice = awayMachine ? (
-      <AttentionBanner testID="project-deployments.draft.machineAwayNotice" tone="warning"
-        title={machineName(awayMachine.id)} description={t('errors.machineNotAnswering')} />
+      <SurfaceStateCard testID="project-deployments.draft.machineAwayNotice" kind="unavailable" size="line"
+        title={machineName(awayMachine.id)} reason={t('errors.machineNotAnswering')} />
     ) : null;
     // The recovery owner names where a refusal is fixed: a Machine cause, or the unavailable target, is that Machine.
     const machineCausedRefusal = awayMachine !== null && refusal?.kind === 'refused' && (refusal.code === 'target_unavailable'
       || readDeploymentRefusalRecoveryV1(refusal.code)?.nextAction.destination === 'machines');
-    const refusalBanner = machineCausedRefusal ? machineAwayNotice
+    const refusalBanner = machineCausedRefusal ? null
       : refusal && refusal.kind === 'approval' ? (
             <AttentionBanner
               testID="project-deployments.draft.approval"
@@ -621,6 +620,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               />
             )}
             {/* Stepped, how long it keeps running is one of More settings (journey-deploy cfgM). */}
+            {stepped ? null : machineAwayNotice}
             {stepped ? null : retentionChoice}
           </ItemGroup>
           {!platformDefinitionAccepted ? <SurfaceStateCard kind="unavailable" size="line"
@@ -721,7 +721,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             />
             <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
               nameOf={machineName} disabled={hostApply.pending} />
-          </> : !onPlatform && host.prepared?.ok === false ? awayMachine ? (refusalBanner === machineAwayNotice ? null : machineAwayNotice) : (
+          </> : !onPlatform && host.prepared?.ok === false ? awayMachine ? null : (
             <AttentionBanner testID="project-deployments.draft.hostSetup.failed" tone="warning" title={t('machinePresets.setup.title')}
               description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
           ) : !onPlatform && chosen && host.readiness === 'unknown' && !host.setup ? (
@@ -906,6 +906,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           <View style={draftStep === 'where' ? null : styles.hiddenStep}>{stepWhere}</View>
           {!configureVisited ? null : (
             <View style={draftStep === 'configure' ? null : styles.hiddenStep}>
+              {machineAwayNotice}
               {refusalBanner}
               {projectChoiceGroups}
               {configureGroups}

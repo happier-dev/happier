@@ -43,6 +43,7 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { PageHeader } = await import('@/components/ui/layout/PageHeader');
 const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
 const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { answerExternalActionAccountForHome } =
@@ -346,8 +347,10 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findByTestId('project-deployments.draft.machineAwayNotice')).not.toBeNull(); });
-      // Exactly one notice says it: no target refusal and no setup failure beside it.
-      expect(screen.findAllByType(AttentionBanner).map(node => node.props.testID)).toEqual(['project-deployments.draft.machineAwayNotice']);
+      // Exactly one notice says it, as the shared line at the Machine it concerns: no banner, no "Couldn't save" card.
+      expect(screen.findAllByType(AttentionBanner).map(node => node.props.testID)).toEqual([]);
+      const notice = screen.findAllByType(SurfaceStateCard).filter(node => node.props.testID === 'project-deployments.draft.machineAwayNotice');
+      expect(notice.map(node => node.props.size)).toEqual(['line']);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
