@@ -1119,7 +1119,7 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         expect(receipt.content.failure).toMatchObject({ requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) });
     }
     if (mode === 'unknown') expect(receipt.content.failure).toMatchObject({ code: 'outcome_unknown', failureCause: {
-        phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503,
+        phase: 'home.database.transaction', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503,
     } });
     expect(link.activeDeploymentId).toBe('uniform-v1');
     expect(dispatched).not.toContain('activate:machine-c');
