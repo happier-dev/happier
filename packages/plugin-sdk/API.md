@@ -62,6 +62,10 @@
 | `.` | `DeploymentDomainDnsRecordInputV1ProtocolSchema` | value | any |
 | `.` | `DeploymentDomainDnsRecordResultV1` | type | any |
 | `.` | `DeploymentDomainDnsRecordResultV1ProtocolSchema` | value | any |
+| `.` | `DeploymentDomainTunnelDispositionV1` | type | any |
+| `.` | `DeploymentDomainTunnelDispositionV1ProtocolSchema` | value | any |
+| `.` | `DeploymentDomainTunnelOwnershipV1` | type | any |
+| `.` | `DeploymentDomainTunnelOwnershipV1ProtocolSchema` | value | any |
 | `.` | `DeploymentSourceMaterializationPortV1` | type | daemon |
 | `.` | `DeploymentSourceMaterializationRequestV1` | type | daemon |
 | `.` | `DeploymentSourceMaterializationV1` | type | daemon |
@@ -363,6 +367,7 @@
 | `.` | `redactBugReportSensitiveText` | value | any |
 | `.` | `resolveUsageCalendarInstant` | value | any |
 | `.` | `selectCurrentTargetedContribution` | value | any |
+| `.` | `settleDeploymentTargetDomainRemovalV1` | value | any |
 | `.` | `summarizeUsageRunLengthObservations` | value | any |
 | `.` | `tailscaleMembershipPrograms` | value | any |
 | `.` | `trimBugReportTextToMaxBytes` | value | any |

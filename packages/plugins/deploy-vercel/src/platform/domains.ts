@@ -1,6 +1,7 @@
 import { withActionFailureDiagnostic, isPluginError, projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
-  PluginError, type DeploymentTargetDomainInputV1 as Input, type DeploymentTargetDomainResultV1 as Result,
+  PluginError, settleDeploymentTargetDomainRemovalV1,
+  type DeploymentTargetDomainInputV1 as Input, type DeploymentTargetDomainResultV1 as Result,
   type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { vercelEndpoint, vercelRequest } from './operations.js';
@@ -72,12 +73,26 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
     }
     response = await verifyDomain();
   } else if (operation === 'remove') {
-    const current = await request(endpoint, 'GET');
-    if (current.status === 404) return { v: 1, hostname, state: 'removed', dns: [] };
-    selected(check(current, false));
-    const removed = await request(endpoint, 'DELETE');
-    if (removed.status !== 404 && (removed.status < 200 || removed.status >= 300)) check(removed, true);
-    // DELETE v9's 200 response acknowledges successful removal.
+    const readCurrent = async () => {
+      try {
+        const current = await request(endpoint, 'GET');
+        if (current.status === 404) return null;
+        const domain = check(current, false);
+        selected(domain);
+        return domain;
+      } catch (error) {
+        if (isPluginError(error) && error.code === 'deployment_unavailable') return null;
+        throw error;
+      }
+    };
+    if (await readCurrent() === null) return { v: 1, hostname, state: 'removed', dns: [] };
+    await settleDeploymentTargetDomainRemovalV1({
+      remove: async () => {
+        const removed = await request(endpoint, 'DELETE');
+        if (removed.status !== 404 && (removed.status < 200 || removed.status >= 300)) check(removed, true);
+      },
+      observeAbsent: async () => await readCurrent() === null,
+    });
     return { v: 1, hostname, state: 'removed', dns: [] };
   } else response = await request(endpoint, 'GET');
   const domain = check(response, operation === 'add');

@@ -17,7 +17,7 @@ it('adds, checks and removes only the exact preview Domain without changing DNS 
   let removed = false;
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
-    if (removed) throw new Error('DELETE already acknowledged removal');
+    if (removed) return { status: 404, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error: { code: 'not_found' } })) };
     if (new URL(request.url).pathname.endsWith('/config')) {
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ misconfigured: false })) };
     }
@@ -43,10 +43,34 @@ it('adds, checks and removes only the exact preview Domain without changing DNS 
       ['POST', '/v9/projects/prj_exact/domains/app.example.test/verify'], ['GET', '/v6/domains/app.example.test/config'],
       ['GET', '/v9/projects/prj_exact/domains/app.example.test'],
       ['DELETE', '/v9/projects/prj_exact/domains/app.example.test'],
+      ['GET', '/v9/projects/prj_exact/domains/app.example.test'],
     ]);
     expect(requests.every(request => new URL(request.url).searchParams.get('teamId') === 'team_exact')).toBe(true);
     expect(JSON.parse(new TextDecoder().decode(requests[0]!.body))).toEqual({ name: 'app.example.test', gitBranch: 'main' });
   } finally { await kit.dispose(); }
+});
+
+it.each(['already absent', 'DELETE returns 404'] as const)('settles Domain removal from the Vercel 404 fact (%s)', async shape => {
+  let absent = shape === 'already absent';
+  const http = createPluginHttpFixture({ async request(request) {
+    if (request.method === 'DELETE') absent = true;
+    return { status: absent ? 404 : 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(absent
+      ? { error: { code: 'not_found' } }
+      : { name: input.domain.hostname, projectId: 'prj_exact', gitBranch: 'main', verified: true })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try { await expect(kit.invokeAction('domains-remove', input)).resolves.toMatchObject({ state: 'removed' }); }
+  finally { await kit.dispose(); }
+});
+
+it('keeps Domain removal uncertain when Vercel acknowledges DELETE but still returns the Domain', async () => {
+  const http = createPluginHttpFixture({ async request(request) {
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(request.method === 'DELETE' ? 'removed'
+      : { name: input.domain.hostname, projectId: 'prj_exact', gitBranch: 'main', verified: true })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try { await expect(kit.invokeAction('domains-remove', input)).rejects.toMatchObject({ code: 'outcome_unknown' }); }
+  finally { await kit.dispose(); }
 });
 
 it('retains an ambiguous remote mutation without retrying or reporting absence', async () => {

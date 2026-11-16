@@ -1,4 +1,5 @@
 import type { ReadonlyAuthorDeclaration } from './authorDeclaration.js';
+import { PluginError } from './errors.js';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { DeploymentDataParentBranchRefV1ProtocolSchema as canonicalParentBranch,
@@ -28,6 +29,21 @@ export type {
     DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1,
 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
+    type DeploymentDomainTunnelOwnershipV1, type DeploymentDomainTunnelDispositionV1 }
+    from '@happier-dev/protocol/deployments/deploymentDomainV1';
+
+/** A Domain removal settles from the provider's absence fact, including a lost DELETE response. */
+export async function settleDeploymentTargetDomainRemovalV1(input: Readonly<{
+    remove(): Promise<unknown>;
+    observeAbsent(): Promise<boolean>;
+}>): Promise<void> {
+    let failure: { error: unknown } | undefined;
+    try { await input.remove(); } catch (error) { failure = { error }; }
+    if (await input.observeAbsent()) return;
+    if (failure) throw failure.error;
+    throw new PluginError({ code: 'outcome_unknown', retryable: false });
+}
 export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
     [TRole in keyof typeof canonicalRoleInputs]: ProtocolComposableSchema<
         ReturnType<(typeof canonicalRoleInputs)[TRole]['parse']>

@@ -1,6 +1,7 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
-  PluginError, isPluginError, type DeploymentTargetDomainInputV1, type DeploymentTargetDomainResultV1, type JsonValue } from '@happier-dev/plugin-sdk';
+  PluginError, isPluginError, settleDeploymentTargetDomainRemovalV1,
+  type DeploymentTargetDomainInputV1, type DeploymentTargetDomainResultV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request } from './deploymentHttp.js';
@@ -41,8 +42,13 @@ async function pages(input: DeploymentTargetDomainInputV1, context: PluginAccoun
     || typeof project.subdomain !== 'string' || !project.subdomain) refuse('provider_response_invalid');
   const path = `${root}/domains/${encodeURIComponent(input.domain.hostname)}`;
   if (operation === 'remove') {
-    try { await native(context, input, path, 'DELETE'); }
-    catch (error) { if (!isAbsent(error)) throw error; }
+    await settleDeploymentTargetDomainRemovalV1({
+      remove: () => native(context, input, path, 'DELETE'),
+      observeAbsent: async () => {
+        try { await native(context, input, path); return false; }
+        catch (error) { if (isAbsent(error)) return true; throw error; }
+      },
+    });
     return removed(input);
   }
   const value = operation === 'add'
@@ -91,7 +97,11 @@ async function workers(input: DeploymentTargetDomainInputV1, context: PluginAcco
   }
   if (operation === 'remove') {
     if (row === null) return removed(input);
-    await native(context, input, `${root}/${encodeURIComponent(row.id)}`, 'DELETE');
+    const id = row.id;
+    await settleDeploymentTargetDomainRemovalV1({
+      remove: () => native(context, input, `${root}/${encodeURIComponent(id)}`, 'DELETE'),
+      observeAbsent: async () => await read() === null,
+    });
     return removed(input);
   }
   if (row === null) refuse('deployment_unavailable');

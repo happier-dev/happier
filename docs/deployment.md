@@ -360,6 +360,14 @@ details, and permits a fresh Remove. Pending or unavailable reads keep removal
 unresolved. This projection preserves the persisted removal intent and captured
 placements; only verified native absence can tombstone the Domain.
 
+Domain removal in 0.3 development uses the SDK's shared
+`settleDeploymentTargetDomainRemovalV1` owner. After the removal attempt, the
+provider adapter observes the selected Domain once: a native 404 or absence from
+its Domain list settles removal, including when the DELETE response was lost or
+failed. A DELETE acknowledgement alone cannot settle removal while the Domain is
+still present; that outcome remains unknown. This observation does not retry the
+mutation or poll the provider.
+
 In 0.3 development, Cloudflare Domain preparation and retirement accept the API's optional pagination metadata and omitted or null tunnel configuration. Without pagination metadata, the route owner reads through an empty page before deciding ownership or absence. Malformed responses retain `providerOutput` in the existing Domain failure details: an endpoint template, issue path and expected type, without response values or credentials. The original provider cause, required fact and remedy remain attached, including when remote changes leave the outcome unknown. Preparation creates each target's sealed connector grant automatically; a failed grant write retains its typed cause and HTTP status without credentials or response values.
 
 In 0.3 development, the Cloudflare plugin's read-only `cloudflare-named/selections-read` Action lists complete named tunnel selections for a connected Account and selected zone. It derives the Cloudflare Account ID from that connection and supplies its canonical connector image and version pin; callers can explicitly override those defaults. It reuses selected-zone validation without requiring Zone Read, and reports `connector_discovery_unavailable` rather than claiming the connector is running. Native execution verifies that connector; the route owner separately decides hostname-route and DNS ownership.
