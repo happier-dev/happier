@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, projectDeploymentSourceCheckoutRequiredV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
@@ -306,6 +306,18 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
         expect(recovery?.nextAction).toMatchObject({ kind: 'navigate', destination: 'source' });
         expect(recovery?.nextAction.label).not.toBe(readDeploymentRefusalRecoveryV1('deployment_source_unavailable')?.nextAction.label);
         expect(recovery?.remedy).not.toBe(readDeploymentRefusalRecoveryV1('deployment_source_unavailable')?.remedy);
+    });
+
+    it('gives agents the projects.open reference for a missing checkout while the app keeps its navigate route', () => {
+        const selector = { protocol: 'https' as const, provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub',
+            baseUrl: 'https://github.com' }, repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } };
+        const details = projectDeploymentSourceCheckoutRequiredV1({ serverId: 'home', machineId: 'controller',
+            source: { id: 'source-1', revision: 2, selector } });
+        expect(details).toMatchObject({ remedy: readDeploymentRefusalRecoveryV1('deployment_source_checkout_required')?.remedy,
+            nextAction: { kind: 'action', actionId: 'projects.open', input: { serverId: 'home', machineId: 'controller',
+                source: { kind: 'source', id: 'source-1', revision: 2, selector } } } });
+        expect(readDeploymentRefusalRecoveryV1('deployment_source_checkout_required', details)?.nextAction)
+            .toEqual({ kind: 'navigate', destination: 'source', label: 'Open checkout' });
     });
 
     it('names the missing Compose file of the selected revision instead of the generic Source setup', () => {

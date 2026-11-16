@@ -12,6 +12,7 @@ import { readDeploymentSourceIntentForHost } from './readDeploymentSourceIntentF
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 import { projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { OpenProjectDraftSelectionV1Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -269,7 +270,17 @@ it('requires a local workspace for native materialization and refuses provider r
     const publicFailure = projectCliActionFailure(failure);
     expect(publicFailure).toMatchObject({ code: 'deployment_source_checkout_required',
         details: { requiredFact: 'deploymentActionResult', remedy: expect.any(String) } });
-    // Agents and the app read the public code through the one recovery owner: Open checkout, not Source setup.
+    // The agent's public result names the one next Action, projects.open for this Source on the controller.
+    // It is a reference only: the agent chooses where to clone and runs projects.open under its own approval.
+    const nextAction = (publicFailure.details as { nextAction?: { input?: unknown } } | undefined)?.nextAction;
+    expect(nextAction).toEqual({ kind: 'action', actionId: 'projects.open', input: { serverId: 'home', machineId: 'controller',
+        source: { kind: 'source', id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision, selector: {
+            // The Source reader's canonical selector, including its qualified provider id.
+            protocol: 'https', provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub',
+                baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } } } });
+    expect(OpenProjectDraftSelectionV1Schema.safeParse(nextAction?.input).success).toBe(true);
+    // The app keeps its navigate route from the same recovery owner.
     expect(readDeploymentRefusalRecoveryV1(publicFailure.code, publicFailure.details)).toMatchObject({
         nextAction: { kind: 'navigate', destination: 'source', label: 'Open checkout' } });
     await expect(readDeploymentSourceIntentForHost({ host, request: { environment, requireWorkspace: false, context } }))

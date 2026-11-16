@@ -8,6 +8,7 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceAdmissionFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentSourceCheckoutRequiredV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -122,8 +123,15 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     })) : undefined;
     const workspace = repository ? rows?.snapshot.workspaceRefs.find(ref => ref.serverId === host.serverId
         && ref.machineId === host.machineId && ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision) : undefined;
-    // The person or agent opens this Source's checkout through projects.open (its own review), then deploys again.
-    if (needsWorkspace && !workspace) return refuse('deployment_source_checkout_required');
+    if (needsWorkspace && !workspace) {
+        if (sourceRevision === undefined || !sourceRepository) return refuse('deployment_source_unavailable');
+        // The person or agent opens this Source's checkout through projects.open (its own review), then deploys again.
+        const code = 'deployment_source_checkout_required';
+        const failure = { ok: false as const, errorCode: code, error: code, details: projectDeploymentSourceCheckoutRequiredV1({
+            serverId: host.serverId, machineId: host.machineId,
+            source: { id: sourceId, revision: sourceRevision, selector: sourceRepository } }) };
+        throw Object.assign(createActionExecuteFailureError(failure), { cause: failure });
+    }
     if (!intent) {
         const definition = environment.content.definition;
         if (definition.kind === 'stored') intent = structuredClone(definition);

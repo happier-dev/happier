@@ -2,6 +2,8 @@ import { z } from '../zodRuntimePolicy.js';
 import { isRecord } from '../common/records.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult.js';
+import type { OpenProjectDraftSelectionV1 } from '../projects/openProjectDraftV1.js';
+import type { ProjectSourceRepositorySelectorV1 } from '../projects/sources/projectSourceV1.js';
 
 /** The fallback names the unavailable result, never an invented provider prerequisite. */
 export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
@@ -298,6 +300,24 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
         requiredFact: facts.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
         remedy: recovery.remedy,
     });
+}
+
+/**
+ * The agent front door's next step for a missing controller checkout: a reference to the existing projects.open
+ * draft for this Source. Nothing runs from it; the caller chooses the clone destination and projects.open keeps its
+ * own approval. The app reads the same code's navigate route through the readers below.
+ */
+export type DeploymentFailureActionReferenceV1 = Readonly<{
+    kind: 'action'; actionId: 'projects.open'; input: OpenProjectDraftSelectionV1;
+}>;
+export function projectDeploymentSourceCheckoutRequiredV1(target: Readonly<{
+    serverId: string; machineId: string;
+    source: Readonly<{ id: string; revision: number; selector: ProjectSourceRepositorySelectorV1 }>;
+}>) {
+    const nextAction: DeploymentFailureActionReferenceV1 = { kind: 'action', actionId: 'projects.open', input: {
+        serverId: target.serverId, machineId: target.machineId, source: { kind: 'source', ...target.source } } };
+    return projectDeploymentFailureRecoveryV1({ reason: 'deployment_source_checkout_required', nextAction },
+        'deployment_source_checkout_required');
 }
 
 /** Receipt, review and Store render this result; callers supply their existing navigation context. */
