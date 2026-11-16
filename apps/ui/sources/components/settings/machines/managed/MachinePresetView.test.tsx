@@ -2941,6 +2941,45 @@ describe('reachable preset detail', () => {
   it('archives and restores the preset with its reviewed revision: explains retained image cleanup after opting out of Prepare', async () => {
     const serverId = await seed();
     const { replaceManagedMachinePresetPreparationV1, replaceManagedMachinePresetAuthorContentV1 } =
+  it('edits Prepare ahead in place: When Happier updates and the switch save the preset through the one editor draft', async () => {
+    const serverId = await seed();
+    // The launch is re-sealed with the content, so its provisioner must be declared here.
+    await seedConfiguration(serverId);
+    let stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } });
+    harness.answer(serverId, '/v1/machines/presets/get', { select: () => ({ body: { kind: 'found', preset: stored } }) });
+    harness.answer(serverId, '/v1/machines/presets/update', { select: body => {
+      const input = body as { patch: { content?: { t: string; v: { preparation?: unknown } } } };
+      stored = createPlainManagedMachinePresetFixture({ ...preset, revision: stored.revision + 1,
+        preparation: input.patch.content?.v.preparation as { enabled: boolean } });
+      return { body: { kind: 'saved', preset: stored } };
+    } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    const savedPreparations = () => harness.requestsFor('/v1/machines/presets/update')
+      .map(request => (request.input as { patch: { content?: { v: { preparation?: unknown; name?: string; launch?: unknown } } } }).patch.content?.v);
+    try {
+      const keep = () => screen.tree.findByProps({ testID: 'machine-preset.prepare.keep.switch' }).props as { disabled?: boolean; onValueChange: (next: boolean) => void };
+      // Editable once the page knows this Account manages the preset.
+      await waitForHomeGovernance(() => expect(keep().disabled).toBe(false));
+      // The row's own choice handler: the segmented bar may fold into a field select at the test's width.
+      await act(async () => {
+        (screen.tree.findByProps({ testID: 'machine-preset.prepare.updates', testIDPrefix: 'machine-preset.prepare.updates' }).props as
+          { onChange: (next: string) => void }).onChange('rebuild-automatically');
+      });
+      await waitForHomeGovernance(() => expect(savedPreparations()).toHaveLength(1));
+      expect(savedPreparations()[0]).toMatchObject({ name: preset.name, launch: preset.launch,
+        preparation: { enabled: true, whenHappierUpdates: 'rebuild-automatically' } });
+      await waitForHomeGovernance(() => expect(stored.revision).toBe(preset.revision + 1));
+      await act(async () => {
+        keep().onValueChange(false);
+      });
+      await waitForHomeGovernance(() => expect(savedPreparations()).toHaveLength(2));
+      expect(savedPreparations()[1]).toMatchObject({ preparation: { enabled: false, whenHappierUpdates: 'rebuild-automatically' } });
+      // Off, the switch says it all: no image row, no update choice.
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.prepare.updates')).toBeNull());
+      expect(screen.findByTestId('machine-preset.preparation')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
       await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
     const stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } });
     const built = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain', content: stored.content,

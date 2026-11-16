@@ -13,6 +13,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { machinePresetEditDraftUpdatePatch } from '@/sync/domains/machines/presets/machinePresetEditDraft';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -51,8 +53,14 @@ import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actio
  * the image's state with its one next step, then where it builds. The builder is a visible Machine choice; an old
  * operation keeps its own admitted address.
  */
+type PresetPreparation = NonNullable<OpenedManagedMachinePresetV1['preparation']>;
+type WhenHappierUpdates = NonNullable<PresetPreparation['whenHappierUpdates']>;
+
 function MachinePresetPrepareSection(props: Readonly<{
     serverId: string; preset: OpenedManagedMachinePresetV1; canManage: boolean; busy: boolean; onChanged: () => void;
+    /** The preference as it will be after any edit still being saved; the switch and the update choice edit it. */
+    preparation: PresetPreparation;
+    onPreparationChange?: (next: PresetPreparation) => void;
 }>) {
     const target = useManagedControllerScope({ serverId: props.serverId, preferred: props.preset.controller,
         delegatedPreset: props.preset.controller !== undefined, observeThisComputer: false,
@@ -83,14 +91,28 @@ function MachinePresetPrepareSection(props: Readonly<{
             title={retry || preparation.error ? t('common.retry') : built ? t('machinePresets.prepareRebuild') : t('machinePresets.prepareBuild')}
             disabled={disabled || machineId === null} loading={preparation.pending}
             onPress={() => fireAndForget(preparation.prepare(), { tag: 'MachinePresetView.prepare' })} /> : null;
+    const enabled = props.preparation.enabled;
+    const onChange = props.onPreparationChange;
+    // Off, the switch says it all; an image kept from before is Archive's to explain (its cleanup help).
+    const showsImage = enabled;
     return <ItemGroup testID="machine-preset.prepare" title={t('machinePresets.prepareSection')} description={t('machinePresets.prepareSectionHelp')}>
-        {/* A standing preference of the preset, changed in its editor; here it says what it does. */}
+        {/* A standing preference of the preset: a switch, and building is its consequence (lab scene 5). */}
         <Item testID="machine-preset.prepare.keep" title={t('machinePresets.prepareKeep')} subtitle={t('machinePresets.prepareKeepHelp')}
             subtitleLines={0} mode="info" showChevron={false}
-            rightElement={<Switch testID="machine-preset.prepare.keep.switch" accessibilityLabel={t('machinePresets.prepareKeep')} value disabled />} />
-        <Item testID="machine-preset.preparation" title={status} subtitleLines={0} mode="info" showChevron={false}
-            loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} />
-        {!props.preset.controller && target.chip ? <Item testID="machine-preset.prepare.builder" title={t('managedMachines.config.managedFrom')}
+            rightElement={<Switch testID="machine-preset.prepare.keep.switch" accessibilityLabel={t('machinePresets.prepareKeep')}
+                value={enabled} disabled={!onChange} onValueChange={next => onChange?.({ ...props.preparation, enabled: next })} />} />
+        {showsImage ? <Item testID="machine-preset.preparation" title={status} subtitleLines={0} mode="info" showChevron={false}
+            loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
+        {/* Only while an image is kept ready: what a Happier update does to it, with its cost (lab F5). */}
+        {enabled ? <SegmentedChoiceItem<WhenHappierUpdates> testID="machine-preset.prepare.updates" testIDPrefix="machine-preset.prepare.updates"
+            title={t('machinePresets.prepareUpdates')} disabled={!onChange}
+            value={props.preparation.whenHappierUpdates ?? 'update-at-start'}
+            onChange={next => onChange?.({ ...props.preparation, whenHappierUpdates: next })}
+            options={[
+                { id: 'update-at-start', label: t('machinePresets.prepareUpdateAtStart'), description: t('machinePresets.prepareUpdateAtStartHelp') },
+                { id: 'rebuild-automatically', label: t('machinePresets.prepareRebuildAutomatically'), description: t('machinePresets.prepareRebuildAutomaticallyHelp') },
+            ]} /> : null}
+        {showsImage && !props.preset.controller && target.chip ? <Item testID="machine-preset.prepare.builder" title={t('managedMachines.config.managedFrom')}
             mode="info" showChevron={false} accessoryLayout="adaptive" rightElement={target.chip} /> : null}
     </ItemGroup>;
 }
@@ -207,6 +229,17 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         fireAndForget(runMutation(() => detail.update(pendingEdit)).finally(() => setSavingEdit(null)), { tag: 'MachinePresetView.edit' });
     }, [pendingEdit, busy, canManage, detail.update, runMutation]);
     const desiredEdit = { ...savingEdit, ...pendingEdit };
+    // Prepare ahead is private content: the one editor draft carries it, with the preset's own name, setup and launch.
+    const desiredPreparation: PresetPreparation = desiredEdit.privateContent?.preparation ?? preset?.preparation ?? { enabled: false };
+    const editPreparation = (next: PresetPreparation) => {
+        if (!creation) return;
+        edit(machinePresetEditDraftUpdatePatch({ name: creation.name, setup: creation.setup, preparation: next,
+            creation: { launch: creation.launch,
+                ...(creation.controllerPoolId ? { controllerPoolId: creation.controllerPoolId } : creation.controller ? { controller: creation.controller } : {}),
+                ...(creation.retention ? { retention: creation.retention } : {}),
+                ...(creation.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: creation.wakeOnAcceptedMessage } : {}),
+                ...(creation.simultaneousLimit ? { simultaneousLimit: creation.simultaneousLimit } : {}) } }));
+    };
     const approvalNotice = approval.approvalId ? <AttentionBanner testID="machine-preset.approval" tone="neutral"
         title={t('approvals.title')} description={t('approvals.status.open')}
         action={{ label: t('approvals.details'), onPress: () => navigate(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}`) }} /> : null;
@@ -259,18 +292,23 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         {archived ? <AttentionBanner testID="machine-preset.archived" tone={cleanupRequired ? 'warning' : 'neutral'} title={t('machinePresets.archived')}
             description={cleanupRequired ? t('machinePresets.preparedImageCleanupRequired', { host: cleanupHost }) : undefined}
             action={restore ? { label: t('common.restore'), onPress: restore, loading: busy, disabled: busy } : undefined} /> : null}
-        {/* Why a preset can't create is moot once it is archived: its notice is the one message. */}
-        {!archived && catalog.error ? <SurfaceStateCard testID="machine-preset.provider-error" kind="unavailable" size="line"
-            title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
-            action={{ label: t('common.retry'), onPress: catalog.refresh }} /> : null}
-        {!archived && configurationUnavailable ? <SurfaceStateCard testID="machine-preset.configuration-unavailable"
-            kind="unavailable" size="line" title={configuration.error ? describeManagedPresetAvailabilityFailure(configuration.error) : t('managedMachines.options.unavailable')} diagnosticCode={configuration.error ?? undefined}
-            action={{ label: t('common.retry'), onPress: configuration.refresh }} /> : null}
-        {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" title={t('machinePresets.loadFailed')}
-            diagnosticCode={detail.state.error} action={{ label: t('common.retry'), onPress: detail.refresh }} /> : null}
-        {conflict || mutationError || refusal ? <SurfaceStateCard testID="machine-preset.mutation-error" kind="error" size="line"
-            title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
-            diagnosticCode={mutationError ?? refusal ?? undefined} action={{ label: t(conflict ? 'managedMachines.actions.review' : 'common.retry'), onPress: () => { setMutationError(null); detail.refresh(); } }} /> : null}
+        {/* The page's one cause, on the sections' column edge. */}
+        {(!archived && (catalog.error || configurationUnavailable)) || detail.state.error || conflict || mutationError || refusal
+            ? <ItemGroup surface="none" header="none">
+            {/* Why a preset can't create is moot once it is archived: its notice is the one message. */}
+            {!archived && catalog.error ? <SurfaceStateCard testID="machine-preset.provider-error" kind="unavailable" size="line"
+                title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
+                action={{ label: t('common.retry'), onPress: catalog.refresh }} /> : null}
+            {/* The provider not answering is the one cause; its options failing with it says nothing new. */}
+            {!archived && !catalog.error && configurationUnavailable ? <SurfaceStateCard testID="machine-preset.configuration-unavailable"
+                kind="unavailable" size="line" title={configuration.error ? describeManagedPresetAvailabilityFailure(configuration.error) : t('managedMachines.options.unavailable')} diagnosticCode={configuration.error ?? undefined}
+                action={{ label: t('common.retry'), onPress: configuration.refresh }} /> : null}
+            {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" title={t('machinePresets.loadFailed')}
+                diagnosticCode={detail.state.error} action={{ label: t('common.retry'), onPress: detail.refresh }} /> : null}
+            {conflict || mutationError || refusal ? <SurfaceStateCard testID="machine-preset.mutation-error" kind="error" size="line"
+                title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
+                diagnosticCode={mutationError ?? refusal ?? undefined} action={{ label: t(conflict ? 'managedMachines.actions.review' : 'common.retry'), onPress: () => { setMutationError(null); detail.refresh(); } }} /> : null}
+        </ItemGroup> : null}
     </>;
     // What it puts on a Machine leads the page; whoever can manage it edits it in the one editor.
     const editSetup = canManage && !archived ? visibleCreation ? () => openConfiguration(true)
@@ -380,8 +418,12 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         // Archive attempts to delete the image it keeps ready; its retained report says when cleanup is needed.
         ...(visiblePreset.preparation?.enabled || visiblePreset.prepared !== undefined
             ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),
-        ...(!archived && visiblePreset.preparation?.enabled ? { prepare: <MachinePresetPrepareSection serverId={props.serverId}
-            preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh} /> } : {}),
+        // Offered wherever its provider can keep an image ready, and kept for a preset that already prepares.
+        ...(!archived && (provisioner?.descriptor.preparation || visiblePreset.preparation?.enabled || visiblePreset.prepared)
+            ? { prepare: <MachinePresetPrepareSection serverId={props.serverId}
+                preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh}
+                preparation={desiredPreparation}
+                {...(canManage && !approval.approvalPending ? { onPreparationChange: editPreparation } : {})} /> } : {}),
         ...archiveActions,
         archivePending: busy, notice,
     };
