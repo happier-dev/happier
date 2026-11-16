@@ -5164,6 +5164,7 @@
     "sources/dev/jsdom.d.ts",
     "sources/dev/why-is-node-running.d.ts",
     "sources/types/fake-indexeddb-auto.d.ts",
+    "sources/types/react-native-normalize-colors.d.ts",
     "sources/types/react-native-svg-xml.d.ts",
     "sources/types/react-native-svg.d.ts",
     "sources/types/react-native-web.d.ts",
