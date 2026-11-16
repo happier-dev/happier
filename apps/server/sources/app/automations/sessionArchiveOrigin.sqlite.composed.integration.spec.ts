@@ -14,6 +14,7 @@ import { readOrCreateInstallationIdentity } from "../../../../cli/src/daemon/ide
 import { updateSettings } from "../../../../cli/src/persistence";
 import { configuration } from "../../../../cli/src/configuration";
 import { eventRouter } from "@/app/events/eventRouter";
+import * as archivePublication from "@/app/session/archive/publishSessionArchiveTransition";
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -59,6 +60,8 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
                 headers: { ...options?.headers, "x-test-user-id": account.id } });
             return { status: response.statusCode, data: response.json() };
         });
+        // Observe the real publisher: the HTTP receipt precedes its completion.
+        const publication = vi.spyOn(archivePublication, "publishSessionArchiveTransition");
         try {
             const credentials = { token: "archive-fixture", encryption: null };
             const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: "", mode: "plain", ctx: null });
@@ -70,6 +73,7 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
             expect(await db.automationRun.count({ where: { triggerId: trigger.id } })).toBe(0);
             misbind = false;
             await expect(archive()).resolves.toMatchObject({ ok: true });
+            await Promise.all(publication.mock.results.map(result => result.value));
             const occurrence = await db.automationRun.findFirstOrThrow({ where: { triggerId: trigger.id } });
             expect(decodeAutomationRunCause(occurrence)).toMatchObject({ kind: "trigger", triggerKind: "sessionLifecycle",
                 evidence: { event: "sessionArchived", sourceSessionId: session.id, originRunId: run.id } });
@@ -86,6 +90,7 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
             const unarchive = () => app.inject({ method: "POST", url: `/v2/sessions/${session.id}/unarchive`,
                 headers: { "x-test-user-id": account.id } });
             expect((await unarchive()).statusCode).toBe(200);
+            await Promise.all(publication.mock.results.map(result => result.value));
             expect(publications.mock.calls.length).toBeGreaterThan(0);
             const unarchived = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             const accountAfterUnarchive = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
@@ -95,7 +100,7 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
             expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual(accountAfterUnarchive);
             expect(publications.mock.calls).toHaveLength(0);
             publications.mockRestore();
-        } finally { get.mockRestore(); post.mockRestore(); }
+        } finally { get.mockRestore(); post.mockRestore(); publication.mockRestore(); }
     });
 });
 

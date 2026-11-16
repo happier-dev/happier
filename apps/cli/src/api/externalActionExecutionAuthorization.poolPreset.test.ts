@@ -8,10 +8,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import { MachinePoolResolveInputV1Schema } from '@happier-dev/protocol/machines/pools';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema,
     ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -23,7 +20,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied', 'fixed-ready', 'fixed-account-ready', 'fixed-bound-ready', 'fixed-mcp-ready', 'fixed-member-bound-ready', 'fixed-member-reviewed-ready'] as const)('originates a controller preset through the real host entry (%s)', async status => {
+it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied', 'fixed-ready', 'fixed-account-ready', 'fixed-bound-ready', 'fixed-mcp-ready', 'fixed-member-bound-ready'] as const)('originates a controller preset through the real host entry (%s)', async status => {
     const fixed = status.startsWith('fixed-');
     const own = status === 'account-ready' || status === 'fixed-account-ready' || status === 'fixed-bound-ready';
     const mcp = status === 'mcp-ready' || status === 'fixed-mcp-ready';
@@ -33,26 +30,16 @@ it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied'
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
     const custodianAccountId = own ? 'requester' : 'company';
     const controllerAccess = { installationPublicKey: encodeBase64(installation.publicKey, 'base64url'), custodian: { accountId: custodianAccountId } };
-    const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'VM', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
-        enrollmentRole: 'sandbox', launchSchema: { type: 'object', properties: {}, additionalProperties: false },
-        resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
-        billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['delete'] },
-        actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' } });
+    const retention = { kind: 'until-delete' as const };
     const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Team VM', choices: {} };
-    const facts = buildManagedConfigurationFactsV1({ choicesSchema: PluginJsonValueV2Schema, launch,
-        optionStatus: 'current', prerequisites: [], billing: provisioner.billing, retentionCapabilities: provisioner.retention,
-        preset: { id: fixed ? 'qa-m-catalog-docker-1111' : 'team-preset', revision: fixed ? 0 : 4, name: 'Team VM',
-            ...(fixed ? { retention: { kind: 'until-delete' } } : {}) } });
-    const preset = ManagedMachinePresetV1Schema.parse({ id: fixed ? 'qa-m-catalog-docker-1111' : 'team-preset', homeId, revision: fixed ? 0 : 4, name: 'Team VM',
-        owner: own ? { kind: 'account', accountId: 'requester' } : { kind: 'team', teamId: 'company-team' }, launch,
+    const preset = ManagedMachinePresetV1Schema.parse({ id: fixed ? 'qa-m-catalog-docker-1111' : 'team-preset', homeId, revision: fixed ? 0 : 4,
+        owner: own ? { kind: 'account', accountId: 'requester' } : { kind: 'team', teamId: 'company-team' },
+        contentEncryptionMode: 'plain', content: { t: 'plain', v: { v: 1, name: 'Team VM', launch } }, recipients: [],
         ...(fixed ? { controller } : { controllerPoolId: poolId }),
-        ...(fixed ? { retention: facts.retention } : {}),
-        ...(own ? {} : { teamAcquireDelegated: true }), ...(fixed && own ? {} : { delegatedAcquire: { kind: 'ready', provisioner,
-            ...(fixed ? { controller: controllerAccess } : {}), reviewedFacts: fixed ? { ...facts, controller } : facts } }) });
+        ...(fixed ? { retention } : {}),
+        ...(own ? {} : { teamAcquireDelegated: true }) });
     const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: preset.id, revision: preset.revision },
-        retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage,
-        enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, ...(fixed ? {} : { reviewedFacts: facts }),
-        ...(status === 'fixed-member-reviewed-ready' ? { reviewedFacts: { ...facts, controller } } : {}),
+        retention, wakeOnAcceptedMessage: false,
         ...(status === 'bound' || status === 'fixed-bound-ready' || status === 'fixed-member-bound-ready' ? { controller } : {}) });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
         provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
@@ -86,6 +73,10 @@ it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied'
         const path = new URL(String(url)).pathname;
         requests.push(path);
         if (path === '/v1/machines/presets/get') return { status: 200, data: { kind: 'found', preset } };
+        if (path === MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1) {
+            expect(body).toEqual({ homeId, id: preset.id, revision: preset.revision, controller });
+            return { status: 200, data: { kind: 'resolved', controller, controllerAccess } };
+        }
         if (path === '/v1/machines/pools/resolve') {
             if (status === 'mcp-ready') requestId = MachinePoolResolveInputV1Schema.parse(body).requestKey;
             expect(body).toEqual({ poolId, requestKey: requestId, purpose: 'managed-preset',
@@ -93,13 +84,14 @@ it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied'
             return { status: status === 'denied' ? 404 : 200, data: status === 'denied' ? { code: 'pool_not_found' } : status === 'unavailable'
                 ? { kind: 'unavailable', poolId, reason: 'managed_preset_unavailable', code: 'controller_unavailable' }
                 : { kind: 'resolved', poolId, machineId: controller.machineId, priorityTier: 0,
-                    managedPreset: { controller, controllerAccess, provisioner, reviewedFacts: { ...facts, controller } } } };
+                    managedPreset: { preset: { id: preset.id, revision: preset.revision,
+                        contentEncryptionMode: preset.contentEncryptionMode }, controller, controllerAccess } } };
         }
         if (path.endsWith('/execution-authorization')) {
             const envelope = ExternalActionRequestEnvelopeSchema.parse((body as { envelope: unknown }).envelope);
             if (fixed && mcp && envelope.requestId) requestId = envelope.requestId;
             expect(envelope).toMatchObject({ target: { kind: 'machine', machineId: controller.machineId },
-                input: { controller, ...(fixed && own ? {} : { reviewedFacts: { controller } }) } });
+                input: { controller } });
             return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
                 accountId: 'requester', custodianAccountId, authentication: { kind: 'terminal', tokenEpoch: 1 },
                 accountEncryptionMode: 'plain', serverIdentityId: homeId, machineId: controller.machineId,
