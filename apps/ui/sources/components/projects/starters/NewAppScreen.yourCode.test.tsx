@@ -159,3 +159,28 @@ it('the Deploy route keeps its Machine through Your code and the catalog (lab dM
     await fixture.dispose();
   }
 });
+
+it("a Project's Deploy an app opens with that Project's code already chosen (journey-deploy proj)", async () => {
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture(
+    'https://deploy-project-code.test',
+    { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } },
+    'updated',
+    { handleRequest: async (path) => path.startsWith('/v1/projects/sources') ? Response.json({ ok: true,
+      sources: [
+        { id: 'source-billing', revision: 1, name: 'billing-api', repository, defaultRef: 'main', audience: [], createdByAccountId: 'alice' },
+        { id: 'source-invoices', revision: 2, name: 'invoices', repository, defaultRef: 'main', audience: [], createdByAccountId: 'alice' },
+      ],
+      coverage: { complete: true, nextCursor: null } }) : null },
+  );
+  try {
+    const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
+    const screen = await renderScreen(<NewAppScreen projectSourceId="source-invoices" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.code:source-invoices')).toBeTruthy());
+    const yourCode = screen.findAllByType(SelectionTiles).find((node) => node.props.testIdPrefix === 'newApp.code');
+    expect(yourCode?.props.value).toBe('source-invoices');
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});

@@ -67,11 +67,11 @@ describe('Source availability at Environment creation', () => {
         actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
       if (available) {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId(populated
-          ? 'project-deployments.rail.add' : 'project-deployments.empty.add'), node => node !== null);
+          ? 'project-deployments.rail.add' : 'project-deployments.empty.deployApp'), node => node !== null);
         expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
       } else {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.sourceUnavailable'), node => node !== null);
-        expect(screen.findByTestId('project-deployments.empty.add')).toBeNull();
+        expect(screen.findByTestId('project-deployments.empty.deployApp')).toBeNull();
         expect(screen.findByTestId('project-deployments.rail.add')).toBeNull();
         expect(screen.findByTestId('project-deployments.rail.draft')).toBeNull();
         expect(screen.findByTestId('project-deployments.draft')).toBeNull();

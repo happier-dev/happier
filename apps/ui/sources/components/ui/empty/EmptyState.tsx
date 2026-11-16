@@ -72,8 +72,8 @@ type EmptyStateProps = Readonly<{
     /**
      * A second way forward beside the primary action (for example, opening the setting that would let
      * everyone do this): the same size, in the secondary (bordered) style, moving beneath it when the
-     * column is too narrow for both. Only rendered with a `primaryAction`, except in the `line` layout,
-     * where it is a second inline link.
+     * column is too narrow for both. Only rendered with a `primaryAction` or a custom `action` (a menu's
+     * trigger), except in the `line` layout, where it is a second inline link.
      */
     secondaryAction?: EmptyStatePrimaryAction;
     /**
@@ -226,9 +226,11 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
             trailing={props.primaryAction.shortcut ? <KeyHint label={props.primaryAction.shortcut} tone="onFill" /> : undefined}
         />
     ) : null;
-    const actionContent = primaryButton && props.secondaryAction ? (
+    // The second way forward pairs with whichever leads: the primary button, or a custom action such as a menu's trigger.
+    const leadAction = primaryButton ?? (props.actionUnavailableReason ? null : props.action ?? null);
+    const actionContent = leadAction && props.secondaryAction ? (
         <View style={stylesheet.actionRow}>
-            {primaryButton}
+            {leadAction}
             <RoundButton
                 testID={props.secondaryAction.testID}
                 size="normal"

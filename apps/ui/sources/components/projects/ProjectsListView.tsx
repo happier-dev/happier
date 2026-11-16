@@ -11,6 +11,7 @@ import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pag
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -155,6 +156,14 @@ export const ProjectsListView = React.memo(() => {
                     scene="noProjects"
                     title={t('projects.emptyTitle')}
                     subtitle={t('projects.emptyDescription')}
+                    // The page's Add leads, as the page beside the column draws it; deploying an app is the second way to start.
+                    action={addMenu((open) => (
+                        <RoundButton testID="projects-list-empty:add-button" size="normal" title={addLabel}
+                            accessibilityLabel={addLabel} action={async () => { open(); }} />
+                    ))}
+                    secondaryAction={{ label: t('newApp.title'), onPress: () => openNewApp(), testID: 'projects-list-empty:deploy-app' }}
+                    prompt={{ question: t('newApp.auto.prompt'), action: { label: t('newApp.auto.entryTitle'),
+                        onPress: () => openNewApp(null, null, { startOn: 'describe' }), testID: 'projects-list-empty:describe-app' } }}
                 />
             ) : model.staleRows ? (
                 <ProjectRowsStaleLine testID="projects-list:stale" asOf={model.staleRows.asOf} />

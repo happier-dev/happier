@@ -486,6 +486,25 @@ describe('ProjectsColumn', () => {
 });
 
 describe('Projects index', () => {
+    it('offers Deploy an app beside Add project while there are no Projects, opening the one Deploy an app dialog (journey-deploy projEmpty)', async () => {
+        workspaceRefsV1Mock = [];
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const { ProjectsIndexView } = await import('./ProjectsIndexView');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const { Modal } = await import('@/modal');
+        // Beside the column the page says no projects yet; collapsed or on a phone the page is the list's empty state.
+        for (const [columnVisible, prefix] of [[true, 'projects-none-open'], [false, 'projects-list-empty']] as const) {
+            const screen = await renderProjects(<AppShellColumnContext.Provider value={{ present: true, columnVisible }}><ProjectsIndexView /></AppShellColumnContext.Provider>);
+            const button = (testID: string) => screen.findAllByType(RoundButton).find(node => node.props.testID === testID);
+            await vi.waitFor(() => expect(button(`${prefix}:deploy-app`)).toBeTruthy());
+            expect(button(`${prefix}:add-button`), 'Add project still leads').toBeTruthy();
+            vi.mocked(Modal.show).mockClear();
+            await act(async () => { await button(`${prefix}:deploy-app`)!.props.action(); });
+            expect(vi.mocked(Modal.show).mock.calls.map(([config]) => (config as { chrome?: { testID?: string } }).chrome?.testID)).toEqual(['newApp.dialog']);
+            await screen.unmount();
+        }
+    });
+
     it('invites opening a saved Source without rendering a duplicate Add affordance below it', async () => {
         workspaceRefsV1Mock = [];
         homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: {

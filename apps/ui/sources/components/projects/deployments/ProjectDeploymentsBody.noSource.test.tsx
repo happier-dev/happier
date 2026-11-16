@@ -35,7 +35,8 @@ const checkout = {
 } as WorkspaceRefV1;
 
 describe('Project → Deployments without a source', () => {
-  it('leads to saving this checkout as a source, the one step deploying needs', async () => {
+  it('leads with Deploy an app, never asking to save a source first; saving this checkout stays beside it', async () => {
+    const { Modal } = await import('@/modal');
     const screen = await renderScreen(
       <ProjectDeploymentsBody workspaceRef={checkout} isFocused />,
     );
@@ -43,5 +44,9 @@ describe('Project → Deployments without a source', () => {
     expect(
       screen.findByTestId('project-deployments.noSource.save'),
     ).not.toBeNull();
+    vi.mocked(Modal.show).mockClear();
+    await screen.pressByTestIdAsync('project-deployments.noSource.deployApp');
+    expect(vi.mocked(Modal.show).mock.calls.map(([config]) => (config as { chrome?: { testID?: string } }).chrome?.testID))
+      .toEqual(['newApp.dialog']);
   });
 });

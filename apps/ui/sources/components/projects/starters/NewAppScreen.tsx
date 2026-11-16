@@ -118,6 +118,8 @@ export type NewAppScreenProps = Partial<
     onClone?: (() => void) | null;
     /** Deploy an app here (a Machine's Services): that Machine stays chosen through every source that places work. */
     machine?: QualifiedMachineV1 | null;
+    /** A Project's Deploy an app: that Project's code starts chosen as Your code. */
+    projectSourceId?: string | null;
   }>;
 
 function readMachineHomeDir(
@@ -164,10 +166,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 
   const [step, setStep] = React.useState<Step>('start');
   const [starterId, setStarterId] = React.useState<string | null>(
-    props.starterId ?? (starters.length === 1 ? starters[0]!.itemId : null),
+    props.starterId ?? (starters.length === 1 && !props.projectSourceId ? starters[0]!.itemId : null),
   );
   // Deploy an app → Your code: a repository Project, chosen instead of a starter (lab f1src). One choice at a time.
-  const [codeSourceId, setCodeSourceId] = React.useState<string | null>(null);
+  const [codeSourceId, setCodeSourceId] = React.useState<string | null>(props.projectSourceId ?? null);
   // Already built and From the catalog (lab f1src): a way that continues outside this dialog, chosen like the others.
   const [door, setDoor] = React.useState<Door | null>(null);
   // Your code → a pasted link to a repository that is not a Project here yet (owner ruling 20:50Z).

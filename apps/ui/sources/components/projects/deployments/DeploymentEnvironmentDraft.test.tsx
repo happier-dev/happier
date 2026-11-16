@@ -538,16 +538,16 @@ describe('Environment draft Machine Home', () => {
         controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="alice" serverId={serverId}
         actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
       await waitForTestEvent(screen.subscribe,
-        () => screen.findByTestId('project-deployments.empty.add'), node => node !== null);
+        () => screen.findByTestId('project-deployments.empty.deployApp'), node => node !== null);
       await act(async () => { storage.getState().applySettingsLocal({
         featureToggles: { ...storage.getState().settings.featureToggles, deployments: false },
       }); });
-      expect(screen.findByTestId('project-deployments.empty.add')).toBeNull();
+      expect(screen.findByTestId('project-deployments.empty.deployApp')).toBeNull();
       expect(screen.findByTestId('project-deployments.empty')).not.toBeNull();
       await act(async () => { storage.getState().applySettingsLocal({
         featureToggles: { ...storage.getState().settings.featureToggles, deployments: true },
       }); });
-      expect(screen.findByTestId('project-deployments.empty.add')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.empty.deployApp')).not.toBeNull();
       await screen.unmount();
     } finally { standardCleanup(); controller.retire(); account.dispose(); storage.setState(previous); }
   });
@@ -613,12 +613,13 @@ describe('Environment draft Machine Home', () => {
           return { ok: true, environmentId: 'created-environment', revision: 1 };
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      // Deploy an app → Your code lands on this Project's new-Environment draft by its address.
+      routerMock.spies.setParams({ newDefinition: 'repository' });
       const screen = await renderScreen(<ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
         controller={controller} demand={{ mounted: true, visible: true, focused: true }}
         accountId="alice" serverId={serverId} actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
       await waitForTestEvent(screen.subscribe,
-        () => screen.findByTestId('project-deployments.empty.add'), node => node !== null);
-      await screen.pressByTestIdAsync('project-deployments.empty.add');
+        () => screen.findAllByType(PageHeader)[0]?.props.titleEditor ?? null, editor => editor !== null);
       await act(async () => screen.findAllByType(PageHeader)[0]!.props.titleEditor.onChangeText('Created app'));
       await waitForTestEvent(screen.subscribe,
         () => screen.findAllByType(PageHeader)[0]!.props.primaryAction.disabled, disabled => disabled === false);

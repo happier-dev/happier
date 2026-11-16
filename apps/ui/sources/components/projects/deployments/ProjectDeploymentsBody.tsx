@@ -38,6 +38,7 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';
 import { useProjectsSourcesComposition } from '../useProjectsSourcesComposition';
+import { useOpenNewApp } from '../starters/newAppPresentation';
 import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
@@ -132,10 +133,14 @@ export const ProjectDeploymentsBody = React.memo(
 
 const NO_OPENED_SOURCES: ReadonlySet<string> = new Set();
 
-/** Without a source there is nothing to deploy yet; the one step is saving this checkout as one (Projects' editor). */
+/**
+ * Without a source this Project has nothing deployed yet. Deploy an app leads (journey-deploy proj), never asking for a
+ * source first; saving this checkout as a source (Projects' editor) stays the second way forward.
+ */
 function ProjectDeploymentsNoSource(props: Readonly<{ checkout: WorkspaceRefV1 | null }>) {
   const composition = useProjectsSourcesComposition(NO_OPENED_SOURCES);
   const saveSource = useProjectSaveAsSource(composition);
+  const openNewApp = useOpenNewApp();
   const { checkout } = props;
   return (
     <ItemList testID="project-deployments.noSource">
@@ -144,7 +149,8 @@ function ProjectDeploymentsNoSource(props: Readonly<{ checkout: WorkspaceRefV1 |
         scene="shipped"
         title={t('projects.deployments.noSourceTitle')}
         subtitle={t('projects.deployments.noSourceBody')}
-        {...(checkout ? { primaryAction: {
+        primaryAction={{ label: t('newApp.title'), onPress: () => openNewApp(), testID: 'project-deployments.noSource.deployApp' }}
+        {...(checkout ? { secondaryAction: {
           label: t('projects.identity.saveAsSource'),
           onPress: () => { void saveSource(checkout); },
           testID: 'project-deployments.noSource.save',
@@ -195,6 +201,7 @@ const ProjectDeploymentsPage = React.memo(
     const sourceRead = useProjectSource(props.lifetime, props.sourceId);
     const sourceAvailable = sourceRead.source !== null;
     const canCreate = newWorkEnabled && sourceAvailable && Boolean(props.actions?.prepareCreate);
+    const openNewApp = useOpenNewApp();
     // A Source this person cannot read is a refusal, not a load failure: it says so and leads to another Source.
     const sourceUnavailable = (size: React.ComponentProps<typeof SurfaceStateCard>['size'], code: string | null) => <SurfaceStateCard
       testID="project-deployments.sourceUnavailable" size={size} kind="unavailable"
@@ -443,9 +450,11 @@ const ProjectDeploymentsPage = React.memo(
             scene="shipped"
             title={t('projects.deployments.emptyTitle')}
             subtitle={t('projects.deployments.emptyBody')}
-            // Settings is the second way forward beside Add environment, or the one action when adding isn't open.
+            // Deploy an app leads, in the one Deploy an app dialog with this Project's code chosen (journey-deploy proj);
+            // Settings is the second way forward, or the one action when deploying isn't open.
             {...(canCreate ? {
-              primaryAction: { label: t('projects.deployments.add'), onPress: startDraft, testID: 'project-deployments.empty.add' },
+              primaryAction: { label: t('newApp.title'), onPress: () => openNewApp(null, null, { projectSourceId: props.sourceId }),
+                testID: 'project-deployments.empty.deployApp' },
               secondaryAction: emptySettingsAction,
             } : { primaryAction: emptySettingsAction })}
           />
