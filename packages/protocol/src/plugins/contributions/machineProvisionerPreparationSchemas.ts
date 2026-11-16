@@ -1,4 +1,5 @@
-import { ManagedNativeOperationReferenceV1Schema, type ManagedNativeOperationReferenceV1 } from '../../machines/managed/providerFactsV1.js';
+import { MachineProvisionerNativeCauseV1Schema, ManagedNativeOperationReferenceV1Schema,
+  type MachineProvisionerNativeCauseV1, type ManagedNativeOperationReferenceV1 } from '../../machines/managed/providerFactsV1.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
 import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
@@ -10,6 +11,8 @@ const referenceSchema: ProtocolComposableSchema<ManagedNativeOperationReferenceV
   projectZodProtocolSchema(lazyDefinition(() => ManagedNativeOperationReferenceV1Schema));
 const localizedStatusSchema: ProtocolComposableSchema<PluginLocalizedStringV2, PluginLocalizedStringV2> =
   projectZodProtocolSchema(lazyDefinition(() => PluginLocalizedStringV2Schema));
+const nativeCauseSchema: ProtocolComposableSchema<MachineProvisionerNativeCauseV1, MachineProvisionerNativeCauseV1> =
+  projectZodProtocolSchema(lazyDefinition(() => MachineProvisionerNativeCauseV1Schema));
 type PreparationReference<T> = Omit<ManagedNativeOperationReferenceV1, 'value'> & { value: T };
 
 /** Artifact and pending-operation identities share the incumbent qualified reference envelope. */
@@ -40,9 +43,10 @@ export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, N
   const nativeOperationRef = preparationReference(schemas.nativeOperation);
   const ready = defineProtocolObject({ kind: defineProtocolLiteral('ready'), artifact }, closed);
   const pending = defineProtocolObject({ kind: defineProtocolLiteral('pending'), nativeOperationRef }, closed);
-  const refused = defineProtocolObject({ kind: defineProtocolLiteral('refused'), code,
+  const refused = defineProtocolObject({ kind: defineProtocolLiteral('refused'), code, nativeCause: nativeCauseSchema.optional(),
     status: localizedStatusSchema.optional() }, closed);
-  const unknown = defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code, nativeOperationRef }, closed);
+  const unknown = defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code, nativeOperationRef,
+    nativeCause: nativeCauseSchema.optional() }, closed);
   return Object.freeze({
     buildInput: defineProtocolObject({ operationId: code, input: schemas.input }, closed),
     buildResult: defineProtocolUnion([ready, pending, refused, unknown]),
@@ -51,7 +55,8 @@ export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, N
       defineProtocolObject({ operationId: code, launch: schemas.launch }, closed),
     ]),
     inspectResult: defineProtocolUnion([ready, pending,
-      defineProtocolObject({ kind: defineProtocolLiteral('failed'), code, nativeOperationRef }, closed),
+      defineProtocolObject({ kind: defineProtocolLiteral('failed'), code, nativeOperationRef,
+        nativeCause: nativeCauseSchema.optional() }, closed),
       defineProtocolObject({ kind: defineProtocolLiteral('absent') }, closed), unknown]),
     destroyInput: defineProtocolUnion([
       defineProtocolObject({ artifact, nativeOperation: nativeOperationRef.optional() }, closed),

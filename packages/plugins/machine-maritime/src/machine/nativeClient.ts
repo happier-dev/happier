@@ -1,8 +1,9 @@
 import { MaritimeNativeError, projectMaritimeNativeFailure } from './nativeFailure.js';
-import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
+import { decodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
   type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING_BY_KIND, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type MaritimeLaunch, type MaritimeResource, type MaritimeOperation } from './schemas.js';
+import { readMaritimeShellOutput } from './shellOutput.js';
 
 // Maritime OpenAPI 0.1.0 and public SDK/API docs, inspected 2026-11-05.
 const origin = 'https://api.maritime.sh';
@@ -186,10 +187,11 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
       await upload(input.resource, directory + '/input', decodeBase64(input.inputBase64));
       argv = ['sh', '-c', `trap ${quote('rm -rf -- ' + quote(directory))} EXIT; ${input.argv.map(quote).join(' ')} < ${quote(directory + '/input')}`];
     }
-    const result = await run(input.resource, argv, input.timeoutMs);
-    return { stdoutBase64: encodeBase64(new TextEncoder().encode(result.stdout)), stderrBase64: encodeBase64(new TextEncoder().encode(result.stderr)),
-      termination: { observed: { kind: 'exit', exitCode: result.exitCode }, requestedBy: { kind: 'none' } },
-      stdoutTruncated: result.stdout.startsWith('[output truncated]'), stderrTruncated: result.stderr.startsWith('[output truncated]') };
+    const result = await run(input.resource, ['sh', '-c', buildMachineProvisionerShellCommand(argv)], input.timeoutMs);
+    const output = readMaritimeShellOutput(result);
+    return { stdoutBase64: output.stdoutBase64, stderrBase64: output.stderrBase64,
+      termination: { observed: { kind: 'exit', exitCode: output.exitCode }, requestedBy: { kind: 'none' } },
+      stdoutTruncated: false, stderrTruncated: false };
   }
   async function destroy(input: ReturnType<typeof RECONCILIATION.destroyInput.parse>): Promise<Destruction> {
     if ('nativeOperation' in input) {

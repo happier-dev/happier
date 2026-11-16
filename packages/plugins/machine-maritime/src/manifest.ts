@@ -12,6 +12,9 @@ import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountP
 import { nativeFetch } from './machine/credentials.js';
 import { createMaritimeNativeClient } from './machine/nativeClient.js';
 import { BILLING, BILLING_BY_KIND, RETENTION, BOX_RETENTION, CONTRIBUTION, ROLE_SCHEMAS, RECONCILIATION, MaritimeLaunchSchema, MaritimeOptionsSchema, MaritimeResourceSchema, MaritimeOperationSchema } from './machine/schemas.js';
+import { SANDBOX_CONTRIBUTION, SANDBOX_HOME, SANDBOX_BILLING, SANDBOX_RETENTION, SandboxLaunchSchema, SandboxOptionsSchema, SandboxResourceSchema, SandboxOperationSchema, SANDBOX_ROLES, SANDBOX_RECONCILIATION } from './sandbox/schemas.js';
+import { createMaritimeSandboxClient } from './sandbox/native.js';
+import { createMaritimePreparationClient, SandboxPreparationInputSchema, SandboxPreparedArtifactSchema, SandboxPreparationOperationSchema, SANDBOX_PREPARATION } from './sandbox/preparation.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
 const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
@@ -19,6 +22,8 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 } as const;
 const confirmation = { title: 'Manage this Maritime machine?', body: 'Maritime may sleep idle machines and bills retained storage. Delete permanently removes the machine and its disk.' };
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createMaritimeNativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const sandboxRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createMaritimeSandboxClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createMaritimePreparationClient(nativeFetch(context), context.signal);
 const errorCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'maritime_unavailable';
 
 export const MACHINE_PROVISIONER = {
@@ -30,6 +35,22 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: MaritimeOperationSchema.jsonSchema, action: 'reconcile' },
+} satisfies MachineProvisionerAuthorDefinitionV1;
+
+// The native Sandboxes API consumes saved snapshots. Agent boxes/computers use
+// different vendor APIs and remain server-enrolled through their existing owner.
+export const SANDBOX_PROVISIONER = {
+  title: 'Maritime Sandbox', icon: 'cloud', resourceKind: 'maritime-sandbox', schemaVersion: 1, enrollmentRole: 'sandbox',
+  kindTitle: 'Sandbox', description: 'Run a Session in a native Maritime sandbox, optionally from a prepared snapshot.',
+  launchSchema: SandboxLaunchSchema.jsonSchema, resourceSchema: SandboxResourceSchema.jsonSchema,
+  resourceIdPath: 'sandboxId', platforms: ['darwin', 'linux', 'win32'], prerequisites: [], browserReachable: false,
+  billing: SANDBOX_BILLING, retention: SANDBOX_RETENTION,
+  actions: { check: 'check', options: 'sandbox-options', acquire: 'sandbox-acquire', bootstrap: 'sandbox-bootstrap', inspect: 'sandbox-inspect', power: 'sandbox-power', destroy: 'sandbox-destroy' },
+  bootstrapTransport: { kind: 'native', exec: 'sandbox-exec', putFile: 'sandbox-put-file' },
+  reconciliation: { nativeOperationSchema: SandboxOperationSchema.jsonSchema, action: 'sandbox-reconcile' },
+  preparation: { inputSchema: SandboxPreparationInputSchema.jsonSchema, artifactSchema: SandboxPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: SandboxPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -54,8 +75,43 @@ export const PLUGIN = definePlugin({
       }],
     } }, runtime: connectedAccountRuntime, accountRuntime: connectedAccountPortableRuntime,
   } },
-  machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER },
+  machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER, [SANDBOX_CONTRIBUTION.localId]: SANDBOX_PROVISIONER },
   actions: {
+    'sandbox-options': { ...defaults, title: 'Maritime sandbox options', dangerLevel: 'safe', inputSchema: SandboxOptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
+      inputHints: { fields: [{ path: 'from', title: 'Base image or saved snapshot', widget: 'text', defaultValue: 'base' }] },
+      async run(input): Promise<MachineProvisionerOptionsResultV1> {
+        const launch = { from: input.from ?? 'base', vcpu: 1, memoryMib: 1024, diskGib: 5 };
+        return { base: { launch, guestPlatform: 'linux', retention: SANDBOX_RETENTION, nativeFacts: {
+          preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: SANDBOX_HOME },
+        } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
+      } },
+    'sandbox-acquire': { ...defaults, title: 'Create Maritime sandbox', dangerLevel: 'writesRemote', confirmation, inputSchema: SANDBOX_ROLES.acquireInput, resultSchema: SANDBOX_RECONCILIATION.result,
+      async run(input, context) { return input.managedId ? sandboxRuntime(context).acquire(input.launch, input.managedId) : { kind: 'rejected' as const, code: 'invalid_request' as const }; } },
+    'sandbox-reconcile': { ...defaults, title: 'Recover Maritime sandbox', dangerLevel: 'safe', inputSchema: SANDBOX_RECONCILIATION.input, resultSchema: SANDBOX_RECONCILIATION.result,
+      async run(input, context) { return sandboxRuntime(context).recover('nativeOperation' in input ? input.nativeOperation : { kind: 'acquire', name: 'happier-' + input.correlation.managedId }); } },
+    'sandbox-bootstrap': { ...defaults, title: 'Prepare Maritime sandbox transport', dangerLevel: 'writesRemote', confirmation, inputSchema: SANDBOX_ROLES.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
+      async run(input, context) { return sandboxRuntime(context).bootstrap(input.resource); } },
+    'sandbox-inspect': { ...defaults, title: 'Inspect Maritime sandbox', dangerLevel: 'safe', inputSchema: SANDBOX_ROLES.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
+      async run(input, context) { return sandboxRuntime(context).inspect(input.resource); } },
+    'sandbox-power': { ...defaults, title: 'Pause or resume Maritime sandbox', dangerLevel: 'writesRemote', confirmation, inputSchema: SANDBOX_ROLES.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
+      async run(input, context) { return sandboxRuntime(context).power(input.resource, input.intent); } },
+    'sandbox-destroy': { ...defaults, title: 'Delete Maritime sandbox', dangerLevel: 'destructive', confirmation, inputSchema: SANDBOX_RECONCILIATION.destroyInput, resultSchema: SANDBOX_RECONCILIATION.destroyResult,
+      async run(input, context) { return sandboxRuntime(context).destroy(input); } },
+    'sandbox-exec': { ...defaults, title: 'Execute Maritime sandbox command', dangerLevel: 'writesRemote', confirmation, inputSchema: SANDBOX_ROLES.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
+      async run(input, context) { return sandboxRuntime(context).exec(input); } },
+    'sandbox-put-file': { ...defaults, title: 'Write Maritime sandbox file', dangerLevel: 'writesRemote', confirmation, inputSchema: SANDBOX_ROLES.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
+      async run(input, context) { return sandboxRuntime(context).putFile(input); } },
+    'prepare-build': { ...defaults, title: 'Build Maritime prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Prepare this Maritime sandbox?', body: 'Maritime bills build compute and retained snapshot storage. See https://maritime.sh/docs/billing.' },
+      inputSchema: SANDBOX_PREPARATION.buildInput, resultSchema: SANDBOX_PREPARATION.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Maritime prepared snapshot', dangerLevel: 'safe', inputSchema: SANDBOX_PREPARATION.inspectInput, resultSchema: SANDBOX_PREPARATION.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Maritime prepared snapshot', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Maritime snapshot?', body: 'This permanently deletes the prepared image and any leftover build sandbox.' },
+      inputSchema: SANDBOX_PREPARATION.destroyInput, resultSchema: SANDBOX_PREPARATION.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({ ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }) }); } },
     check: { ...defaults, title: 'Check Maritime access', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { try { return await runtime(context).check(); }
         catch (error) { return projectMaritimeNativeFailure(error, () => ({ available: false, code: errorCode(error), status: 'Maritime unavailable' })); } } },

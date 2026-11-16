@@ -86,6 +86,7 @@ export type MachineProvisionerDeletionNoticeV1 = ProviderDeletionNoticeV1;
 /** Neutral Action DTOs keep inferred author declarations independent of transitive Protocol type names. */
 export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; nativeCause?: MachineProvisionerNativeCauseV1; status?: PluginLocalizedStringV2; nativeCredentialDelivery?: Readonly<{ status: 'supported' | 'unsupported' | 'unknown'; code?: string }>; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; setupSources?: NonNullable<NonNullable<PluginActionResultById['machines.provisioners.check']['prerequisites']>[number]['setupSources']> & ProtocolJsonValue; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: ManagedLocalResourceFactsV1 }>;
 export type MachineProvisionerNativeOptionFactsV1 = Readonly<{
+  preparationGuest?: NonNullable<canonical.MachineProvisionerDimensionOptionV1['nativeFacts']>['preparationGuest'];
   size?: Readonly<{ id: string; title: PluginLocalizedStringV2; cpuCores?: number; memoryBytes?: number; diskBytes?: number }>;
   image?: Readonly<{ id: string; title: PluginLocalizedStringV2; description?: PluginLocalizedStringV2;
     preview?: Readonly<{ resource: PluginContributionRef; accessibilityLabel?: PluginLocalizedStringV2 }> }>;

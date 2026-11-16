@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { createMaritimeNativeClient } from './nativeClient.js';
@@ -25,11 +26,15 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
     const url = new URL(req.url); const path = url.pathname;
     req.signal.throwIfAborted();
     if (path.endsWith('/files/upload') || path.endsWith('/files')) return new Response(null, { status: 204 });
-    if (path.endsWith('/exec/execution-one')) return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: 0, stdout: 'done', stderr: '' });
+    if (path.endsWith('/exec/execution-one')) return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: 0,
+      stdout: JSON.stringify({ exitCode: 0, stdoutBase64: Buffer.from('done').toString('base64'), stderrBase64: '' }), stderr: '' });
     if (path.endsWith('/exec')) {
       const body = await req.clone().json();
       if (options.runningExec && body.detached) return Response.json({ executionId: 'execution-one', status: 'running' }, { status: 202 });
-      const result = { exitCode: 0, stdout: 'Linux\nx86_64\n/home/desk\n', stderr: '' };
+      const command: string = Array.isArray(body.command) ? body.command.join(' ') : body.command;
+      const stdout = 'Linux\nx86_64\n/home/desk\n';
+      const result = { exitCode: 0, stdout: command.includes('umask 077;')
+        ? JSON.stringify({ exitCode: 0, stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: '' }) : stdout, stderr: '' };
       return Response.json(path.startsWith('/api/agents/') ? { ...result, executionId: 'execution-one', status: 'completed' } : result);
     }
     if (path.endsWith('/resize')) return Response.json({ ok: true, alwaysOn: !options.keepAwakeRefused,
@@ -54,6 +59,22 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
 }
 
 describe('Maritime managed-machine REST leaf', () => {
+  it.each([boxResource, computerResource])('preserves binary stdout and stderr through the text API for $kind', async resource => {
+    const request: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      if (new URL(req.url).pathname.endsWith('/exec')) {
+        const body = await req.json() as { command: string | string[] };
+        const result = Array.isArray(body.command)
+          ? spawnSync(body.command[0], body.command.slice(1), { encoding: 'utf8' })
+          : spawnSync('sh', ['-c', body.command], { encoding: 'utf8' });
+        return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: result.status, stdout: result.stdout, stderr: result.stderr });
+      }
+      return Response.json(resource.kind === 'agent-box' ? box : computer);
+    };
+    const result = MachineProvisionerNativeExecResultV1Schema.parse(await createMaritimeNativeClient(request, new AbortController().signal, 1000)
+      .exec({ resource, argv: ['sh', '-c', 'printf "\\000\\377\\200"; printf "\\000\\377\\200" >&2; exit 7'], allowWake: false }));
+    expect(result).toMatchObject({ stdoutBase64: 'AP+A', stderrBase64: 'AP+A', termination: { observed: { kind: 'exit', exitCode: 7 } } });
+  });
   it.each([boxResource, computerResource].flatMap(resource => (['stdin', 'bootstrap'] as const).map(phase => ({ resource, phase }))))(
     'classifies a failed $phase guest prerequisite for $resource.kind as a command failure', async ({ resource, phase }) => {
       const request: typeof fetch = async input => {
