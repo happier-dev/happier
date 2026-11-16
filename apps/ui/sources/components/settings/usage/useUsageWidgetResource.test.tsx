@@ -214,8 +214,9 @@ describe('Usage widget shared Resource selection', () => {
             if (!result || typeof result !== 'object' || Array.isArray(result) || !('buckets' in result) || !Array.isArray(result.buckets)) throw new Error('Missing Daily bucket values');
             const bucket = result.buckets[0];
             if (!bucket || typeof bucket !== 'object' || Array.isArray(bucket) || !Array.isArray(bucket.rows)) throw new Error('Missing Daily bucket rows');
-            const row = bucket.rows.find(candidate => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && candidate.label === codex);
-            if (!row || typeof row !== 'object' || Array.isArray(row) || typeof row.id !== 'string') throw new Error('Missing Codex lens row');
+            const rows: readonly unknown[] = bucket.rows;
+            const row = rows.find(candidate => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && 'label' in candidate && candidate.label === codex);
+            if (!row || typeof row !== 'object' || Array.isArray(row) || !('id' in row) || typeof row.id !== 'string') throw new Error('Missing Codex lens row');
             const choose = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.charts.commandChoose'));
             expect(choose, 'held Daily chart publishes its structured drill choice').toBeDefined();
             storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
