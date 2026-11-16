@@ -6,6 +6,7 @@ import { SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataVersionConflic
 export class SessionDetailInvalidResponseError extends Error {
   readonly code = 'session_detail_invalid_response' as const;
   readonly issues: readonly Readonly<{ path: readonly string[]; code: z.core.$ZodIssue['code'] }>[];
+  readonly cause: Readonly<Pick<SessionDetailInvalidResponseError, 'schema' | 'issues'>>;
 
   constructor(
     readonly schema: 'v2_session_detail' | 'current_access_projection_v1' | 'session_metadata_version_conflict_v1' | 'session_metadata_tuple_patch_success_v1',
@@ -34,5 +35,9 @@ export class SessionDetailInvalidResponseError extends Error {
       structuralIssues.set(JSON.stringify([path, issue.code]), { path, code: issue.code });
     }
     this.issues = [...structuralIssues.values()];
+    this.cause = { schema, issues: this.issues };
+    // Changes-feed and other message-only catches retain the same sanitized
+    // parser-owned facts without learning how to serialize schema failures.
+    this.message += `: ${JSON.stringify(this.cause)}`;
   }
 }
