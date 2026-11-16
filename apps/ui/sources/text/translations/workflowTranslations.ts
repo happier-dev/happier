@@ -12,10 +12,16 @@ import { workflowTranslations as ru } from './features/ru';
 import { workflowTranslations as zh_Hans } from './features/zh-Hans';
 import { workflowTranslations as zh_Hant } from './features/zh-Hant';
 import type { WorkflowTranslations } from './workflowTranslations.shared';
-import type { SupportedLanguage } from '../_all';
 export type { WorkflowTranslations } from './workflowTranslations.shared';
 
-export const workflowTranslations: Readonly<Record<SupportedLanguage, WorkflowTranslations>> = {
+type WorkflowLocale = keyof typeof en.workflowTranslations | keyof typeof ca.workflowTranslations
+    | keyof typeof de.workflowTranslations | keyof typeof es.workflowTranslations
+    | keyof typeof fr.workflowTranslations | keyof typeof it.workflowTranslations
+    | keyof typeof ja.workflowTranslations | keyof typeof pl.workflowTranslations
+    | keyof typeof pt.workflowTranslations | keyof typeof ru.workflowTranslations
+    | keyof typeof zh_Hans.workflowTranslations | keyof typeof zh_Hant.workflowTranslations;
+
+export const workflowTranslations: Readonly<Record<WorkflowLocale, WorkflowTranslations>> = {
     ...en.workflowTranslations,
     ...ca.workflowTranslations,
     ...de.workflowTranslations,
