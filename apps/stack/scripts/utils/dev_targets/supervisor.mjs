@@ -821,6 +821,13 @@ export async function startStackDevTargets(
       return worker;
     };
 
+    // A ready server has created its data: a creation pin stops awaiting data.
+    const serverDataObservedTargets = new Set();
+    const markServerDataObserved = async (target) => {
+      if (serverDataObservedTargets.has(target.name) || !retainedRuntime) return;
+      if (typeof onServerDataAuthority === 'function') await onServerDataAuthority({ targetName: target.name, dataObserved: true });
+      serverDataObservedTargets.add(target.name);
+    };
     const startTarget = async (plan, index, existingTunnel = null, refreshSourceRuntime = false, retryAttempt = 0, transportRecovery = false) => {
       if (isSuperseded) return null;
       const { target, services } = plan;
@@ -837,10 +844,11 @@ export async function startStackDevTargets(
       let workspacePreparationCurrent = false;
       let retainedRemoteData = false;
       let serverAuthorityPinned = false;
-      const pinServerDataAuthority = async () => {
+      const pinServerDataAuthority = async ({ dataObserved = false } = {}) => {
         if (serverAuthorityPinned || !retainedRuntime || !services.server) return;
-        if (typeof onServerDataAuthority === 'function') await onServerDataAuthority({ targetName: target.name });
+        if (typeof onServerDataAuthority === 'function') await onServerDataAuthority({ targetName: target.name, dataObserved });
         serverAuthorityPinned = true;
+        if (dataObserved) serverDataObservedTargets.add(target.name);
       };
       deferredCompanionPreparationsByTarget.delete(target.name);
       const beginPhase = (nextPhase) => {
@@ -940,7 +948,7 @@ export async function startStackDevTargets(
           if (services.server) {
             const readiness = await ensureRemoteServerDataReady({ target, stackName, stackBaseDir, syncStackBaseDir, env: infraEnv }, { runCommand });
             retainedRemoteData = readiness?.retainedRemoteData === true;
-            if (retainedRemoteData) await pinServerDataAuthority();
+            if (retainedRemoteData) await pinServerDataAuthority({ dataObserved: true });
           }
           if (sourceSnapshot) {
             provisionedTargets.add(target.name);
@@ -1431,7 +1439,7 @@ export async function startStackDevTargets(
                       serverPort: servicePortsByTarget.get(target.name).server, sshArgs: openSsh.sshArgs } } : {}),
                     signal: readinessController.signal,
                   }).then(
-                    () => verifiedServiceReady('server'),
+                    async () => { await markServerDataObserved(target); return verifiedServiceReady('server'); },
                     (error) => ({ kind: 'server-readiness-failed', error }),
                   ),
                 );

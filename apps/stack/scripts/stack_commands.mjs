@@ -458,7 +458,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       // resolves hosts and preserves each consumer's subsequent explicit pins.
       qaPlacementConfig = parseDevTargetsConfig({ version: 3, targets: producerConfig.targets,
         runtimePlacement: {
-          server: { mode: 'prefer-target', target, fallback: 'error' },
+          server: { mode: 'prefer-target', target, fallback: 'error', awaitingData: true },
           daemon: { mode: 'prefer-target', target },
           qa: { mode: 'prefer-target', targets: [target] },
           expo: { mode: 'local' },

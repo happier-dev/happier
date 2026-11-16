@@ -174,6 +174,18 @@ test('READY requires one real Agent start; a child that exits before webhook kee
     [['session', 'stop', 'probe-1'], ['session', 'archive', 'probe-1']]);
 });
 
+test('a source-snapshot stack runs its probe CLI from the source runtime, not a built snapshot', async () => {
+  const wrapperArgs = [];
+  const run = async (_cmd, args) => {
+    wrapperArgs.push(args.slice(args.indexOf('qa') + 1, args.indexOf('--')));
+    const kind = { create: 'session_create', stop: 'session_stop', archive: 'session_archive' }[args[args.indexOf('--') + 2]];
+    return { ok: true, out: `${JSON.stringify({ ok: true, kind, data: { session: { id: 'probe-3' } } })}\n` };
+  };
+  await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', runtimeMode: 'source-snapshot', run });
+  // Bare `--runtime` selects the built runtime snapshot, which a source stack does not have.
+  assert.deepEqual(wrapperArgs, [['--runtime=source'], ['--runtime=source'], ['--runtime=source']]);
+});
+
 test('a probe Session the stop owner cannot stop keeps the stack NOT_READY', async () => {
   const info = readyInfo();
   const leaking = fakeRuntimeCli({

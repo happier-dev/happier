@@ -211,6 +211,15 @@ test('persisted remote authority never initializes a missing replacement even af
   await assert.rejects(ensureRemoteServerDataReady(options, dependencies), /retained server data operation failed/);
 });
 
+test('a creation-time server pin that never dispatched lets the first start initialize its data', async t => {
+  // `stack new --qa` pins the server to the QA host before any data exists;
+  // only the first dispatch makes that target the data authority.
+  const { options, dependencies, sourceDir } = await setup(t);
+  await rm(sourceDir, { recursive: true });
+  options.config.runtimePlacement.server = { mode: 'prefer-target', target: options.target.name, awaitingData: true };
+  assert.deepEqual(await ensureRemoteServerDataReady(options, dependencies), { retainedRemoteData: false });
+});
+
 test('readiness observes existing target data so fresh placement cannot fall back across retained authority', async t => {
   const { options, dependencies, sourceDir, paths } = await setup(t);
   await cp(sourceDir, paths.serverLightDataDir, { recursive: true });

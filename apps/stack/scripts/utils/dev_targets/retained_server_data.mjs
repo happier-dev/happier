@@ -155,7 +155,9 @@ export async function ensureRemoteServerDataReady({ target, stackName, stackBase
   const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
   const result = await remoteDataCommand({ target, stackBaseDir: syncStackBaseDir, env, commandArgs: [
     '--check-placement', `--data-dir=${paths.serverLightDataDir}`,
-    `--require-existing=${retainedSource || (placement?.mode === 'prefer-target' && placement.target === target.name)}`,
+    // A creation-time pin (`awaitingData`) names the host before any data exists;
+    // the first dispatch persists the pin without it and makes the target the authority.
+    `--require-existing=${retainedSource || (placement?.mode === 'prefer-target' && placement.target === target.name && placement.awaitingData !== true)}`,
     `--controller-stack=${stackName}`, `--target=${target.name}`,
   ] }, runCommand);
   const observed = JSON.parse(result.out);

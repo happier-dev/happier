@@ -117,7 +117,7 @@ export async function resolveControlledQaBrowserTarget({ stackName, sourceDir, t
 
 // Awaited at the supervisor's server dispatch boundary, before the child can
 // create data. An uncertain dispatch must retain the selected data authority.
-export async function persistControlledServerPlacement({ stackName, sourceDir, targetName, env = process.env }) {
+export async function persistControlledServerPlacement({ stackName, sourceDir, targetName, dataObserved = false, env = process.env }) {
   const loaded = await loadControlledRuntimeConfig({ stackName, sourceDir, env });
   const retained = loaded.config.runtimePlacement.server;
   if (retained.mode === 'prefer-target' && retained.target !== targetName) {
@@ -128,7 +128,10 @@ export async function persistControlledServerPlacement({ stackName, sourceDir, t
   }
   const persisted = parseDevTargetsConfig({ ...loaded.config,
     runtimePlacement: { ...loaded.config.runtimePlacement,
-      server: { mode: 'prefer-target', target: targetName, fallback: 'local' },
+      // A dispatch may fail before the server creates data: keep a creation pin's
+      // `awaitingData` until the host is observed holding data.
+      server: { mode: 'prefer-target', target: targetName, fallback: 'local',
+        ...(!dataObserved && retained.mode === 'prefer-target' && retained.awaitingData === true ? { awaitingData: true } : {}) },
     },
   });
   if (!loaded.daemonExplicitlySet) delete persisted.runtimePlacement.daemon;

@@ -1433,8 +1433,8 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
       activeServerId: resolveStackActiveServerId({ env, stackName: context.stackName }), credentialPath, cliHomeDir,
       remoteServerRuntimeConfig: resolveRemoteServerRuntimeConfig({ serverComponentName, env }),
       targetPlans, syncTargets: placement.config.targets,
-      onServerDataAuthority: async ({ targetName }) => persistControlledServerPlacement({ stackName: context.stackName,
-        sourceDir: getRepoDir(rootDir, env), targetName, env }),
+      onServerDataAuthority: async ({ targetName, dataObserved }) => persistControlledServerPlacement({ stackName: context.stackName,
+        sourceDir: getRepoDir(rootDir, env), targetName, dataObserved, env }),
       onTargetStateChange: async ({ name, ...state }) => {
         await recordStackRuntimeUpdate(context.runtimeStatePath, {
           remoteTargets: { [name]: state },

@@ -587,6 +587,21 @@ test('ready remote QA persists server authority without changing the producer bu
   });
 });
 
+test('a creation pin keeps awaiting data through dispatch until the host is observed holding data', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    await writeJsonAtomic(path, { ...config, runtimePlacement: { ...config.runtimePlacement,
+      server: { mode: 'prefer-target', target: 'linux3', fallback: 'error', awaitingData: true } } });
+    // A dispatch that failed before the server created data must not brick the next start.
+    await placement.persistControlledServerPlacement({ stackName: 'qa', sourceDir: '/repo', targetName: 'linux3', env });
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).runtimePlacement.server.awaitingData, true);
+    await placement.persistControlledServerPlacement({ stackName: 'qa', sourceDir: '/repo', targetName: 'linux3', dataObserved: true, env });
+    const server = JSON.parse(await readFile(path, 'utf8')).runtimePlacement.server;
+    assert.equal(server.target, 'linux3');
+    assert.equal(server.awaitingData, undefined);
+  });
+});
+
 test('controlled QA failover excludes only failed workers and never excludes retained server authority', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
     await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), config);

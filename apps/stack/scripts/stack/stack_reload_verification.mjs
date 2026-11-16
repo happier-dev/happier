@@ -5,11 +5,14 @@ import { projectStackReloadVerification } from './reload_verdict.mjs';
  * The wrapper selects the Stack's auth home and daemon host. The child process
  * is the boundary `run` stands for; null means the command printed no envelope.
  */
-async function runRetainedRuntimeCli({ rootDir, stackName, args, kind, run }) {
+export async function runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, input, runtimeMode }) {
   const { join } = await import('node:path');
   const runCli = run ?? (await import('../utils/proc/proc.mjs')).runCaptureResult;
+  // Bare `--runtime` selects the built runtime snapshot; a source stack runs its retained source bundle.
+  const runtimeFlag = runtimeMode === 'source-snapshot' ? '--runtime=source' : '--runtime';
+  // `input` is the child's stdin (e.g. `--secrets-json-stdin`), never argv.
   const result = await runCli(process.execPath, [join(rootDir, 'scripts/stack.mjs'),
-    'happier', stackName, '--runtime', '--', ...args, '--json'], { cwd: rootDir, env: process.env });
+    'happier', stackName, runtimeFlag, '--', ...args, '--json'], { cwd: rootDir, env: process.env, ...(input == null ? {} : { input }) });
   let found = null;
   for (const line of result.out.split(/\r?\n/)) {
     try {
@@ -33,8 +36,8 @@ function readAgentProbeFailure(phase, envelope) {
  * attach (the same `session create` path QA uses), then stop and archive it
  * through the canonical Session owners. No prompt is sent, so no model turn runs.
  */
-export async function probeStackAgentStart({ rootDir, stackName, run }) {
-  const cli = (args, kind) => runRetainedRuntimeCli({ rootDir, stackName, args, kind, run });
+export async function probeStackAgentStart({ rootDir, stackName, runtimeMode, run }) {
+  const cli = (args, kind) => runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, runtimeMode });
   const created = await cli(['session', 'create', '--title', 'Stack readiness probe'], 'session_create');
   const sessionId = created?.ok === true ? created.data?.session?.id : null;
   if (typeof sessionId !== 'string' || !sessionId) return readAgentProbeFailure('create', created);
@@ -63,7 +66,8 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     const info = await readStackInfoSnapshot({ rootDir, stackName });
     check = 'auth';
     // Keep the envelope private: only the owner's authenticated boolean is exposed.
-    const status = await runRetainedRuntimeCli({ rootDir, stackName, args: ['auth', 'status'], kind: 'auth_status' });
+    const runtimeMode = info?.runtime?.mode;
+    const status = await runRetainedRuntimeCli({ rootDir, stackName, args: ['auth', 'status'], kind: 'auth_status', runtimeMode });
     const auth = { authenticated: status?.ok === true && status.data?.authenticated === true };
     // Spawn the probe Agent only on an otherwise ready, signed-in runtime.
     const verdict = projectStackReloadVerification({ info, beforeManagedCli, auth });
@@ -71,7 +75,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
       return { ...verdict, durationMs: Date.now() - startedAt };
     }
     check = 'agent';
-    const agent = await probeStackAgentStart({ rootDir, stackName });
+    const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode });
     // Resolve all non-render failures before acquiring a managed browser.
     const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent });
     if (agentVerdict.status === 'NOT_READY' && agentVerdict.check !== 'render') {

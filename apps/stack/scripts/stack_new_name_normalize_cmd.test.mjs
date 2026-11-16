@@ -89,6 +89,7 @@ test('new QA stacks seed configured producer QA placement without moving develop
     const path = join(fixture.storageDir, name, 'dev-targets.json');
     const config = JSON.parse(await readFile(path, 'utf8'));
     assert.equal(config.runtimePlacement.server.target, 'qa-host');
+    assert.equal(config.runtimePlacement.server.awaitingData, true, 'the first start initializes the pinned host data');
     assert.equal(config.runtimePlacement.daemon.target, 'qa-host');
     assert.deepEqual(config.runtimePlacement.qa.targets, ['qa-host']);
     assert.equal(config.commandExecution.target, 'qa-host');

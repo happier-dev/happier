@@ -377,12 +377,18 @@ function normalizePlacedConfig(raw, targets) {
         ? normalizeCommandExecution({ ...runtimePlacementRaw.qa, includeLocal: false }, { targets, targetNames })
         : normalizeBuildPlacement(runtimePlacementRaw.qa, { targetNames, label: 'runtimePlacement.qa' }),
     } : {}),
-    server: normalizePlacement(runtimePlacementRaw?.server, {
-      label: 'runtimePlacement.server',
-      targetNames,
-      canonicalFallback: 'error',
-      acceptedFallbacks: new Set(['error', 'local']),
-    }),
+    server: {
+      ...normalizePlacement(runtimePlacementRaw?.server, {
+        label: 'runtimePlacement.server',
+        targetNames,
+        canonicalFallback: 'error',
+        acceptedFallbacks: new Set(['error', 'local']),
+      }),
+      // Set only by `stack new --qa`: the pinned host has no data yet. The first
+      // server dispatch (persistControlledServerPlacement) rewrites the pin without it.
+      ...(runtimePlacementRaw?.server?.mode === 'prefer-target' && runtimePlacementRaw.server.awaitingData === true
+        ? { awaitingData: true } : {}),
+    },
     expo: normalizePlacement(runtimePlacementRaw?.expo, {
       label: 'runtimePlacement.expo',
       targetNames,
