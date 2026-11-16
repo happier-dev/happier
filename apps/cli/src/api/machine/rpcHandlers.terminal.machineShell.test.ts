@@ -181,12 +181,12 @@ describe('machine shell RPC custody', () => {
         verifyMachineAdmissionCurrent: async () => true };
       const input = { terminalKey: 'machine-shell:machine:opening', cwd: root };
       try {
-        await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, input,
-          { rpcContext: { ...rpcContext, callerAuthority: 'account_automation' } }))
-          .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
         const opened = await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, input, { rpcContext });
         expect(opened).toMatchObject({ ok: true, reused: false });
         const terminal = sessions.list()[0]!;
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, input,
+          { rpcContext: { ...rpcContext, callerAuthority: 'account_automation' } }))
+          .toMatchObject({ ok: true, reused: true, terminalId: terminal.terminalId });
         expect(terminal.cwd).toBe(root);
         expect(sessions.getCustody(terminal.terminalId)).toEqual({ kind: 'machine', serverId: 'home', homeServerIdentityId: 'home',
           requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation', rootPath: root });

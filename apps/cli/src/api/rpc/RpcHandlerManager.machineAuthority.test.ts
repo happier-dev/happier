@@ -1,5 +1,4 @@
 import { expect, it, vi } from 'vitest';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import axios from 'axios';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -8,8 +7,8 @@ import { RpcHandlerManager } from './RpcHandlerManager';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
-import { createDeploymentChildExecutionProofV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
+import { createDeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 it.each([
   { authority: 'present_user', mode: 'plain' }, { authority: 'account_automation', mode: 'plain' },
@@ -93,24 +92,19 @@ it('preserves signed Workflow Role writes without admitting report-copy configur
 });
 
 it.each(['account', 'terminal'] as const)('admits only the closed finite archive phase under the verified receiver signer without opening %s requester custody at the holder', async kind => {
-  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-deployment-root', binding: {
-    accountId: 'requester-bob', custodianAccountId: 'controller-owner', authentication: { kind, tokenEpoch: 1 },
-    accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-install',
-    actionId: 'deployments.deploy', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43),
-    target: { kind: 'machine', machineId: 'controller' },
-  } });
   const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
     machineId: 'receiver', installationId: 'receiver-install', phase: 'activate', deploymentId: 'deployment',
     selectedDeploymentId: 'deployment', actionOperationId: 'operation',
     input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
       expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
-  const originalActionEnvelope = { v: 1, requestId: root.binding.requestId, target: root.binding.target,
-    input: projectNativeJsonValueForTransport(job.input) } as const;
-  root.binding.requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope);
-  const proof = createDeploymentChildExecutionProofV1({ method: `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, originalActionEnvelope,
-    requestId: 'member-request', params: projectNativeJsonValueForTransport(job), externalActionExecution: { v: 1, authorization: root,
-      effectActionId: 'deployments.deploy', target: root.binding.target, installationId: 'controller-install',
-      machineSignature: 'a'.repeat(86), deploymentChildRouting: projectDeploymentChildRoutingV1(job) } },
+  const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain', job,
+    receivingIdentity: { machineId: 'receiver', installationId: 'receiver-install', homeIdentityId: 'home' } });
+  // Home may admit either root authentication kind; its finite-child authority
+  // comes from the real deployment authorization producer.
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...h.root,
+    binding: { ...h.root.binding, authentication: { kind, tokenEpoch: 1 } } });
+  const proof = createDeploymentChildExecutionProofV1({ ...h.packet,
+    externalActionExecution: { ...h.packet.externalActionExecution, authorization: root } },
     { environmentId: 'environment', deploymentId: 'deployment', holderMachineId: 'holder', holderInstallationId: 'holder-install' });
   const method = `holder:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`;
   const params = { source: { rootPath: '/archive', path: '/archive/image.tar' } };
@@ -129,7 +123,7 @@ it.each(['account', 'terminal'] as const)('admits only the closed finite archive
     workspaceSyncSourceExecution: { method, requestId: 'download-request', params, externalActionExecution: { v: 1 as const,
       authorization: root, effectActionId: 'daemon.filesystem.download' as const, target: root.binding.target,
       installationId: 'receiver-install', machineSignature: 'a'.repeat(86), deploymentChildExecution: proof } } };
-  expect(await rpc.handleRequest(request)).toMatchObject({ rootAccount: 'requester-bob', actorAccount: 'receiver-ann', current: true });
+  expect(await rpc.handleRequest(request)).toMatchObject({ rootAccount: 'bob', actorAccount: 'receiver-ann', current: true });
   current = false;
   expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
   current = true;

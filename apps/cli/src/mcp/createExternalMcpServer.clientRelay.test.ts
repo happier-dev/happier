@@ -513,7 +513,8 @@ describe('standalone MCP client Action admission', () => {
       for (const [actionId, input, connectedResult, absentResult] of [
         ['ui.find', { op: 'read' }, { status: 'idle' }, { status: 'unavailable', reason: 'noClient' }],
         ['session.pending.next', {}, { status: 'none' }, { status: 'unavailable', reason: 'noClient' }],
-        ['workspace.tabs.list', {}, workspace, { errorCode: 'unsupported_action', error: 'unsupported_action:workspace.tabs.list' }],
+        ['workspace.tabs.list', {}, workspace, { errorCode: 'unsupported_action', error: 'unsupported_action:workspace.tabs.list',
+          requestId: expect.any(String) }],
       ] as const) {
         const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId, input } }));
         const text = response.content.find(entry => entry.type === 'text');
@@ -526,7 +527,9 @@ describe('standalone MCP client Action admission', () => {
       } }));
       const dashboardText = dashboard.content.find(entry => entry.type === 'text');
       if (!dashboardText || dashboardText.type !== 'text') throw new Error('Missing dashboard result');
-      expect(JSON.parse(dashboardText.text)).toEqual(connected ? dashboardResult : { errorCode: 'unavailable', error: 'noClient' });
+      expect(JSON.parse(dashboardText.text)).toEqual(connected ? dashboardResult : {
+        errorCode: 'unavailable', error: 'noClient', requestId: expect.any(String),
+      });
       const ref = { surface: { serverId: configuration.activeServerId, accountId: 'viewer',
         owner: { kind: 'companion', sessionId: 'mcp-session-active' } }, instanceId: 'checks' };
       const companion = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
@@ -555,8 +558,8 @@ describe('standalone MCP client Action admission', () => {
         if (!text || text.type !== 'text') throw new Error('Missing Coach dismissal result');
         return JSON.parse(text.text) as unknown;
       };
-      // The daemon owns admission even when the originating MCP environment
-      // permits the Action: without the reviewed Account waiver it refuses.
+      // Coach dismiss is a safe preference edit. It preserves the MCP principal
+      // without requiring an approval waiver (the canonical Coach declaration).
       const noWaiverResult = await dismissCoach();
       const coachAdmissionsBeforeWaiver = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
       reviewedSettings = waivedSettings;
@@ -570,24 +573,27 @@ describe('standalone MCP client Action admission', () => {
       if (!openedText || openedText.type !== 'text') throw new Error('Missing workspace tab result');
       expect(JSON.parse(openedText.text)).toEqual(connected ? workspaceOpened : {
         errorCode: 'client_not_available', error: 'The selected clientId is not eligible or is disconnected',
+        requestId: expect.any(String),
       });
       if (connected) expect(admitted.at(-1)).toMatchObject({ actionId: 'workspace.tabs.open', context: {
         surface: 'mcp', defaultSessionId: 'mcp-session-active',
       } });
       const homeLookupsBeforeCoach = homeSessionLookups.length;
       const dismissed = await dismissCoach();
-      // The canonical Coach owner falls back to a headless usage query after
-      // noClient. This relay-only host has no Usage source, so it refuses that
-      // query without issuing a client RPC or changing a preference.
-      expect.soft(dismissed).toEqual(connected ? coachResult : { errorCode: 'unsupported_action', error: 'unsupported_action' });
-      expect.soft(noWaiverResult).toMatchObject({ errorCode: 'approvals_not_supported' });
-      expect(coachAdmissionsBeforeWaiver).toEqual([]);
+      // Without a client, the canonical Coach owner needs its preference port.
+      // This relay-only fixture supplies none, so it refuses the edit.
+      const absentCoachOwner = {
+        errorCode: 'coach_preferences_unavailable', error: 'coach_preferences_unavailable', requestId: expect.any(String),
+      };
+      expect.soft(dismissed).toEqual(connected ? coachResult : absentCoachOwner);
+      expect.soft(noWaiverResult).toEqual(connected ? coachResult : absentCoachOwner);
+      expect(coachAdmissionsBeforeWaiver).toHaveLength(connected ? 1 : 0);
       expect(daemonAdmissions).toContainEqual(expect.objectContaining({
         actionId: 'usage.coach.dismiss', surface: 'mcp', target: { kind: 'session', sessionId: 'mcp-session-active' },
       }));
       expect(homeSessionLookups.slice(homeLookupsBeforeCoach)).toContain('/v2/sessions/mcp-session-active');
       const coachAdmissions = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
-      expect(coachAdmissions).toHaveLength(connected ? 1 : 0);
+      expect(coachAdmissions).toHaveLength(connected ? 2 : 0);
       if (connected) {
         const request = UiActionDispatchRequestV1Schema.parse(coachAdmissions[0]);
         expect(request).toMatchObject({ input: { evidenceKey: coachInput.evidenceKey, dismissed: true }, context: {

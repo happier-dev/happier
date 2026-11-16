@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/transfers/node';
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
+import { registerOwnerFilesystemRpcHandlers as registerFileSystemHandlers } from '@/rpc/handlers/fileSystem.testkit';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
