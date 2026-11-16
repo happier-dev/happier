@@ -17,6 +17,9 @@ function nonEmpty(value: unknown): string | null {
     return normalized.length > 0 ? normalized : null;
 }
 
+/** The Session header's "Automate when this turn completes" action; offered only while `readExactActiveParentTurn` reads a turn. */
+export const EXACT_TURN_AUTOMATION_HEADER_ACTION_ID = 'header.automateExactTurnCompletion';
+
 /** Exact observed parent-turn identity; this never infers or retargets. */
 export function readExactActiveParentTurn(
     session: Pick<Session, 'id' | 'serverId' | 'latestTurnId' | 'latestTurnStatus'> | null | undefined,

@@ -112,9 +112,9 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         materializedThroughSourceAt: session.materializedThroughSourceAt ?? null,
         transcriptShareable: session.transcriptShareable ?? null,
         presence: session.presence ?? null,
-        thinking: session.thinking === true,
-        optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
-        latestTurnStatus: session.latestTurnStatus ?? null,
+        // thinking, optimisticThinkingAt and latestTurnStatus move several times per turn. Their readers take them
+        // from the live runtime source (useSessionRuntimeStatusSource, useSessionStatus, a store selector), so a
+        // turn's status writes draw only the indicators that show them, not every Session view consumer.
         latestReadyEventAt: session.latestReadyEventAt ?? null,
         // meaningfulActivityAt moves with every arriving message; its readers take it from the live runtime source
         // (useSessionRuntimeStatusSource), so it is not a shell fact and must not re-render the whole Session view.
@@ -202,4 +202,9 @@ export function useSessionViewShellSession(sessionId: string, expectedServerId?:
 
 export function useSessionViewShellSessionSeq(sessionId: string): number {
     return storage((state) => state.sessions[sessionId]?.seq ?? 0);
+}
+
+/** The Session's turn status, for the leaf that reads it; the shell Session does not carry it live. */
+export function useSessionViewLatestTurnStatus(sessionId: string): Session['latestTurnStatus'] | null {
+    return storage((state) => state.sessions[sessionId]?.latestTurnStatus ?? null);
 }

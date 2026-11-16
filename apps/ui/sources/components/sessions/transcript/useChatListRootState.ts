@@ -2,6 +2,7 @@ import * as React from 'react';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { resolveTranscriptToolVisibility } from './resolveTranscriptToolVisibility';
 import {
+    storage,
     useSessionPendingMessages,
     useSessionReferenceTarget,
     useSetting,
@@ -277,10 +278,13 @@ export function useChatListRootState(props: ChatListProps) {
         sessionMetadataSignature,
         stableSessionMetadata,
     });
+    // The shell Session does not move with thinking (it changes several times a turn); this list reads it live.
+    const liveSessionThinking = storage((state) => state.sessions[props.session.id]?.thinking);
+    const sessionThinking = (liveSessionThinking ?? props.session.thinking) === true;
     const activeThinkingMessageId = useTranscriptRootThinkingState({
         latestCommittedActivityKey,
         sessionId: props.session.id,
-        sessionThinking: props.session.thinking === true,
+        sessionThinking,
     });
     const eventEmphasisByMessageId = React.useMemo(() => (
         resolveTranscriptEventEmphasisByMessageId({
@@ -500,7 +504,7 @@ export function useChatListRootState(props: ChatListProps) {
             sessionServerId,
             sessionSurfaceKey,
             sessionActive: props.session.active === true,
-            sessionThinking: props.session.thinking === true,
+            sessionThinking,
             groupingMode,
             forkedTranscriptEnabled,
             items: groupedItems,

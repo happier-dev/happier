@@ -7,6 +7,7 @@ import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPol
 import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 
 import type { SessionPluginRuntimeState } from './useSessionPluginRuntime';
+import { useSessionRuntimeStatusSource } from '@/components/sessions/shell/useSessionRuntimeStatusSource';
 
 /**
  * The ONE mounted-Session plugin policy context.
@@ -28,7 +29,9 @@ export function useSessionPluginPolicyContext(input: Readonly<{
     /** A route-scoped Agent id, used only when the Session record has none. */
     agentId?: string | null;
 }>): PluginUiPolicyEvaluationContext {
-    const sessionStatus = useSessionStatus(input.session, {
+    // Policy reads the Session's live state (working, waiting); the supplied Session may be the shell, which
+    // does not move with a turn's thinking/status writes.
+    const sessionStatus = useSessionStatus(useSessionRuntimeStatusSource(input.session), {
         subscribeToSession: false,
         subscribeToTranscript: false,
     });

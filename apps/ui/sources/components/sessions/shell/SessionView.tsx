@@ -11,7 +11,7 @@ import { useSessionCollaborationDestinationEntryAdmitted } from "@/hooks/session
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from "@/sync/domains/session/sessionAddress";
 import type { AttachmentDraft } from "@/components/sessions/attachments/attachmentDraftModel";
 import { useSessionFileUploadAvailability } from "@/components/sessions/files/useSessionFileUploadAvailability";
-import { SessionPaneHeader } from "@/components/sessions/shell/view/SessionPaneHeader";
+import { SessionViewLiveStatusPaneHeader } from "@/components/sessions/shell/view/SessionViewLiveStatusPaneHeader";
 import { SESSION_HEADER_MENU_OPEN_BROWSER_ID, SESSION_HEADER_MENU_OPEN_TERMINAL_ID } from "@/components/sessions/shell/view/resolveSessionViewHeaderActionItems";
 import { useSessionTerminalAction } from "@/components/sessions/terminal/useSessionTerminalAction";
 import { useFeatureDecision } from "@/hooks/server/useFeatureDecision";
@@ -100,7 +100,7 @@ import { isVoiceConversationSystemSessionMetadata } from "@/voice/persistence/vo
 import { navigateWithBlurOnWeb } from "@/utils/platform/navigateWithBlurOnWeb";
 import { safeRouterBack } from "@/utils/navigation/safeRouterBack";
 import { useAutomationsSupport } from "@/hooks/server/useAutomationsSupport";
-import { buildExactTurnAutomationRouteParams, readExactActiveParentTurn } from "@/components/automations/sessionLifecycle/exactTurnAutomationPrefill";
+import { buildExactTurnAutomationRouteParams, EXACT_TURN_AUTOMATION_HEADER_ACTION_ID, readExactActiveParentTurn } from "@/components/automations/sessionLifecycle/exactTurnAutomationPrefill";
 import { SESSION_WORK_STATE_STATUS_BADGE_KEY } from "@/components/sessions/workState/sessionWorkStatePresentation";
 import { SessionWorkSourcesProvider, useSessionWorkSourcesOwner, useStableWorkSummary } from "@/components/sessions/work/sessionWorkSources";
 import type { SessionRunnerRuntimeStatusSnapshot } from "@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention";
@@ -197,7 +197,7 @@ import { resolveSessionBlockedSurfaceState, type SessionBlockedSurfaceActionInte
 import { SessionBlockedSurfaceCard } from "./SessionBlockedSurfaceCard";
 import { SETTINGS_ROUTES } from "@/components/settings/catalog/routes";
 import { openRouteWithEstablishedHome } from "@/sync/domains/server/selection/openRouteWithEstablishedHome";
-import { useSessionViewShellSession, useSessionViewShellSessionSeq } from "./sessionViewStableSession";
+import { useSessionViewLatestTurnStatus, useSessionViewShellSession, useSessionViewShellSessionSeq } from "./sessionViewStableSession";
 import { ActivitySpinner } from "@/components/ui/feedback/ActivitySpinner";
 import { PaneLoadingFallback } from "@/components/ui/panels/PaneLoadingFallback";
 import { SurfaceStateCard } from "@/components/ui/surfaces/SurfaceStateCard";
@@ -395,15 +395,14 @@ const SessionPendingMessagesRefresh = React.memo(function SessionPendingMessages
 const SessionTranscriptViewedLifecycle = React.memo(function SessionTranscriptViewedLifecycle({
     serverId,
     sessionId,
-    latestTurnStatus,
 }: Readonly<{
     serverId: string;
     sessionId: string;
-    latestTurnStatus: Session['latestTurnStatus'];
 }>) {
     const presence = useSessionSurfacePresence();
     const surfaceFocused = presence.visible && presence.focused;
     const sessionSeq = useSessionViewShellSessionSeq(sessionId);
+    const latestTurnStatus = useSessionViewLatestTurnStatus(sessionId);
     const visibleReadSeq = useSessionVisibleReadSeq(sessionId, {
         sessionSeq,
         latestTurnStatus,
@@ -1463,7 +1462,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             paneRef.current.setRightTab('agents');
             return true;
         }
-        if (actionId === 'header.automateExactTurnCompletion') {
+        if (actionId === EXACT_TURN_AUTOMATION_HEADER_ACTION_ID) {
             const observed = readExactActiveParentTurn(storage.getState().sessions[sessionId]);
             if (!observed) return true;
             navigateWithBlurOnWeb(() => routerRef.current.push({
@@ -1527,15 +1526,16 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                 icon: <Icon name="arrows-left-right" size={16} color={theme.colors.text.secondary} />,
             });
         }
-        if (showAutomations && readExactActiveParentTurn(stableSessionForHeader)) {
+        // Offered by the menu while it reads a turn in progress (it reads the live row when opened).
+        if (showAutomations) {
             items.push({
-                id: 'header.automateExactTurnCompletion',
+                id: EXACT_TURN_AUTOMATION_HEADER_ACTION_ID,
                 title: t('automations.exactTurn.actionTitle'),
                 icon: <Icon name="clock" size={16} color={theme.colors.text.secondary} />,
             });
         }
         return items.length > 0 ? items : undefined;
-    }, [attachedSessionTerminal.available, mobileWorkspaceExperience, repeatableWorkflow.available, showAutomations, showWorkspaceExperienceToggle, stableSessionForHeader, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
+    }, [attachedSessionTerminal.available, mobileWorkspaceExperience, repeatableWorkflow.available, showAutomations, showWorkspaceExperienceToggle, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
 
     const headerWorkspaceDisplay = React.useMemo(() => resolveSessionWorkspaceDisplayPresentation({
         serverId: currentSessionRouteServerId,
@@ -1786,7 +1786,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             {isTablet ? null : (
                 <SessionAllTabsOpenerBridge sessionId={sessionId} serverId={currentSessionRouteServerId || null} openRef={openAllTabsRef} />
             )}
-            <SessionPaneHeader
+            <SessionViewLiveStatusPaneHeader
                 {...headerProps}
                 rightElement={headerRightElement}
                 // Desktop renames in place (the title is the field); a phone keeps ⋯ Rename.
@@ -1963,7 +1963,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                     <SessionTranscriptViewedLifecycle
                         serverId={currentSessionRouteServerId}
                         sessionId={sessionId}
-                        latestTurnStatus={session.latestTurnStatus}
                     />
                 )
             ) : null}

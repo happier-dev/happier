@@ -1086,7 +1086,7 @@ describe('SessionView header action menu visibility', () => {
     });
   });
 
-  it('withholds the exact-turn Automation action after the parent turn becomes terminal', async () => {
+  it('leaves the exact-turn Automation action to the open menu after the parent turn becomes terminal', async () => {
     automationsSupportState.enabled = true;
     sessionState.session = {
       ...sessionState.session,
@@ -1097,10 +1097,12 @@ describe('SessionView header action menu visibility', () => {
 
     await renderSessionView();
 
+    // The Session view no longer re-renders with the turn status; the open menu withholds the action from the
+    // Session it reads then (SessionHeaderActionMenu.sessionHandoff), and the press handler re-reads the live row.
     const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
-    expect((props?.extraItems ?? []).map((item: any) => item?.id)).not.toContain(
-      'header.automateExactTurnCompletion',
-    );
+    expect((props?.extraItems ?? []).map((item: any) => item?.id)).toContain('header.automateExactTurnCompletion');
+    expect(props?.onSelectExtraItem?.('header.automateExactTurnCompletion')).toBe(true);
+    expect(routerPushSpy).not.toHaveBeenCalled();
   });
 
   it('preserves the visible header props when rerendered with identical session values', async () => {

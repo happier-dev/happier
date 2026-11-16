@@ -1,3 +1,4 @@
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -133,22 +134,27 @@ function SessionBoardWidgetCandidateSelectionReady(props: Readonly<{
         session: props.session,
         runtime: props.runtime,
     });
-    const candidates = React.useMemo(
-        () => selectCurrentSessionWidgetCandidates({
+    // The policy context follows the Session's live state (working, waiting), which moves every turn; the
+    // candidates it admits usually do not, and an equal list keeps its identity so the Board owner stays put.
+    const previousCandidatesRef = React.useRef<readonly WidgetCandidate[] | undefined>(undefined);
+    const candidates = React.useMemo(() => {
+        const next = retainIfEqual(previousCandidatesRef.current, selectCurrentSessionWidgetCandidates({
             runtime: props.runtime,
             boardFeatureEnabled: props.boardFeatureEnabled,
             canEdit: props.canEdit,
             policyContext,
-        }),
-        [policyContext, props.boardFeatureEnabled, props.canEdit, props.runtime],
-    );
+        }));
+        previousCandidatesRef.current = next;
+        return next;
+    }, [policyContext, props.boardFeatureEnabled, props.canEdit, props.runtime]);
     const resolveSourceAvailability = React.useMemo(
         () => createSessionBoardSourceAvailabilityResolver({
             hostedHtmlRendererAvailable: props.hostedHtmlRendererAvailable,
         }),
         [props.hostedHtmlRendererAvailable],
     );
-    return props.children({ candidates, resolveSourceAvailability });
+    const { children } = props;
+    return React.useMemo(() => children({ candidates, resolveSourceAvailability }), [candidates, children, resolveSourceAvailability]);
 }
 
 /**

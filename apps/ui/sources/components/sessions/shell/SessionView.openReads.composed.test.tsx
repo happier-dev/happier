@@ -294,6 +294,58 @@ it('renders nothing of a retained Session view when the phone shows another Sess
     }
 });
 
+it('a turn\'s thinking and status writes draw only the leaves that show them, not the Session view', async () => {
+    installShippedNativeFrameScheduler();
+    const id = 'turn-status-writes';
+    storage.getState().applySessions([createSessionFixture({ id, serverId: runtime.serverId, seq: 4, encryptionMode: 'plain' })]);
+    await sync.ensureSessionVisibleForMessageRoute(id, { serverId: runtime.serverId, hydrateMessages: false });
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+    const screen = await renderScreen(<React.Profiler id="session-tab" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+        <DestinationInstanceHost tabId={id} ref={{ kind: 'session', params: { id, serverId: runtime.serverId } }} pathname={`/session/${id}`}
+            focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+            <SessionDestinationBody />
+        </DestinationInstanceHost>
+    </React.Profiler>, { wrapper: runtime.Wrapper });
+    try {
+        await act(async () => {
+            await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        readRoot = readTestRendererRoot(screen.tree.root);
+        const now = Date.now();
+        // One turn's Session-row writes: thinking on, turn started, thinking off, turn completed.
+        const writes: Record<string, unknown>[] = [
+            { thinking: true, thinkingAt: now },
+            { latestTurnStatus: 'started', latestTurnStatusObservedAt: now + 1 },
+            { thinking: false, thinkingAt: now + 2 },
+            { latestTurnStatus: 'completed', latestTurnStatusObservedAt: now + 3 },
+        ];
+        counts.start();
+        for (const patch of writes) {
+            await act(async () => {
+                const current = storage.getState().sessions[id]!;
+                storage.getState().applySessions([{ ...current, ...patch } as typeof current]);
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        }
+        counts.stop();
+        const renders = counts.read().renders;
+        const total = [...renders.values()].reduce((sum, count) => sum + count, 0);
+        const summary = JSON.stringify(Object.fromEntries([...renders].sort((a, b) => b[1] - a[1]).slice(0, 20)));
+        // HEAD before: 179–215 renders per write, ~790 for these four (the Session view, the Board owner, the cockpit
+        // pane and their subtrees). Now each write reaches only its readers: the header status leaf, the composer's
+        // runtime source, the transcript's thinking row and the viewed-read leaf (measured 155 for the four).
+        expect(renders.get('SessionBoardControllerRuntimeOwner') ?? 0, summary).toBe(0);
+        expect(renders.get('SessionBoardControllerOwner') ?? 0, summary).toBe(0);
+        expect(renders.get('SessionPageTabs') ?? 0, summary).toBe(0);
+        expect(total, summary).toBeLessThanOrEqual(200);
+    } finally {
+        await screen.unmount();
+    }
+});
+
 it('renders nothing of the Session view when a turn reports its usage', async () => {
     installShippedNativeFrameScheduler();
     const id = 'usage-write';

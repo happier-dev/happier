@@ -896,7 +896,7 @@ export function useSessionComposerController({
         selectionIntentPresent: providerModelSelectionIntent !== null,
         launchBinding: providerLaunchBinding,
         declarationContext,
-        completedTurnObservedAt: session.latestTurnStatus === 'completed' ? session.latestTurnStatusObservedAt : null,
+        completedTurnObservedAt: sessionRuntimeStatusSource.latestTurnStatus === 'completed' ? sessionRuntimeStatusSource.latestTurnStatusObservedAt : null,
         bindingRefusalObservedAt: session.lastRuntimeIssue?.code === 'provider_binding_changed' ? session.lastRuntimeIssue.occurredAt : null,
     });
     const [providerModelPickerDemanded, setProviderModelPickerDemanded] = React.useState(false);
@@ -5854,8 +5854,9 @@ export function useSessionComposerController({
     // handed a permanently stable wrapper that forwards to it.
     const composerSendMode = useSetting('sessionMessageSendMode');
     const composerBusySteerSendPolicy = useSetting('sessionBusySteerSendPolicy');
+    // Steer / queue alternatives follow the live turn state (the shell Session does not move with it).
     const composerSendActions = resolveSessionComposerSendActions({
-        configuredMode: composerSendMode, busySteerSendPolicy: composerBusySteerSendPolicy, session,
+        configuredMode: composerSendMode, busySteerSendPolicy: composerBusySteerSendPolicy, session: sessionRuntimeStatusSource,
     });
     const canChooseComposerSendActions = !pendingMessageEdit && !pendingComposerDocument
         && !recipientState.recipient && !recipientState.scmDiffSummaryDiscussion
@@ -6255,7 +6256,9 @@ export function useSessionComposerController({
                             || (sendOptions.deliveryIntent !== 'agent_queue' && sendOptions.deliveryIntent !== 'interrupt')) return;
                         setIsComposerSending(true);
                         try {
-                            await sendPendingMessageWithIntent({ sessionId, serverId: sessionRouteServerId ?? undefined, session, message,
+                            await sendPendingMessageWithIntent({ sessionId, serverId: sessionRouteServerId ?? undefined,
+                                // Decided at press time against the live row, not the shell Session.
+                                session: storage.getState().sessions[sessionId] ?? session, message,
                                 executor: actionExecutor, expectedAccountId: outboundAccountLifetime.scope.accountId,
                                 deliveryIntent: sendOptions.deliveryIntent === 'interrupt' ? 'interrupt_and_send' : 'steer_now',
                                 isCurrent: () => outboundAccountLifetime.isCurrent(),
@@ -6755,7 +6758,8 @@ export function useSessionComposerController({
                             || outboundDestination.kind === 'armedRouteContinuation'
                             ? { kind: 'proceed' as const }
                             : await resolveNonSteerableSendPlan({
-                                session,
+                                // The busy-send prompt is decided at press time against the live row.
+                                session: storage.getState().sessions[sessionId] ?? session,
                                 agentId,
                                 text: trimmedText,
                                 configuredMode,

@@ -63,6 +63,7 @@ import { useSessionReachableMachineTarget } from '@/components/sessions/model/us
 import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
 import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
 import { selectSessionViewShellSessionForRouteState, useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
+import { useSessionRuntimeStatusSource } from '@/components/sessions/shell/useSessionRuntimeStatusSource';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -184,10 +185,12 @@ export type SessionInfoBodyProps = Readonly<{
 export const SessionInfoBody = React.memo(function SessionInfoBody(
   props: SessionInfoBodyProps,
 ) {
-  const session = useSessionViewShellSession(
+  // Info shows the turn's status (working clock, bot mood, developer row): runtime facts read live, the rest
+  // from the shell Session.
+  const session = useSessionRuntimeStatusSource(useSessionViewShellSession(
     props.address.sessionId,
     props.address.serverId,
-  );
+  ));
   if (!session) {
     // A record the viewer no longer has (deleted, or access lost): one sized state, never another
     // Home's Session of the same id.

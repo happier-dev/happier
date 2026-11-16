@@ -78,6 +78,7 @@ import { readExternalSessionFollowPolicy } from '@/sync/domains/session/external
 import { setExternalSessionFollowPolicy, useExternalSessionFollowPolicyIntent } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
+import { EXACT_TURN_AUTOMATION_HEADER_ACTION_ID, readExactActiveParentTurn } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import {
   executeSessionAction,
@@ -691,7 +692,11 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     }
 
     if (Array.isArray(props.extraItems) && props.extraItems.length > 0) {
-      for (const item of props.extraItems) push(resolveSessionHeaderExtraItemGroup(item.id), item);
+      for (const item of props.extraItems) {
+        // The open menu reads the live row; the exact-turn action exists only while a turn is in progress.
+        if (item.id === EXACT_TURN_AUTOMATION_HEADER_ACTION_ID && !readExactActiveParentTurn(session)) continue;
+        push(resolveSessionHeaderExtraItemGroup(item.id), item);
+      }
     }
 
     if (showCompanionInOverflow && companionHeaderIntent) {

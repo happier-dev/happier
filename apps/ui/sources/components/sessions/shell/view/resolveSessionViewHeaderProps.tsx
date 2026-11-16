@@ -77,7 +77,32 @@ export type SessionViewHeaderProps = Readonly<{
     isConnected?: boolean;
     flavor?: string | null;
     constrainWidth?: boolean;
+    /**
+     * Present for a loaded Session: the header leaf re-reads the bot face, activity and connection from the
+     * live runtime source, since the shell Session does not move with a turn's thinking/status writes.
+     */
+    liveStatusSource?: SessionViewHeaderLiveStatusSource;
 }>;
+
+export type SessionViewHeaderLiveStatusSource = Readonly<{
+    session: Session;
+    managedWakeProjection: ResolveSessionViewHeaderPropsInput['managedWakeProjection'];
+}>;
+
+/** The header's turn-dependent facts: one reading for the shell pass and the live leaf. */
+export function resolveSessionViewHeaderLiveStatus(
+    session: Session,
+    managedWakeProjection: ResolveSessionViewHeaderPropsInput['managedWakeProjection'],
+): Readonly<{ botFace: SessionBotFaceFacts | null; botActivity: BotActivity | undefined; isConnected: boolean }> {
+    const nowMs = Date.now();
+    const botFace = readSessionBotFaceFacts(session, session.serverId ?? null);
+    const status = getSessionStatus(session, nowMs, { managedWakeProjection });
+    return {
+        botFace,
+        botActivity: botFace ? readBotActivity(session, nowMs, status) : undefined,
+        isConnected: status.isConnected,
+    };
+}
 
 /**
  * Which settled blocked surface owns the body right now. A blocked Session keeps its safe title and
@@ -250,11 +275,9 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ? voiceConversation ? 'tail' as const : input.workspaceSubtitleEllipsizeMode ?? 'head' as const
         : undefined;
     const avatarId = getSessionAvatarId(session);
-    const botFace = readSessionBotFaceFacts(session, session.serverId ?? null);
-    const status = getSessionStatus(session, Date.now(), { managedWakeProjection: input.managedWakeProjection });
-    const botActivity = botFace ? readBotActivity(session, Date.now(), status) : undefined;
+    const { botFace, botActivity, isConnected } = resolveSessionViewHeaderLiveStatus(session, input.managedWakeProjection);
+    const liveStatusSource: SessionViewHeaderLiveStatusSource = { session, managedWakeProjection: input.managedWakeProjection };
     const agentId = readSessionPresentationAgentId(session);
-    const isConnected = status.isConnected;
     const flavor = agentId;
     // Only an external Session names its storage: every other Session here is a Happier Session,
     // and a badge saying so is healthy-state noise that costs the title its width.
@@ -280,6 +303,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             }),
             rightElement: undefined,
             isConnected,
+            liveStatusSource,
             flavor,
         };
     }
@@ -446,6 +470,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ),
         badges: resolvedBadges,
         isConnected,
+        liveStatusSource,
         flavor,
     };
 

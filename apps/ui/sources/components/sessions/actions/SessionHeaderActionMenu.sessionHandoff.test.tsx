@@ -727,6 +727,28 @@ describe('SessionHeaderActionMenu handoff', () => {
     }
   });
 
+  it('offers the exact-turn Automation action only while the open menu reads a turn in progress', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const exactTurnItem = { id: 'header.automateExactTurnCompletion', title: 'automations.exactTurn.actionTitle' };
+    const itemIds = async (turn: Readonly<{ latestTurnId: string; latestTurnStatus: string }>) => {
+      const session = {
+        id: 'session-exact-turn', serverId: 'server_a', active: true, seq: 1, metadataLayoutVersion: 1,
+        metadata: {}, ownerMetadataView: {}, agentState: null, access: null, ...turn,
+      } as any;
+      const screen = await renderOpenMenu(
+        <SessionHeaderActionMenu sessionId={session.id} session={session} extraItems={[exactTurnItem]} />,
+      );
+      try {
+        return screen.findByType('DropdownMenu' as any).props.items.map((item: { id: string }) => item.id);
+      } finally {
+        await act(async () => { screen.unmount(); });
+      }
+    };
+    // The Session view always hands the action over; the open menu decides from the Session it reads then.
+    expect(await itemIds({ latestTurnId: 'turn-live', latestTurnStatus: 'in_progress' })).toContain(exactTurnItem.id);
+    expect(await itemIds({ latestTurnId: 'turn-done', latestTurnStatus: 'completed' })).not.toContain(exactTurnItem.id);
+  });
+
   it('keeps an untouched empty Companion reachable through the incumbent overflow menu', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
     const { SessionCompanionRevealPortProvider } = await import(

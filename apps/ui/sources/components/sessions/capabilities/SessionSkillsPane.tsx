@@ -7,6 +7,7 @@ import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocatio
     type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
+import { useSessionRuntimeStatusSource } from '@/components/sessions/shell/useSessionRuntimeStatusSource';
 import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -33,7 +34,8 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
     presentation?: 'pane' | 'embedded' }>) {
     const serverId = props.serverId ?? null;
     const router = useRouter();
-    const session = useSessionViewShellSession(props.sessionId, serverId);
+    // Whether the turn has settled is read live; the shell Session does not move with turn status.
+    const session = useSessionRuntimeStatusSource(useSessionViewShellSession(props.sessionId, serverId));
     const status = useSessionStatus(session, { subscribeToSession: false, subscribeToTranscript: false });
     const turnSettled = !status?.awareness.operational.reasons.some(reason =>
         reason === 'working' || reason === 'permission_required' || reason === 'action_required');

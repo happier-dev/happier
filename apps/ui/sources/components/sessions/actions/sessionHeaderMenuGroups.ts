@@ -1,6 +1,7 @@
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { EXACT_TURN_AUTOMATION_HEADER_ACTION_ID } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 
 /**
  * The groups of a session's ⋯ menu, in reading order: what opens beside or inside the session, what
@@ -32,7 +33,7 @@ export const SESSION_HEADER_MENU_SPEC_PRESENTATION: Readonly<Record<string, Read
 };
 
 /** Rows the session view adds that start work; its other rows open something (a pane, a terminal). */
-const WORK_EXTRA_ITEM_IDS: ReadonlySet<string> = new Set(['header.makeRepeatable', 'header.automateExactTurnCompletion']);
+const WORK_EXTRA_ITEM_IDS: ReadonlySet<string> = new Set(['header.makeRepeatable', EXACT_TURN_AUTOMATION_HEADER_ACTION_ID]);
 
 export function resolveSessionHeaderExtraItemGroup(itemId: string): SessionHeaderMenuGroup {
     return WORK_EXTRA_ITEM_IDS.has(itemId) ? 'work' : 'open';
