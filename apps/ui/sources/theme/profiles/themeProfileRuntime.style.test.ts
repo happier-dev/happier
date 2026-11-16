@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { FontFamilies } from '@/constants/Typography';
+import * as stylesheet from '../css/themeStylesheet';
+import * as cssParser from '../css/cssTreeBoundary';
+import { Appearance } from 'react-native';
 
-import { applyThemeRuntimeSelection, resolveThemeRuntimeStartupThemes } from './themeProfileRuntime';
+import { applyThemeRuntimeSelection, initializeThemeRuntimeAppearance, resolveThemeRuntimeStartupThemes } from './themeProfileRuntime';
 import { themeStyleSelectionFromSurfaceFinish } from '../themeStyleScales';
 import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 import { getBuiltInThemeLibraryEntries } from './builtInThemeProfiles';
@@ -55,6 +58,53 @@ describe('theme runtime style selection', () => {
         applyThemeRuntimeSelection({ ...input, themeProfiles: noProfiles });
         expect(sheet).toHaveBeenLastCalledWith(null, 'light');
         sheet.mockRestore();
+    });
+    it('applies native CSS through one theme update and does no work on an unchanged selection', () => {
+        const runtime = createRegisteredThemes();
+        const parse = vi.spyOn(cssParser, 'parseThemeCss');
+        const profile = {
+            schemaVersion: 1 as const, id: 'native-css', name: 'CSS', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light' as const, dark: 'dark' as const }, overrides: { light: {}, dark: {} },
+            css: '[data-surface="composer"] { border-radius: 12px; }',
+        };
+        const input = { themePreference: 'light' as const,
+            themeProfiles: { activeProfileIds: { light: profile.id, dark: null }, profiles: [profile] },
+            platform: 'ios', unistylesRuntime: runtime.adapter, style: null,
+            setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {} };
+        applyThemeRuntimeSelection(input);
+        expect(runtime.registered.light.surfaces?.composer?.root?.base.borderTopLeftRadius).toBe(12);
+        expect(runtime.updateTheme).toHaveBeenCalledTimes(1);
+        expect(parse).toHaveBeenCalledTimes(1);
+        runtime.updateTheme.mockClear();
+        parse.mockClear();
+        applyThemeRuntimeSelection(input);
+        expect(runtime.updateTheme).not.toHaveBeenCalled();
+        expect(parse).not.toHaveBeenCalled();
+        const changed = { ...profile, css: profile.css.replace('12px', '14px') };
+        applyThemeRuntimeSelection({ ...input, themeProfiles: { ...input.themeProfiles, profiles: [changed] } });
+        expect(runtime.registered.light.surfaces?.composer?.root?.base.borderTopLeftRadius).toBe(14);
+        expect(runtime.updateTheme).toHaveBeenCalledTimes(1);
+        expect(parse).toHaveBeenCalledTimes(1);
+        parse.mockRestore();
+    });
+    it('composes the newly visible native CSS table when the OS changes adaptive mode', () => {
+        let changed: Parameters<typeof Appearance.addChangeListener>[0] | undefined;
+        const listener = vi.spyOn(Appearance, 'addChangeListener').mockImplementation(callback => {
+            changed = callback;
+            return { remove() {} };
+        });
+        const runtime = createRegisteredThemes();
+        const profile = { schemaVersion: 1 as const, id: 'adaptive-css', name: 'CSS', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light' as const, dark: 'dark' as const }, overrides: { light: {}, dark: {} },
+            css: '.dark [data-surface="composer"] { border-radius: 14px; }' };
+        initializeThemeRuntimeAppearance({ themePreference: 'adaptive',
+            themeProfiles: { activeProfileIds: { light: profile.id, dark: profile.id }, profiles: [profile] },
+            platform: 'ios', unistylesRuntime: runtime.adapter, style: null,
+            setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {} }, runtime.registered);
+        changed?.({ colorScheme: 'dark' });
+        expect(runtime.registered.dark.surfaces?.composer?.root?.base.borderTopLeftRadius).toBe(14);
+        expect(runtime.updateTheme).toHaveBeenCalledTimes(1);
+        listener.mockRestore();
     });
     it('keeps profile corners and typeface alongside device finish and publishes once on native', () => {
         const runtime = createRegisteredThemes();

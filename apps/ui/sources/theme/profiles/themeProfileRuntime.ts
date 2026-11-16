@@ -32,6 +32,8 @@ import {
 import { createThemeProfileResolver } from './resolveThemeProfile';
 import { applyThemeFontFamilyVariables } from '../themeFontFamilyVariables';
 import { applyThemeStylesheet } from '../css/themeStylesheet';
+import { prepareThemeProfileCss } from '../css/prepareThemeCss';
+import type { ThemeSurfaceStyleTable } from '../css/types';
 import { applyThemeStyleScales, resolveThemeStyleScales, themeStyleSelectionFromSurfaceFinish, type ThemeStyleSelection } from '../themeStyleScales';
 import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 
@@ -74,6 +76,7 @@ type ThemeRuntimeBreadcrumb = Readonly<{
 }>;
 
 type ResolveThemeRuntimeStartupThemesInput = Readonly<{
+    platform?: string;
     themePreference: ThemePreference;
     themeProfiles: ThemeProfilesLocalStateV1;
     systemTheme?: AppThemeName | null;
@@ -190,6 +193,25 @@ const composeRuntimeThemeStyles = (
     return { light: compose('light'), dark: compose('dark') };
 };
 
+const nativeCssThemes = new WeakMap<Theme, Readonly<{ surfaces: ThemeSurfaceStyleTable; theme: Theme }>>();
+function composeNativeCss(
+    themes: ThemeRuntimeThemes,
+    profiles: ThemeProfilesLocalStateV1,
+    mode: AppThemeName,
+    platform: string,
+): ThemeRuntimeThemes {
+    if (platform === 'web') return themes;
+    const profile = findActiveThemeProfileForMode(profiles, mode);
+    if (!profile?.css) return themes;
+    const prepared = prepareThemeProfileCss(profile);
+    const surfaces = prepared[mode];
+    const base = themes[mode];
+    const previous = nativeCssThemes.get(base);
+    const theme = previous?.surfaces === surfaces ? previous.theme : { ...base, surfaces };
+    nativeCssThemes.set(base, { surfaces, theme });
+    return { ...themes, [mode]: theme };
+}
+
 export const resolveThemeRuntimeStartupThemes = (
     input: ResolveThemeRuntimeStartupThemesInput,
 ): ThemeRuntimeStartupThemes => {
@@ -198,7 +220,11 @@ export const resolveThemeRuntimeStartupThemes = (
     let themes: ThemeRuntimeThemes;
     try {
         const resolved = resolveThemes(input.themeProfiles);
-        themes = composeRuntimeThemeStyles(resolved, input.themeProfiles, input.style ?? null);
+        themes = composeNativeCss(
+            composeRuntimeThemeStyles(resolved, input.themeProfiles, input.style ?? null),
+            input.themeProfiles, resolveThemeRuntimeVisualTheme(input.themePreference, input.systemTheme ?? readSystemTheme()),
+            input.platform ?? Platform.OS,
+        );
     } catch (error) {
         warnThemeRuntimeFallback(error);
         themes = canonicalBaseThemes;
@@ -241,7 +267,7 @@ function observeSystemTheme(): void {
         const current = currentRuntimeSelection;
         if (!current || current.input.themePreference !== 'adaptive') return;
         const systemTheme = colorScheme === 'dark' ? 'dark' : 'light';
-        applyThemesToUnistyles(current.themes, { ...current.input, systemTheme });
+        applyThemeRuntimeSelection({ ...current.input, systemTheme });
         setStatusBarStyle(resolveStatusBarStyleForThemePreference('adaptive', systemTheme), true);
     });
 }
@@ -353,7 +379,11 @@ export const applyThemeRuntimeSelection = (input: ApplyThemeRuntimeSelectionInpu
     let themes: ThemeRuntimeThemes;
     try {
         const profileThemes = resolveThemes(input.themeProfiles);
-        themes = composeRuntimeThemeStyles(profileThemes, input.themeProfiles, style);
+        themes = composeNativeCss(
+            composeRuntimeThemeStyles(profileThemes, input.themeProfiles, style),
+            input.themeProfiles, resolveThemeRuntimeVisualTheme(input.themePreference, input.systemTheme ?? readSystemTheme()),
+            resolveRuntimePlatform(input),
+        );
     } catch (error) {
         warnThemeRuntimeFallback(error);
         themes = canonicalBaseThemes;
