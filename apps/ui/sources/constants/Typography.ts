@@ -1,4 +1,5 @@
 import { Platform, type TextStyle } from 'react-native';
+import { BUNDLED_FONTS } from './bundledFonts';
 import { HAPPIER_TYPE_WEIGHT, resolveHappierTypeScale, type HappierTypeRole, type HappierTypeEmphasis } from '@happier-dev/plugin-ui/presentation/typeScale';
 
 /**
@@ -34,28 +35,28 @@ import { HAPPIER_TYPE_WEIGHT, resolveHappierTypeScale, type HappierTypeRole, typ
 export const FontFamilies = {
     // Inter (default typography)
     default: {
-        regular: 'Inter-Regular',
-        italic: 'Inter-Italic',
-        medium: 'Inter-Medium',
-        semiBold: 'Inter-SemiBold',
-        bold: 'Inter-SemiBold',
+        regular: BUNDLED_FONTS.inter.faces.regular.family,
+        italic: BUNDLED_FONTS.inter.faces.italic.family,
+        medium: BUNDLED_FONTS.inter.faces.medium.family,
+        semiBold: BUNDLED_FONTS.inter.faces.semiBold.family,
+        bold: BUNDLED_FONTS.inter.faces.semiBold.family,
     },
 
     // IBM Plex Mono (default monospace)
     mono: {
-        regular: 'IBMPlexMono-Regular',
-        italic: 'IBMPlexMono-Italic',
-        semiBold: 'IBMPlexMono-SemiBold',
+        regular: BUNDLED_FONTS.plexMono.faces.regular.family,
+        italic: BUNDLED_FONTS.plexMono.faces.italic.family,
+        semiBold: BUNDLED_FONTS.plexMono.faces.semiBold.family,
     },
 
     // Bricolage Grotesque (logo/special use only)
     logo: {
-        bold: 'BricolageGrotesque-Bold',
+        bold: BUNDLED_FONTS.bricolage.faces.bold.family,
     },
 
     // Legacy fonts (keep for backward compatibility)
     legacy: {
-        spaceMono: 'SpaceMono',
+        spaceMono: BUNDLED_FONTS.spaceMono.faces.regular.family,
         systemMono: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     },
 };

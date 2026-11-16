@@ -3,6 +3,7 @@ import '../theme.css';
 import * as React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
+import { loadBundledFontAssets } from '@/constants/bundledFonts';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Slot, Stack } from 'expo-router';
 import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
@@ -584,23 +585,7 @@ async function loadFonts() {
         }
 
         const fontMap = {
-            // Keep existing font
-            SpaceMono: require('@/assets/fonts/SpaceMono-Regular.ttf'),
-
-            // Inter family (default typography)
-            'Inter-Regular': require('@/assets/fonts/Inter-Regular.ttf'),
-            'Inter-Italic': require('@/assets/fonts/Inter-Italic.ttf'),
-            'Inter-Medium': require('@/assets/fonts/Inter-Medium.ttf'),
-            'Inter-SemiBold': require('@/assets/fonts/Inter-SemiBold.ttf'),
-
-            // IBM Plex Mono family
-            'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
-            'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
-            'IBMPlexMono-SemiBold': require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'),
-
-            // Bricolage Grotesque
-            'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
-
+            ...loadBundledFontAssets(),
             ...FontAwesome.font,
             ...Ionicons.font,
         };
