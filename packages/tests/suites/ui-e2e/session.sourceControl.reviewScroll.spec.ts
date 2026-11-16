@@ -280,7 +280,7 @@ test.describe('ui e2e: SCM review position + tab state', () => {
     await page.keyboard.type('\nui-e2e edit');
 
     // Ensure the edit landed before switching tabs (otherwise the next assertion is ambiguous).
-    const markerMatch = laterPath.match(/file-(\\d+)\\.txt$/);
+    const markerMatch = laterPath.match(/file-(\d+)\.txt$/);
     const marker = markerMatch ? `hello ${markerMatch[1]}` : null;
 
     const readMonacoValue = async () =>

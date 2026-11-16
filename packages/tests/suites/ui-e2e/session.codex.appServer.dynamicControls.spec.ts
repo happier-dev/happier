@@ -217,6 +217,9 @@ async function ensureSignedIn(page: Page, uiBaseUrl: string): Promise<void> {
 
 async function ensureOnNewSessionComposer(page: Page, uiBaseUrl: string): Promise<void> {
     const composer = page.getByTestId('new-session-composer-input');
+    // A bare /new navigation creates a fresh draft. Keep the current draft's
+    // selected mode and model controls when its composer is already available.
+    if (new URL(page.url()).pathname === '/new' && await composer.isVisible()) return;
     const blockingGuidance = page.locator('[data-testid^="session-getting-started-kind-"]');
     const deadlineMs = Date.now() + 180_000;
 
@@ -255,6 +258,7 @@ async function ensureAgentChipAvailable(page: Page, uiBaseUrl: string, opts?: Re
     const agentChip = page.getByTestId('agent-input-agent-chip');
     const blockingGuidance = page.locator('[data-testid^="session-getting-started-kind-"]');
     const composer = page.getByTestId('new-session-composer-input');
+    if (new URL(page.url()).pathname === '/new' && await agentChip.isVisible()) return;
 
     while (Date.now() < deadlineMs) {
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`).catch(() => {});

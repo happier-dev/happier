@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 
 import {
     buildConnectedServiceCredentialRecord,
+    buildConnectedServiceCredentialMetadata,
     buildUsageLimitIssueFingerprint,
     buildProviderAccountUsageRecordId,
     ProviderAccountUsageSnapshotV1Schema,
@@ -308,6 +309,7 @@ async function createConnectedServiceProfile(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
     providerEmail: string;
+    providerOrganizationId?: string;
 }>): Promise<void> {
     const now = Date.now();
     const record = buildConnectedServiceCredentialRecord({
@@ -324,6 +326,9 @@ async function createConnectedServiceProfile(params: Readonly<{
             tokenType: 'Bearer',
             providerAccountId: `acct-${params.profileId}`,
             providerEmail: params.providerEmail,
+            ...(params.providerOrganizationId ? {
+                raw: { claudeAiOauth: { organizationUuid: params.providerOrganizationId } },
+            } : {}),
         },
     });
     const ciphertext = sealAccountScopedBlobCiphertext({
@@ -343,12 +348,7 @@ async function createConnectedServiceProfile(params: Readonly<{
             },
             body: JSON.stringify({
                 sealed: { format: 'account_scoped_v1', ciphertext },
-                metadata: {
-                    kind: 'oauth',
-                    providerEmail: params.providerEmail,
-                    providerAccountId: `acct-${params.profileId}`,
-                    expiresAt: record.expiresAt,
-                },
+                metadata: buildConnectedServiceCredentialMetadata(record),
             }),
             timeoutMs: 20_000,
         },
@@ -815,14 +815,17 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             const auth = await readLegacyAuthCredentialsFromBrowserStorage(page);
             const serviceId = 'claude-subscription' satisfies ConnectedServiceId;
             const profileId = `saved-reset-${run.runId}`;
+            const providerOrganizationId = `org-${profileId}`;
             await createConnectedServiceProfile({
                 baseUrl: server.baseUrl, token: auth.token, secret: auth.secret,
                 serviceId, profileId, providerEmail: 'saved-reset@example.test',
+                providerOrganizationId,
             });
             const now = Date.now();
             const recordKey = {
                 providerId: 'claude', accountSubjectId: `acct-${profileId}`,
-                subjectKind: 'account' as const, quotaScope: 'account' as const,
+                subjectKind: 'account' as const, quotaScope: 'organization' as const,
+                quotaScopeId: providerOrganizationId,
             };
             const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
                 v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,

@@ -388,7 +388,7 @@ test.describe('ui e2e: desktop local setup through the real hsetup (hermetic com
         const app = await openDesktopApp({ context, computer, uiBaseUrl });
         try {
             await ensureAccountReadyForConnect({ page: app.page, timeoutMs: 180_000 });
-            const title = app.page.getByText(/^Switch this computer to .+\?$/);
+            const title = app.page.getByRole('heading', { name: /^Switch this computer to .+\?$/ });
             await expect(title).toBeVisible({ timeout: 240_000 });
             const toLabel = /^Switch this computer to (.+)\?$/.exec((await title.textContent()) ?? '')?.[1] ?? '';
             const body = app.page.getByText(/^This computer is signed in to /);
