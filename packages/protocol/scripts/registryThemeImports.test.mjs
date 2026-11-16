@@ -5,12 +5,16 @@ import { test } from 'vitest';
 
 // Native children expose ESM initialization order, which a transformed test
 // graph can mask. Observe during collection, as bootstrap latency is not the
-// contract. Exercise both real entry points before consuming provenance.
-for (const entry of ['registries/registryItemsV1', 'account/settings/themeProfiles']) {
+// contract. Exercise the direct entries and the public SDK UI consumer first.
+for (const [entry, module] of [
+  ['registries/registryItemsV1', './src/registries/registryItemsV1.ts'],
+  ['account/settings/themeProfiles', './src/account/settings/themeProfiles.ts'],
+  ['plugin-sdk/ui', '../plugin-sdk/src/ui/index.ts'],
+]) {
   const result = spawnSync(process.execPath, [
     '--import', 'tsx', '--conditions=happier-source', '--input-type=module', '--eval', `
       import assert from 'node:assert/strict';
-      await import('./src/${entry}.ts');
+      await import(${JSON.stringify(module)});
       const { ThemeProfileV1Schema } = await import('./src/account/settings/themeProfiles.ts');
       const source = { kind: 'store', contributionId: 'dark', provenance: {
         sourceId: 'openvsx', itemId: 'publisher.palette', format: 'open-vsx',
