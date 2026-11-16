@@ -49,7 +49,17 @@ async function destination() {
 }
 
 it('forwards simultaneous binary clients with half-close through only the inspected network gateway', async () => {
-    const bridge = await acquirePrivateServiceContainerBridge({ docker, engine, networkId: network.Id, forward: await destination() });
+    // Reserve the same port on another host interface. A wildcard bridge bind
+    // cannot coexist with this listener; an unrelated process may also happen
+    // to listen there, so a connection-refused assertion is not deterministic.
+    const outsideServer = createServer(socket => socket.destroy());
+    outsideServer.listen(0, '127.0.0.1');
+    await once(outsideServer, 'listening');
+    cleanup.push(() => new Promise<void>(resolve => outsideServer.close(() => resolve())));
+    const outsideAddress = outsideServer.address();
+    if (!outsideAddress || typeof outsideAddress === 'string') throw new Error('No outside listener');
+    const bridge = await acquirePrivateServiceContainerBridge({ docker, engine, networkId: network.Id,
+        forward: await destination(), preferredListenPort: outsideAddress.port });
     cleanup.push(bridge.close);
     expect(bridge.host).toBe(network.IPAM.Config[0]!.Gateway);
     expect(bridge.networkId).toBe(network.Id);
@@ -64,10 +74,7 @@ it('forwards simultaneous binary clients with half-close through only the inspec
         expect(Buffer.concat(chunks)).toEqual(Buffer.from(bytes).reverse());
         client.destroy();
     }));
-    // The wildcard-bind regression would make this unrelated host address reachable.
-    const outside = connect({ host: '127.0.0.1', port: bridge.port });
-    sockets.add(outside);
-    await expect(once(outside, 'connect')).rejects.toMatchObject({ code: 'ECONNREFUSED' });
+    expect(bridge.port).toBe(outsideAddress.port);
     expect(dockerReads).toEqual([['network', 'inspect', network.Id]]);
     await bridge.close();
     await bridge.close();

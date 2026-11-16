@@ -27,8 +27,6 @@ it('admits the requester against B current export and closes only its open strea
     if (!address || typeof address === 'string') throw new Error('TCP fixture missing');
     try {
         await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
-            referenceEnvironment.content.ownServer!.serviceExports = [{ key: 'database', service: 'db', containerPort: 5432,
-                scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'network', transport: { kind: 'iroh' } }];
             const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
             if (!lease) throw new Error('Real managed service owner missing');
             const installedKeys = nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed);
@@ -82,7 +80,7 @@ it('admits the requester against B current export and closes only its open strea
             };
             try {
                 const admitted = await resolve();
-                if (admitted.kind !== 'iroh') throw new Error('Expected Iroh export');
+                if (admitted.kind !== 'local') throw new Error(`Expected local service export, got ${admitted.kind}`);
                 referenceEnvironment.content.ownServer!.serviceExports = [];
                 for (const [field, binding] of [
                     ['generation', { ...admitted.serviceExport, generation: 'replaced' }],
@@ -139,6 +137,7 @@ it('admits the requester against B current export and closes only its open strea
                 await closed;
                 expect(await rpc.handleRequest(census)).toEqual({ kind: 'requesters', accountIds: [], coverage: 'complete' });
             } finally { installedIdentity.mockRestore(); for (const socket of sockets) socket.destroy(); await app.close(); await lease.release(); }
-        }, { buildReference: true, referencePublishedPort: address.port, referenceDualPublication: true, referenceNetworkObserved: false });
+        }, { buildReference: true, referencePublishedPort: address.port, referenceBindAddress: '127.0.0.1',
+            referenceIroh: true, referenceNetworkObserved: false });
     } finally { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
 });
