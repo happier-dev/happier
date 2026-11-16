@@ -3,6 +3,7 @@ import type { HomeConnectionDescriptorV1, HomeCredentialDestinationV1 } from '@h
 
 import { resolveDefaultWebappUrl } from '../happierCloud.js';
 import {
+  resolveDescriptorApplicationOrigin,
   resolveHomeCarrierPreferredTransport,
   type HomeCarrierPreferredTransport,
 } from '../homeEnrollment/homeCarrierPolicy.js';
@@ -163,10 +164,7 @@ export function resolveHomeTargetFromDescriptor(params: Readonly<{
   profile?: SavedHomeTargetProfile;
 }>): ResolvedHomeTarget {
   const descriptor = HomeConnectionDescriptorV1Schema.parse(params.descriptor);
-  const httpsEndpoint = descriptor.endpoints.find((endpoint) => endpoint.kind === 'https');
-  const applicationUrl = httpsEndpoint
-    ? parseApplicationUrl(httpsEndpoint.url)
-    : parseApplicationUrl(descriptor.canonicalServerUrl);
+  const applicationUrl = parseApplicationUrl(resolveDescriptorApplicationOrigin(descriptor) ?? descriptor.canonicalServerUrl);
   return {
     profileId: params.profile?.id ?? null,
     homeServerIdentityId: descriptor.homeServerIdentityId,
@@ -248,7 +246,7 @@ export function assertResolvedHomeTargetIdentity(
 }
 
 /** Projects a resolved local target into the non-secret authority sent to another CLI. */
-export function createTransferableHomeTargetInput(target: ResolvedHomeTarget): HomeTargetInput {
+export function createTransferableHomeTargetInput(target: ResolvedHomeTarget): Exclude<HomeTargetInput, { kind: 'saved_profile' }> {
   if (target.descriptor) {
     return {
       kind: 'descriptor',
@@ -259,7 +257,7 @@ export function createTransferableHomeTargetInput(target: ResolvedHomeTarget): H
   return {
     kind: 'https_url',
     url: target.canonicalAuthUrl,
-    ...(target.applicationUrl !== target.canonicalAuthUrl ? { localUrl: target.applicationUrl } : {}),
+    // applicationUrl may be a controller-only loopback override; the guest uses the canonical route.
     ...(target.webappUrl !== deriveWebappUrl(target.canonicalAuthUrl) ? { webappUrl: target.webappUrl } : {}),
   };
 }

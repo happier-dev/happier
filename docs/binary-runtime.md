@@ -165,6 +165,11 @@ non-loopback application endpoint. Existing controllers need refreshed CLI
 code for qualification and refusal; endpoint-order selection also needs the
 updated guest CLI. No SSH tunnel or public ingress is created automatically.
 
+The transferable Home-target owner also drops a URL profile's controller-local
+application override. Remote enrollment persists the canonical URL and web app
+route instead; descriptor-backed profiles retain their Home identity and select
+the declared reachable application endpoint after a guest restart.
+
 In 0.3 development, Add Machine's remote command and SSH admission consume the
 shared Home carrier policy. Another computer uses a declared non-loopback HTTPS
 application endpoint or the Home's Iroh descriptor; a controller-only Home

@@ -5,6 +5,7 @@ import { acquireHomeCarrierByPolicy } from '../homeEnrollment/homeCarrierPolicy.
 import {
   HomeTargetResolutionError,
   assertResolvedHomeTargetIdentity,
+  createTransferableHomeTargetInput,
   parseHomeTargetInput,
   parseResolvedHomeTarget,
   resolveHomeTarget,
@@ -23,6 +24,14 @@ const descriptor = {
 };
 
 describe('Home target input and resolution', () => {
+  it('transfers URL profiles without the controller-local route', async () => {
+    const target = await resolveHomeTarget({
+      input: { kind: 'https_url', url: 'https://home.example.test', localUrl: 'http://127.0.0.1:3010' },
+      readSavedProfile: async () => null,
+    });
+    const guest = await resolveHomeTarget({ input: createTransferableHomeTargetInput(target), readSavedProfile: async () => null });
+    expect(guest.applicationUrl).toBe('https://home.example.test');
+  });
   it('normalizes descriptor authority without preselecting the Iroh-first carrier', async () => {
     const result = await resolveHomeTarget({
       input: parseHomeTargetInput({

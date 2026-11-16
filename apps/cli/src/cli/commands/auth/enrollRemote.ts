@@ -1,5 +1,6 @@
 import {
   parseHomeTargetInput,
+  createTransferableHomeTargetInput,
   type HomeTargetInput,
 } from '@happier-dev/cli-common/homeTarget';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -90,6 +91,8 @@ export async function prepareRemoteEnrollmentHomeTarget(input: HomeTargetInput):
   if (input.kind === 'saved_profile') {
     throw new Error('Remote enrollment input must contain a transferable Home descriptor or HTTPS URL.');
   }
+  // Use the same transfer decision for stdin URL inputs and controller-produced profiles.
+  input = createTransferableHomeTargetInput(await resolveCliHomeTarget(input));
   const profile = input.kind === 'descriptor'
     ? (await adoptServerProfileHomeConnectionDescriptor({
         descriptor: input.descriptor,
