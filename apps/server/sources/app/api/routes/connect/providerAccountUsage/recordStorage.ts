@@ -43,22 +43,24 @@ export function projectProviderAccountUsageRecordV4(record: StoredProviderAccoun
     };
 }
 
-export async function readProviderAccountUsageHistory(params: Readonly<{ accountId: string; recordId: string; history: import('@happier-dev/protocol/connect/providerAccountUsageHistory').ProviderAccountUsageHistoryRequestV1 }>, client: ProviderAccountUsageRecordClient = db) {
+export async function readProviderAccountUsageHistory(params: Readonly<{ accountId: string; recordId: string; history: import('@happier-dev/protocol/connect/providerAccountUsageHistory').ProviderAccountUsageHistoryRequestV1 }>, client: Pick<TransactionClient, 'providerAccountUsageHistory'> = db) {
     const page = await readProviderAccountUsageHistoryPageRows(params, client);
     return { entries: page.entries.map(parseProviderAccountUsageHistoryEntry), nextCursor: page.nextCursor };
 }
 
 /** Capture database values in the admission snapshot; validate payloads after releasing its connection. */
-export async function readProviderAccountUsageHistoryPageRows(params: Readonly<{ accountId: string; recordId: string; history: import('@happier-dev/protocol/connect/providerAccountUsageHistory').ProviderAccountUsageHistoryRequestV1 }>, client: ProviderAccountUsageRecordClient) {
+export async function readProviderAccountUsageHistoryPageRows(params: Readonly<{ accountId: string; recordId: string; history: import('@happier-dev/protocol/connect/providerAccountUsageHistory').ProviderAccountUsageHistoryRequestV1 }>, client: Pick<TransactionClient, 'providerAccountUsageHistory'>) {
     const { range, pageSize, cursor } = params.history;
-    const row = await client.providerAccountUsageRecord.findUnique({
-        where: { accountId_recordId: { accountId: params.accountId, recordId: params.recordId } },
-        select: { history: { where: {
+    // A parent relation read aggregates the entire page into one PostgreSQL
+    // JSONB array, which can exceed its 256 MiB representation limit. Return
+    // independent rows while retaining the same Account, range and cursor scope.
+    const rows = await client.providerAccountUsageHistory.findMany({
+        where: {
+            accountId: params.accountId, recordId: params.recordId,
             observedAt: { gte: new Date(range.startAtMs), lt: new Date(range.endAtMs) },
             ...(cursor ? { OR: [{ observedAt: { gt: new Date(cursor.observedAtMs) } }, { observedAt: new Date(cursor.observedAtMs), id: { gt: cursor.id } }] } : {}),
-        }, orderBy: [{ observedAt: 'asc' }, { id: 'asc' }], take: pageSize + 1, select: { id: true, observedAt: true, payload: true } } },
+        }, orderBy: [{ observedAt: 'asc' }, { id: 'asc' }], take: pageSize + 1, select: { id: true, observedAt: true, payload: true },
     });
-    const rows = row?.history ?? [];
     const entries = rows.slice(0, pageSize);
     const last = entries.at(-1);
     return { entries, nextCursor: rows.length > pageSize && last ? { observedAtMs: last.observedAt.getTime(), id: last.id } : null };
