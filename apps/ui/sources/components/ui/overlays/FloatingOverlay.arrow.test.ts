@@ -126,7 +126,8 @@ function findOverlayClipStyle(screen: RenderedOverlayScreen): Record<string, unk
     const style = screen.tree.root.findAll((node) => typeof node.type === 'string')
         .map((node) => flattenStyle(node.props.style))
         .find((candidate) => (
-            candidate.overflow === 'hidden'
+            // The web clips without a scroll container (`clip`); native clips with `hidden`.
+            (candidate.overflow === 'hidden' || candidate.overflow === 'clip')
             && candidate.borderRadius === FLOATING_OVERLAY_METRICS.radiusPx
         ));
     if (!style) throw new Error('expected floating overlay clipped surface to exist');
