@@ -28,6 +28,18 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation detail presentation', () => {
+    it('shows an opaque child policy refusal with the required and requested surfaces', () => {
+        const reason = 'Approval required by happier.machine.lima/actions/acquire; required surface: ui; requested surface: ui.';
+        const detail = projectActionOperationDetail(operation({ actionId: 'machines.managed.bootstrap.retry',
+            state: 'failed', settledAt: 2_000, error: { errorCode: 'credential_scope_denied', error: reason,
+                failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: 'approval_required', httpStatus: null } },
+        }), 'available');
+        expect(detail.failure?.reason).toBe(reason);
+        expect(detail.failure?.technicalLines).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'failure-code', value: 'credential_scope_denied' }),
+            expect.objectContaining({ key: 'failure-cause-code', value: 'approval_required' }),
+        ]));
+    });
     it('uses a retained Action failure instead of its coarse settlement summary', () => {
         const detail = projectActionOperationDetail(operation({ state: 'failed', settledAt: 2_000,
             error: { errorCode: 'credential_unavailable', error: 'credential_unavailable' },

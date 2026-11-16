@@ -82,6 +82,8 @@ import { createDeferred } from '@/testkit/async/deferred';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { logger } from '@/ui/logger';
 import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
+import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
+import { withManagedOpaquePresetReview } from './presetHydration';
 
 const unavailable = async (): Promise<never> => { throw new Error('Unexpected credential transport'); };
 function signedIdle(machine: ReturnType<typeof ManagedMachineV1Schema.parse>, since: number, confirmedAt: number) {
@@ -457,6 +459,38 @@ describe('opaque preset Delete on the controller', () => {
             .resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
         expect(test.effects).toEqual(['destroy']);
     });
+});
+it('retains the opaque Update acquire policy refusal through reconcile and operation projection', async () => {
+    const test = setup();
+    const machine = { ...test.readMachine(), preset: { id: 'opaque-preset', revision: 1, contentEncryptionMode: 'plain' as const } };
+    const { launch: _launch, resource: _resource, ...structural } = machine;
+    const opaqueMachine = ManagedOpaquePresetMachineV1Schema.parse(structural);
+    const action = 'machines.managed.bootstrap.retry' as const;
+    const target = { kind: 'machine' as const, machineId: machine.controller!.machineId };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
+        serverIdentityId: machine.homeId, accountId: 'owner', custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 1 }, ...machine.controller,
+        actionId: action, requestId: 'control', requestEnvelopeDigest: 'A'.repeat(43), target,
+    } });
+    const options = withManagedOpaquePresetReview({ ...test.options, context: { ...test.options.context,
+        surface: 'ui' as const, runtimeAccountId: 'owner', actionRequestId: 'control',
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+            'acme.compute/actions/acquire': { approvalRequiredSurfaces: ['ui'] },
+        } }),
+    } }, { machine, opaqueMachine, parent: { actionId: action,
+        input: { homeId: machine.homeId, managedId: machine.id } }, requestId: 'control' });
+    const client = createManagedMachineControllerClient(test.driverInput, options, action);
+    const native = createManagedNativeInvocation({ input: test.driverInput, options, client, machine, action }, () => machine);
+    const error = await native.invoke('acquire', {}).then(() => { throw new Error('Expected policy refusal'); }, error => error);
+    expect(error).toBeInstanceOf(ManagedMachineNativeEffectGuardRefusal);
+    const failure = projectActionOperationFailure(error, 'action_operation_failed', 'root');
+    expect(failure).toMatchObject({ errorCode: 'credential_scope_denied',
+        failureCause: { phase: 'deployment.reviewed_child', errorCode: 'approval_required', httpStatus: null } });
+    expect(failure.error).toContain('acme.compute/actions/acquire');
+    expect(failure.error).toContain('required surface: ui');
+    expect(failure.error).toContain('requested surface: ui');
+    expect(test.effects).toEqual([]);
 });
 describe('Delete with no native resource', () => {
     it('settles the Home-confirmed absence without native effects or guest activity', async () => {

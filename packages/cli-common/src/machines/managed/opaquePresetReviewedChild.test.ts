@@ -56,7 +56,13 @@ describe('opaque preset reviewed child issuer', () => {
 
     const result = await port!.invoke({ action: { pluginId: 'fixture.compute', localId: 'acquire' }, role: 'acquire', input: { choice: 'x' } });
     if (!admitted) {
-      expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied',
+        failureCause: { phase: 'deployment.reviewed_child', errorCode: 'approval_required', httpStatus: null } });
+      if (!result.ok) {
+        expect(result.error).toContain(formatQualifiedPluginActionId({ pluginId: 'fixture.compute', localId: 'acquire' }));
+        expect(result.error).toContain('required surface: cli');
+        expect(result.error).toContain('requested surface: cli');
+      }
       expect(childContext).toBeUndefined();
       return;
     }

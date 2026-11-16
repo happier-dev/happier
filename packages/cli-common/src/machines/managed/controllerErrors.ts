@@ -33,7 +33,10 @@ export class ManagedMachineControllerError extends Error {
                 details: new PluginError({ code: authored.code, message, retryable: authored.retryable,
                     ...(remediation.success ? { remediation: remediation.data } : {}),
                     ...(details ? { details } : {}) }).data }
-            : undefined;
+            : failure.error.trim() && failure.error !== failure.errorCode
+                ? { ok: false, errorCode: failure.errorCode, error: failure.error, failureCause,
+                    ...(details ? { details } : {}) }
+                : undefined;
         return new this(failure.errorCode, undefined, details, failureCause, cause);
     }
 }

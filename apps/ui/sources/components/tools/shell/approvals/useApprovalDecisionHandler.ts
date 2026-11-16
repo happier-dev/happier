@@ -97,9 +97,13 @@ export function presentApprovalFailure(
     const reason = error instanceof ApprovalExecutionError ? t('approvals.failureGeneric')
         : /^[a-z][a-z0-9_]*(?::[a-z0-9_]+)*$/.test(fallbackMessage.trim())
             ? neutralReason : fallbackMessage;
-    // Keep the validated cause for the shared presenter, without transport prose.
+    // A stored public failure can supply the readable reason already selected
+    // above. Keep it with the cause; raw thrown transport prose stays excluded.
+    const publicReason = typeof error === 'object' && error !== null && !(error instanceof Error)
+        && 'error' in error && error.error === reason ? reason : undefined;
     return { reason: presentActionExecutionFailure({ ok: false,
-        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause }, reason).reason, code: diagnosticCode };
+        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause,
+        ...(publicReason ? { message: publicReason } : {}) }, reason).reason, code: diagnosticCode };
 }
 
 /**

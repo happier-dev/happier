@@ -4,6 +4,17 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { ManagedMachineControllerError } from './controllerErrors.js';
 
 describe('ManagedMachineControllerError.fromActionFailure', () => {
+    it('retains a public child refusal reason and its original typed cause without arbitrary details', () => {
+        const failureCause = { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: 'approval_required', httpStatus: null } as const;
+        const error = ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: 'credential_scope_denied',
+            error: 'Approval required by fixture.compute/actions/acquire; required surface: ui; requested surface: ui.',
+            failureCause, details: { privateOutput: 'PRIVATE_OUTPUT' } }, 'machines.managed.bootstrap.retry');
+        expect(normalizeActionExecutorThrownError(error, 'root')).toMatchObject({
+            errorCode: 'credential_scope_denied', failureCause,
+            error: 'Approval required by fixture.compute/actions/acquire; required surface: ui; requested surface: ui.',
+        });
+        expect(JSON.stringify(error.cause)).not.toContain('PRIVATE_OUTPUT');
+    });
     it('preserves only the same-code authored reason, repair and closed native diagnostics', () => {
         const error = ManagedMachineControllerError.fromActionFailure({
             ok: false, errorCode: 'credential_unavailable', error: 'credential_unavailable',

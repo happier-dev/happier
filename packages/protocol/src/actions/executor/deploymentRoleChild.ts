@@ -23,9 +23,14 @@ const deploymentRoleChild = Symbol('deploymentRoleChild');
 const credentialScopeAdmission = Symbol('credentialScopeAdmission');
 const reviewedChildPlan = Symbol('reviewedChildPlan');
 
-function reviewedChildScopeDenied(reason: 'issuer_binding' | 'issuer_target' | 'aborted' | 'child_mismatch' | 'no_plan'): ActionExecuteFailure {
-  return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
-    failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: reason, httpStatus: null } };
+function reviewedChildScopeDenied(reason: 'issuer_binding' | 'issuer_target' | 'aborted' | 'child_mismatch' | 'no_plan',
+  policy?: Readonly<{ requiredActionIds: readonly string[]; surface: HostReviewedChildPolicyV1['surface'];
+    requestedSurface: ActionExecutorContext['surface'] }>): ActionExecuteFailure {
+  return { ok: false, errorCode: 'credential_scope_denied',
+    error: policy ? `Approval required by ${policy.requiredActionIds.join(', ')}; required surface: ${policy.surface}; requested surface: ${policy.requestedSurface}.`
+      : 'credential_scope_denied',
+    failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error',
+      errorCode: policy ? 'approval_required' : reason, httpStatus: null } };
 }
 type ReviewedOperation = Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> & Readonly<{
   approvedBy?: WorkflowApprovedOperationV1['approvedBy'];
@@ -478,6 +483,8 @@ export function createHostReviewedChildPortV1(params: Readonly<{
   actionId: string; input: unknown; context: ActionExecutorContext;
   plan?: HostReviewedChildrenPlanV1;
   policies?: readonly HostReviewedChildPolicyV1[];
+  /** Diagnostic facts from the policy owner; never admit the refused child. */
+  refusedPolicy?: HostReviewedChildPolicyV1 & Readonly<{ requiredActionIds: readonly string[] }>;
   reviewAdmitted?: true;
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
   /** Parent-only review ports have no prepared child execution. */
@@ -498,7 +505,8 @@ export function createHostReviewedChildPortV1(params: Readonly<{
       : [{ action: child.action, role: child.role, input: child.input }]) } : {}),
     invoke: async request => {
       const execute = params.execute;
-      if (!plan || !execute) return reviewedChildScopeDenied('no_plan');
+      if (!plan || !execute) return reviewedChildScopeDenied('no_plan', params.refusedPolicy
+        ? { ...params.refusedPolicy, requestedSurface: params.context.surface } : undefined);
       const matches = plan.children.flatMap((child, index) => child.role === request.role
         && sameStrictJsonValue(child.action, request.action)
         && (child.input === undefined || sameStrictJsonValue(child.input, request.input))

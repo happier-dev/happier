@@ -503,8 +503,9 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     const child = await port.invoke({ action: { pluginId: contribution.pluginId, localId }, role,
                         input: projectNativeJsonValueForTransport(nativeInput) });
                     if (!childExecution) {
-                        throw new ManagedMachineNativeEffectGuardRefusal(child.ok ? 'admission_unavailable'
-                            : child.errorCode ?? 'admission_unavailable');
+                        if (!child.ok) throw ManagedMachineNativeEffectGuardRefusal.fromActionFailure(child, params.action,
+                            { pluginId: contribution.pluginId, localId });
+                        throw new ManagedMachineNativeEffectGuardRefusal('admission_unavailable');
                     }
                     execution = childExecution;
                 } else {

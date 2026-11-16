@@ -45,7 +45,8 @@ export function createManagedOpaquePresetReviewedChildPortV1(params: Readonly<{
     // explicit Require (or an unresolvable policy) refuses before any native
     // effect. Reuse the host issuer's typed refusal.
     return createHostReviewedChildPortV1({ actionId: params.parent.actionId, input: params.parent.input,
-      context: params.context, reviewAdmitted: true });
+      context: params.context, reviewAdmitted: true,
+      ...(custodyAdmitted && prepared ? { refusedPolicy: prepared } : {}) });
   }
   return createHostReviewedChildPortV1({ actionId: params.parent.actionId, input: params.parent.input,
     context: params.context, reviewAdmitted: true,
