@@ -35,6 +35,8 @@ export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   operationId: string; expectedRevision: number;
   /** Only a new build needs CLI assets; recovery uses the retained native facts. */
   composeBuild?: (capturedContent: ManagedMachinePresetContentV1) => Promise<ManagedMachinePresetPreparationBuildCompositionV1>;
+  /** True only after the original host invocation has stopped and retired. */
+  stopIncumbentBuild?: (operationId: string) => Promise<boolean>;
   custody: ManagedMachinePresetPreparationCustodyV1;
   storage: ManagedMachinePresetPreparationStorageV1;
   native: ManagedMachinePresetPreparationNativeV1;
@@ -287,14 +289,25 @@ export async function settleManagedMachinePresetPreparationOperationV1(
   }
   // Native absence does not establish that the original executor has stopped
   // before create. Its host Action must stop and join before replacement.
-  if (incumbent.status === 'building') {
-    return { kind: 'conflict', currentRevision: initial.preset.revision };
-  }
   const capturedContent = initial.content;
+  let cleanupRevision = input.expectedRevision;
+  if (incumbent.status === 'building') {
+    if (input.expectedRevision !== initial.preset.revision || !input.stopIncumbentBuild
+      || !await input.stopIncumbentBuild(incumbent.operationId)) {
+      return { kind: 'conflict', currentRevision: initial.preset.revision };
+    }
+    const retired = await readPreset(input);
+    if ('kind' in retired) return retired;
+    if (retired.content.prepared?.operationId !== incumbent.operationId) {
+      return { kind: 'conflict', currentRevision: retired.preset.revision };
+    }
+    current = retired;
+    cleanupRevision = retired.preset.revision;
+  }
   if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild) {
     return { kind: 'refused', code: 'invalid_request' };
   }
-  const cleanup = await follow({ ...input, operationId: incumbent.operationId }, true, input.expectedRevision);
+  const cleanup = await follow({ ...input, operationId: incumbent.operationId }, true, cleanupRevision);
   if (cleanup.kind !== 'cancelled' || input.signal?.aborted) return cleanup;
   const next = await readPreset(input);
   if ('kind' in next) return next;

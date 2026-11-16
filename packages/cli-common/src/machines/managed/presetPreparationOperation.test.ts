@@ -523,6 +523,96 @@ describe('private preset preparation operation', () => {
     expect.soft(replacementEffects).toBe(0);
   });
 
+  it.each([false, true])('replacement joins the held original create before cleanup and respects Stop=%s', async stopped => {
+    const fixture = storageFixture();
+    let releaseCreate!: () => void;
+    let buildStarted!: () => void;
+    const started = new Promise<void>(resolve => { buildStarted = resolve; });
+    const upload = new Promise<void>(resolve => { releaseCreate = resolve; });
+    const events: string[] = [];
+    const original = advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
+      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => {
+        buildStarted();
+        await upload;
+        events.push('old-create');
+        return { kind: 'ready', artifact };
+      } }) });
+    await started;
+    const target = { ...definition, launch: { ...definition.launch!, choices: { image: 'captured-target' } } };
+    await editAuthor(fixture, target);
+    const stop = new AbortController();
+    const replacement = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+      expectedRevision: fixture.row().revision, custody: { mode: 'plain' }, storage: fixture.storage, signal: stop.signal,
+      stopIncumbentBuild: async operationId => {
+        expect(operationId).toBe('operation-one');
+        events.push('join');
+        await original;
+        events.push('retired');
+        return true;
+      }, composeBuild: async captured => {
+        events.push('compose');
+        expect(captured.launch).toEqual(target.launch);
+        return { input: { ...buildInput, launch: { ...buildInput.launch, choices: target.launch.choices } } };
+      }, native: nativeFixture({ destroy: async () => { events.push('destroy'); return { kind: 'confirmed' }; },
+        build: async () => { events.push('new-build'); return { kind: 'ready', artifact }; } }) });
+    await editAuthor(fixture, { ...target, launch: { ...target.launch, choices: { image: 'later-edit' } } });
+    expect.soft(events).toEqual(['join']);
+    if (stopped) stop.abort();
+    releaseCreate();
+    await original;
+    expect(await replacement).toMatchObject({ kind: stopped ? 'cancelled' : 'ready',
+      prepared: { operationId: stopped ? 'operation-one' : 'operation-two' } });
+    expect(events).toEqual(stopped ? ['join', 'old-create', 'retired', 'destroy']
+      : ['join', 'old-create', 'retired', 'destroy', 'compose', 'new-build']);
+    expect(fixture.opened().launch?.choices).toEqual({ image: 'later-edit' });
+  });
+
+  it.each([false, true])('building replacement rejects unavailable retirement or stale revision=%s before native work', async stale => {
+    const fixture = storageFixture();
+    await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
+      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }) }) });
+    let stops = 0;
+    let effects = 0;
+    expect(await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+      expectedRevision: stale ? 1 : fixture.row().revision, custody: { mode: 'plain' }, storage: fixture.storage,
+      stopIncumbentBuild: async () => { stops++; return false; },
+      composeBuild: async () => { effects++; return { input: buildInput }; },
+      native: nativeFixture({ inspect: async () => { effects++; return { kind: 'absent' }; },
+        destroy: async () => { effects++; return { kind: 'confirmed' }; },
+        build: async () => { effects++; return { kind: 'ready', artifact }; } }) }))
+      .toMatchObject({ kind: 'conflict', currentRevision: fixture.row().revision });
+    expect(stops).toBe(stale ? 0 : 1);
+    expect(effects).toBe(0);
+    expect(fixture.opened().prepared).toMatchObject({ operationId: 'operation-one', status: 'building' });
+  });
+
+  it('replacement preserves a newer retired binding installed during incumbent join', async () => {
+    const fixture = storageFixture();
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
+      custody: { mode: 'plain' as const }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => ({ kind: 'pending' as const, nativeOperationRef }) }) };
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    let stops = 0;
+    let effects = 0;
+    expect(await settleManagedMachinePresetPreparationOperationV1({ ...request, operationId: 'operation-two',
+      expectedRevision: fixture.row().revision, stopIncumbentBuild: async () => {
+        stops++;
+        await cancelManagedMachinePresetPreparationOperationV1(request);
+        const newer = { ...request, operationId: 'operation-newer', expectedRevision: fixture.row().revision,
+          native: nativeFixture({ build: async () => ({ kind: 'refused', code: 'invalid_request' }) }) };
+        await advanceManagedMachinePresetPreparationOperationV1(newer);
+        await cancelManagedMachinePresetPreparationOperationV1(newer);
+        return true;
+      }, composeBuild: async () => { effects++; return { input: buildInput }; },
+      native: nativeFixture({ destroy: async () => { effects++; return { kind: 'confirmed' }; } }) }))
+      .toMatchObject({ kind: 'conflict', currentRevision: fixture.row().revision });
+    expect(stops).toBe(1);
+    expect(effects).toBe(0);
+    expect(fixture.opened().prepared).toMatchObject({ operationId: 'operation-newer', status: 'cancelled' });
+  });
+
   it('replacement conflicts before composition when a newer admitted operation retired its own binding', async () => {
     const fixture = storageFixture();
     const baseRequest = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
