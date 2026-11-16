@@ -15,8 +15,12 @@ export function captureRuntimeDependencies({ imports, outputDir, sourceRepoDir, 
   ).map(entry => entry.name));
   // Configured optional runtimes load by file URL, outside the emitted import
   // graph. Retain their installed closure through the same dependency owner.
-  const optionalImports = Object.values(CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS)
-    .map(entry => entry.replace(/^node_modules\//, ''))
+  const optionalImports = [
+    ...Object.values(CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS)
+      .map(entry => entry.replace(/^node_modules\//, '')),
+    // Both the native provider and its Node relay select these by variable.
+    'node-pty', '@homebridge/node-pty-prebuilt-multiarch',
+  ]
     .filter(entry => dependencies.has(packageNameOfSpecifier(entry)))
     .map(path => ({ path, resolveFrom: cliManifestPath }));
   imports = [...imports, ...optionalImports];

@@ -43,3 +43,23 @@ test('captures dynamically resolved optional runtimes and their native dependenc
   assert.deepEqual(require('emitted-runtime-fixture'), { runtime: 'emitted ready' });
   assert.equal(captured.captured, true);
 });
+
+test('retains dynamically selected native PTY providers without emitted imports', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-pty-runtime-capture-' });
+  const repo = fixture.path('repo');
+  const cli = join(repo, 'apps/cli');
+  const ids = ['node-pty', '@homebridge/node-pty-prebuilt-multiarch'];
+  await mkdir(cli, { recursive: true });
+  await writeFile(join(cli, 'package.json'), JSON.stringify({ optionalDependencies: Object.fromEntries(ids.map(id => [id, '1.0.0'])) }));
+  for (const id of ids) {
+    const dir = join(cli, 'node_modules', id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: id, main: 'index.cjs' }));
+    await writeFile(join(dir, 'index.cjs'), 'exports.backend = ' + JSON.stringify(id) + ';');
+  }
+  const outputDir = fixture.path('capture');
+  captureRuntimeDependencies({ imports: [], outputDir, sourceRepoDir: repo });
+  await rm(repo, { recursive: true });
+  const require = createRequire(join(outputDir, 'apps/cli/package.json'));
+  for (const id of ids) assert.equal(require(id).backend, id);
+});
