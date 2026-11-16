@@ -17,13 +17,11 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-  useServerScopedMachine,
-  useServerScopedMachineLabel,
-} from '@/sync/store/hooks';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
+import { describeMachinePresenceSummary } from '@/utils/sessions/machinePresenceLine';
 
 import { buildServiceCheckHref } from './deploymentNavigation';
 import {
@@ -33,10 +31,12 @@ import {
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
 import { ServiceCheckDetail } from './ServiceCheckDetail';
 import {
+  NO_OFFLINE_OBSERVERS,
   SERVICE_CHECK_ROW_BARS,
   formatServiceCheckLatency,
   serviceCheckListFacts,
   serviceCheckMonitorSummary,
+  serviceCheckStale,
   serviceCheckStatusTone,
   serviceCheckStatusWord,
   serviceCheckUptimeText,
@@ -106,7 +106,7 @@ export function useServiceCheckSelection(active: boolean) {
       shown
         ? {
             header: {
-              title: shown.native.name,
+              title: serviceCheckListFacts(shown).title,
               actions: (
                 <CorePluginUiPresentationScope>
                   <DetailsPaneOpenAsPageButton
@@ -127,6 +127,31 @@ export function useServiceCheckSelection(active: boolean) {
     [openCheckPage, shown],
   );
   return { selection, details, closeCheck };
+}
+
+/**
+ * The observing Machines this Home cannot reach, by the Machine presence owner (the Machines list's own verdict, pushed
+ * on every heartbeat): the one input of serviceCheckStale for the rows, the glance line and Needs you.
+ */
+export function useServiceCheckOfflineObservers(
+  rows: readonly ManagedConfiguredCheckRow[],
+  scope: ServerAccountScope | null,
+): ReadonlySet<string> {
+  const machineIds = React.useMemo(
+    () => [...new Set(rows.flatMap((row) =>
+      row.native.enabled && row.definitionFacts.kind === 'available' && row.definitionFacts.observerMachineId !== null
+        ? [row.definitionFacts.observerMachineId] : []))].sort(),
+    [rows],
+  );
+  const summaries = useMachinePresenceSummaries(scope?.serverId ?? null, machineIds);
+  return React.useMemo(() => {
+    if (machineIds.length === 0) return NO_OFFLINE_OBSERVERS;
+    const offline = machineIds.filter((_, index) => {
+      const summary = summaries[index];
+      return summary?.machineIsKnown === true && describeMachinePresenceSummary(summary).status === 'offline';
+    });
+    return offline.length === 0 ? NO_OFFLINE_OBSERVERS : new Set(offline);
+  }, [machineIds, summaries]);
 }
 
 type RowInput = Readonly<{
@@ -159,6 +184,10 @@ export function ServiceCheckList(
     () => ({ scope: props.scope, machine: null, projectKey: null }),
     [props.scope],
   );
+  const offlineObservers = useServiceCheckOfflineObservers(rows, props.scope);
+  // Results arrive for every check in one read: until they do, each row reserves its title and bars (lab B5 loading),
+  // and no section is decided, so nothing is renamed or moved when they land.
+  const settling = rows.some((row) => row.lastResults.kind === 'loading');
   const facts = React.useMemo(
     () => new Map(rows.map((row) => [row.key, serviceCheckListFacts(row)])),
     [rows],
@@ -180,12 +209,19 @@ export function ServiceCheckList(
     },
     [onSelect, rows],
   );
-  const needsYou = React.useMemo(
+  // What needs the person, decided once results are in: Monitoring stands it in its own section; a list without
+  // sections (Services → Checks, lab A1) leads with it.
+  const attention = React.useMemo(
+    () => (settling ? null : serviceCheckMonitorSummary(rows, offlineObservers).needsYou),
+    [rows, settling, offlineObservers],
+  );
+  const needsYou = props.grouping === 'attention' ? attention : null;
+  const items = React.useMemo(
     () =>
-      props.grouping === 'attention'
-        ? serviceCheckMonitorSummary(rows).needsYou
-        : null,
-    [props.grouping, rows],
+      props.grouping === 'attention' || !attention || attention.size === 0
+        ? rows
+        : [...rows.filter((row) => attention.has(row.key)), ...rows.filter((row) => !attention.has(row.key))],
+    [attention, props.grouping, rows],
   );
   const groups = React.useMemo(
     () =>
@@ -210,7 +246,7 @@ export function ServiceCheckList(
     [needsYou],
   );
   const model = useHappierCollection<ManagedConfiguredCheckRow>({
-    items: rows,
+    items,
     keyOf: keyOfCheck,
     ...(groups ? { groups } : {}),
     openKey: selection.selectedKey,
@@ -221,25 +257,35 @@ export function ServiceCheckList(
     CollectionAnatomy<ManagedConfiguredCheckRow>
   >(() => {
     const factsOf = (row: ManagedConfiguredCheckRow) => facts.get(row.key)!;
-    const state = (row: ManagedConfiguredCheckRow) => (
-      <CheckState row={row} facts={factsOf(row)} scope={scope} />
+    const staleOf = (row: ManagedConfiguredCheckRow) => serviceCheckStale(row, offlineObservers);
+    const state = (row: ManagedConfiguredCheckRow) =>
+      settling ? null : <CheckState row={row} facts={factsOf(row)} stale={staleOf(row)} />;
+    const bars = (row: ManagedConfiguredCheckRow) => (
+      <CheckRowBars facts={factsOf(row)} stale={staleOf(row)} loading={settling} />
     );
     return {
       glyph: (row) => (
         <RowMark row={row} title={row.native.name} input={input} />
       ),
       title: (row) => factsOf(row).title,
+      // A host or path: one line, ending in an ellipsis, never broken mid-word (the full title is the row's label).
+      titleIdentifier: true,
+      // Its target arrives with its definition: until then the title's place holds the loading bar, never the saved
+      // automation's name it would then flip from.
+      titlePending: (row) => settling || row.definitionFacts.kind === 'loading',
       // Line 2 says what the check is, or why it fails when it does; a phone (no columns) also draws its bars there.
       byline: (row, layout) => (
         <CheckByline
           row={row}
           facts={factsOf(row)}
           scope={scope}
+          stale={staleOf(row)}
+          loading={settling}
           columns={layout?.fieldColumns === true}
         />
       ),
       bylineLead: (row, layout) =>
-        layout?.fieldColumns !== true && checkStateSpeaks(row, factsOf(row))
+        layout?.fieldColumns !== true && checkStateSpeaks(row, factsOf(row), staleOf(row))
           ? state(row)
           : null,
       fields: [
@@ -249,15 +295,13 @@ export function ServiceCheckList(
           minWidth: 172,
           priority: 3,
           listColumn: true,
-          render: (row) => (
-            <CheckRowBars row={row} facts={factsOf(row)} scope={scope} />
-          ),
+          render: bars,
         },
         {
           key: 'response',
           title: t(`${k}.response`),
-          minWidth: 88,
-          priority: 2,
+          minWidth: 72,
+          priority: 1,
           align: 'end',
           listColumn: true,
           render: (row) => <CheckResponse facts={factsOf(row)} />,
@@ -265,8 +309,8 @@ export function ServiceCheckList(
         {
           key: 'uptime',
           title: t(`${k}.columnUptime`),
-          minWidth: 104,
-          priority: 1,
+          minWidth: 96,
+          priority: 2,
           align: 'end',
           listColumn: true,
           render: (row) => <CheckUptime facts={factsOf(row)} />,
@@ -274,7 +318,7 @@ export function ServiceCheckList(
         {
           key: 'state',
           title: t(`${k}.columnState`),
-          minWidth: 200,
+          minWidth: 152,
           priority: 4,
           align: 'end',
           listColumn: true,
@@ -284,14 +328,14 @@ export function ServiceCheckList(
       card: {
         headerRight: state,
         body: {
-          render: (row) => (
-            <CheckRowBars row={row} facts={factsOf(row)} scope={scope} />
-          ),
+          render: bars,
           heightAtNormalText: 24,
         },
         facts: (row) => <CheckCardFacts facts={factsOf(row)} />,
         // What it is, or why it fails (lab B2): the row's line 2 without its phone bars.
-        description: (row) => <CheckByline row={row} facts={factsOf(row)} scope={scope} columns />,
+        description: (row) => (
+          <CheckByline row={row} facts={factsOf(row)} scope={scope} stale={staleOf(row)} loading={settling} columns />
+        ),
       },
       accessibilityLabel: (row) =>
         [factsOf(row).title, serviceCheckStatusWord(factsOf(row).status)].join(
@@ -301,7 +345,7 @@ export function ServiceCheckList(
         `services.checks.row.${row.automationId}.${row.triggerId}`,
       columnTitles: { title: t(`${k}.columnCheck`) },
     };
-  }, [facts, input, scope]);
+  }, [facts, input, scope, offlineObservers, settling]);
   return (
     <ServicesPageList<ManagedConfiguredCheckRow>
       testID={props.testID}
@@ -317,44 +361,25 @@ export function ServiceCheckList(
 function checkStateSpeaks(
   row: ManagedConfiguredCheckRow,
   facts: ServiceCheckListFacts,
+  stale: boolean,
 ): boolean {
   return (
     !row.native.enabled ||
+    stale ||
     serviceCheckStatusTone(facts.status) !== null ||
     facts.status === 'notChecked'
   );
 }
 
-/**
- * The Machine that runs this check, when this Home cannot reach it (its presence owner's word): the check keeps its
- * last results, dimmed, and says since when it has not checked (lab "stale observer").
- */
-function useOfflineObserver(
-  scope: ServerAccountScope | null,
-  machineId: string | null,
-): boolean {
-  return (
-    useServerScopedMachine(scope?.serverId ?? null, machineId, (machine) => {
-      if (!machine) return false;
-      return (
-        describeMachineRuntimePresence(machine, undefined, null, scope)
-          .status === 'offline'
-      );
-    }) === true
-  );
-}
-
+/** A row's last checks as bars; dimmed while its observing Machine is offline (lab "stale observer"). */
 const CheckRowBars = React.memo(function CheckRowBars(
   props: Readonly<{
-    row: ManagedConfiguredCheckRow;
     facts: ServiceCheckListFacts;
-    scope: ServerAccountScope | null;
+    stale: boolean;
+    loading: boolean;
   }>,
 ) {
-  const stale =
-    useOfflineObserver(props.scope, props.facts.observerMachineId) &&
-    props.row.native.enabled;
-  const loading = props.facts.status === 'loading';
+  const loading = props.loading || props.facts.status === 'loading';
   const cells = React.useMemo(
     (): readonly ServiceCheckBarCell[] =>
       props.facts.recent.bars.map((bar) => ({
@@ -371,7 +396,7 @@ const CheckRowBars = React.memo(function CheckRowBars(
       size="inline"
       label={t(`${m}.columnRecent`, { count: SERVICE_CHECK_ROW_BARS })}
       partialLead={props.facts.recent.partialLead}
-      stale={stale}
+      stale={props.stale}
     />
   );
 });
@@ -448,11 +473,11 @@ const CheckState = React.memo(function CheckState(
   props: Readonly<{
     row: ManagedConfiguredCheckRow;
     facts: ServiceCheckListFacts;
-    scope: ServerAccountScope | null;
+    stale: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const stale = useOfflineObserver(props.scope, props.facts.observerMachineId);
+  const { stale } = props;
   const quiet = (label: string) => (
     <Text
       style={{
@@ -496,18 +521,17 @@ const CheckByline = React.memo(function CheckByline(
     row: ManagedConfiguredCheckRow;
     facts: ServiceCheckListFacts;
     scope: ServerAccountScope | null;
+    stale: boolean;
+    loading: boolean;
     columns: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const { facts, row } = props;
+  const { facts, row, stale } = props;
   const observer = useServerScopedMachineLabel(
     props.scope?.serverId ?? null,
     facts.observerMachineId,
   );
-  const stale =
-    useOfflineObserver(props.scope, facts.observerMachineId) &&
-    row.native.enabled;
   const named = facts.title !== row.native.name ? row.native.name : null;
   const every = facts.every
     ? observer
@@ -545,7 +569,7 @@ const CheckByline = React.memo(function CheckByline(
     color: theme.colors.text.secondary,
     flexShrink: 1,
   } as const;
-  if (!props.columns && !failing && !slow && !stale) {
+  if (!props.columns && (stale || (!failing && !slow))) {
     const uptime = serviceCheckUptimeText(facts.uptimePercent);
     const figures = [
       uptime,
@@ -564,7 +588,7 @@ const CheckByline = React.memo(function CheckByline(
           minWidth: 0,
         }}
       >
-        <CheckRowBars row={row} facts={facts} scope={props.scope} />
+        <CheckRowBars facts={facts} stale={stale} loading={props.loading} />
         {figures ? (
           <Text
             style={{ ...meta, fontVariant: ['tabular-nums'] }}

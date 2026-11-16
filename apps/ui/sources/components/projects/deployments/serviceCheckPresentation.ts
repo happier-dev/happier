@@ -338,11 +338,30 @@ export function serviceCheckTodayUptime(history: History, nowMs: number): number
   return history.days.find((day) => day.dayStartAt === todayStart)?.uptimePercent ?? null;
 }
 
-type MonitoredCheck = Readonly<{ key: string; native: Readonly<{ enabled: boolean }>; lastResults: ConfiguredHealthResultsState }>;
+type MonitoredCheck = Readonly<{ key: string; native: Readonly<{ enabled: boolean }>; lastResults: ConfiguredHealthResultsState;
+  definitionFacts: ListedCheck['definitionFacts'] }>;
+
+export const NO_OFFLINE_OBSERVERS: ReadonlySet<string> = new Set();
+
+/**
+ * Whether a running check has stopped being checked: the Machine that observes it is offline by its presence owner
+ * (`offlineObservers`, from useMachinePresenceSummaries). Its last results are kept, dimmed, and never count as
+ * passing. The one decision for the row, its bars, the glance line and Needs you.
+ */
+export function serviceCheckStale(
+  row: Pick<MonitoredCheck, 'native' | 'definitionFacts'>,
+  offlineObservers: ReadonlySet<string>,
+): boolean {
+  if (!row.native.enabled || row.definitionFacts.kind !== 'available') return false;
+  const machineId = row.definitionFacts.observerMachineId;
+  return machineId !== null && offlineObservers.has(machineId);
+}
 export type ServiceCheckMonitorSummary = Readonly<{
   down: number;
   degraded: number;
   passing: number;
+  /** Running checks whose observing Machine is offline: their last result is not today's answer (serviceCheckStale). */
+  notChecked: number;
   /** Running checks whose state needs the person (down, degraded), in list order. */
   needsYou: ReadonlySet<string>;
 }>;
@@ -351,20 +370,28 @@ export type ServiceCheckMonitorSummary = Readonly<{
  * Monitoring's glance line and its Needs-you section, from each check's reported state (readServiceCheckFacts). Only
  * running checks count: a paused check, one not read yet or one whose state is unknown counts in none.
  */
-export function serviceCheckMonitorSummary(rows: readonly MonitoredCheck[]): ServiceCheckMonitorSummary {
+export function serviceCheckMonitorSummary(
+  rows: readonly MonitoredCheck[],
+  offlineObservers: ReadonlySet<string> = NO_OFFLINE_OBSERVERS,
+): ServiceCheckMonitorSummary {
   let down = 0;
   let degraded = 0;
   let passing = 0;
+  let notChecked = 0;
   const needsYou = new Set<string>();
   for (const row of rows) {
     if (!row.native.enabled) continue;
+    if (serviceCheckStale(row, offlineObservers)) {
+      notChecked += 1;
+      continue;
+    }
     const status = readServiceCheckFacts(row.lastResults).status;
     if (status === 'down') down += 1;
     else if (status === 'degraded') degraded += 1;
     else if (status === 'up') passing += 1;
     if (serviceCheckStatusTone(status) !== null) needsYou.add(row.key);
   }
-  return { down, degraded, passing, needsYou };
+  return { down, degraded, passing, notChecked, needsYou };
 }
 
 /**

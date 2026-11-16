@@ -1,6 +1,11 @@
 import { afterEach, expect, it } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { Text } from 'react-native';
+
+import { act } from 'react-test-renderer';
+
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
 import {
   createProviderSettingsAccountHarness,
   createProviderSettingsHarness,
@@ -13,7 +18,7 @@ const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
-const { ServiceCheckList } = await import('./ServiceCheckList');
+const { ServiceCheckList, useServiceCheckSelection } = await import('./ServiceCheckList');
 
 afterEach(async () => {
   standardCleanup();
@@ -60,4 +65,74 @@ it('Monitoring lists what needs the person first, says healthy checks quietly, a
   expect(text).not.toContain('Passing');
   expect(text).toContain('99.98%');
   expect(screen.findHostByTestId('services.checks.row.a-ok.t-ok')).toBeTruthy();
+});
+
+// MONITOR-ACCEPT-1116: a Check opened beside the page is named by what it checks, as its row is ("n8n.acme.dev"),
+// never by the saved automation's name ("n8n.acme.dev availability", live: "Event observation").
+it('names an opened Check by what it checks, as its row does', async () => {
+  const rows = [row('down', 'n8n.acme.dev', results('down', 900))];
+  function Harness() {
+    const { selection, details } = useServiceCheckSelection(true);
+    return (
+      <>
+        <ServiceCheckList testID="monitoring.checks" rows={rows} scope={{ serverId: 'server-1', accountId: 'account-1' } as never}
+          selection={selection} accessibilityLabel="Checks" />
+        {details ? <Text testID="pane.title">{details.header.title}</Text> : null}
+      </>
+    );
+  }
+  const screen = await renderScreen(<Harness />);
+  await screen.pressByTestIdAsync('services.checks.row.a-down.t-down');
+  const title = screen.findHostByTestId('pane.title');
+  expect(title).toBeTruthy();
+  expect(screen.getTextContent()).not.toContain('n8n.acme.dev availability');
+});
+
+// MONITOR-ACCEPT-1116 F1 (live: "eadc runs this check and is offline" while eadc reported every minute and the Machines
+// list called it online). A Machine's heartbeat moves its activity, not its record: the row must follow the presence
+// owner's pushed answer, not a reading frozen when the record last changed.
+it('says the observing Machine stopped checking only while its presence owner says offline, and follows its heartbeat', async () => {
+  const observer = createMachineFixture({ id: 'observer-1', active: false, activeAt: Date.now() - 3_600_000, storageMode: 'plain' });
+  const scope = await account.restore({ machines: [observer] });
+  storage.getState().applyMachineActivityUpdates([{ id: observer.id, active: false, activeAt: Date.now() - 3_600_000 }],
+    { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+  const watched = { ...(row('down', 'n8n.acme.dev', results('down', 900)) as object), scope,
+    definitionFacts: { kind: 'available', observerMachineId: observer.id,
+      checks: [{ checkId: 'down', name: 'HTTP', targetLabel: 'n8n.acme.dev', periodMs: 60_000, domainId: null }] } } as never;
+  const screen = await renderScreen(
+    <ServiceCheckList testID="monitoring.checks" rows={[watched]} scope={scope as never} selection={SELECTION} accessibilityLabel="Checks" />,
+  );
+  expect(screen.getTextContent()).toContain('is offline');
+  await act(async () => {
+    storage.getState().applyMachineActivityUpdates([{ id: observer.id, active: true, activeAt: Date.now() }],
+      { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+  });
+  expect(screen.getTextContent()).not.toContain('is offline');
+  expect(screen.getTextContent()).toContain('Down');
+});
+
+// MONITOR-ACCEPT-1116 F9: Services → Checks (no sections) leads with what fails, as lab A1 does.
+it('lists a failing check before healthy ones without sections', async () => {
+  const rows = [row('ok', 'billing.acme.dev/health', results('up', 142)), row('down', 'n8n.acme.dev', results('down', 900))];
+  const screen = await renderScreen(
+    <ServiceCheckList testID="services.checks" rows={rows} scope={{ serverId: 'server-1', accountId: 'account-1' } as never}
+      selection={SELECTION} accessibilityLabel="Checks" />,
+  );
+  const text = screen.getTextContent();
+  expect(text).not.toContain('Needs you');
+  expect(text.indexOf('n8n.acme.dev')).toBeLessThan(text.indexOf('billing.acme.dev/health'));
+});
+
+// MONITOR-ACCEPT-1116 F6: until results and the definition arrive, a row never says the saved automation's name it
+// would then flip from, and no section is decided yet.
+it('reserves titles and sections while results and definitions arrive', async () => {
+  const pending = { ...(row('down', 'n8n.acme.dev', { kind: 'loading' }) as object), definitionFacts: { kind: 'loading' } } as never;
+  const loaded = row('ok', 'billing.acme.dev/health', { kind: 'loading' });
+  const screen = await renderScreen(
+    <ServiceCheckList testID="monitoring.checks" rows={[pending, loaded]} scope={{ serverId: 'server-1', accountId: 'account-1' } as never}
+      selection={SELECTION} accessibilityLabel="Checks" grouping="attention" />,
+  );
+  const text = screen.getTextContent();
+  expect(text).not.toContain('n8n.acme.dev availability');
+  expect(text).not.toContain('Needs you');
 });

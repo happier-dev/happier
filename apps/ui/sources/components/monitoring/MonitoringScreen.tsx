@@ -7,7 +7,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import { SERVICES_ROUTE } from '@/components/projects/deployments/deploymentNavigation';
-import { ServiceCheckList, useServiceCheckSelection, type ServiceCheckSelection } from '@/components/projects/deployments/ServiceCheckList';
+import { ServiceCheckList, useServiceCheckOfflineObservers, useServiceCheckSelection, type ServiceCheckSelection } from '@/components/projects/deployments/ServiceCheckList';
 import {
   servicesFamilyCoverage,
   servicesFamilyMore,
@@ -131,9 +131,10 @@ const MonitoringBody = React.memo(function MonitoringBody(
   }>,
 ) {
   const router = useRouter();
+  const offlineObservers = useServiceCheckOfflineObservers(props.rows, props.scope);
   const summary = React.useMemo(
-    () => serviceCheckMonitorSummary(props.rows),
-    [props.rows],
+    () => serviceCheckMonitorSummary(props.rows, offlineObservers),
+    [props.rows, offlineObservers],
   );
   const empty = props.rows.length === 0 && !props.reading;
   const openServices = React.useCallback(
@@ -218,6 +219,13 @@ function MonitoringBand(
       ? {
           key: 'passing',
           text: t(`${m}.glancePassing`, { count: summary.passing }),
+          color: theme.colors.text.secondary,
+        }
+      : null,
+    summary.notChecked > 0
+      ? {
+          key: 'notChecked',
+          text: t(`${m}.glanceNotChecked`, { count: summary.notChecked }),
           color: theme.colors.text.secondary,
         }
       : null,

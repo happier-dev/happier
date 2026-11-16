@@ -13,6 +13,7 @@ import {
   serviceCheckAverageLatency,
   serviceCheckTodayUptime,
   serviceCheckMonitorSummary,
+  serviceCheckStale,
 } from './serviceCheckPresentation';
 
 const DAY = 86_400_000;
@@ -346,8 +347,9 @@ describe('a Check’s recent results as bars (MONITOR-LAB-1115 Q1)', () => {
 });
 
 describe('Monitoring: what needs the person, and the counts that say it', () => {
-  const row = (key: string, status: 'up' | 'down' | 'degraded' | 'unknown' | null, enabled = true) => ({
+  const row = (key: string, status: 'up' | 'down' | 'degraded' | 'unknown' | null, enabled = true, observerMachineId: string | null = null) => ({
     key, native: { enabled },
+    definitionFacts: { kind: 'available', observerMachineId, checks: [] },
     lastResults: status === null ? { kind: 'neverObserved' } : { kind: 'available', checks: [{ checkId: key, result: result(status) }] },
   }) as never;
 
@@ -356,5 +358,16 @@ describe('Monitoring: what needs the person, and the counts that say it', () => 
       row('e', 'down', false), row('f', null), row('g', 'unknown')]);
     expect(summary).toMatchObject({ down: 1, degraded: 1, passing: 2 });
     expect([...summary.needsYou]).toEqual(['a', 'b']);
+  });
+
+  // MONITOR-ACCEPT-1116 F2: a check whose observing Machine is offline is not passing; its last answer is not today's.
+  it('counts a check whose observer is offline as not checked, never as passing or needing the person', () => {
+    const offline = new Set(['build-01']);
+    const summary = serviceCheckMonitorSummary([row('a', 'up', true, 'build-01'), row('b', 'down', true, 'build-01'),
+      row('c', 'up', true, 'web-01'), row('d', 'up', false, 'build-01')], offline);
+    expect(summary).toMatchObject({ down: 0, degraded: 0, passing: 1, notChecked: 2 });
+    expect([...summary.needsYou]).toEqual([]);
+    expect(serviceCheckStale(row('a', 'up', true, 'build-01') as never, offline)).toBe(true);
+    expect(serviceCheckStale(row('d', 'up', false, 'build-01') as never, offline)).toBe(false);
   });
 });

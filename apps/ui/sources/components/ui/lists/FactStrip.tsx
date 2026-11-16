@@ -34,13 +34,20 @@ export const FactStrip = React.memo(function FactStrip(
     layout?: 'wrap' | 'columns';
     narrow?: boolean;
     divided?: boolean;
+    /**
+     * `headline`: a monitor page's few figures (a Check's response and uptime, lab `mfacts`) read at title size, and
+     * one hairline above and below the strip rules it from the page instead of rules between its cells.
+     */
+    scale?: 'headline';
     testID?: string;
   }>,
 ) {
   if (props.facts.length === 0) return null;
   const columns = props.layout === 'columns';
+  const headline = props.scale === 'headline';
   return (
-    <View style={[styles.strip, columns ? styles.columns : null, columns && props.divided ? styles.columnsDivided : null]}
+    <View style={[styles.strip, columns ? styles.columns : null, columns && props.divided ? styles.columnsDivided : null,
+      headline ? styles.headline : null]}
       testID={props.testID}>
       {props.facts.map((fact, index) => (
         <View key={fact.key} testID={fact.testID} style={[styles.fact, columns ? [
@@ -54,7 +61,7 @@ export const FactStrip = React.memo(function FactStrip(
             {fact.label}
           </Text>
           <Text
-            variant="label"
+            variant={headline ? 'title' : 'label'}
             style={[
               styles.value,
               fact.tone === 'danger'
@@ -67,7 +74,7 @@ export const FactStrip = React.memo(function FactStrip(
             {fact.value}
           </Text>
           {fact.detail === undefined || fact.detail === null ? null : (
-            <Text variant="meta" style={styles.detail} numberOfLines={columns ? 1 : undefined}>{fact.detail}</Text>
+            <Text variant="meta" style={styles.detail} numberOfLines={columns && !props.narrow ? 1 : undefined}>{fact.detail}</Text>
           )}
         </View>
       ))}
@@ -86,6 +93,13 @@ const styles = StyleSheet.create((theme) => ({
   // Columns: cells share the row; a phone keeps two to a row and a wide fact takes its own.
   columns: { flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s12 },
   columnsDivided: { columnGap: 0, rowGap: 0 },
+  headline: {
+    columnGap: theme.space.s24,
+    paddingVertical: theme.space.s12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border.subtle,
+  },
   cell: { flexGrow: 1, flexShrink: 1, flexBasis: 0 },
   cellWide: { flexGrow: 2, flexShrink: 1, flexBasis: 0 },
   narrowCell: { flexGrow: 1, flexShrink: 1, flexBasis: '40%' },

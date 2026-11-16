@@ -13,7 +13,8 @@ import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import { readServiceCheckRouteParams } from './deploymentNavigation';
-import { ServiceCheckDetail } from './ServiceCheckDetail';
+import { ServiceCheckDetail, useServiceCheckMeta } from './ServiceCheckDetail';
+import { serviceCheckListFacts } from './serviceCheckPresentation';
 
 const CHECK_KINDS = ['configuredCheck'] as const;
 const NO_OPEN = () => {};
@@ -64,16 +65,15 @@ export function ServiceCheckPage() {
           (!family || family.result.coverage === 'loading');
         return (
           <ItemList testID="services.check.page">
-            <MainScreenHeader
-              testID="services.check.page.header"
-              title={
-                row?.native.name ??
-                t('projects.deployments.services.checkPageTitle')
-              }
-              alwaysShowTitle
-            />
+            {row ? <CheckPageHeader row={row} /> : (
+              <MainScreenHeader
+                testID="services.check.page.header"
+                title={t('projects.deployments.services.checkPageTitle')}
+                alwaysShowTitle
+              />
+            )}
             {row ? (
-              <ServiceCheckDetail row={row} />
+              <ServiceCheckDetail row={row} metaInHeader />
             ) : reading ? (
               <ItemGroup surface="none" testID="services.check.page.loading">
                 <SkeletonRows rows={4} />
@@ -91,5 +91,24 @@ export function ServiceCheckPage() {
         );
       }}
     </MachineManagedInventorySection>
+  );
+}
+
+/**
+ * The Check page header (lab A3): named by what it checks, as the row the person pressed is, with what it is (kind,
+ * cadence, Machine) as its description, right under the name.
+ */
+function CheckPageHeader(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
+  const meta = useServiceCheckMeta(props.row);
+  const title = props.row.definitionFacts.kind === 'loading'
+    ? t('projects.deployments.services.checkPageTitle')
+    : serviceCheckListFacts(props.row).title;
+  return (
+    <MainScreenHeader
+      testID="services.check.page.header"
+      title={title}
+      alwaysShowTitle
+      {...(meta ? { description: meta } : {})}
+    />
   );
 }

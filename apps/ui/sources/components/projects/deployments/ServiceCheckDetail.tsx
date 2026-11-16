@@ -40,6 +40,7 @@ import {
   serviceCheckCauseText,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
+  serviceCheckListFacts,
   serviceCheckRecentBars,
   serviceCheckAverageLatency,
   serviceCheckTodayUptime,
@@ -49,7 +50,6 @@ import {
   serviceCheckStatusWord,
   type ServiceCheckSettings,
   formatServiceCheckLatency,
-  formatServiceCheckPeriod,
   formatServiceCheckUnit,
 } from './serviceCheckPresentation';
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
@@ -59,7 +59,6 @@ const m = 'projects.deployments.monitoring' as const;
 
 const unit = formatServiceCheckUnit;
 const formatLatency = formatServiceCheckLatency;
-const formatPeriod = formatServiceCheckPeriod;
 const formatClock = (ms: number) =>
   formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), {
     hour: 'numeric',
@@ -117,13 +116,34 @@ function useCheckSeed(row: ManagedConfiguredCheckRow) {
 }
 
 /**
+ * What a Check is, under its name (lab A3): its kind, how often and from which Machine, the list row's own facts.
+ * The target is the name and its state stands in the banner and under the bars, so neither repeats here.
+ */
+export function useServiceCheckMeta(row: ManagedConfiguredCheckRow): string | null {
+  const facts = serviceCheckListFacts(row);
+  const observer = useServerScopedMachineLabel(row.scope.serverId, facts.observerMachineId);
+  if (row.definitionFacts.kind === 'loading') return null;
+  const every = facts.every
+    ? observer
+      ? t(`${k}.checkEvery`, { period: facts.every, machine: observer })
+      : t(`${k}.checkEveryAnywhere`, { period: facts.every })
+    : null;
+  return [facts.kind, every].filter(Boolean).join(' · ') || t('automations.form.trigger.sourceUnavailable');
+}
+
+/**
  * One Check's detail (pfc-redesign rdDet-chk), the same body in the details pane and as its page: who checks what
  * and how often, whether it is failing first, the last result, response and 30-day uptime, each target's latest result,
  * then its settings. Every fact is the owner's: configured health results (with UPTIME-HISTORY's 30 days) and the
  * saved source; settings open the Check's editor.
  */
 export function ServiceCheckDetail(
-  props: Readonly<{ row: ManagedConfiguredCheckRow; nowMs?: number }>,
+  props: Readonly<{
+    row: ManagedConfiguredCheckRow;
+    nowMs?: number;
+    /** The Check page says what the Check is in its header's description; the pane says it at the top of the body. */
+    metaInHeader?: boolean;
+  }>,
 ) {
   const { row } = props;
   const { theme } = useUnistyles();
@@ -179,21 +199,10 @@ export function ServiceCheckDetail(
   const statusText = row.native.enabled
     ? serviceCheckStatusWord(facts.status)
     : t(`${k}.paused`);
-  // Kind, target and cadence come from the inventory's definition facts; the page never reads a target itself.
+  // The target comes from the inventory's definition facts; the page never reads a target itself.
   const head = serviceCheckShownDefinition(row.definitionFacts, shown?.checkId ?? null);
   const definition = head.kind === 'available' ? head.definition : null;
-  const meta = [
-    ...(definition
-      ? [
-          definition.name,
-          definition.targetLabel,
-          observer
-            ? t(`${k}.checkEvery`, { period: formatPeriod(definition.periodMs), machine: observer })
-            : t(`${k}.checkEveryAnywhere`, { period: formatPeriod(definition.periodMs) }),
-        ]
-      : [head.kind === 'loading' ? t('common.loading') : t('automations.form.trigger.sourceUnavailable')]),
-    statusText,
-  ].filter((part): part is string => Boolean(part));
+  const meta = useServiceCheckMeta(row);
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
   const recent = shown ? readServiceCheckRecent(shown) : null;
   const causeText = serviceCheckCauseText(shown?.result.cause);
@@ -261,13 +270,15 @@ export function ServiceCheckDetail(
   return (
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
       <ItemGroup surface="none" testID="services.check.head">
-        <Text
-          variant="meta"
-          style={styles.metaText}
-          testID="services.check.meta"
-        >
-          {meta.join(' · ')}
-        </Text>
+        {props.metaInHeader || meta === null ? null : (
+          <Text
+            variant="meta"
+            style={styles.metaText}
+            testID="services.check.meta"
+          >
+            {meta}
+          </Text>
+        )}
         <View style={styles.actions}>
           {settings ? <CheckNow run={settings.run} scope={row.scope} /> : null}
           {failing && investigateSubject ? (
@@ -303,7 +314,7 @@ export function ServiceCheckDetail(
       ) : null}
       <ItemGroup surface="none" testID="services.check.facts">
         <View onLayout={(event) => setFactsWidth(Math.round(event.nativeEvent.layout.width))}>
-          <FactStrip facts={stripFacts} layout="columns" divided
+          <FactStrip facts={stripFacts} layout="columns" scale="headline"
             narrow={factsWidth !== null && factsWidth < stripFacts.length * FACT_MIN_WIDTH_PX} />
         </View>
       </ItemGroup>
@@ -320,19 +331,23 @@ export function ServiceCheckDetail(
               points: latencies.map((result) => ({ id: String(result.observedAt), x: result.observedAt, y: result.latencyMs ?? null,
                 label: formatClock(result.observedAt) })),
             }]}
-            variant="area"
+            variant="line"
             size="full"
             showLegend={false}
             showReadout={false}
+            {...(average ? { reference: { value: average.averageMs, label: t(`${m}.average`) } } : {})}
           />
         </ItemGroup>
       ) : null}
       {facts.checks.map((check) => {
         const strip = check.history ? serviceCheckHistoryStrip(check.history, nowMs) : null;
         if (!strip) return null;
-        const firstObserved = strip.find((day) => day.tone !== 'unobserved') ?? null;
+        // The strip's left edge is its oldest day; a check younger than the window says when its checks began (lab A3).
+        const firstObserved = strip.findIndex((day) => day.tone !== 'unobserved');
+        const began = firstObserved > 0 ? t(`${m}.noChecksBefore`, { day: formatDay(strip[firstObserved]!.dayStartAt) }) : null;
         return (
-          <ItemGroup key={check.checkId} title={t(`${k}.lastDays`)} surface="none" testID={`services.check.history.${check.checkId}`}>
+          <ItemGroup key={check.checkId} title={t(`${k}.lastDays`)} surface="none" testID={`services.check.history.${check.checkId}`}
+            {...(began ? { action: <Text variant="meta" style={styles.captionText}>{began}</Text> } : {})}>
             <View style={styles.hero}>
               <ServiceCheckBars
                 size="tile"
@@ -347,7 +362,7 @@ export function ServiceCheckDetail(
                 }))}
               />
               <View style={styles.caption}>
-                <Text variant="meta" style={styles.captionText}>{formatDay((firstObserved ?? strip[0]!).dayStartAt)}</Text>
+                <Text variant="meta" style={styles.captionText}>{formatDay(strip[0]!.dayStartAt)}</Text>
                 <Text variant="meta" style={styles.captionText}>{t(`${m}.today`)}</Text>
               </View>
             </View>
@@ -368,14 +383,16 @@ export function ServiceCheckDetail(
               title={serviceCheckResultWord(result.status)
                 ? <InlineStatus tone={serviceCheckStatusTone(result.status) ?? 'secondary'} label={serviceCheckResultWord(result.status)!} />
                 : '—'}
-              subtitle={observer ? t(`${k}.resultFrom`, { machine: observer }) : undefined}
-              detail={[
-                result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
-                result.latencyMs === undefined ? null : formatLatency(result.latencyMs),
+              // When, what it answered and from where on line 2; the response alone on the right, the same short value
+              // on every row so a phone never switches one row to stacked facts (lab A3 recent results).
+              subtitle={[
                 formatClock(result.observedAt),
+                result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
+                observer ? t(`${k}.resultFrom`, { machine: observer }) : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}
+              detail={result.latencyMs === undefined ? undefined : formatLatency(result.latencyMs)}
               mode="info"
             />
           ))}

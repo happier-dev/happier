@@ -16,8 +16,9 @@ import type { ManagedWatchedServiceRow } from '@/components/store/inventory/mana
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
-import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { describeMachinePresenceSummary } from '@/utils/sessions/machinePresenceLine';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -25,7 +26,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 
 import { serviceCheckMonitorSummary } from './serviceCheckPresentation';
-import { ServiceCheckList, type ServiceCheckSelection } from './ServiceCheckList';
+import { ServiceCheckList, useServiceCheckOfflineObservers, type ServiceCheckSelection } from './ServiceCheckList';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { watchedServiceBands, watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
 import { ServicesPaging, useReportViewCount, type ServicesViewCount } from './ServicesViews';
@@ -141,7 +142,8 @@ function ChecksList(props: Readonly<{
   onCount: (count: ServicesViewCount) => void;
 }>) {
   const { rows } = props;
-  const failing = React.useMemo(() => serviceCheckMonitorSummary(rows).down, [rows]);
+  const offlineObservers = useServiceCheckOfflineObservers(rows, props.scope);
+  const failing = React.useMemo(() => serviceCheckMonitorSummary(rows, offlineObservers).down, [rows, offlineObservers]);
   const count = React.useMemo(() => [t('projects.deployments.services.countChecks', { count: rows.length }),
     failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, rows.length]);
   useReportViewCount('checks', count, props.onCount, failing);
@@ -287,7 +289,7 @@ function WatchedList(props: Readonly<{
   return (
     <>
       {props.serverId ? machineIds.map((machineId) => (
-        <WatchedMachineReader key={machineId} serverId={props.serverId!} scope={props.scope} machineId={machineId} active={props.presented}
+        <WatchedMachineReader key={machineId} serverId={props.serverId!} machineId={machineId} active={props.presented}
           onRead={report} onRefresh={registerRefresh} />
       )) : null}
       <ServicesPageList<WatchedItem> testID="services.watched" model={model} anatomy={anatomy}
@@ -297,7 +299,7 @@ function WatchedList(props: Readonly<{
 }
 
 /** One Machine's service read (no UI of its own), reported up so the Watched rows draw its facts. */
-function WatchedMachineReader(props: Readonly<{ serverId: string; scope: ServerAccountScope | null; machineId: string; active: boolean;
+function WatchedMachineReader(props: Readonly<{ serverId: string; machineId: string; active: boolean;
   onRead: (machineId: string, read: WatchedMachineRead) => void;
   onRefresh: (machineId: string, refresh: () => void) => void }>) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: props.active });
@@ -306,13 +308,11 @@ function WatchedMachineReader(props: Readonly<{ serverId: string; scope: ServerA
   React.useEffect(() => { onRefresh(machineId, () => { void refresh(); }); }, [machineId, onRefresh, refresh]);
   const failed = Boolean(list.error || list.unavailable);
   const rows = list.rows ?? null;
-  // The Machine presence owner's word while this Home cannot reach it (the Machine page header's own line).
-  const { scope } = props;
-  const unreachable = useServerScopedMachine(props.serverId, machineId, (machine) => {
-    if (!machine) return null;
-    const presence = describeMachineRuntimePresence(machine, undefined, null, scope);
-    return presence.status === 'offline' && presence.label ? presence.label : null;
-  });
+  // The Machine presence owner's word while this Home cannot reach it, pushed on every heartbeat (the record itself
+  // does not move with presence), as the Machines list reads it.
+  const summary = useMachinePresenceSummary(props.serverId, machineId);
+  const presence = summary.machineIsKnown ? describeMachinePresenceSummary(summary) : null;
+  const unreachable = presence?.status === 'offline' && presence.label ? presence.label : null;
   React.useEffect(() => {
     // An unreachable Machine settles on its presence; still reading reports nothing; a read that answered or failed
     // reports its rows (the last listed ones on failure).
