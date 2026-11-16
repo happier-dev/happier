@@ -12,6 +12,7 @@ import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { readSessionByIdHttp, resetSessionByIdHttpReadsForTests } from '@/sync/engine/sessions/sessionByIdHttp';
 import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { StaleServerGenerationError } from '@/sync/http/client';
+import { captureActiveServerRuntimeTarget, publishActiveServerRuntimeOrigin } from '@/sync/domains/server/serverProfiles';
 import { apiSocket } from './apiSocket';
 
 installTokenStorageWebPlatformMocks();
@@ -212,5 +213,32 @@ it('uses the installed incumbent origin for a logical active read and refuses a 
     ]) {
         expect(() => apiSocket.createReadTransportForActiveServer(mismatch)).toThrow(StaleServerGenerationError);
     }
+    expect(reads).toHaveLength(1);
+});
+
+it('follows a same-Home native listener restart for a prepared Sync request instead of refusing it forever', async () => {
+    const snapshot = getActiveServerSnapshot();
+    const target = { endpoint, serverId: snapshot.serverId, generation: snapshot.generation };
+    const firstListener = 'http://127.0.0.1:47231';
+    const restartedListener = 'http://127.0.0.1:47299';
+    const runtimeTarget = captureActiveServerRuntimeTarget();
+    expect(publishActiveServerRuntimeOrigin({ target: runtimeTarget, leaseId: 'home-lease', runtimeOrigin: firstListener, carrier: 'iroh' })).toBe(true);
+    apiSocket.initialize({ ...target, runtimeOrigin: firstListener, carrier: 'iroh', token: oldToken, credentials: { token: oldToken } }, null);
+    const reads: string[] = [];
+    setRuntimeFetch(async input => {
+        if (new URL(String(input)).pathname !== '/v2/changes') return Response.json({});
+        reads.push(String(input));
+        return Response.json({ changes: [], nextCursor: 0 });
+    });
+    // Sync captures its applied target once per apply, as `createAppliedTransportRequest` does.
+    const prepared = apiSocket.createRequestForPreparedTarget({ ...target, runtimeOrigin: firstListener, carrier: 'iroh' });
+    // The native supervisor restarts the same lease's loopback listener: same Home, generation and carrier.
+    expect(publishActiveServerRuntimeOrigin({ target: runtimeTarget, leaseId: 'home-lease', runtimeOrigin: restartedListener, carrier: 'iroh' })).toBe(true);
+    const response = await prepared('/v2/changes', { method: 'GET' }, { retry: 'none' });
+    expect(response.ok).toBe(true);
+    expect(reads.map(read => new URL(read).origin)).toEqual([restartedListener]);
+    // A different Home generation still refuses before issuing HTTP.
+    const otherGeneration = apiSocket.createRequestForPreparedTarget({ ...target, generation: target.generation + 1, runtimeOrigin: restartedListener, carrier: 'iroh' });
+    await expect(otherGeneration('/v2/changes', { method: 'GET' }, { retry: 'none' })).rejects.toBeInstanceOf(StaleServerGenerationError);
     expect(reads).toHaveLength(1);
 });

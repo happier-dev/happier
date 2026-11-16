@@ -1262,12 +1262,15 @@ class ApiSocket {
 
     private isPreparedRequestTargetCurrent(target: PreparedSocketRequestTarget): boolean {
         const config = this.config;
+        // The runtime origin is the lease's current loopback listener, not the target: a
+        // same-generation republication (a native listener restart) moves it in place and
+        // every request below is issued through the moved origin. Pinning it here left a
+        // prepared Sync target refusing every request after the first restart.
         return Boolean(
             config
             && config.endpoint === target.endpoint
             && config.serverId === target.serverId
             && config.generation === target.generation
-            && config.runtimeOrigin === target.runtimeOrigin
             && config.carrier === target.carrier
             && (config.homeCarrier ?? null) === (target.homeCarrier ?? null),
         );
