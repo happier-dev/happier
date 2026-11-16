@@ -64,6 +64,68 @@ const actions: Readonly<{
 
 // Wrangler Pages starts its deployment status wait at one second. The plugin declares the same cadence for Workers.
 const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
+    description: 'Code that runs on Cloudflare’s network',
+    plans: [
+      {
+        "id": "free",
+        "title": "Free",
+        "facts": [
+          {
+            "label": "Price",
+            "value": "$0"
+          },
+          {
+            "label": "Requests",
+            "value": "100,000 a day"
+          },
+          {
+            "label": "CPU time",
+            "value": "10 ms per invocation"
+          }
+        ],
+        "included": [
+          "No data transfer charges"
+        ],
+        "source": {
+          "url": "https://developers.cloudflare.com/workers/platform/pricing/",
+          "checkedAt": "2026-11-16"
+        }
+      },
+      {
+        "id": "paid",
+        "title": "Paid",
+        "facts": [
+          {
+            "label": "Price",
+            "value": "From $5 a month per account"
+          },
+          {
+            "label": "Requests",
+            "value": "10M a month"
+          },
+          {
+            "label": "CPU time",
+            "value": "30M ms a month"
+          },
+          {
+            "label": "Extra requests",
+            "value": "$0.30 per 1M"
+          },
+          {
+            "label": "Extra CPU time",
+            "value": "$0.02 per 1M ms"
+          }
+        ],
+        "included": [
+          "No data transfer charges",
+          "Pages Functions usage included in Workers billing"
+        ],
+        "source": {
+          "url": "https://developers.cloudflare.com/workers/platform/pricing/",
+          "checkedAt": "2026-11-16"
+        }
+      }
+    ],
     accepts: ['workers'], needs: ['repository', 'stateless'], sources: { gitIntegration: [], upload: true },
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
     actions: { inspect: 'workers-inspect', link: 'workers-link', create: 'workers-create', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel', teardown: 'workers-teardown', promote: 'workers-promote', rollback: 'workers-rollback',
@@ -72,7 +134,40 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
       domains: { read: 'workers-domains-read', add: 'workers-domains-add', verify: 'workers-domains-verify', remove: 'workers-domains-remove' } } },
     pages: { statusIntervalMs: 1000, role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
       accepts: ['static'], needs: ['repository', 'stateless'], sources: { gitIntegration: ['github', 'gitlab'], upload: true },
-      description: 'Create or link a Pages project.',
+      description: 'Static and server-rendered sites',
+      plans: [
+        {
+          "id": "free",
+          "title": "Free",
+          "facts": [
+            {
+              "label": "Price",
+              "value": "$0"
+            },
+            {
+              "label": "Builds",
+              "value": "500 a month"
+            },
+            {
+              "label": "At a time",
+              "value": "1 build"
+            },
+            {
+              "label": "Projects",
+              "value": "100 per account"
+            }
+          ],
+          "included": [
+            "Custom domains",
+            "Preview deployments",
+            "Functions billed separately as Workers"
+          ],
+          "source": {
+            "url": "https://developers.cloudflare.com/pages/platform/limits/",
+            "checkedAt": "2026-11-16"
+          }
+        }
+      ],
       targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
       actions: { inspect: 'pages-inspect', link: 'pages-link', create: 'pages-create', deploy: 'pages-deploy', observe: 'pages-observe', rollback: 'pages-rollback', logs: { build: 'pages-build-logs-read' },
         variables: { read: 'pages-variables-read', sync: 'pages-variables-sync' },
