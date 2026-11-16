@@ -866,6 +866,7 @@ async function stageCliBinaryArtifactSupportPayload({
   goVersion,
   preserveCompilePayloadAssets = false,
   includeIrohNativeReleaseEvidence = false,
+  dependencyRootDir = repoRoot,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -878,6 +879,8 @@ async function stageCliBinaryArtifactSupportPayload({
   goVersion?: string;
   preserveCompilePayloadAssets?: boolean;
   includeIrohNativeReleaseEvidence?: boolean;
+  /** Installed packages resolve under this root (default: repoRoot); a source revision tree mounts its checkout's installation. */
+  dependencyRootDir?: string;
 }): Promise<
   Readonly<{
     entrypoint: string;
@@ -924,7 +927,7 @@ async function stageCliBinaryArtifactSupportPayload({
   vendorBundledPackageRuntimeDependencies({
     srcPackageJsonPath: join(repoRoot, 'apps/cli/package.json'),
     destPackageDir: payloadDir,
-    dereferenceRootDir: repoRoot,
+    dereferenceRootDir: dependencyRootDir,
     excludeRootDependencies: CLI_OPTIONAL_RUNTIME_PACKAGES,
   });
   const workspaceBundles = resolveWorkspaceBundlesFromPackageJson({
@@ -940,7 +943,7 @@ async function stageCliBinaryArtifactSupportPayload({
     vendorBundledPackageRuntimeDependencies({
       srcPackageJsonPath: join(srcDir, 'package.json'),
       destPackageDir: destination,
-      dereferenceRootDir: repoRoot,
+      dereferenceRootDir: dependencyRootDir,
     });
     // Native/static support is consumed beside the source-bundled graph.
     // Authored TypeScript and private package dist never enter this tree.
@@ -1051,6 +1054,7 @@ export async function buildCliBinaryArtifactSupportPayload({
   goVersion,
   preserveCompilePayloadAssets = false,
   includeIrohNativeReleaseEvidence = false,
+  dependencyRootDir = repoRoot,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -1063,6 +1067,8 @@ export async function buildCliBinaryArtifactSupportPayload({
   goVersion?: string;
   preserveCompilePayloadAssets?: boolean;
   includeIrohNativeReleaseEvidence?: boolean;
+  /** Installed packages resolve under this root (default: repoRoot); a source revision tree mounts its checkout's installation. */
+  dependencyRootDir?: string;
 }): Promise<
   Readonly<{
     entrypoint: string;
@@ -1082,6 +1088,7 @@ export async function buildCliBinaryArtifactSupportPayload({
     goVersion,
     preserveCompilePayloadAssets,
     includeIrohNativeReleaseEvidence,
+    dependencyRootDir,
   });
 }
 

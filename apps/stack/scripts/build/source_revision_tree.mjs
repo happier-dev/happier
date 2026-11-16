@@ -211,19 +211,19 @@ function supportStoreDir(treesRoot) {
  * are hardlinks, never symlinks. An unchanged identity only links.
  * @returns {Promise<string>} the support identity this tree consumed
  */
-async function stageTreeNativeSupport({ treeDir, treesRoot, env, signal }) {
+async function stageTreeNativeSupport({ repoDir, treeDir, treesRoot, env, signal }) {
   const storeDir = supportStoreDir(treesRoot);
   // The tree's own owner, loaded through the tree's source runtime.
   const code = `const { pathToFileURL } = await import('node:url');
 const { join } = await import('node:path');
-const [baseDir, storeDir] = JSON.parse(process.argv[1]);
+const [baseDir, storeDir, dependencyRootDir] = JSON.parse(process.argv[1]);
 const owner = await import(pathToFileURL(join(baseDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs')).href);
 if (typeof owner.ensureDaemonSupportArtifact !== 'function') throw new Error('[source-tree] this revision predates source-tree native support; reload at a newer --rev');
-const support = await owner.ensureDaemonSupportArtifact({ stackBaseDir: storeDir, repoDir: baseDir, env: process.env });
+const support = await owner.ensureDaemonSupportArtifact({ stackBaseDir: storeDir, repoDir: baseDir, dependencyRootDir, env: process.env });
 process.stdout.write('HSTACK_DAEMON_SUPPORT ' + JSON.stringify(support) + '\\n');`;
   const output = await runCapture(process.execPath, ['--conditions=happier-source',
     '--import', pathToFileURL(join(treeDir, 'packages/cli-common/registerSourceRuntime.mjs')).href,
-    '--input-type=module', '-e', code, JSON.stringify([treeDir, storeDir])], {
+    '--input-type=module', '-e', code, JSON.stringify([treeDir, storeDir, resolveDependencyInstallRoot(repoDir)])], {
     cwd: treeDir, signal,
     // Rust intermediates are shared per host, never inside a published base.
     env: { ...env, CARGO_TARGET_DIR: join(storeDir, 'cargo-target') } });
@@ -453,7 +453,7 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   if (touchesPluginInputs([...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)])) {
     await deriveDaemonPluginPublication({ treeDir, env, signal });
   }
-  const supportFingerprint = await stageTreeNativeSupport({ treeDir, treesRoot, env, signal });
+  const supportFingerprint = await stageTreeNativeSupport({ repoDir, treeDir, treesRoot, env, signal });
   await writeOwnFile(join(treeDir, TREE_MARKER), JSON.stringify({ baseDir: base.baseDir,
     revision: descriptor.commit?.revision ?? descriptor.revision, supportFingerprint }));
   // A new base, or a Stack that moved to another base, can leave an unreferenced one.

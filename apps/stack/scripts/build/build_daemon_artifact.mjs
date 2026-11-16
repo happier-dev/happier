@@ -151,6 +151,7 @@ async function buildDaemonSupportArtifact({
   env,
   runCaptureImpl,
   buildDaemonSupportArtifactPayloadImpl,
+  dependencyRootDir,
 }) {
   const artifactDir = resolveStackComponentArtifactDir({
     stackBaseDir,
@@ -195,6 +196,7 @@ async function buildDaemonSupportArtifact({
         env,
         supportArtifactFingerprint,
         goVersion,
+        ...(dependencyRootDir ? { dependencyRootDir } : {}),
       });
       await writeArtifactManifest({
         artifactDir: tmpArtifactDir,
@@ -235,14 +237,15 @@ async function buildDaemonSupportArtifact({
  * Source revision trees consume it beside their source graph.
  * @returns {Promise<{ fingerprint: string, payloadDir: string }>}
  */
-export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir, env = process.env,
+export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir, dependencyRootDir, env = process.env,
   runtimeTarget = { platform: process.platform, arch: process.arch } }) {
   const fingerprint = await resolveDaemonSupportArtifactFingerprint({ sourceMetadata: { repoDir }, env, target: runtimeTarget });
   // The support identity is derived from these sources alone.
   const sourceMetadata = { repoDir, sourceFingerprint: fingerprint, builtAt: new Date().toISOString() };
   const support = await buildDaemonSupportArtifact({ stackBaseDir, supportArtifactFingerprint: fingerprint, sourceMetadata,
     target: resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS, platform: runtimeTarget.platform, arch: runtimeTarget.arch }),
-    runtimeTarget, env, runCaptureImpl: runCapture, buildDaemonSupportArtifactPayloadImpl: buildCliBinaryArtifactSupportPayload });
+    runtimeTarget, env, runCaptureImpl: runCapture, buildDaemonSupportArtifactPayloadImpl: buildCliBinaryArtifactSupportPayload,
+    dependencyRootDir });
   return { fingerprint, payloadDir: support.payloadDir };
 }
 
