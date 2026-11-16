@@ -17,6 +17,7 @@ import { CollectionRowMenu } from '@/components/ui/lists/collection/CollectionRo
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 
+import type { HappierTone } from '@happier-dev/plugin-ui/presentation';
 import type { deploymentRailState } from '../deploymentPresentation';
 
 /**
@@ -26,6 +27,13 @@ import type { deploymentRailState } from '../deploymentPresentation';
 export type DeploymentEnvironmentState = NonNullable<
   ReturnType<typeof deploymentRailState>
 > | Readonly<{ tone: 'quiet'; text: string }>;
+/**
+ * A tree row's state in its owner's tone and words: an Environment's (`DeploymentEnvironmentState`), a Domain's or a
+ * Check's. A null tone is work in progress (it pulses).
+ */
+export type DeploymentRowState = DeploymentEnvironmentState | Readonly<{ tone: HappierTone; text: string }>;
+/** The tones that ask for the person: the row keeps the shared needs-you treatment while its state has one. */
+const NEEDS_YOU_TONES: ReadonlySet<string> = new Set<HappierTone>(['danger', 'warning', 'attention']);
 
 /**
  * The one Environment state mark (UI refinements ruling 2026-11-15 08:57Z): plugin-ui `Status` inline, its dot and word
@@ -35,7 +43,7 @@ export type DeploymentEnvironmentState = NonNullable<
 export const DeploymentEnvironmentStateMark = React.memo(
   function DeploymentEnvironmentStateMark(
     props: Readonly<{
-      state: DeploymentEnvironmentState;
+      state: DeploymentRowState;
       testID?: string;
     }>,
   ) {
@@ -85,7 +93,9 @@ export type DeploymentTreeRowKind =
   | 'project'
   | 'environment'
   | 'service'
-  | 'database';
+  | 'database'
+  | 'domain'
+  | 'check';
 
 function treeRowGlyph(
   kind: DeploymentTreeRowKind,
@@ -101,6 +111,10 @@ function treeRowGlyph(
       return 'cube';
     case 'database':
       return 'stack';
+    case 'domain':
+      return 'globe';
+    case 'check':
+      return 'pulse';
   }
 }
 
@@ -110,7 +124,7 @@ function treeRowGlyph(
  */
 export function DeploymentEnvironmentRowEnd(
   props: Readonly<{
-    state: DeploymentEnvironmentState | null;
+    state: DeploymentRowState | null;
     fact: string | null;
     testID?: string;
   }>,
@@ -132,7 +146,7 @@ export type DeploymentTreeRowModel = Readonly<{
   titleQualifier?: string | null;
   /** An Environment on a platform target (its mark is a cloud). */
   platform?: boolean;
-  state?: DeploymentEnvironmentState | null;
+  state?: DeploymentRowState | null;
   fact?: string | null;
 }>;
 
@@ -179,7 +193,7 @@ export const DeploymentTreeRow = React.memo(function DeploymentTreeRow(
         />
       }
       // While it needs the person (a toned state, not a working deploy) the row keeps the shared needs-you treatment.
-      needsYou={Boolean(row.state?.tone)}
+      needsYou={row.state?.tone ? NEEDS_YOU_TONES.has(row.state.tone) : false}
       status={
         <DeploymentEnvironmentRowEnd
           state={row.state ?? null}

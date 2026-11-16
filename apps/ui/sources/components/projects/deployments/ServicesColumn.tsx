@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import type { DeploymentReadDemandV1 } from '@happier-dev/deployments';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 
 import {
   usePathname,
@@ -36,8 +36,13 @@ import {
 import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref, SERVICES_ROUTE } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
+import { useServicesListView, useServicesSpaceHeader } from './useServicesListView';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { DeploymentEnvironmentRowMenu, DeploymentEnvironmentStateMark, DeploymentTreeRow } from './rows/DeploymentEnvironmentRow';
 import { usePinnedEnvironmentIds } from '@/sync/domains/workspaces/projectAccountRows';
+import { setServicesColumnGrouping, useServicesColumnGrouping, type ServicesColumnGrouping } from '@/sync/domains/state/servicesColumnUiState';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { ServicesColumnTypeSections } from './ServicesColumnTypeSections';
 import { pinProjectService } from '@/sync/ops/actions/projectWorkspaceActions';
 import { deploymentEnvironmentRowFact, deploymentEnvironmentRunsOnMachine } from './rows/deploymentEnvironmentRowFact';
 
@@ -127,11 +132,27 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
   const serverId = lifetime?.scope.serverId ?? null;
   // The person's pinned services: their private Services organization row on this Home (projects.services.pin).
   const pinnedEnvironmentIds = usePinnedEnvironmentIds(serverId);
+  // How the column groups what you run, kept on this device (owner 2026-11-16 10:20Z).
+  const grouping = useServicesColumnGrouping();
   const togglePinned = React.useCallback((environmentId: string, pinned: boolean) => {
     if (serverId) void pinProjectService({ serverId, environmentId, pinned });
   }, [serverId]);
+  // Saved views and filters (owner D5, agreed with PFC-SERVICES 11:15Z): the column header places the one Services
+  // header (title menu, funnel, strip); the Apps page beside it adds none, and both narrow through the same draft.
+  const presented = useLayoutPresentationActive();
+  const servicesView = useServicesListView(read.snapshot.value?.items, presented);
+  const spaceHeader = useServicesSpaceHeader(servicesView, 'services-column-space');
+  const space: ServicesColumnSpace = {
+    isVisible: servicesView.isVisible,
+    narrowing: servicesView.narrowing,
+    matchedCount: servicesView.filterResult.matchedCount,
+    titleControl: spaceHeader.titleControl,
+    filterButton: spaceHeader.filterButton,
+    band: <>{spaceHeader.strip}{spaceHeader.conditionRow}{spaceHeader.overlays}</>,
+  };
   return (
     <ServicesColumnView
+      space={space}
       read={read}
       serverId={lifetime?.scope.serverId ?? null}
       lifetime={lifetime}
@@ -140,6 +161,9 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
       create={create}
       pinnedEnvironmentIds={pinnedEnvironmentIds}
       onTogglePinned={togglePinned}
+      controller={read.controller}
+      grouping={grouping}
+      onGroupingChange={setServicesColumnGrouping}
     />
   );
 });
@@ -160,6 +184,12 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     /** Pinned services, newest first (the Services organization row); an id this read does not hold draws nothing. */
     pinnedEnvironmentIds: readonly string[];
     onTogglePinned: (environmentId: string, pinned: boolean) => void;
+    /** The read's controller, for the By type sections' own reads (mounted only while By type shows). */
+    controller: DeploymentReadControllerV1 | null;
+    grouping: ServicesColumnGrouping;
+    onGroupingChange: (grouping: ServicesColumnGrouping) => void;
+    /** The Services saved view (owner D5): which Environments it keeps, and the header pieces the column places. */
+    space?: ServicesColumnSpace;
   }>,
 ) {
   const { read, serverId, selection, onNavigate } = props;
@@ -178,8 +208,10 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
   const routeEnvironmentId = selection?.kind === 'environment' ? selection.environmentId : null;
   const listed = React.useMemo(() => {
     const deployed = new Set(items.flatMap((item) => item.currentDeployment ? [item.environment.projectSourceId] : []));
-    return rows.filter((row) => deployed.has(row.projectSourceId) || row.environmentId === routeEnvironmentId);
-  }, [items, rows, routeEnvironmentId]);
+    const kept = props.space?.isVisible;
+    return rows.filter((row) => (deployed.has(row.projectSourceId) || row.environmentId === routeEnvironmentId)
+      && (kept === undefined || kept(row.environmentId)));
+  }, [items, rows, routeEnvironmentId, props.space?.isVisible]);
   const groups = React.useMemo(() => {
     const shown = needle
       ? listed.filter((row) =>
@@ -295,11 +327,14 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         href: childHref(row, child),
       }))];
     };
+    // All (owner 2026-11-16): every listed Environment in one flat run, each named by its Project.
+    const flat = props.grouping === 'all' ? groups.flatMap((group) => group.rows) : null;
     const treeRows: ServicesTreeRow[] = [
       { key: 'all', level: 0, expandable: false, expanded: false, href: SERVICES_ROUTE },
       ...pinnedRows.map((row): ServicesTreeRow => ({ key: `pinned:${row.environmentId}`, level: 0, expandable: false,
         expanded: false, href: environmentHref(row.projectSourceId, row.environmentId) })),
-      ...presented.flatMap(({ group, only, open }) =>
+      ...(flat ? flat.flatMap((row) => environmentRow(row, 0)) : []),
+      ...(flat ? [] : presented).flatMap(({ group, only, open }) =>
         only
           ? environmentRow(only, 0)
           : [
@@ -318,7 +353,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     return { presented, rows: treeRows, byKey: new Map(treeRows.map((row) => [row.key, row])) };
     // isOpen, environmentHref and projectHref read exactly these inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, expanded, collapsed, routeProject, needle, serverId, openEnvironments, children, itemById, pinnedRows]);
+  }, [groups, expanded, collapsed, routeProject, needle, serverId, openEnvironments, children, itemById, pinnedRows, props.grouping]);
   const keyboard = useCollectionTreeKeyboard(tree.rows, {
     onToggle: (key) => {
       const row = tree.byKey.get(key);
@@ -337,7 +372,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
 
   // The one Environment row (UI refinements ruling 2026-11-15 08:57Z): the Projects tree's row, one line, its end the
   // shared state mark or its one quiet fact; opened, the services and databases it runs under it.
-  const renderEnvironment = (row: (typeof rows)[number], child: boolean, title?: string) => {
+  const renderEnvironment = (row: (typeof rows)[number], child: boolean, title?: string, named = false) => {
+    const name = named ? namedByProject(row) : { title: row.title, titleQualifier: row.titleQualifier };
     const href = environmentHref(row.projectSourceId, row.environmentId);
     const testID = `services-column:environment:${row.environmentId}`;
     const expandable = machineOf(row.environmentId) !== null;
@@ -348,7 +384,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         <DeploymentTreeRow
           testID={testID}
           // A folded Project keeps its Project mark, so every top-level row starts on one edge (lab `sideSvc`).
-          row={{ kind: title ? 'project' : 'environment', title: title ?? row.title, titleQualifier: title ? null : row.titleQualifier,
+          row={{ kind: title ? 'project' : 'environment', title: title ?? name.title, titleQualifier: title ? null : name.titleQualifier,
             platform: row.platform, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
           href={href}
           treeItem={treeItemOf(`environment:${row.environmentId}`)}
@@ -386,8 +422,11 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         testID="services-column:list"
         surface="plane"
         title={t('projects.deployments.services.title')}
-        // A count speaks only once the whole list is known (no "0", no count of one page).
-        count={complete && items.length > 0 ? items.length : undefined}
+        // The grouping switch (owner 2026-11-16 10:20Z): the Session list's own control (SegmentedTabBar) in the title row.
+        titleAccessory={<ServicesColumnGroupingSwitch grouping={props.grouping} onChange={props.onGroupingChange} />}
+        {...(props.space ? { titleControl: props.space.titleControl, strip: props.space.band } : {})}
+        // A count speaks only once the whole list is known (no "0", no count of one page); a saved view counts what it keeps.
+        count={complete && items.length > 0 ? (props.space?.narrowing ? props.space.matchedCount : items.length) : undefined}
         create={props.create}
         search={
           searchable
@@ -395,6 +434,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
                 testID: 'services-column:search',
                 value: query,
                 onChangeText: setQuery,
+                ...(props.space ? { trailing: props.space.filterButton } : {}),
                 placeholder: t(
                   'projects.deployments.services.searchPlaceholder',
                 ),
@@ -416,13 +456,12 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         {pinnedRows.map((row) => {
           const href = environmentHref(row.projectSourceId, row.environmentId);
           const testID = `services-column:pinned:${row.environmentId}`;
-          // Named by its Project, the Environment beside it (lab: "billing-api  Production  v1.42").
-          const project = row.projectName && !isSameDeploymentName(row.title, row.projectName) ? row.projectName : null;
+          const name = namedByProject(row);
           return (
             <DeploymentTreeRow
               key={testID}
               testID={testID}
-              row={{ kind: 'environment', title: project ?? row.title, titleQualifier: project ? row.title : row.titleQualifier,
+              row={{ kind: 'environment', title: name.title, titleQualifier: name.titleQualifier,
                 platform: row.platform, state: row.state, fact: deploymentEnvironmentRowFact(row, itemById.get(row.environmentId)) }}
               href={href}
               treeItem={treeItemOf(`pinned:${row.environmentId}`)}
@@ -460,8 +499,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
             title={t('common.noMatches')}
           />
         ) : null}
-        {groups.length > 0 ? (
-          <CollectionListGroupLabel title={t('tabs.projects')} />
+        {groups.length > 0 && props.grouping !== 'all' ? (
+          <CollectionListGroupLabel title={props.grouping === 'type' ? t('projects.deployments.services.apps') : t('tabs.projects')} />
         ) : null}
         {[...openEnvironments].flatMap((environmentId) => {
           const machineId = machineOf(environmentId);
@@ -470,7 +509,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         })}
         {/* The tree's rows in drawn order, disclosed children included: the one list-row rule runs between them. */}
         <CollectionRows>
-        {tree.presented.map(({ group, only, open }) => {
+        {props.grouping === 'all' ? groups.flatMap((group) => group.rows).map((row) => renderEnvironment(row, false, undefined, true)) : null}
+        {props.grouping === 'all' ? null : tree.presented.map(({ group, only, open }) => {
           // A Project whose one Environment carries its name folds into that Environment's row.
           if (only) return renderEnvironment(only, false, group.title);
           // Folded, the Project says the first state that needs the person, with the one Environment state mark.
@@ -507,8 +547,58 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           );
         })}
         </CollectionRows>
+        {props.grouping === 'type' ? (
+          <ServicesColumnTypeSections controller={props.controller} demand={COLUMN_DEMAND} scope={props.lifetime?.scope ?? null}
+            serverId={serverId} needle={needle} onNavigate={onNavigate} />
+        ) : null}
       </CollectionList>
     </View>
+  );
+});
+
+export type { ServicesColumnGrouping };
+
+/** The Services saved view the column header carries (owner D5): `useServicesListView` + `useServicesSpaceHeader`. */
+type ServicesColumnSpace = Readonly<{
+  isVisible: (environmentId: string) => boolean;
+  narrowing: boolean;
+  matchedCount: number;
+  titleControl: React.ReactNode;
+  filterButton: React.ReactNode;
+  band: React.ReactNode;
+}>;
+
+/** Named by its Project, the Environment beside it (lab "billing-api  Production"): the All and Pinned rows. */
+function namedByProject(row: Readonly<{ title: string; titleQualifier?: string | null; projectName?: string | null }>) {
+  const project = row.projectName && !isSameDeploymentName(row.title, row.projectName) ? row.projectName : null;
+  return { title: project ?? row.title, titleQualifier: project ? row.title : row.titleQualifier ?? null };
+}
+
+/**
+ * All · By project · By type (owner 2026-11-16 10:20Z): the Session list's icon segmented control (`SegmentedTabBar`,
+ * compact, a radiogroup) in the column's title row, before Search and "+".
+ */
+const ServicesColumnGroupingSwitch = React.memo(function ServicesColumnGroupingSwitch(props: Readonly<{
+  grouping: ServicesColumnGrouping;
+  onChange: (grouping: ServicesColumnGrouping) => void;
+}>) {
+  const { theme } = useUnistyles();
+  const color = theme.colors.text.secondary;
+  return (
+    <SegmentedTabBar<ServicesColumnGrouping>
+      testIDPrefix="services-column:grouping"
+      accessibilityLabel={t('projects.deployments.services.groupingTitle')}
+      role="radiogroup"
+      compact
+      segmentSizing="content"
+      tabs={[
+        { id: 'all', label: t('projects.deployments.services.groupingAll'), icon: <Icon name="list-bullets" size={15} color={color} /> },
+        { id: 'project', label: t('projects.deployments.services.groupingByProject'), icon: <Icon name="folder" size={15} color={color} /> },
+        { id: 'type', label: t('projects.deployments.services.groupingByType'), icon: <Icon name="squares-four" size={15} color={color} /> },
+      ]}
+      activeTabId={props.grouping}
+      onSelectTab={props.onChange}
+    />
   );
 });
 

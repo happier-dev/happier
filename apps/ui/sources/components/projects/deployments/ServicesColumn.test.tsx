@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDeploymentReadControllerV1,
@@ -32,6 +33,7 @@ afterEach(standardCleanup);
 
 const { ServicesColumnView, readServicesColumnSelection } =
   await import('./ServicesColumn');
+type ServicesColumnGrouping = import('./ServicesColumn').ServicesColumnGrouping;
 const { useDeploymentCollection } = await import('./useDeploymentReads');
 
 const shown = { mounted: true, visible: true, focused: true };
@@ -61,6 +63,7 @@ function environment(
 function controllerFor(
   items: DeploymentEnvironmentCollectionV1['items'],
   nextCursor: string | null = null,
+  pages: Pick<DeploymentReadTransportV1, 'listDataServicePage' | 'listDomainPage'> = {},
 ) {
   const unavailable = async () => ({
     ok: false as const,
@@ -74,6 +77,7 @@ function controllerFor(
     readEnvironment: unavailable,
     listHistory: unavailable,
     readReceipt: unavailable,
+    ...pages,
   };
   return createDeploymentReadControllerV1({
     scope: { serverId: 'home', accountId: 'account-owner' },
@@ -88,6 +92,9 @@ function Column(
     onNavigate: (href: string) => void;
     pinnedEnvironmentIds?: readonly string[];
     onTogglePinned?: (environmentId: string, pinned: boolean) => void;
+    grouping?: ServicesColumnGrouping;
+    onGroupingChange?: (grouping: ServicesColumnGrouping) => void;
+    space?: React.ComponentProps<typeof ServicesColumnView>['space'];
   }>,
 ) {
   const read = useDeploymentCollection(props.controller, shown);
@@ -101,6 +108,10 @@ function Column(
       create={null}
       pinnedEnvironmentIds={props.pinnedEnvironmentIds ?? []}
       onTogglePinned={props.onTogglePinned ?? (() => {})}
+      controller={props.controller}
+      grouping={props.grouping ?? 'project'}
+      onGroupingChange={props.onGroupingChange ?? (() => {})}
+      {...(props.space ? { space: props.space } : {})}
     />
   );
 }
@@ -111,7 +122,9 @@ async function render(
   onNavigate = vi.fn(),
   /** The row whose arrival says the column's read has landed. */
   ready = 'services-column:project:unnamed',
-  pins: Readonly<{ pinnedEnvironmentIds?: readonly string[]; onTogglePinned?: (environmentId: string, pinned: boolean) => void }> = {},
+  pins: Readonly<{ pinnedEnvironmentIds?: readonly string[]; onTogglePinned?: (environmentId: string, pinned: boolean) => void;
+    grouping?: ServicesColumnGrouping; onGroupingChange?: (grouping: ServicesColumnGrouping) => void;
+    space?: React.ComponentProps<typeof ServicesColumnView>['space'] }> = {},
 ) {
   const screen = await renderScreen(
     <Column
@@ -375,6 +388,88 @@ describe('Services column lists what runs (OWNER-UI-1115B E1)', () => {
     expect(ids).toContain('services-column:project:source-shop');
     expect(ids).toContain('services-column:environment:env-draft');
     expect(ids.some((id) => id.includes('env-idle') || id.includes('source-idle'))).toBe(false);
+    controller.retire();
+  });
+});
+
+describe('Services column grouping (owner 2026-11-16 10:20Z: All · By project · By type)', () => {
+  const switchOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
+    .findAll((node) => node.props.testIDPrefix === 'services-column:grouping' && Array.isArray(node.props.tabs))[0]!;
+
+  it('offers the three groupings through the shared segmented control and reports the choice', async () => {
+    const onGroupingChange = vi.fn();
+    const controller = controllerFor(ITEMS);
+    const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:project:source-shop', { onGroupingChange });
+    const control = switchOf(screen);
+    expect(control.props.tabs.map((tab: { id: string }) => tab.id)).toEqual(['all', 'project', 'type']);
+    expect(control.props.activeTabId).toBe('project');
+    await act(async () => { control.props.onSelectTab('type'); });
+    expect(onGroupingChange).toHaveBeenCalledWith('type');
+    controller.retire();
+  });
+
+  it('All lists every Environment as one flat run of rows, each named by its Project, with no Project rows', async () => {
+    const controller = controllerFor(ITEMS);
+    const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:environment:env-shop-staging', { grouping: 'all' });
+    const ids = rowIds(screen);
+    expect(ids.filter((id) => id.startsWith('services-column:project:'))).toEqual([]);
+    for (const id of ['env-shop-staging', 'env-shop-production', 'env-api', 'env-gone']) expect(ids).toContain(`services-column:environment:${id}`);
+    const staging = screen.root.findAll((node) => node.props.testID === 'services-column:environment:env-shop-staging' && 'row' in node.props)[0]!;
+    expect(staging.props.row).toMatchObject({ title: 'storefront', titleQualifier: 'Staging' });
+    controller.retire();
+  });
+
+  it('By type draws Apps and each type that has items as its own section, every row through the one Environment row', async () => {
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop-staging', projectSourceId: 'source-shop' });
+    const detail = createDeploymentEnvironmentDetailV1();
+    const controller = controllerFor(ITEMS, null, {
+      listDataServicePage: async () => ({ ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Staging',
+        content: { ...detail.content, template: { ...detail.content.template!, data: [{ service: 'shop-db', engine: 'postgres' as const }] } },
+        databaseSizes: [{ service: 'shop-db', size: { status: 'unavailable', reason: 'unsupported_engine' },
+          growth: { status: 'unavailable', reason: 'unsupported_engine' } }] }] } }),
+      listDomainPage: async () => ({ ok: true, value: { nextCursor: null, items: [] } }),
+    } as never);
+    const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:database:env-shop-staging/shop-db', { grouping: 'type' });
+    const text = screen.getTextContent();
+    expect(text).toContain('Apps');
+    expect(text).toContain('Databases');
+    // A type with no items draws no section.
+    expect(text).not.toContain('Domains');
+    expect(rowIds(screen)).toContain('services-column:project:source-shop');
+    const database = screen.root.findAll((node) => node.props.testID === 'services-column:database:env-shop-staging/shop-db' && 'row' in node.props)[0]!;
+    expect(database.props.row).toMatchObject({ kind: 'database', title: 'shop-db', fact: 'PostgreSQL' });
+    controller.retire();
+  });
+});
+
+describe('Services column saved view (owner D5: one Services header, the column places it)', () => {
+  it('narrows its tree and Pinned to the Environments the saved view keeps, counts what it keeps, and places the view controls in its header', async () => {
+    const controller = controllerFor(ITEMS);
+    const kept = new Set(['env-shop-staging', 'env-api']);
+    const space = {
+      isVisible: (environmentId: string) => kept.has(environmentId),
+      narrowing: true,
+      matchedCount: kept.size,
+      titleControl: <View testID="space:title" />,
+      filterButton: <View testID="space:filter" />,
+      band: <View testID="space:strip" />,
+    };
+    const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:project:source-shop',
+      { space, pinnedEnvironmentIds: ['env-shop-production', 'env-api'] });
+    expect(rowIds(screen)).toEqual([
+      'services-column:all',
+      'services-column:project:source-shop',
+      'services-column:environment:env-api',
+    ]);
+    // A pin the view leaves out is not drawn under Pinned either.
+    expect(screen.findByTestId('services-column:pinned:env-shop-production')).toBeNull();
+    expect(screen.findByTestId('services-column:pinned:env-api')).not.toBeNull();
+    const list = screen.root.findAll((node) => node.props.testID === 'services-column:list' && 'title' in node.props)[0]!;
+    expect(list.props.count).toBe(2);
+    for (const id of ['space:title', 'space:strip']) expect(screen.findByTestId(id)).not.toBeNull();
+    // The funnel ends the column's search field (behind the magnifier, as the Sessions and Discussions columns).
+    expect(list.props.search?.trailing).toBe(space.filterButton);
     controller.retire();
   });
 });
