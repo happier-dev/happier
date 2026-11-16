@@ -69,6 +69,13 @@ JavaScript runtime, while the current native release binary does not.
 
 ## Runtime contract
 
+The Windows installer runs a copied CLI executable while promoting its original
+payload. For the Node single-executable CLI it supplies the original payload as
+`HAPPIER_CLI_PACKAGE_ROOT`, so the copied runtime can load `package-dist/index.mjs`
+and its adjacent support files. The runtime consumes this launch variable before
+entering the CLI; child processes resolve their own installed payload. The
+installer keeps the existing command arguments for older Bun-compiled CLIs.
+
 In 0.3 development source, native Agent CLI detection, install checks and launch
 share `resolveAgentCliCommandForRuntime` in `cli-common`. An alternative binary
 name must resolve through the filesystem to the declared primary filename.

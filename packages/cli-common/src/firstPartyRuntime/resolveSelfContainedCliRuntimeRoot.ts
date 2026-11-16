@@ -62,6 +62,13 @@ export function resolveSelfContainedCliRuntimeRootPath(
     const admittedRoot = resolveRuntimeRootFromEntrypointPath(env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT);
     if (admittedRoot) return admittedRoot;
   }
+  // Node's copied installer runtime loads its CLI graph from the original
+  // payload. That active graph owns support assets; another executable passed
+  // explicitly to this resolver still owns its own installation.
+  if (execPath === process.execPath && isSelfContainedCliBinary(execPath)) {
+    const launchedRoot = resolveRuntimeRootFromEntrypointPath(process.argv[1]);
+    if (launchedRoot) return launchedRoot;
+  }
   const installedCliRuntimeRoot = resolveInstalledCliRuntimeRootPath(execPath, env);
   if (installedCliRuntimeRoot) return installedCliRuntimeRoot;
   const normalized = normalizePathLike(execPath);

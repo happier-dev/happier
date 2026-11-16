@@ -71,4 +71,44 @@ describe('doctor Windows census discovery', () => {
     const { classifyProcessByPid } = await import('./doctor');
     await expect(classifyProcessByPid(26316)).resolves.toEqual({ kind: 'unknown' });
   });
+
+  it('admits an independent updater whose Windows service ancestors belong to another principal', async () => {
+    // Native WSL ancestry: caller -> wslhost -> wslservice -> services -> wininit.
+    // The census intentionally omits foreign-principal command lines.
+    const own = { kind: 'sid', value: 'S-1-5-21-1' };
+    const system = { kind: 'sid', value: 'S-1-5-18' };
+    censusOutput.value = JSON.stringify({ v: 1, capturedAtMs: Date.now(), logicalCpus: 4, rows: [
+      { pid: process.pid, ppid: 22068, name: 'node.exe', argv: ['node.exe'], start: { startTimeMs: 6000 }, principal: own, memory: null, cpuTimeUs: null },
+      { pid: 22068, ppid: 12552, name: 'wslhost.exe', argv: ['wslhost.exe'], start: { startTimeMs: 5000 }, principal: own, memory: null, cpuTimeUs: null },
+      { pid: 12552, ppid: 1808, name: 'wslservice.exe', start: { startTimeMs: 4000 }, principal: system, memory: null, cpuTimeUs: null },
+      { pid: 1808, ppid: 1672, name: 'services.exe', start: { startTimeMs: 3000 }, principal: system, memory: null, cpuTimeUs: null },
+      { pid: 1672, ppid: 1180, name: 'wininit.exe', start: { startTimeMs: 2000 }, principal: system, memory: null, cpuTimeUs: null },
+    ] });
+    const { assertWindowsCliUpdateIsOutsideManagedProcessTree } = await import('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners');
+    await expect(assertWindowsCliUpdateIsOutsideManagedProcessTree()).resolves.toBeUndefined();
+  });
+
+  it.each(['managed-daemon-above-foreign', 'unreadable-own-command'] as const)('refuses update admission for %s ancestry', async (kind) => {
+    const own = { kind: 'sid', value: 'S-1-5-21-1' };
+    const foreign = { kind: 'sid', value: 'S-1-5-18' };
+    censusOutput.value = JSON.stringify({ v: 1, capturedAtMs: Date.now(), logicalCpus: 4, rows: [
+      { pid: process.pid, ppid: 22067, name: 'node.exe', argv: ['node.exe'], start: { startTimeMs: 7000 }, principal: own, memory: null, cpuTimeUs: null },
+      { pid: 22067, ppid: 22068, name: 'service.exe', start: { startTimeMs: 6000 }, principal: foreign, memory: null, cpuTimeUs: null },
+      { pid: 22068, ppid: 1, name: 'happier.exe', start: { startTimeMs: 5000 }, principal: own, memory: null, cpuTimeUs: null,
+        ...(kind === 'managed-daemon-above-foreign' ? { commandLine: 'happier.exe daemon start-sync', argv: ['happier.exe', 'daemon', 'start-sync'] } : {}) },
+    ] });
+    const { assertWindowsCliUpdateIsOutsideManagedProcessTree } = await import('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners');
+    await expect(assertWindowsCliUpdateIsOutsideManagedProcessTree()).rejects.toThrow(
+      kind === 'managed-daemon-above-foreign' ? /inside a Happier daemon/ : /Cannot verify Windows update process ancestry/,
+    );
+  });
+
+  it.each(['happier.exe', 'node.exe', 'bun.exe'])('refuses an unreadable foreign %s ancestor that could host a service daemon', async (name) => {
+    censusOutput.value = JSON.stringify({ v: 1, capturedAtMs: Date.now(), logicalCpus: 4, rows: [
+      { pid: process.pid, ppid: 22068, name: 'node.exe', argv: ['node.exe'], start: { startTimeMs: 6000 }, principal: { kind: 'sid', value: 'self' }, memory: null, cpuTimeUs: null },
+      { pid: 22068, ppid: 1, name, start: { startTimeMs: 5000 }, principal: { kind: 'sid', value: 'system' }, memory: null, cpuTimeUs: null },
+    ] });
+    const { assertWindowsCliUpdateIsOutsideManagedProcessTree } = await import('@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners');
+    await expect(assertWindowsCliUpdateIsOutsideManagedProcessTree()).rejects.toThrow(/Cannot verify Windows update process ancestry/);
+  });
 });

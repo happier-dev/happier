@@ -10,7 +10,7 @@ import { readSettings } from '@/persistence';
 import { MachineProcessesAnswerV1Schema, type MachineProcessesAnswerV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { normalizeActionExecuteResult, unwrapCliActionSuccessPayload } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
-export { classifyDaemonLifecycleProcessByPid, classifyProcessByPid, classifyHappyProcess, findAllHappyProcesses, findHappyProcessByPid } from './processInspection';
+export { findWindowsHappyProcessAncestors, indicatesDaemonStartedSessionCommand, classifyDaemonLifecycleProcessByPid, classifyProcessByPid, classifyHappyProcess, findAllHappyProcesses, findHappyProcessByPid } from './processInspection';
 export type { DaemonLifecycleProcessByPidClassification, HappyProcessInfo, DaemonOwnershipEnvironmentVariables, ProcessByPidClassification } from './processInspection';
 
 export type DoctorProcessAnswer =

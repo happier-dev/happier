@@ -37,6 +37,7 @@ import {
 import { resolveRunningCliPackageManagerOrigin } from '@/cli/runtime/update/cliUpdateFacts';
 import { reportUpdaterAdmission } from '@/cli/runtime/update/updaterAdmission';
 import {
+  assertWindowsCliUpdateIsOutsideManagedProcessTree,
   quiesceInstalledCliWindowsPayloadOwners,
   resolvePayloadOwnerStopTimeoutMs,
 } from '@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners';
@@ -295,6 +296,8 @@ async function cmdUpdate(argv: string[], rawArgv: readonly string[] = process.ar
   })();
   const processEnv = { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir };
 
+  await assertWindowsCliUpdateIsOutsideManagedProcessTree();
+
   // Observed before anything changes: on Windows the update stops the payload's processes, and only
   // this observation still knows which service daemons were running and must come back (S-8). The
   // Windows quiesce stops every server's daemon, so every one of them comes back (R15).
@@ -425,6 +428,10 @@ async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly strin
     assertManagedGuestCliVersion({ candidateVersion: packageJson.version, installedVersion });
   }
 
+  if (componentId === 'happier-cli') {
+    await assertWindowsCliUpdateIsOutsideManagedProcessTree();
+  }
+
   // The Windows quiesce stops every service daemon of the payload; each one observed running before
   // it comes back once the payload is promoted (R15). A daemon that does not come back is named and
   // never fails the promotion. Elsewhere nothing is stopped, so nothing is restarted here.
@@ -484,7 +491,7 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
   try {
     const argv = context.args.slice(1);
     const sub = argv[0] ?? 'help';
-    if (sub === 'help' || sub === '--help' || sub === '-h') {
+    if (sub === 'help' || argv.includes('--help') || argv.includes('-h')) {
       console.log(usage());
       process.exitCode = 0;
       return;

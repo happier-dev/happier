@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,5 +59,19 @@ describe('Node single executable', () => {
       const output = execFileSync(process.execPath, [main, ...prefix, script, '4123', 'Stop'], { encoding: 'utf8' });
       expect(JSON.parse(output)).toEqual({ main: true, argv: [script, '4123', 'Stop'] });
     }
+  });
+
+  it('loads the original CLI graph when the installer runs a copied executable', () => {
+    const dir = tempDir();
+    const main = join(dir, 'copied-runtime.cjs');
+    const packageRoot = join(dir, 'payload');
+    const entry = join(packageRoot, 'package-dist', 'index.mjs');
+    mkdirSync(join(packageRoot, 'package-dist'), { recursive: true });
+    writeFileSync(main, NODE_SINGLE_EXECUTABLE_MAIN);
+    writeFileSync(entry, 'process.stdout.write(JSON.stringify({ argv: process.argv.slice(1), inheritedRoot: process.env.HAPPIER_CLI_PACKAGE_ROOT ?? null }));\n');
+    const output = execFileSync(process.execPath, [main, 'self', '__install-payload'], {
+      encoding: 'utf8', env: { ...process.env, HAPPIER_CLI_PACKAGE_ROOT: packageRoot },
+    });
+    expect(JSON.parse(output)).toEqual({ argv: [entry, 'self', '__install-payload'], inheritedRoot: null });
   });
 });

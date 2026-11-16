@@ -35,18 +35,22 @@ const NODE_SEA_SENTINEL_FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
  *     executable's own `execArgv`, so they are already in effect.
  *   happier ...args
  *     runs the Happier CLI from `package-dist/` beside the executable.
+ * The Windows installer's copied runtime supplies HAPPIER_CLI_PACKAGE_ROOT for
+ * that second form. Consume it here so child processes use their own payload.
  */
 export const NODE_SINGLE_EXECUTABLE_MAIN = `'use strict';
 const { existsSync } = require('node:fs');
 const { dirname, isAbsolute, join } = require('node:path');
 const argv = process.argv;
+const packageRoot = process.env.HAPPIER_CLI_PACKAGE_ROOT || dirname(process.execPath);
+delete process.env.HAPPIER_CLI_PACKAGE_ROOT;
 let index = 2;
 while (argv[index] === '--no-warnings' || argv[index] === '--no-deprecation') index += 1;
 const script = argv[index];
 if (script !== undefined && isAbsolute(script) && /\\.[cm]?js$/u.test(script) && existsSync(script)) {
   argv.splice(1, index - 1);
 } else {
-  argv[1] = join(dirname(process.execPath), 'package-dist', 'index.mjs');
+  argv[1] = join(packageRoot, 'package-dist', 'index.mjs');
 }
 require('node:module').runMain();
 `;

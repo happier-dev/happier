@@ -2752,10 +2752,14 @@ function Invoke-InstallerPayloadPromotionWithTimeout {
 `$previousHappyHomeDir = `$env:HAPPIER_HOME_DIR
 `$previousSkipPayloadOwnerStopCommands = `$env:HAPPIER_CLI_SKIP_PAYLOAD_OWNER_STOP_COMMANDS
 `$previousSkipInstallPayloadMigration = `$env:HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION
+`$previousCliPackageRoot = `$env:HAPPIER_CLI_PACKAGE_ROOT
 try {
   `$env:HAPPIER_HOME_DIR = '$(& $escapeSingleQuotedLiteral $InstallHomeDir)'
   `$env:HAPPIER_CLI_SKIP_PAYLOAD_OWNER_STOP_COMMANDS = '1'
   `$env:HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION = '1'
+  # The copied Node runtime loads the original payload's graph. Older compiled
+  # CLIs ignore this variable and keep their existing argument contract.
+  `$env:HAPPIER_CLI_PACKAGE_ROOT = '$(& $escapeSingleQuotedLiteral $PayloadRoot)'
   & '$(& $escapeSingleQuotedLiteral $runnerBinaryPath)' self __install-payload --component happier-cli --payload-root '$(& $escapeSingleQuotedLiteral $PayloadRoot)' --version '$(& $escapeSingleQuotedLiteral $Version)' --channel '$(& $escapeSingleQuotedLiteral $ChannelValue)'
   `$exitCode = `$LASTEXITCODE
   if (`$null -eq `$exitCode) {
@@ -2781,6 +2785,12 @@ finally {
   }
   else {
     `$env:HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION = `$previousSkipInstallPayloadMigration
+  }
+  if (`$null -eq `$previousCliPackageRoot) {
+    Remove-Item Env:HAPPIER_CLI_PACKAGE_ROOT -ErrorAction SilentlyContinue
+  }
+  else {
+    `$env:HAPPIER_CLI_PACKAGE_ROOT = `$previousCliPackageRoot
   }
 }
 "@

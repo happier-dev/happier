@@ -1,6 +1,15 @@
-import { readProcessCensus, type DaemonOwnershipEnvironment, type ProcessCensusRow } from '@/processes/census/processCensus';
+import { ancestorsOf, indexCensus, readProcessCensus, type DaemonOwnershipEnvironment, type ProcessCensusRow } from '@/processes/census/processCensus';
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
+import { compareProcessPrincipals } from '@/processes/ownership/principal';
 import { isJavaScriptRuntimeExecutable } from '@/daemon/service/runtimeTarget';
+
+import { PUBLIC_RELEASE_RING_IDS } from '@happier-dev/release-runtime/releaseRings';
+import { resolveFirstPartyComponentPublicReleaseVariant } from '@happier-dev/cli-common/firstPartyRuntime';
+
+const HAPPY_CLI_PROCESS_NAMES = new Set(PUBLIC_RELEASE_RING_IDS.flatMap((channel) =>
+  resolveFirstPartyComponentPublicReleaseVariant({ componentId: 'happier-cli', channel }).installShims
+    .flatMap((name) => [name, `${name}.exe`]),
+));
 
 export type DaemonOwnershipEnvironmentVariables = DaemonOwnershipEnvironment;
 
@@ -33,6 +42,10 @@ function normalizeProcessName(name: string | undefined): string {
   return normalized.split('/').pop() ?? normalized;
 }
 
+function isJavaScriptHostProcessName(name: string): boolean {
+  return isJavaScriptRuntimeExecutable(name) || name === 'mainthread';
+}
+
 function isCliSourceSnapshotCommand(normalizedCommand: string): boolean {
   return /\/(?:cli-dist-snapshot|cli-dist|cli-source-snapshot-source-\d+-\d+-\d+)\/src\/index\.ts(?=["']?(?:\s|$))/u
     .test(normalizedCommand);
@@ -49,7 +62,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
   const normalizedName = normalizeProcessName(name);
   // Any JavaScript runtime that hosts the CLI bundle (Node, Bun, the packaged runtime): the one list
   // the daemon's runtime target owns. A census may report Node's main thread name instead.
-  const isNodeHostProcess = isJavaScriptRuntimeExecutable(normalizedName) || normalizedName === 'mainthread';
+  const isNodeHostProcess = isJavaScriptHostProcessName(normalizedName);
   const isCliSourceSnapshot = isCliSourceSnapshotCommand(normalizedCommand);
   // The canonical source registration imports tsx internally, so its name need
   // not appear in argv. Recognize the CLI entrypoint for both source and builds.
@@ -75,8 +88,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
     normalizedCommand.includes('happier.mjs') ||
     normalizedCommand.includes('@happier-dev/cli') ||
     normalizedCommand.includes('package-dist/index.mjs') ||
-    normalizedName === 'happier' ||
-    normalizedName === 'happier.exe';
+    HAPPY_CLI_PROCESS_NAMES.has(normalizedName);
 
   if (!isHappy) return null;
 
@@ -88,7 +100,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
     type = cmd.includes('tsx') ? 'dev-daemon-version-check' : 'daemon-version-check';
   } else if (cmd.includes('daemon start-sync') || cmd.includes('daemon start')) {
     type = cmd.includes('tsx') ? 'dev-daemon' : 'daemon';
-  } else if (cmd.includes('--started-by daemon')) {
+  } else if (indicatesDaemonStartedSessionCommand(cmd)) {
     type = cmd.includes('tsx') ? 'dev-daemon-spawned' : 'daemon-spawned-session';
   } else if (cmd.includes('doctor')) {
     type = cmd.includes('tsx') ? 'dev-doctor' : 'doctor';
@@ -104,6 +116,42 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
       ? { daemonOwnershipEnvironmentVariables: proc.daemonOwnershipEnvironmentVariables }
       : {}),
   };
+}
+
+export function indicatesDaemonStartedSessionCommand(command: string): boolean {
+  const normalized = command.replace(/\s+/g, ' ').trim();
+  return /(?:^|[\s"])--started-by"?(?:=|\s+)\s*"?daemon"?(?=$|[\s"])/i.test(normalized);
+}
+
+/** Windows update admission consumes the canonical fresh census and ancestor traversal. */
+export async function findWindowsHappyProcessAncestors(): Promise<HappyProcessInfo[]> {
+  if (process.platform !== 'win32') return [];
+  const snapshot = await readProcessCensus({
+    freshness: 'fresh', pids: [process.pid], includeAncestors: true, scope: 'all', fields: ['argv'],
+  });
+  if (snapshot.status !== 'ok') throw new Error(`Windows process census is unavailable: ${snapshot.reason}`);
+  const index = indexCensus(snapshot.rows);
+  const current = index.byPid.get(process.pid);
+  if (!current || current.ppid === null) throw new Error('Windows process ancestry is unavailable');
+  const ancestors = ancestorsOf(index, process.pid);
+  // An omitted parent can have exited, but explicit partial evidence means it was unreadable.
+  // Include each observed parent PID so the first missing link cannot hide that failure.
+  const requiredPids = new Set([current, ...ancestors].flatMap(row => [row.pid, row.ppid]));
+  if (snapshot.partial?.some(partial => requiredPids.has(partial.pid))) {
+    throw new Error('Windows process ancestry is incomplete');
+  }
+  return ancestors.flatMap(row => {
+    const classified = classifyHappyProcess(projectDoctorProcessInfo(row));
+    const name = normalizeProcessName(row.name);
+    // The census redacts foreign command lines. Known OS/service executables
+    // can be skipped, but a Happier or JS host may be a dedicated-user daemon.
+    if (compareProcessPrincipals(row.principal, current.principal) === 'other'
+      && name && !classified && !isJavaScriptHostProcessName(name)) return [];
+    if (row.ppid === null || (!row.commandLine?.trim() && !row.argv?.length)) {
+      throw new Error(`Cannot inspect Windows ancestor PID ${row.pid}`);
+    }
+    return classified ? [classified] : [];
+  });
 }
 
 export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
