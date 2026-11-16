@@ -127,6 +127,8 @@ describe('Superserve thin HTTP qualification', () => {
       expect(await client.inspect(resource)).toMatchObject({ availability: 'present', power: 'unknown', storage: 'unknown' });
       v.setStatus('failed');
       expect(await client.inspect(resource)).toMatchObject({ availability: 'present', power: 'unknown', storage: 'unknown' });
+      v.setStatus('deleted');
+      expect(await client.inspect(resource)).toMatchObject({ availability: 'absent' });
       expect(await client.destroy({ resource })).toEqual({ kind: 'confirmed' });
       expect(await client.inspect(resource)).toMatchObject({ availability: 'absent' });
     } finally { v.cleanup(); }

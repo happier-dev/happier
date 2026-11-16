@@ -11,6 +11,7 @@ import {
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, API_ORIGIN, GUEST_ORIGIN, connectedAccountRuntime, connectedAccountPortableRuntime } from './account.js';
 import { nativeFetch } from './machine/credentials.js';
 import { createSuperserveNativeClient } from './machine/nativeClient.js';
+import { createSuperservePreparationClient, SUPERSERVE_PREPARATION_HOME, SuperservePreparationInputSchema, SuperservePreparedArtifactSchema, SuperservePreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, SuperserveLaunchSchema, SuperserveOptionsSchema, SuperserveResourceSchema, SuperserveOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
@@ -20,6 +21,7 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 const confirmation = { title: 'Manage this Superserve sandbox?', body: 'Superserve charges for sandbox resources. Pausing retains memory and disk; deleting permanently removes both.' };
 const retention = { supportedIntents: ['suspend', 'resume', 'delete'] } as const;
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createSuperserveNativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createSuperservePreparationClient(nativeFetch(context), context.signal);
 
 export const MACHINE_PROVISIONER = {
   title: 'Superserve', icon: 'cloud', resourceKind: 'superserve-sandbox', schemaVersion: 1,
@@ -30,6 +32,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: SuperserveOperationSchema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: SuperservePreparationInputSchema.jsonSchema, artifactSchema: SuperservePreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: SuperservePreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -65,7 +70,9 @@ export const PLUGIN = definePlugin({
         if (!check.available) return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable' };
         const template = input.template ?? 'superserve/base';
         return { base: { launch: { template }, guestPlatform: 'linux' as const, retention },
-          dimensions: { size: [], image: [{ id: template, title: template, guestPlatform: 'linux' as const, assignments: [], nativeFacts: { image: { id: template, title: template } } }], location: [], network: [], duration: [] } };
+          dimensions: { size: [], image: [{ id: template, title: template, guestPlatform: 'linux' as const, assignments: [], nativeFacts: {
+            preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: SUPERSERVE_PREPARATION_HOME },
+            image: { id: template, title: template } } }], location: [], network: [], duration: [] } };
       } },
     acquire: { ...defaults, title: 'Create Superserve sandbox', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: RECONCILIATION.result,
       async run(input, context) { return input.managedId ? runtime(context).acquire(input.launch, input.managedId) : { kind: 'rejected' as const, code: 'invalid_request' as const }; } },
@@ -79,6 +86,21 @@ export const PLUGIN = definePlugin({
       async run(input, context) { return runtime(context).power(input.resource, input.intent); } },
     destroy: { ...defaults, title: 'Delete Superserve sandbox', confirmation, dangerLevel: 'destructive', inputSchema: RECONCILIATION.destroyInput, resultSchema: RECONCILIATION.destroyResult,
       async run(input, context) { return runtime(context).destroy(input); } },
+    'prepare-build': { ...defaults, title: 'Build Superserve prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Prepare this Superserve sandbox?', body: 'Provider compute and retained sandbox/snapshot storage charges apply. See https://www.superserve.ai/pricing/ for current pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Superserve prepared snapshot', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Superserve prepared snapshot', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Superserve snapshot?', body: 'This permanently removes the owned prepared snapshot and its temporary build sandbox.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     exec: { ...defaults, title: 'Run in Superserve guest', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write Superserve guest file', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,

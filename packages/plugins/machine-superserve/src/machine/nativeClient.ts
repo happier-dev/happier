@@ -2,6 +2,7 @@ import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtoco
 import { projectMachineProvisionerActionFailure, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { API_ORIGIN, GUEST_ORIGIN } from '../account.js';
 import { BILLING, CONTRIBUTION, SuperserveLaunchSchema, SuperserveOperationSchema, SuperserveResourceSchema, ROLE_SCHEMAS, reference, type SuperserveLaunch, type SuperserveOperation, type SuperserveResource } from './schemas.js';
+import { createSuperserveHttp, NativeError } from './transport.js';
 
 // Superserve OpenAPI 0.1.0, sandbox ee91ea60f1e18e4f09c3a57104582308a1636366.
 const open = { policy: 'additive-open/drop' } as const;
@@ -15,24 +16,24 @@ const outputSchema = defineProtocolObject({ exitCode: defineProtocolNumber({ int
 const resumeSchema = defineProtocolObject({ id: text, status: text }, open);
 type Acquisition = MachineProvisionerAcquireResultV1<SuperserveResource, SuperserveOperation>;
 type Destruction = MachineProvisionerDestroyResultV1<SuperserveOperation>;
-class NativeError extends Error { constructor(readonly code: string, readonly status?: number) { super(code); } }
 const code = (error: unknown) => error instanceof NativeError ? error.code : error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable';
 const pending = (operation: SuperserveOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
 
+// PublicSandboxId accepts both forms; keep the public ID for regional routing,
+// but compare source UUIDs consistently with SnapshotResponse.sandbox_id.
+export function superserveSandboxIdentity(id: string): string {
+  const match = /^(?:sb-[a-z0-9]+-)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.exec(id);
+  return match ? match[1]!.toLowerCase() : id;
+}
+
 export function createSuperserveNativeClient(request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
-  async function http(url: string, method = 'GET', body?: unknown, headers?: Record<string, string>, bytes?: Uint8Array) {
-    signal?.throwIfAborted();
-    const response = await request(url, { method, signal, redirect: 'error', headers: { 'content-type': bytes ? 'application/octet-stream' : 'application/json', ...headers },
-      ...(bytes ? { body: new Uint8Array(bytes) } : body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'superserve_http_' + response.status, response.status);
-    if (response.status === 204) return { status: response.status, value: null };
-    try { return { status: response.status, value: await response.json() as unknown }; } catch { throw new NativeError('superserve_invalid_response'); }
-  }
+  const http = createSuperserveHttp(request, signal);
   function identity(input: unknown, expected: { name: string; managedId: string; sandboxId?: string }) {
     const parsed = dtoSchema.safeParse(input);
     if (!parsed.success) throw new NativeError('superserve_invalid_response');
     const value = parsed.data;
-    if (value.name !== expected.name || value.metadata['happier-managed-id'] !== expected.managedId || expected.sandboxId !== undefined && value.id !== expected.sandboxId) throw new NativeError('superserve_identity_mismatch');
+    if (value.name !== expected.name || value.metadata['happier-managed-id'] !== expected.managedId || expected.sandboxId !== undefined
+      && superserveSandboxIdentity(value.id) !== superserveSandboxIdentity(expected.sandboxId)) throw new NativeError('superserve_identity_mismatch');
     return value;
   }
   const path = (id: string) => API_ORIGIN + '/sandboxes/' + encodeURIComponent(id);
@@ -43,7 +44,8 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
   async function acquire(input: SuperserveLaunch, managedId: string): Promise<Acquisition> {
     const launch = SuperserveLaunchSchema.parse(input), operation = { kind: 'acquire', name: 'happier-' + managedId, managedId } as const;
     try {
-      const native = identity((await http(API_ORIGIN + '/sandboxes', 'POST', { name: operation.name, from_template: launch.template,
+      const native = identity((await http(API_ORIGIN + '/sandboxes', 'POST', { name: operation.name,
+        ...('snapshot' in launch ? { from_snapshot: launch.snapshot } : { from_template: launch.template }),
         metadata: { 'happier-managed-id': managedId }, preview_access: 'private' })).value, operation);
       return { kind: 'bound', resource: { ...reference({ sandboxId: native.id, name: native.name, managedId }), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
@@ -52,19 +54,28 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       return pending(operation);
     }); }
   }
+  async function findResource(expected: SuperserveOperation, deleted = false): Promise<SuperserveResource | null> {
+    const query = new URLSearchParams({ 'metadata.happier-managed-id': expected.managedId,
+      ...(deleted ? { status: 'deleted' } : {}) });
+    const response = (await http(API_ORIGIN + '/sandboxes?' + query)).value;
+    if (!Array.isArray(response)) throw new NativeError('superserve_invalid_response');
+    if (response.length === 0) return null;
+    if (response.length !== 1) throw new NativeError('superserve_identity_mismatch');
+    const native = identity(response[0], expected);
+    return { sandboxId: native.id, name: native.name, managedId: expected.managedId };
+  }
   async function recover(input: SuperserveOperation): Promise<Acquisition> {
     const operation = SuperserveOperationSchema.parse(input);
     try {
-      const response = (await http(API_ORIGIN + '/sandboxes?' + new URLSearchParams({ 'metadata.happier-managed-id': operation.managedId }))).value;
-      if (!Array.isArray(response) || response.length !== 1) return pending(operation);
-      const native = identity(response[0], operation);
-      return { kind: 'bound', resource: { ...reference({ sandboxId: native.id, name: native.name, managedId: operation.managedId }), origin: 'created' as const } };
+      const resource = await findResource(operation);
+      return resource === null ? pending(operation) : { kind: 'bound', resource: { ...reference(resource), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }
   async function inspect(input: SuperserveResource): Promise<MachineProvisionerObservationV1> {
     const resource = SuperserveResourceSchema.parse(input);
     try {
       const native = identity((await http(path(resource.sandboxId))).value, resource);
+      if (native.status === 'deleted') return observeMachineProvisionerNativeRead(observedAt, { kind: 'absent' });
       const expiry = native.auto_delete_at === undefined ? undefined : Date.parse(native.auto_delete_at);
       const nativeExpiry = expiry !== undefined && Number.isFinite(expiry) && expiry >= 0 ? expiry : undefined;
       return { observedAt, availability: 'present', power: native.status === 'active' ? 'running' : native.status === 'paused' ? 'suspended' : 'unknown',
@@ -124,7 +135,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
     try {
       const response = await http(path(resource.sandboxId) + (intent === 'suspend' ? '/pause' : '/resume'), 'POST');
       if (intent === 'suspend' && response.status === 204) return { kind: 'confirmed' };
-      if (intent === 'resume' && response.status === 200) { const resumed = resumeSchema.safeParse(response.value); if (resumed.success && resumed.data.id === resource.sandboxId && resumed.data.status === 'active') return { kind: 'confirmed' }; }
+      if (intent === 'resume' && response.status === 200) { const resumed = resumeSchema.safeParse(response.value); if (resumed.success && superserveSandboxIdentity(resumed.data.id) === superserveSandboxIdentity(resource.sandboxId) && resumed.data.status === 'active') return { kind: 'confirmed' }; }
       return { kind: 'unknown', code: 'superserve_power_unconfirmed' };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
@@ -135,5 +146,5 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
     try { const response = await http(path(resource.sandboxId), 'DELETE'); return response.status === 204 ? { kind: 'confirmed' } : { kind: 'unknown', code: 'superserve_delete_unconfirmed' }; }
     catch (error) { return projectMachineProvisionerActionFailure(error, () => error instanceof NativeError && error.status === 404 ? { kind: 'confirmed' } : { kind: 'unknown', code: code(error) }); }
   }
-  return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy };
+  return { check, acquire, recover, findResource, bootstrap, inspect, exec, putFile, power, destroy };
 }
