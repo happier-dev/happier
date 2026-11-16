@@ -3258,6 +3258,26 @@ describe('own-server target at the Action host boundary', () => {
                                 if (!service) throw new Error('Expected the restored Environment service');
                                 expect(service.serviceId).toBe(beforeRestoreService?.serviceId);
                                 expect(service.instanceId).not.toBe(beforeRestoreService?.instanceId);
+                                if (scenario === 'standalone_public_restore_volume_upload') {
+                                    await docker.changeNativeHealth('app', 'unhealthy');
+                                    await service.inspectCurrentOccurrence();
+                                    await waitForNativeRead(() => expect(service.snapshot().state).toBe('unhealthy'));
+                                    await waitForNativeRead(() => {
+                                        const notices = [...stored.values()].map(row => {
+                                            return typeof row.header === 'string' ? decodePlainArtifactStoredContent(row.header) : null;
+                                        });
+                                        expect(notices).toContainEqual(expect.objectContaining({
+                                            source: { kind: 'host', topic: 'service_health', subject: service.identity }, healthPhase: 'open',
+                                            recoveryChoices: expect.arrayContaining([
+                                                expect.objectContaining({ actionId: 'deployments.restart', input: expect.objectContaining({
+                                                    service: service.identity, expectedGeneration: service.instanceId,
+                                                }) }),
+                                            ]),
+                                        }));
+                                    });
+                                    await docker.changeNativeHealth('app', 'healthy');
+                                    await service.inspectCurrentOccurrence();
+                                }
                                 const execContext = { ...context, actionRequestId: 'exec-after-volume-restore',
                                     actionsSettings: setScopedActionApprovalPreference({ settings: context.actionsSettings,
                                         actionId: 'machines.services.exec', scope: { kind: 'environment', environmentId: environment.environment.id },

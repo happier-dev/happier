@@ -117,6 +117,33 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         operationId: string, delivery: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>,
         retryTarget?: Parameters<ReturnType<typeof createBackupSettlementNotices>>[0]['retryTarget']): NonNullable<OwnServerNativeRestoreInput['onBackupSettled']> => (outcome, configRevision) =>
         publishBackupSettlementNotice({ environment, targetLinkId, operationId, configRevision, check: 'run', outcome, delivery, retryTarget });
+    const observeServices = (input: Readonly<{
+        environment: DeploymentEnvironmentDetailV1;
+        receipt: OwnServerDeploymentReceipt;
+        deploymentId: string;
+        runtime: OwnServerDeploymentRuntimeAcquisition;
+        homeServerIdentityId: string;
+        handles: Parameters<typeof attachDeploymentServiceHealthNotices>[0]['handles'];
+        installationId: string;
+    }>) => attachDeploymentServiceHealthNotices({ credentials: host.credentials,
+        serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
+        homeServerIdentityId: input.homeServerIdentityId,
+        environment: input.environment, handles: input.handles, recoveryReceipt: input.receipt,
+        serviceRows: input.runtime.projectManagedServices.machineServiceRows,
+        readHealthAlertSource: input.runtime.readHealthAlertSource,
+        readEnvironment: signal => host.readEnvironment({ environmentId: input.environment.environment.id, context: { signal } }),
+        nativeWorkload: { installationId: input.installationId, handles: input.handles,
+            rows: input.runtime.projectManagedServices.machineServiceRows,
+            ...(input.runtime.currentDomainEdgeObservation ? { edge: input.runtime.currentDomainEdgeObservation } : {}),
+            async *receipts(environment, signal) {
+                const context = { signal };
+                if (host.readBuildHistory) yield* host.readBuildHistory({ environmentId: environment.environment.id,
+                    targetLinkId: environment.environment.runtimeTargetLinkId!, environment, context });
+                else yield await host.readReceipt({ environmentId: environment.environment.id,
+                    deploymentId: input.deploymentId, context });
+            },
+        },
+    });
     const sourceRetention = createOwnServerSourceRetention(host);
     const retain: OwnServerDeploymentTargetForHost['retain'] = async input => {
         try { return await sourceRetention.retain(input); }
@@ -451,6 +478,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             nativeEffects: { keys: activated.render.keys, settleNative: project.settleNative },
                             io: recovery.runtime.nativeIo, project: activated.project });
                         recovery.runtime.retainServiceReferences?.(handles);
+                        observeServices({ environment, receipt: generation, deploymentId: generation.deployment.id, runtime: recovery.runtime,
+                            homeServerIdentityId: recovery.homeServerIdentityId, handles, installationId: input.installationId });
                     },
                     readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({ data: environment.content.template?.data,
                         preparation: { ...recovery.runtime.secrets, environmentId: environment.environment.id,
@@ -1364,26 +1393,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         await prepared.source.commit(); committed = true;
                         const staged = await stage(row(project.health));
                         if (!staged.ok) return staged;
-                        attachDeploymentServiceHealthNotices({ credentials: host.credentials,
-                            serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
-                            homeServerIdentityId: prepared.homeServerIdentityId,
-                            environment: snapshot.environment, handles, recoveryReceipt: receipt,
-                            serviceRows: prepared.runtime.projectManagedServices.machineServiceRows,
-                            readHealthAlertSource: prepared.runtime.readHealthAlertSource,
-                            readEnvironment: signal => host.readEnvironment({ environmentId: snapshot.environment.environment.id, context: { signal } }),
-                            nativeWorkload: { installationId: input.installationId, handles,
-                                rows: prepared.runtime.projectManagedServices.machineServiceRows,
-                                ...(prepared.runtime.currentDomainEdgeObservation
-                                    ? { edge: prepared.runtime.currentDomainEdgeObservation } : {}),
-                                async *receipts(environment, signal) {
-                                    const context = { signal };
-                                    if (host.readBuildHistory) yield* host.readBuildHistory({ environmentId: environment.environment.id,
-                                        targetLinkId: environment.environment.runtimeTargetLinkId!, environment, context });
-                                    else yield await host.readReceipt({ environmentId: environment.environment.id,
-                                        deploymentId: selected.deployment.id, context });
-                                },
-                            },
-                        });
+                        observeServices({ environment: snapshot.environment, receipt, deploymentId: selected.deployment.id, runtime: prepared.runtime,
+                            homeServerIdentityId: prepared.homeServerIdentityId, handles, installationId: input.installationId });
                         return staged;
                     } finally { await project.dispose(); }
                 });
