@@ -4,6 +4,7 @@ import type { LanguageIntelligenceQueryInput, LanguageIntelligenceQueryResult } 
 import type { CodeEditorInlineContext, CodeEditorInlineEvent, CodeEditorInlineSuggestion } from '@/components/ui/code/editor/codeEditorTypes';
 import { createCodeNextEditSuggestions } from './codeNextEditSuggestions';
 import { applyWorkspaceFileTextEdits } from '@happier-dev/protocol/machines/workspaceFilesReplace';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 export type CodeInlineSuggestionUsage = Readonly<{
     kind: 'requested' | 'valid' | 'shown' | 'acceptedFull' | 'acceptedPartial' | 'dismissed' | 'kept';
@@ -19,6 +20,7 @@ export type CodeInlineSuggestionPort = Readonly<{
 export type CodeInlineSuggestionSnapshot = Readonly<{
     status: 'off' | 'idle' | 'requesting' | 'ready' | 'unavailable';
     reason?: string;
+    error?: ProviderErrorV1;
     suggestion: CodeEditorInlineSuggestion | null;
 }>;
 type Basis = Readonly<{ context: CodeEditorInlineContext; text: string }>;
@@ -53,7 +55,7 @@ export function createCodeInlineSuggestions(input: Readonly<{
     });
 
     function publish(next: CodeInlineSuggestionSnapshot) {
-        if (snapshot.status === next.status && snapshot.reason === next.reason && snapshot.suggestion === next.suggestion) return;
+        if (snapshot.status === next.status && snapshot.reason === next.reason && snapshot.error === next.error && snapshot.suggestion === next.suggestion) return;
         snapshot = next;
         for (const listener of listeners) listener();
     }
@@ -162,9 +164,10 @@ export function createCodeInlineSuggestions(input: Readonly<{
                     return;
                 }
                 if (response.status !== 'ok' || response.kind !== 'ai.inlineSuggest' || operation !== 'inline') {
-                    const reason = response.status === 'error' ? response.errorCode : response.status === 'unavailable' ? response.reason : 'model_unavailable';
-                    nextEdit.retire('unavailable', reason);
-                    publish({ status: 'unavailable', reason, suggestion: null });
+                    const error = response.status === 'error' && response.errorCode === 'provider_error' ? response.error : undefined;
+                    const reason = error?.code ?? (response.status === 'error' ? response.errorCode : response.status === 'unavailable' ? response.reason : 'model_unavailable');
+                    nextEdit.retire('unavailable', reason, error);
+                    publish({ status: 'unavailable', reason, ...(error ? { error } : {}), suggestion: null });
                     if (response.status === 'ok') continueNextEdit();
                     return;
                 }

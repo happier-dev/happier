@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, FeaturesResponseSchema,
   ProviderContributionV1Schema, ProviderSettingsV1Schema, encryptSecretStringV1 } from '@happier-dev/protocol';
 import * as policyOwner from '@happier-dev/protocol/account/settings/accountSettings';
-import { DaemonLspQueryRequestSchema } from '@happier-dev/protocol/machines/languageIntelligence';
+import { DaemonLspQueryRequestSchema, DaemonLspQueryResponseSchema } from '@happier-dev/protocol/machines/languageIntelligence';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { resetActiveAccountSettingsSnapshotForTests,
@@ -173,7 +174,10 @@ describe('inline suggestion admission', () => {
     });
     expect(await f.query(request(), machineId)).toMatchObject({ status: 'ok' });
     expect(f.openHttp.mock.calls[0]?.[0].headers.authorization?.startsWith('Bearer ')).toBe(true);
-    expect(await f.query(request(), machineId)).toEqual({ status: 'error', errorCode: 'signed_out' });
+    const refused = await f.query(request(), machineId);
+    expect(refused).toMatchObject({ status: 'error', errorCode: 'provider_error',
+      error: createProviderErrorV1('provider_secret_missing', { connectionId, machineId, savedSecretReason: 'reference_missing' }) });
+    expect(DaemonLspQueryResponseSchema.parse(refused)).toEqual(refused);
     expect(f.openHttp).toHaveBeenCalledTimes(1);
   });
 

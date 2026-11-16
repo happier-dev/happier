@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LanguageIntelligenceQueryInput, LanguageIntelligenceQueryResult } from '@happier-dev/protocol/machines/languageIntelligence';
 import { FilesEditorAiSuggestionsV1Schema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DaemonLspQueryResponseSchema } from '@happier-dev/protocol/machines/languageIntelligence';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createCodeIntelligenceController } from './createCodeIntelligenceController';
 import { bindCodeIntelligenceEditor } from './bindCodeIntelligenceEditor';
 import type { CodeInlineSuggestionPort } from './codeInlineSuggestions';
@@ -40,6 +42,22 @@ function fixture(onUsage?: CodeInlineSuggestionPort['onUsage']) {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('inline suggestions through the code intelligence controller', () => {
+    it('retains a typed Provider refusal and Saved Secret reason after transport parsing', async () => {
+        vi.useFakeTimers();
+        const f = fixture();
+        try {
+            f.move(); await vi.runAllTimersAsync();
+            const error = createProviderErrorV1('provider_binding_changed', { savedSecretReason: 'reference_stale' });
+            f.requests[0].resolve(DaemonLspQueryResponseSchema.parse({ status: 'error', errorCode: 'provider_error', error }));
+            await vi.runAllTimersAsync();
+            expect(f.controller.inlineSuggestions.getSnapshot()).toMatchObject({
+                status: 'unavailable', reason: 'provider_binding_changed', error, suggestion: null,
+            });
+            expect(f.controller.nextEditSuggestions.getSnapshot()).toMatchObject({
+                status: 'unavailable', reason: 'provider_binding_changed', error, suggestion: null,
+            });
+        } finally { f.controller.dispose(); }
+    });
     it('settles suggestions through a refused physical usage write and records later requests after recovery', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { fileEditorAiSuggestionUsageState } = await import('@/sync/domains/state/filePaneUiState');

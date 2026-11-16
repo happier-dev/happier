@@ -4,6 +4,7 @@ import { WorkspaceFileEditSetFileSchema, WorkspaceFileEditPositionSchema, Worksp
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
 import { ProviderConnectionIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
 import { FilesystemEffectFailureDetailsV1Schema } from './filesystemFailure.js';
+import { ProviderErrorV1Schema } from '../providers/errors.js';
 
 const nonempty = () => z.string().check(z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
@@ -103,13 +104,14 @@ const generalErrorCodes = [
   'ai_disabled', 'ai_excluded', 'ai_language_disabled', 'model_unavailable', 'signed_out', 'rate_limited',
 ] as const;
 export const LanguageIntelligenceErrorCodeSchema = lazyZodSchema(() => z.enum([
-  ...generalErrorCodes, 'unsaved_editor_changes', 'symbol_not_found', 'filesystem_identity_custody_unavailable',
+  ...generalErrorCodes, 'provider_error', 'unsaved_editor_changes', 'symbol_not_found', 'filesystem_identity_custody_unavailable',
 ]));
 export type LanguageIntelligenceErrorCode = z.infer<typeof LanguageIntelligenceErrorCodeSchema>;
 const failureSchema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal('loading') }),
   z.strictObject({ status: z.literal('unavailable'), reason: LanguageIntelligenceUnavailableReasonSchema }),
   z.strictObject({ status: z.literal('error'), errorCode: z.enum(generalErrorCodes) }),
+  z.strictObject({ status: z.literal('error'), errorCode: z.literal('provider_error'), error: ProviderErrorV1Schema }),
   z.strictObject({ status: z.literal('error'), errorCode: z.literal('filesystem_identity_custody_unavailable'),
     details: z.optional(FilesystemEffectFailureDetailsV1Schema) }),
   z.strictObject({ status: z.literal('error'), errorCode: z.literal('unsaved_editor_changes'), diskHash: hash() }),

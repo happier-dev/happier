@@ -7,6 +7,7 @@ import type { CodeEditorInlineContext } from '@/components/ui/code/editor/codeEd
 import type { CodeInlineSuggestionPort } from './codeInlineSuggestions';
 import { resolveFilesEditorAiSuggestionModelId } from '@happier-dev/protocol/account/settings/accountSettings';
 import { diffToSingleEdit } from './diffToSingleEdit';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 export type CodeNextEditSuggestion = Readonly<{
   id: string; path: string; version: number; targetRange: LanguageIntelligenceRange;
@@ -14,6 +15,7 @@ export type CodeNextEditSuggestion = Readonly<{
 }>;
 export type CodeNextEditSnapshot = Readonly<{
   status: 'off' | 'idle' | 'requesting' | 'ready' | 'preview' | 'unavailable'; reason?: string; suggestion: CodeNextEditSuggestion | null;
+  error?: ProviderErrorV1;
 }>;
 /** Implemented by each engine: jump preserves the buffer; apply validates the
  * actual model and makes one undo transaction. Native bridges acknowledge the
@@ -37,11 +39,11 @@ export function createCodeNextEditSuggestions(input: Readonly<{
     settings: ReturnType<CodeInlineSuggestionPort['getSettings']>; model: ProviderModelDescriptorV1 }> | null = null;
   let nextId = 0;
   function publish(next: CodeNextEditSnapshot) {
-    if (snapshot.status === next.status && snapshot.reason === next.reason && snapshot.suggestion === next.suggestion) return;
+    if (snapshot.status === next.status && snapshot.reason === next.reason && snapshot.error === next.error && snapshot.suggestion === next.suggestion) return;
     snapshot = next; for (const listener of listeners) listener();
   }
-  function retire(status: CodeNextEditSnapshot['status'] = 'idle', reason?: string) {
-    candidate = null; publish({ status, ...(reason ? { reason } : {}), suggestion: null });
+  function retire(status: CodeNextEditSnapshot['status'] = 'idle', reason?: string, error?: ProviderErrorV1) {
+    candidate = null; publish({ status, ...(reason ? { reason } : {}), ...(error ? { error } : {}), suggestion: null });
   }
   function enabled() { return !input.policy() && input.port?.getSettings().nextEditEnabled === true; }
   function suppressed(context: CodeEditorInlineContext) {

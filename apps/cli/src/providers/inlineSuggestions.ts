@@ -4,6 +4,7 @@ import { resolveFilesEditorAiSuggestionPolicy, resolveFilesEditorAiSuggestionMod
 import type { DaemonLspQueryRequest, DaemonLspQueryResponse } from '@happier-dev/protocol/machines/languageIntelligence';
 import { encodeNextEditRewriteWindow, decodeNextEditRewriteWindow } from '@happier-dev/protocol/machines/languageIntelligence';
 import type { ProviderInlineCompletionOperationV1 } from '@happier-dev/protocol/providers/contributions';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { normalizeProviderCredentialHeaderName, normalizeProviderQueryParameterName } from '@happier-dev/protocol/providers/credential-headers';
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -30,6 +31,7 @@ import { awaitAbortableWithinProviderOperation, awaitWithinProviderOperation, cr
 type InlineResponse = Extract<DaemonLspQueryResponse, { status: 'ok'; kind: 'ai.inlineSuggest' }>;
 type InlineError = 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited' | 'cancelled' | 'request_failed' | 'stale_query';
 const failure = (errorCode: InlineError) => ({ status: 'error' as const, errorCode });
+const providerFailure = (error: ProviderErrorV1) => ({ status: 'error' as const, errorCode: 'provider_error' as const, error });
 
 /** Real boundaries only; the inference owner, policy and Provider admission stay real in composed tests. */
 export type ProviderInlineSuggestionDependencies = Readonly<{
@@ -251,14 +253,14 @@ export function createProviderInlineSuggestionQuery(dependencies: ProviderInline
       if (facts.credential && transport.length !== 1) return failure('model_unavailable');
       const admitted = await admitRuntimeProviderSavedSecret({ connection: record, providerSettings: settingsRead.settings, snapshot,
         getAccountSettingsSnapshot: getSnapshot, lifetime, additionalCredentials: transport[0]?.additionalCredentials });
-      if (!admitted.ok) return failure(admitted.error.code === 'provider_secret_missing' ? 'signed_out' : 'model_unavailable');
+      if (!admitted.ok) return providerFailure(admitted.error);
       snapshot = admitted.snapshot;
       const reference = facts.credential ? resolveProviderCredentialReference({ providerSettings: settingsRead.settings,
         accountSettings: snapshot.settings,
         savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, { isCurrent: () => !signal?.aborted }),
         connectionId: input.connectionId, machineId,
         credentialSlotId: facts.credential.slotId, required: facts.credential.required, additionalCredentials: transport[0]?.additionalCredentials }) : { ok: true as const, reference: { kind: 'none' as const } };
-      if (!reference.ok) return failure(reference.error.code === 'provider_secret_missing' ? 'signed_out' : 'model_unavailable');
+      if (!reference.ok) return providerFailure(reference.error);
       const dispatchUrl = new URL(operation.path, endpoint.normalizedUrl).toString();
       // The grant and the socket consume the same DNS evidence. Looking up the
       // hostname again here could dial a private address under a public grant.
@@ -267,7 +269,7 @@ export function createProviderInlineSuggestionQuery(dependencies: ProviderInline
         secretSources: dependencies.secretSources ?? registryLease?.registry.secretSources, signal,
         credentialRef: { connectionId: record.connectionId, machineId, reference: reference.reference, transport: transport[0], protocol: endpoint.protocol,
           admittedSnapshot: snapshot } }) : null;
-      if (credential && !credential.ok) return failure(credential.error.code === 'provider_secret_missing' ? 'signed_out' : 'model_unavailable');
+      if (credential && !credential.ok) return providerFailure(credential.error);
       try {
         const headers: Record<string, string> = { ...endpoint.publicHeaders, 'content-type': 'application/json' };
         const url = new URL(dispatchUrl);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
+import { createProviderErrorV1 } from '../providers/errors.js';
 import {
   DaemonLspQueryRequestSchema, DaemonLspQueryResponseSchema, DaemonLspSyncRequestSchema,
   DaemonLspWatchResponseSchema,
@@ -8,6 +9,15 @@ import {
 const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } };
 
 describe('language intelligence Machine wire contract', () => {
+  it('retains the Provider owner refusal and Saved Secret reason through the strict response parser', () => {
+    const error = createProviderErrorV1('provider_binding_changed', {
+      connectionId: 'pc_source', machineId: 'machine', savedSecretReason: 'reference_stale',
+    });
+    const response = { status: 'error', errorCode: 'provider_error', error };
+    expect(DaemonLspQueryResponseSchema.parse(response)).toEqual(response);
+    expect(DaemonLspQueryResponseSchema.safeParse({ ...response, error: undefined }).success).toBe(false);
+    expect(DaemonLspQueryResponseSchema.safeParse({ ...response, error: { ...error, retryable: !error.retryable } }).success).toBe(false);
+  });
   it('admits only the live inline operation with captured buffer identity and no client credential or policy authority', () => {
     const request = { rootPath: '/repo', path: 'a.ts', kind: 'ai.inlineSuggest', version: 3, languageId: 'typescript',
       position: { line: 1, character: 4 }, inlineSuggestion: { connectionId: 'pc_source', modelId: 'base', prefix: 'const ', suffix: '\n' } };
