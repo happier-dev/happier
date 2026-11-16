@@ -78,7 +78,12 @@ export function createMaritimePreparationClient(request: typeof fetch, signal: A
           + (definition.cli.files.length ? 'cd -- ' + quoteSandboxShell(directory) + '\n' : '')
           + 'sh -c ' + quoteSandboxShell(definition.cli.installScript) + '\nchmod -R a+rX ' + SANDBOX_HOME + '\n'
           + 'sh -c ' + quoteSandboxShell(definition.setupScript ?? '') + '\n';
-        const result = await native.run(builder, ['sh', '-c', script]);
+        // The native base example installs under /home/user. Installation into
+        // /opt/happier and the shared setup effect require root, without changing
+        // the image's ordinary command user. Images without sudo fail visibly.
+        const result = await native.run(builder, ['sh', '-c',
+          'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi',
+          'happier-prepare', 'sh', '-c', script]);
         assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exitCode, stderr: result.stderr }, details => new SandboxError('maritime_preparation_command_failed', undefined, details));
         snapshot(await native.json(await native.api('/sandboxes/' + encodeURIComponent(builder.id) + '/save', 'POST', { name: operation.name })), operation);
         const resultState = await inspectOperation(operation);

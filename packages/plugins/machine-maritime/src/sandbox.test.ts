@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MachineProvisionerPreparationBuildResultV1Schema, MachineProvisionerPreparationInspectResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as entry from './index.js';
@@ -68,6 +70,28 @@ function vendor(options: { injectSecrets?: boolean; commandFails?: boolean; inte
 }
 
 describe('Maritime native sandbox and preparation through public Actions', () => {
+  it('runs installation and setup as root when the native base command user requires passwordless sudo', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'maritime-guest-'));
+    // Model only guest OS executables: Maritime base docs install under /home/user.
+    // The effect itself requires UID0; this sudo boundary changes the child identity.
+    writeFileSync(join(directory, 'id'), '#!/bin/sh\nprintf "%s\\n" "$MARITIME_TEST_UID"\n', { mode: 0o700 });
+    writeFileSync(join(directory, 'sudo'), '#!/bin/sh\n[ "$1" = -n ] && [ "$2" = -- ] || exit 74\nshift 2\nexport MARITIME_TEST_UID=0\nexec "$@"\n', { mode: 0o700 });
+    writeFileSync(join(directory, 'chmod'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+    const v = vendor();
+    v.data.mockImplementation(async (_url, init) => {
+      const { cmd } = JSON.parse(String(init?.body)) as { cmd: string[] };
+      const result = spawnSync(cmd[0], cmd.slice(1), { encoding: 'utf8', env: { ...process.env,
+        PATH: directory + ':' + process.env.PATH, MARITIME_TEST_UID: '1000' } });
+      return Response.json({ state: 'exited', exitCode: result.status, stdout: result.stdout, stderr: result.stderr, truncated: false });
+    });
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
+    try {
+      const result = await kit.invokeAction('prepare-build', { ...input, input: { ...input.input,
+        cli: { ...input.input.cli, files: [], installScript: '[ "$(id -u)" = 0 ] || exit 73' },
+        setupScript: '[ "$(id -u)" = 0 ] || exit 73' } }, { surface: 'plugin' });
+      expect(result).toMatchObject({ kind: 'ready' });
+    } finally { await kit.dispose(); v.data.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
+  });
   it('builds without account-secret injection, launches saved image, executes and destroys both native resources', async () => {
     const v = vendor(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
