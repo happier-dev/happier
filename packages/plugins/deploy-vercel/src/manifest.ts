@@ -21,6 +21,83 @@ export const plugin = definePlugin({
   inputTypes: targetInputTypes,
   // Vercel client getPollingDelay starts at one second; only demanded pending receipts use this cadence.
   deploymentTargets: { runtime: { statusIntervalMs: 1000, role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
+    description: 'Hosting for web apps · builds from your repository',
+    plans: [
+      {
+        "id": "hobby",
+        "title": "Hobby",
+        "facts": [
+          {
+            "label": "Price",
+            "value": "$0 a month"
+          },
+          {
+            "label": "Seats",
+            "value": "1 developer"
+          },
+          {
+            "label": "Transfer",
+            "value": "100 GB a month"
+          },
+          {
+            "label": "CDN requests",
+            "value": "1M a month"
+          },
+          {
+            "label": "More usage",
+            "value": "Not available"
+          }
+        ],
+        "included": [
+          "Personal, non-commercial projects",
+          "Automatic HTTPS",
+          "Preview deployments"
+        ],
+        "source": {
+          "url": "https://vercel.com/docs/plans/hobby",
+          "checkedAt": "2026-11-16"
+        }
+      },
+      {
+        "id": "pro",
+        "title": "Pro",
+        "facts": [
+          {
+            "label": "Price",
+            "value": "$20 a month, including 1 deploying seat"
+          },
+          {
+            "label": "Additional seats",
+            "value": "$20 a month per deploying seat"
+          },
+          {
+            "label": "Credit",
+            "value": "$20 a month"
+          },
+          {
+            "label": "Transfer",
+            "value": "1 TB a month"
+          },
+          {
+            "label": "CDN requests",
+            "value": "1M a month"
+          },
+          {
+            "label": "More usage",
+            "value": "On-demand billing"
+          }
+        ],
+        "included": [
+          "Free viewer seats",
+          "Team collaboration",
+          "Spend management"
+        ],
+        "source": {
+          "url": "https://vercel.com/docs/plans/pro-plan",
+          "checkedAt": "2026-11-16"
+        }
+      }
+    ],
     accepts: ['static', 'server'], needs: ['repository', 'stateless'],
     sources: { gitIntegration: vercelGitIntegrations.map(provider => provider.kind), upload: true },
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: projectPrepareResultSchema,
