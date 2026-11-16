@@ -3442,6 +3442,13 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
 
+  /** The admitted Archive owner removes owned prepared artifacts before the ordinary archive mutation. */
+  machinePresetArchive?: (args: Readonly<{
+    input: MachinePresetActionInputV1<'machines.presets.archive'>;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   /** Exact-Home managed-resource and selected-controller provisioner transport. */
   managedMachineReferences?: (args: Readonly<{
     input: ManagedMachineActionInputV1<'machines.managed.references.get'>;

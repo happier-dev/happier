@@ -8,7 +8,7 @@ import { normalizeId } from '../inputReading.js';
 import { ManagedBootstrapFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema } from '../../operations/v1.js';
 import { normalizeActionExecutorThrownError } from '../resultProjection.js';
 import { ManagedRefusalCodeV1Schema } from '../../../machines/managed/providerFactsV1.js';
-import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetHttpActionIdV1Schema, type MachinePresetActionInputSchemasV1 } from '../../../machines/managed/machinePresetActionsV1.js';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetHttpActionIdV1Schema, type MachinePresetActionInputSchemasV1, type MachinePresetActionInputV1 } from '../../../machines/managed/machinePresetActionsV1.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
@@ -152,6 +152,13 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machinePresetActionId !== null) {
+        if (machinePresetActionId === 'machines.presets.archive' && deps.machinePresetArchive) {
+          const result = await deps.machinePresetArchive({
+            input: admittedInput as MachinePresetActionInputV1<'machines.presets.archive'>,
+            context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          return readActionFailureEnvelope(result) ?? { ok: true, result };
+        }
         if (!deps.machinePresetAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }

@@ -8,6 +8,26 @@ import type { ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { getActionSpec, listActionCliCommandDeclarations, listVoiceToolActionSpecs, PLUGIN_INVOCABLE_ACTION_IDS, PUBLIC_ACTION_IDS } from './actionSpecs.js';
 
 describe('personal and Team Machine preset Actions', () => {
+  it('runs Archive through its admitted cleanup owner while Restore uses the ordinary preset transport', async () => {
+    const effects: string[] = [];
+    const input = { homeId: 'home', id: 'preset', expectedRevision: 1 };
+    const executor = createActionExecutor({
+      machinePresetArchive: async request => {
+        expect(request.input).toEqual(input);
+        effects.push('cleanup-and-archive');
+        return { kind: 'refused', code: 'provider_unavailable' };
+      },
+      machinePresetAction: async request => {
+        effects.push(request.actionId);
+        return { kind: 'refused', code: 'preset_not_found' };
+      },
+    });
+    for (const actionId of ['machines.presets.archive', 'machines.presets.restore'] as const) {
+      expect(await executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+        presentUserConfirmation: { actionId } })).toMatchObject({ ok: true, result: { kind: 'refused' } });
+    }
+    expect(effects).toEqual(['cleanup-and-archive', 'machines.presets.restore']);
+  });
   it('executes Prepare through the installed Machine operation owner', async () => {
     const input = { homeId: 'home', id: 'preset', expectedRevision: 0, machineId: 'builder' };
     const accepted = { status: 'accepted', operationId: 'prepare-operation', machineId: 'builder' };

@@ -1050,6 +1050,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const openPrivateLabel = createCliPrivateLabelActionOpener(params.credentials?.token === params.token ? params.credentials.encryption : null);
   const actionDeps: CliActionDeps = {
     machinePresetPrepare: params.machinePresetPrepare,
+    machinePresetArchive: params.machinePresetArchive,
     privateLabelOpen: async (request, context) => {
       if (context.serverId && !await isSameActionHomeId(context.serverId)) return null;
       if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {

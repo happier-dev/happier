@@ -234,6 +234,7 @@ export type CliActionDepsParams = Readonly<{
   machineGuardAction?: ActionExecutorDeps['machineGuardAction'];
   /** Installed original Prepare operation; clients use selected-Machine ingress. */
   machinePresetPrepare?: ActionExecutorDeps['machinePresetPrepare'];
+  machinePresetArchive?: ActionExecutorDeps['machinePresetArchive'];
   /** Machine-owned policy intersects the selected Session's confined SCM root. */
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** The daemon binds its canonical local file owner; clients use exact Machine transport. */
