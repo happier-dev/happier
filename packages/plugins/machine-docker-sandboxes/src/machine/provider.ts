@@ -56,7 +56,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'> & P
       // https://docs.docker.com/ai/sandboxes/cloud/local-vs-cloud/
       const hostArch = arch();
       const preparationGuest = hostArch === 'x64' || hostArch === 'arm64'
-        ? { target: { os: 'linux' as const, arch: hostArch }, remoteHomeDir: '/home/agent' } : undefined;
+        ? { target: { os: 'linux', arch: hostArch }, remoteHomeDir: '/home/agent' } as const : undefined;
       return { base: { launch: { name: 'happier' }, guestPlatform: 'linux' as const,
         ...(preparationGuest ? { nativeFacts: { preparationGuest } } : {}) }, dimensions: { size: [], location: [], network: [], duration: [],
         image: catalog.templateIds.map(templateId => ({ id: templateId, title: templateId, guestPlatform: 'linux' as const,
