@@ -11,6 +11,7 @@ import {
 import {
     CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS,
     createConnectedAccountAuthenticationAttemptOwner,
+    executeConnectedAccountAuthenticationCommand,
     type ConnectedAccountAttemptConfigurationAdmission,
     type ConnectedAccountAttemptModeAdmission,
     type ConnectedAccountAttemptProviderOperation,
@@ -442,6 +443,12 @@ describe('addressed manual attempts', () => {
             expect(await next.owner.ensureRestored({ attemptId: 'attempt-1' })).toEqual({
                 status: 'reconnectRequired', attemptId: 'attempt-1', code: 'connected_account_authentication_outcome_unknown',
             });
+            expect(await executeConnectedAccountAuthenticationCommand({
+                attempts: next.owner, command: { operation: 'cancel', attemptId: 'attempt-1' },
+            })).toEqual({
+                status: 'reconnectRequired', attemptId: 'attempt-1', code: 'connected_account_authentication_outcome_unknown',
+            });
+            expect(first.transactionApi.records.get('attempt-1')).toMatchObject({ kind: 'manual', scope: { phase: 'starting' } });
             expect(next.invoke).not.toHaveBeenCalled();
             provider.resolve({ status: 'connected', accountId: 'account-a', displayName: 'Example', scopes: [] });
             expect(await pending).toMatchObject({ status: 'connected' });
@@ -475,6 +482,58 @@ describe('addressed manual attempts', () => {
             expect(await next.owner.ensureRestored({ attemptId: 'attempt-1' })).toMatchObject({
                 status: 'conflict', code: 'connected_account_runtime_generation_changed',
             });
+            expect(next.invoke).not.toHaveBeenCalled();
+        } finally { first.owner.dispose(); next.owner.dispose(); }
+    });
+
+    it.each(['awaitingManual', 'configurationRequired'] as const)(
+        'cancels a retained %s manual draft without restoring its retired runtime', async (phase) => {
+            const original = manualMode();
+            const admittedMode = phase === 'configurationRequired' ? {
+                ...original,
+                descriptor: PluginConnectedAccountAuthenticationModeV2Schema.parse({
+                    ...original.descriptor, configuration: accountScopedConfiguration(),
+                }),
+            } : original;
+            const executionMachine = { serverId: 'server-1', machineId: 'machine-1' };
+            const first = manualHandoffHarness({ admittedMode, executionMachine });
+            const next = manualHandoffHarness({ executionMachine, attemptAddresses: first.transactions.address,
+                admittedMode: { ...admittedMode, occurrenceId: 'replacement-generation', sourceCustody: {
+                    kind: 'managed', immutableGenerationId: 'replacement-artifact', installSource: 'archive',
+                } } });
+            try {
+                expect(await first.owner.beginConnect({ service, modeId: 'manual' })).toMatchObject({ status: phase });
+                expect(await first.transactionApi.listPending({ service, machineId: 'machine-1' })).toHaveLength(1);
+                first.owner.dispose();
+                expect(await executeConnectedAccountAuthenticationCommand({
+                    attempts: next.owner, command: { operation: 'cancel', attemptId: 'attempt-1' },
+                })).toEqual({ status: 'cancelled', attemptId: 'attempt-1' });
+                expect(await first.transactionApi.listPending({ service, machineId: 'machine-1' })).toEqual([]);
+                expect(await next.owner.read({ attemptId: 'attempt-1' })).toMatchObject({
+                    status: 'unavailable', code: 'connected_account_attempt_not_found',
+                });
+                expect(next.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
+                expect(next.invoke).not.toHaveBeenCalled();
+            } finally { first.owner.dispose(); next.owner.dispose(); }
+        },
+    );
+
+    it('does not discard unreadable manual attempt contents during cancellation', async () => {
+        const first = manualHandoffHarness();
+        const next = manualHandoffHarness({ attemptAddresses: first.transactions.address });
+        try {
+            await first.owner.beginConnect({ service, modeId: 'manual' });
+            const record = first.transactionApi.records.get('attempt-1');
+            if (!record) throw new Error('Expected the persisted manual draft');
+            first.transactionApi.records.set('attempt-1', {
+                ...record, content: { t: 'plain', v: { unreadable: true } },
+            });
+            first.owner.dispose();
+            expect(await executeConnectedAccountAuthenticationCommand({
+                attempts: next.owner, command: { operation: 'cancel', attemptId: 'attempt-1' },
+            })).toMatchObject({ status: 'unavailable', code: 'connected_account_attempt_internal_unavailable' });
+            expect(first.transactionApi.records.has('attempt-1')).toBe(true);
+            expect(next.destroyAttemptConfiguration).not.toHaveBeenCalled();
             expect(next.invoke).not.toHaveBeenCalled();
         } finally { first.owner.dispose(); next.owner.dispose(); }
     });

@@ -29,6 +29,7 @@ export async function executeConnectedAccountAuthenticationCommand(input: Readon
     };
     if ('attemptId' in command) {
         const restored = await attempts.ensureRestored({ attemptId: command.attemptId,
+            ...(command.operation === 'cancel' ? { forCancellation: true } : {}),
             ...(input.addressedRecord ? { record: input.addressedRecord } : {}),
             ...(input.signal ? { signal: input.signal } : {}) });
         if (restored !== null) return restored;

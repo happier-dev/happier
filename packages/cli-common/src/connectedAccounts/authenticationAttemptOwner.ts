@@ -628,6 +628,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         attemptId: string;
         record?: ConnectedAccountAttemptTransactionRecord;
         signal?: AbortSignal;
+        forCancellation?: true;
     }>): Promise<AttemptResponse | null>;
     beginConnect(input: Readonly<{
         service: PluginContributionRef;
@@ -3182,6 +3183,22 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 catch (error) { return internalAttemptFailure(error, input.attemptId, 'connected_account.attempt.restore_manual'); }
                 input.signal?.throwIfAborted();
                 if (!manual) return unavailable(input.attemptId);
+                if (input.forCancellation) {
+                    // An unsubmitted draft has no provider effect to restore. Its
+                    // addressed contents still pass the ordinary decoder above.
+                    const credentials = createAttemptCredentialStore();
+                    const restoration: RestoringStoredAttempt & { addressExpiresAtMs: number } = {
+                        id: input.attemptId, active: true, createdAtMs: record.scope.createdAtMs,
+                        credentials, pendingDurableOperations: 0, oauthTransaction: null,
+                        phase: 'restoring', lastResponse: { status: 'pending', attemptId: input.attemptId, retryAfterMs: 1 },
+                        cleanupTerminalResponse: null, addressExpiresAtMs: record.expiresAtMs,
+                    };
+                    if (!installRestoration(restoration)) { credentials.clear(); return null; }
+                    await destroyAttempt(restoration, { status: 'cancelled', attemptId: input.attemptId }, {
+                        skipOAuthTransactionCleanup: true, skipDeviceTransactionCleanup: true,
+                    });
+                    return null;
+                }
                 const reconnectTarget = manual.account ? await prepareReconnectTarget(manual.account) : null;
                 if (manual.account && (!reconnectTarget
                     || reconnectTarget.expectedCredentialRevision !== manual.expectedCredentialRevision
