@@ -22,26 +22,50 @@ installSessionRouteCommonModuleMocks({
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        // The leaf reads its own route: on a device Expo can move it a render before the layout's route moves
+        // (P03-MOBILE-SWITCHBACK, live Android probe). `leafRoute.set` before the navigation models that lead.
+        const leafParams = () => React.useSyncExternalStore(leafRoute.subscribe, leafRoute.get, leafRoute.get);
+        const routeParams = () => {
+            const leaf = React.useContext(LeafRouteContext) ? leafParams() : null;
+            const route = (useRoute().params ?? {}) as Record<string, string | undefined>;
+            return leaf ?? route;
+        };
         return { ...createExpoRouterMock().module,
-            useLocalSearchParams: () => useRoute().params ?? {},
-            usePathname: () => `/session/${String((useRoute().params as { id?: string } | undefined)?.id)}`,
+            useLocalSearchParams: routeParams,
+            usePathname: () => `/session/${String(routeParams().id)}`,
             useRouter: () => ({ replace: () => {} }),
-            Slot: () => React.createElement(sessionRoute.Index!),
+            Slot: () => React.createElement(LeafRouteContext.Provider, { value: true }, React.createElement(sessionRoute.Index!)),
         };
     },
 });
 
 // The Session view needs the whole sync runtime; this route contract is about which Session views the screen
 // mounts and keeps, so the body is a probe that reads its own destination params and visibility.
-const bodies = vi.hoisted(() => ({ mounts: [] as string[], visibleBy: new Map<string, boolean>() }));
+const bodies = vi.hoisted(() => ({ mounts: [] as string[], visibleBy: new Map<string, boolean>(),
+    paramsBy: new Map<string, Set<object>>(), pathnameBy: new Map<string, string>() }));
+const leafRoute = vi.hoisted(() => {
+    let params: Record<string, string> | null = null;
+    const listeners = new Set<() => void>();
+    return {
+        get: () => params,
+        set: (next: Record<string, string> | null) => { params = next; for (const listener of listeners) listener(); },
+        subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    };
+});
+/** Marks the Session leaf (what Expo's Slot renders) so the router boundary can serve it the leaf's own route. */
+const LeafRouteContext = React.createContext(false);
 vi.mock('@/components/sessions/shell/SessionDestinationBody', async () => {
-    const { useDestinationParams, useDestinationVisibility } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const { useDestinationParams, useDestinationPathname, useDestinationVisibility } = await import('@/components/appShell/workspace/DestinationInstanceHost');
     return {
         SessionDestinationBody: function SessionBodyProbe() {
-            const { id } = useDestinationParams<{ id?: string }>();
+            const params = useDestinationParams<{ id?: string }>();
+            const { id } = params;
+            const pathname = useDestinationPathname();
             const visible = useDestinationVisibility();
             React.useEffect(() => { bodies.mounts.push(String(id)); }, []);
             bodies.visibleBy.set(String(id), visible);
+            bodies.paramsBy.set(String(id), (bodies.paramsBy.get(String(id)) ?? new Set()).add(params));
+            bodies.pathnameBy.set(String(id), pathname);
             return React.createElement('SessionBody', { id, visible });
         },
     };
@@ -56,7 +80,10 @@ const Layout = (await import('@/app/(app)/session/[id]/_layout')).default;
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
 const homesFixture = createSessionRouteHomesFixture();
-afterEach(() => { standardCleanup(); homesFixture.restore(); bodies.mounts = []; bodies.visibleBy.clear(); });
+afterEach(() => {
+    standardCleanup(); homesFixture.restore(); leafRoute.set(null);
+    bodies.mounts = []; bodies.visibleBy.clear(); bodies.paramsBy.clear(); bodies.pathnameBy.clear();
+});
 
 function Navigator(props: Readonly<{ children: React.ReactNode }>) {
     const { state, descriptors, NavigationContent } = useNavigationBuilder(StackRouter, { children: props.children });
@@ -82,7 +109,7 @@ const phoneWorkspace = {
     registerBackStep: () => () => {}, back: () => {}, forward: () => {},
 };
 
-it('switching back to a recently opened Session on the phone stack mounts no Session view again', async () => {
+async function renderPhoneSessionScreen() {
     homesFixture.seed(['home-b']);
     const navigation = createNavigationContainerRef();
     await renderScreen(<InjectedAuthProvider credentials={null}><WorkspaceNavigationProvider value={phoneWorkspace}>
@@ -90,10 +117,16 @@ it('switching back to a recently opened Session on the phone stack mounts no Ses
             <Root.Navigator><Root.Screen name="Session" component={Layout} /></Root.Navigator>
         </BaseNavigationContainer>
     </WorkspaceNavigationProvider></InjectedAuthProvider>);
-    const open = async (sessionId: string) => {
+    return async (sessionId: string, options?: Readonly<{ leafFirst?: boolean }>) => {
+        const params = { id: sessionId, serverId: 'home-b' };
+        if (options?.leafFirst) await act(async () => { leafRoute.set(params); });
         const route = navigation.getCurrentRoute()!;
-        await act(async () => { navigation.dispatch({ ...CommonActions.setParams({ id: sessionId, serverId: 'home-b' }), source: route.key }); });
+        await act(async () => { navigation.dispatch({ ...CommonActions.setParams(params), source: route.key }); });
     };
+}
+
+it('switching back to a recently opened Session on the phone stack mounts no Session view again', async () => {
+    const open = await renderPhoneSessionScreen();
 
     await open('session-2');
     await open('session-1');
@@ -102,4 +135,23 @@ it('switching back to a recently opened Session on the phone stack mounts no Ses
     // mounted but hidden, as a listed tab.
     expect({ mounts: bodies.mounts, visible: Object.fromEntries(bodies.visibleBy) })
         .toEqual({ mounts: ['session-1', 'session-2'], visible: { 'session-1': true, 'session-2': false } });
+});
+
+it('a leaf route that moves before its layout does not re-target the retained Session views', async () => {
+    const open = await renderPhoneSessionScreen();
+
+    await open('session-2', { leafFirst: true });
+    await open('session-1', { leafFirst: true });
+
+    // Each retained view keeps its own path and the same params object: a new params object renders every
+    // params reader of the view (the whole composer controller on a device) although nothing of it changed.
+    expect({
+        mounts: bodies.mounts,
+        pathnames: Object.fromEntries(bodies.pathnameBy),
+        paramsObjects: Object.fromEntries([...bodies.paramsBy].map(([id, seen]) => [id, seen.size])),
+    }).toEqual({
+        mounts: ['session-1', 'session-2'],
+        pathnames: { 'session-1': '/session/session-1', 'session-2': '/session/session-2' },
+        paramsObjects: { 'session-1': 1, 'session-2': 1 },
+    });
 });

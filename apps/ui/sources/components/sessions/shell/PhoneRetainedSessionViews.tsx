@@ -93,13 +93,20 @@ export function PhoneRetainedSessionViews(props: Readonly<{ address: SessionAddr
     const screenFocused = useOptionalScreenIsFocused();
     const tabs = useOptionalWorkspaceNavigation(selectPhoneTabs);
     const currentKey = sessionAddressKey(props.address);
-    const current: RetainedSession = {
+    const [retained, setRetained] = React.useState<RetainedSessions>(() => new Map([[currentKey, {
+        key: currentKey, address: props.address, target: readSessionTarget(params, props.address), pathname,
+    }]]));
+    // On a device Expo moves this leaf's route a render before the layout moves the address (a rail switch:
+    // the leaf already names the next Session while the address still names the shown one). Those route facts
+    // are not the shown Session's; adopting them gave it the other Session's path and a new params object,
+    // which rendered every params reader of both retained views on each switch.
+    const presented = retained.get(currentKey);
+    const current: RetainedSession = presented && params.id !== props.address.sessionId ? presented : {
         key: currentKey,
         address: props.address,
         target: readSessionTarget(params, props.address),
         pathname,
     };
-    const [retained, setRetained] = React.useState<RetainedSessions>(() => new Map([[currentKey, current]]));
     const next = retainSessions(retained, current, tabs);
     if (next !== retained) setRetained(next);
     return <>
