@@ -15,6 +15,7 @@ import { MachineAgentIsolationPolicyV1Schema, MachineAgentIsolationStatusV1Schem
 import { MachineAdminAccessV1Schema, MachineAdminAccessObservationV1Schema, StoredMachineAdminAccessObservationV1Schema } from './adminAccessV1.js';
 import { MachineResourcesPolicyV1Schema } from './resources/machineResourcesPolicyV1.js';
 import { MachinePublishedMachineRolesV1Schema, MachineRolesPolicyV1Schema } from './roles/machineRolesV1.js';
+import { MachineIsolationPolicyV1Schema } from './machineIsolationV1.js';
 import { MachinePublishedResourceSummaryV1Schema } from './resources/machineResourceSummaryV1.js';
 import { MachineSetupObservationV1Schema } from './setup/machineSetupObservationV1.js';
 import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
@@ -39,6 +40,7 @@ export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObje
   adminAccess: z.optional(MachineAdminAccessV1Schema),
   resourcesPolicyV1: z.optional(MachineResourcesPolicyV1Schema),
   rolesV1: z.optional(MachineRolesPolicyV1Schema),
+  isolationPolicyV1: z.optional(MachineIsolationPolicyV1Schema),
   serviceWatchesV1: z.optional(MachineServiceWatchesV1Schema),
   reachabilityPosture: z.optional(MachineReachabilityPostureV1Schema),
   accessProviderSelections: z.optional(z.array(AccessProviderSelectionV1Schema)),

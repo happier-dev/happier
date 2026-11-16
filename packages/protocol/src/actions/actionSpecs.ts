@@ -274,6 +274,7 @@ import { MACHINE_PROCESSES_ACTION_SPECS } from './specs/machineProcesses.js';
 import { MACHINE_STORAGE_ACTION_SPECS } from './specs/storage.js';
 import { MACHINE_RESOURCES_ACTION_SPECS } from './specs/machineResources.js';
 import { MACHINE_ROLES_ACTION_SPECS } from './specs/machineRoles.js';
+import { MACHINE_ISOLATION_ACTION_SPECS } from './specs/machineIsolation.js';
 import { MACHINE_SERVICE_ACTION_SPECS } from './specs/machine/services.js';
 import { MACHINE_SERVICE_ADOPTION_ACTION_SPECS } from './specs/machine/serviceAdoption.js';
 import { MACHINE_SCHEDULED_ACTION_SPECS } from './specs/machineScheduled.js';
@@ -501,6 +502,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MACHINE_STORAGE_ACTION_SPECS)[number]
   | (typeof MACHINE_RESOURCES_ACTION_SPECS)[number]
   | (typeof MACHINE_ROLES_ACTION_SPECS)[number]
+  | (typeof MACHINE_ISOLATION_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ADOPTION_ACTION_SPECS)[number]
   | (typeof MACHINE_SCHEDULED_ACTION_SPECS)[number]
@@ -552,6 +554,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MACHINE_STORAGE_ACTION_SPECS,
   ...MACHINE_RESOURCES_ACTION_SPECS,
   ...MACHINE_ROLES_ACTION_SPECS,
+  ...MACHINE_ISOLATION_ACTION_SPECS,
   ...MACHINE_SERVICE_ACTION_SPECS,
   ...MACHINE_SERVICE_ADOPTION_ACTION_SPECS,
   ...MACHINE_SCHEDULED_ACTION_SPECS,

@@ -372,6 +372,7 @@ const actionFamilyTranslations = { ca: translated({
             client_files: "Fitxers del client",
             project_readiness: "Preparació del projecte",
             deployments: "Desplegaments",
+            machine_isolation: "Aïllament",
             machine_agent_isolation: `Els agents s’executen com a`,
             plugin_execution_origin: "Execució de plugins",
             machine_reachability: "Connectivitat de les màquines",

@@ -7,6 +7,8 @@ import { executeCapturedMachineAction } from '@/api/machine/capturedMachineActio
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
 import { MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineRoles';
+import { MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineIsolation';
+import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machine/agentIsolation';
 import { MACHINE_STORAGE_ACTION_INPUT_SCHEMAS, MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/storage';
@@ -43,7 +45,7 @@ export function createCliMachineResourceActionDeps(
     observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
-): Pick<ActionExecutorDeps, 'machineScheduledAction' | 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineRolesAction' | 'machineGuardAction' | 'usageSourceAction'> {
+): Pick<ActionExecutorDeps, 'machineScheduledAction' | 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineRolesAction' | 'machineIsolationAction' | 'machineGuardAction' | 'usageSourceAction'> {
   const admitMachineService = async (serverId: string, actionContext: ActionExecutorContext, machineId: string,
     method: string): Promise<CliProjectAdmissionFailure | null> => {
     const denied = await projectAccountAdmission(serverId, actionContext);
@@ -527,6 +529,40 @@ export function createCliMachineResourceActionDeps(
         const { ApiClient } = await import('@/api/api');
         const authorization = context.externalActionExecutionAuthorization;
         return readMachineRolesSnapshot({ actionId, machineId: request.machineId, isCurrent: current, readMachine: async () => {
+          if (authorization) return ApiClient.getRequesterMachine(request.machineId, { authorization, effectActionId: actionId, ...(signal ? { signal } : {}) });
+          if (!params.credentials) return null;
+          const api = await ApiClient.create(params.credentials);
+          return api.getMachine(request.machineId, { ...(signal ? { signal } : {}) });
+        } });
+      });
+    },
+    machineIsolationAction: async ({ actionId, input, context, signal }) => {
+      const serverId = input.serverId ?? context.serverId ?? projectHomeId;
+      const denied = await projectAccountAdmission(serverId, context);
+      if (denied) return denied;
+      const current = async () => {
+        if (signal?.aborted || params.isCredentialCurrent && !await params.isCredentialCurrent()) return false;
+        await assertProjectRequesterCurrent(context);
+        return true;
+      };
+      return withProjectHome(async () => {
+        if (!await current()) return { status: 'unavailable' };
+        if (actionId === MACHINE_ISOLATION_SET_ACTION_ID_V1) {
+          const request = MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+          return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
+            signal?.throwIfAborted();
+            if (!await current()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            signal?.throwIfAborted();
+          }, invoke: options => callMachineAction({ machineId: request.machineId, serverId, method: RPC_METHODS.MACHINES_ISOLATION_SET,
+            request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
+            ...(signal ? { signal } : {}), ...options }) });
+        }
+        // Get reads the synced Machine metadata, so they work while the Machine is offline.
+        const request = MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+        const { readMachineIsolationSnapshot } = await import('@/api/machine/machineIsolation');
+        const { ApiClient } = await import('@/api/api');
+        const authorization = context.externalActionExecutionAuthorization;
+        return readMachineIsolationSnapshot({ machineId: request.machineId, isCurrent: current, readMachine: async () => {
           if (authorization) return ApiClient.getRequesterMachine(request.machineId, { authorization, effectActionId: actionId, ...(signal ? { signal } : {}) });
           if (!params.credentials) return null;
           const api = await ApiClient.create(params.credentials);

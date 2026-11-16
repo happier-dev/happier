@@ -68,6 +68,7 @@ import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAcc
 import type { MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { registerDaemonMachineResourcesPolicyRpcHandlers, type DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
 import { registerDaemonMachineRolesRpcHandlers, type DaemonMachineRolesRoutes } from '@/rpc/handlers/daemonMachineRoles';
+import { registerDaemonMachineIsolationRpcHandlers, type DaemonMachineIsolationRoutes } from '@/rpc/handlers/daemonMachineIsolation';
 import { registerDaemonMachineGuardRpcHandlers, type DaemonMachineGuardRoutes } from '@/rpc/handlers/daemonMachineGuard';
 import { createMachineAgentInventoryPublication, type MachineAgentInventoryObservation } from '@/capabilities/snapshots/machineAgentInventory';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -3202,6 +3203,30 @@ export class ApiMachineClient {
 
     registerMachineRolesRoutes(options: DaemonMachineRolesRoutes): void {
         registerDaemonMachineRolesRpcHandlers(this.rpcHandlerManager, options);
+    }
+
+    registerMachineIsolationRoutes(options: DaemonMachineIsolationRoutes): void {
+        registerDaemonMachineIsolationRpcHandlers(this.rpcHandlerManager, { ...options,
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            validateConfiguredSandboxes: async (entries, ingress) => {
+                const runtime = await this.resolveOwnSessionRuntime(ingress);
+                const installationId = ingress.machineAdmission?.installationId;
+                if (!runtime || !installationId) return 'unavailable';
+                const homeId = runtime.accountAuthorization?.binding.serverIdentityId
+                    ?? await resolveServerProfileHomeIdentityId(runtime.serverId);
+                if (!homeId) return 'unavailable';
+                const [{ tryAcquireAuthoritativePluginRuntimeRegistryLease }, { validateMachineIsolationConfiguredSandboxes }] = await Promise.all([
+                    import('@/plugins/runtime/reload/runtimeLease'), import('@/machines/managed/isolationPolicyReferences'),
+                ]);
+                const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir });
+                if (!lease) return 'unavailable';
+                try {
+                    return await validateMachineIsolationConfiguredSandboxes({ entries, runtime,
+                        target: { homeId, machineId: this.machine.id, installationId },
+                        provisioners: lease.registry.contributes.machineProvisioners ?? [], signal: ingress.signal });
+                } finally { await lease.release(); }
+            },
+        });
     }
 
     private machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;

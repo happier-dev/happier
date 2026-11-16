@@ -3562,6 +3562,13 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
 
+  machineIsolationAction?: (args: Readonly<{
+    actionId: import('../specs/machineIsolation.js').MachineIsolationActionId;
+    input: import('../specs/machineIsolation.js').MachineIsolationActionInput;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   machineAgentIsolationAction?: (args: Readonly<{
     actionId: import('../specs/machine/agentIsolation.js').MachineAgentIsolationActionId;
     input: import('../specs/machine/agentIsolation.js').MachineAgentIsolationActionInput;

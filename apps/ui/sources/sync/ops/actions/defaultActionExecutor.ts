@@ -111,6 +111,9 @@ import { setSessionConnectedServiceAuthBinding } from '@/sync/ops/connectedServi
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
 import { MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineRoles';
+import { MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineIsolation';
+import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
+import { readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
 import { readSyncedMachineRoles, readSyncedMachineRolesList } from '@/sync/domains/machines/roles/machineRoles';
 import { resolveMachineGuardOperationTimeoutMs } from '@happier-dev/protocol/machines/guard/actionIdsV1';
 import { machineResourcesPolicyGet } from '@/sync/ops/machineResourcesPolicy';
@@ -842,6 +845,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   machineServiceLogsRead?: NonNullable<ActionExecutorDeps['machineServiceLogsRead']>;
   machineResourcesPolicyAction?: NonNullable<ActionExecutorDeps['machineResourcesPolicyAction']>;
   machineRolesAction?: NonNullable<ActionExecutorDeps['machineRolesAction']>;
+  machineIsolationAction?: NonNullable<ActionExecutorDeps['machineIsolationAction']>;
   machineAdminAccessAction?: NonNullable<ActionExecutorDeps['machineAdminAccessAction']>;
   machineAgentIsolationAction?: NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>;
   machineReboot?: NonNullable<ActionExecutorDeps['machineReboot']>;
@@ -3624,6 +3628,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? { machineRolesAction: opts?.machineRolesAction ?? ((args: Parameters<NonNullable<ActionExecutorDeps['machineRolesAction']>>[0]) => args.context.invocationServices?.managedContinuation
         ? executeMachineOwnedAction(args) : capturedFamilyPorts!.machineRolesAction(args)) }
       : {}),
+    ...(opts?.machineIsolationAction ?? capturedFamilyPorts?.machineIsolationAction
+      ? { machineIsolationAction: opts?.machineIsolationAction ?? capturedFamilyPorts!.machineIsolationAction }
+      : {}),
     ...(opts?.machineAdminAccessAction ?? capturedFamilyPorts?.machineAdminAccessAction
       ? { machineAdminAccessAction: opts?.machineAdminAccessAction ?? capturedFamilyPorts!.machineAdminAccessAction }
       : {}),
@@ -5283,6 +5290,7 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
   machineServiceLogsRead: NonNullable<ActionExecutorDeps['machineServiceLogsRead']>;
   machineResourcesPolicyAction: NonNullable<ActionExecutorDeps['machineResourcesPolicyAction']>;
   machineRolesAction: NonNullable<ActionExecutorDeps['machineRolesAction']>;
+  machineIsolationAction: NonNullable<ActionExecutorDeps['machineIsolationAction']>;
   machineAdminAccessAction: NonNullable<ActionExecutorDeps['machineAdminAccessAction']>;
   machineAgentIsolationAction: NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>;
   machineReboot: NonNullable<ActionExecutorDeps['machineReboot']>;
@@ -5409,6 +5417,15 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
       // List and Get read synced metadata, so a Machine's roles stay readable while it is offline.
       const machine = resolveServerScopedMachine(storage.getState(), account.serverId, input.machineId);
       return actionId === 'machines.roles.list' ? readSyncedMachineRolesList(machine) : readSyncedMachineRoles(machine);
+    },
+    machineIsolationAction: async ({ actionId, input, context, signal }) => {
+      account.assertCurrent();
+      if (input.serverId && !areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return { status: 'unavailable' };
+      if (actionId === MACHINE_ISOLATION_SET_ACTION_ID_V1) {
+        return machineActionRpc(actionId, MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS['machines.isolation.set'].parse(input), signal,
+          context.actionRequestId ?? undefined);
+      }
+      return readSyncedMachineIsolationPolicy(resolveServerScopedMachine(storage.getState(), account.serverId, input.machineId));
     },
     machineVitalsAction: async ({ actionId, input, signal }) => {
       account.assertCurrent();

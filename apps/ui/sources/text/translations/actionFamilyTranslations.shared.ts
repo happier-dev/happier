@@ -97,6 +97,7 @@ export const english = {
         machine_resources: "Machine resources",
         machine_admin_access: "Administrator access",
         machine_reboot: "Machine reboot",
+        machine_isolation: "Isolation",
         machine_agent_isolation: "Agents run as",
         machine_guard: "Machine protection",
         account_home_continuation: "Account access recovery",

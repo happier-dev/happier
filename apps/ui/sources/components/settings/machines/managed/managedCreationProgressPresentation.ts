@@ -6,6 +6,12 @@ import { describeManagedLifecycleState } from '@/components/settings/machines/ma
 import { t } from '@/text';
 
 import type { ManagedMachineCreationProgress } from './managedMachineCreation';
+import type { SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
+
+export type ManagedCreationProgressStep = Readonly<{
+  id: 'create' | 'install' | 'setup' | 'ready';
+  state: Extract<SetupStepState, 'done' | 'running' | 'upcoming' | 'failed'>;
+}>;
 
 /**
  * How one managed creation reads right now, from the creation owner's progress and its observed
@@ -21,7 +27,7 @@ export function describeManagedCreationProgress(
       ? progress.machineSetup
       : undefined;
   const operation =
-    progress.kind === 'acquiring' || progress.kind === 'failed'
+    progress.kind === 'acquiring' || progress.kind === 'failed' || progress.kind === 'session_starting'
       ? progress.operation
       : progress.kind === 'setup_pending' &&
           progress.operation?.scope.machineId === progress.machineId
@@ -30,12 +36,30 @@ export function describeManagedCreationProgress(
   const observedStatus = operation
     ? resolveActionOperationStatus(
         operation,
-        (progress.kind === 'acquiring' || progress.kind === 'failed'
+        (progress.kind === 'acquiring' || progress.kind === 'failed' || progress.kind === 'session_starting'
           ? progress.operationObservation
           : undefined) ?? 'available',
       )
     : null;
-  const failed = progress.kind === 'failed' || operation?.state === 'failed';
+  const failed = progress.kind === 'failed' || operation?.state === 'failed' || operation?.state === 'cancelled';
+  const steps: ManagedCreationProgressStep[] = [];
+  if (progress.kind === 'session_starting') {
+    const phase = operation?.progress?.kind === 'phase' ? operation.progress.phase : undefined;
+    const current = phase === 'setup' ? 2
+      : phase === 'ssh.installCli' || phase?.startsWith('ssh.installCli.') ? 1
+        : phase === 'machines.managed.acquire' || phase === 'native.readiness.wait'
+          || phase === 'ssh.readiness.wait' || phase === 'ssh.trust' ? 0 : -1;
+    // Only the observed phase is claimed: earlier effects may have been skipped or prepared.
+    // Session success completes Ready; its receiver owns settling the required bound Setup.
+    if (current >= 0 || operation?.state === 'succeeded') {
+      const currentState: ManagedCreationProgressStep['state'] = operation?.state === 'succeeded' ? 'done'
+        : failed ? 'failed' : observedStatus?.tone === 'active' ? 'running' : 'upcoming';
+      for (const [index, id] of (['create', 'install', 'setup', 'ready'] as const).entries()) {
+        steps.push({ id, state: index === current ? currentState
+          : id === 'ready' && operation?.state === 'succeeded' ? 'done' : 'upcoming' });
+      }
+    }
+  }
   const label = setup
     ? progress.kind === 'failed'
       ? `${t('managedMachines.creation.setup')} · ${t('inbox.actionOperations.status.failed')}`
@@ -60,5 +84,5 @@ export function describeManagedCreationProgress(
         (observedStatus && observedStatus.tone !== 'active')
       ? 'neutral'
       : 'active';
-  return { setup, operation, observedStatus, failed, label, tone };
+  return { setup, operation, observedStatus, failed, label, tone, steps };
 }

@@ -181,6 +181,7 @@ export const RPC_METHODS = {
   MACHINES_VITALS_GET: 'machines.vitals.get',
   MACHINES_RESOURCES_POLICY_SET: 'machines.resources.policy.set',
   MACHINES_ROLES_SET: 'machines.roles.set',
+  MACHINES_ISOLATION_SET: 'machines.isolation.set',
   MACHINES_SERVICE_LOGS_READ: 'machines.services.logs.read',
   MACHINES_SERVICE_CONTROL: 'machines.services.control',
   MACHINES_SERVICE_EXEC: 'machines.services.exec',

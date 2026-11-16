@@ -10,6 +10,7 @@ import { MachineStorageActionIdSchema, MACHINE_STORAGE_ACTION_INPUT_SCHEMAS } fr
 import { MachineProcessesActionIdSchema, MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS } from '../../specs/machineProcesses.js';
 import { MachineResourcesActionIdSchema, MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '../../specs/machineResources.js';
 import { MachineRolesActionIdSchema, MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '../../specs/machineRoles.js';
+import { MachineIsolationActionIdSchema, MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS } from '../../specs/machineIsolation.js';
 import { MachineAdminAccessActionIdSchema, MACHINE_ADMIN_ACCESS_ACTION_INPUT_SCHEMAS } from '../../specs/machine/adminAccess.js';
 import { MachineReachabilityActionIdV1Schema } from '../../specs/machineReachability.js';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '../../../machines/reachability/actionsV1.js';
@@ -171,6 +172,14 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineRolesAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineRolesAction({ actionId: machineRolesActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      const machineIsolationActionId = isActionFamilyId(actionId, MachineIsolationActionIdSchema) ? actionId : null;
+      if (machineIsolationActionId !== null) {
+        const input = parsed.data as z.infer<(typeof MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS)[typeof machineIsolationActionId]>;
+        if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (!deps.machineIsolationAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.machineIsolationAction({ actionId: machineIsolationActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machineVitalsActionId !== null) {

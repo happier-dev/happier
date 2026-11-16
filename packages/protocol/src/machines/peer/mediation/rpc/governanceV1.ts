@@ -63,6 +63,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST]: 'machines.storage.suggestions.list',
   [RPC_METHODS.MACHINES_RESOURCES_POLICY_SET]: 'machines.resources.policy.set',
   [RPC_METHODS.MACHINES_ROLES_SET]: 'machines.roles.set',
+  [RPC_METHODS.MACHINES_ISOLATION_SET]: 'machines.isolation.set',
   'machines.agentIsolation.preview': 'machines.agentIsolation.preview',
   'machines.agentIsolation.status': 'machines.agentIsolation.status',
   'machines.agentIsolation.set': 'machines.agentIsolation.set',

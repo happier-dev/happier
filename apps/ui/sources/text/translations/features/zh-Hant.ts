@@ -372,6 +372,7 @@ const actionFamilyTranslations = { 'zh-Hant': translated({
             client_files: "用戶端檔案",
             project_readiness: "專案就緒狀態",
             deployments: "部署",
+            machine_isolation: "隔離",
             machine_agent_isolation: `代理執行身分`,
             plugin_execution_origin: "外掛執行",
             machine_reachability: "機器可達性",

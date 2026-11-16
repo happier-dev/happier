@@ -52,7 +52,7 @@ afterAll(async () => {
 });
 
 describe('signed Account Action transport purpose', () => {
-  it('admits a Machine-hosted preset read on its own declared transport and refuses other bytes', async () => {
+  it.each(['machines.presets.get', 'machines.isolation.set'] as const)('admits only the supporting preset read for %s', async (actionId) => {
     const account = await db.account.create({
       data: { publicKey: null, encryptionMode: 'plain' },
     });
@@ -95,8 +95,11 @@ describe('signed Account Action transport purpose', () => {
       }),
     });
     try {
-      const actionId = 'machines.presets.get';
-      const input = { homeId, id: crypto.randomUUID() };
+      const presetInput = { homeId, id: crypto.randomUUID() };
+      const policy = { configuredSandboxes: { local: { provisioner: { pluginId: 'test.local', localId: 'vm' }, presetId: presetInput.id } },
+        workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } };
+      const input = actionId === 'machines.presets.get' ? presetInput : { machineId: machine.id, expectedMetadataVersion: 1,
+        expectedPolicy: policy, policy };
       const minted = await app.inject({
         method: 'POST',
         url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
@@ -116,11 +119,11 @@ describe('signed Account Action transport purpose', () => {
       const root = ExternalActionExecutionAuthorizationV1Schema.parse(
         minted.json(),
       );
-      const verify = async (path: string, body: unknown) => {
+      const verify = async (path: string, body: unknown, effectActionId: string = actionId) => {
         let phase: string | undefined;
         const result = await verifyExternalActionDomainExecutionRequest({
           authorizationToken: root.token,
-          effectActionId: actionId,
+          effectActionId,
           encodedTarget: encodeExternalActionResolvedTargetV1(
             root.binding.target,
           ),
@@ -129,7 +132,7 @@ describe('signed Account Action transport purpose', () => {
           body,
           machineSignature: signExternalActionMachineRequestV1({
             authorizationToken: root.token,
-            effectActionId: actionId,
+            effectActionId,
             target: root.binding.target,
             installationId: machine.installationId!,
             requestId: root.binding.requestId,
@@ -148,18 +151,30 @@ describe('signed Account Action transport purpose', () => {
           phase,
         };
       };
-      const path = machinePresetActionEndpointPathV1(actionId);
+      const path = machinePresetActionEndpointPathV1('machines.presets.get');
 
-      expect(await verify(path, input)).toEqual({
+      expect(await verify(path, presetInput)).toEqual({
         admitted: true,
         phase: undefined,
       });
       expect(
         await verify(
           machinePresetActionEndpointPathV1('machines.presets.archive'),
-          input,
+          presetInput,
         ),
       ).toEqual({ admitted: false, phase: 'verification_purpose' });
+      expect(await verify(machinePresetActionEndpointPathV1('machines.presets.list'), { homeId })).toEqual({ admitted: false, phase: 'verification_purpose' });
+      if (actionId === 'machines.isolation.set') {
+        expect(await verify(path, { ...presetInput, homeId: 'another-home' })).toEqual({ admitted: false, phase: 'verification_purpose' });
+        expect(await verify(path, presetInput, 'machines.roles.set')).toMatchObject({ admitted: false });
+        const outsider = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const outsiderToken = await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user' });
+        const refused = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+          headers: { authorization: `Bearer ${outsiderToken}` }, payload: { v: 1, machineId: machine.id,
+            envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id }, input } } });
+        expect(refused.statusCode, refused.body).toBe(409);
+        expect(refused.json()).toMatchObject({ code: 'target_unavailable' });
+      }
     } finally {
       await app.close();
     }

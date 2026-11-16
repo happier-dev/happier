@@ -10,7 +10,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
-import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionAgentUpdateNoticeV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -37,6 +37,9 @@ import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePr
 export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'idle' }>
     | Readonly<{ kind: 'approval' }>
+    | Readonly<{ kind: 'session_starting';
+        operationAddress: NonNullable<Extract<SessionSpawnNewResultV1, { type: 'pending' }>['operation']>;
+        operation?: ActionOperationSnapshotV1; operationObservation?: ActionOperationObservation }>
     | Readonly<{ kind: 'acquiring'; managedId?: string; operation?: ActionOperationSnapshotV1; operationObservation?: ActionOperationObservation }>
     | Readonly<{ kind: 'enrollment_pending'; managedId: string }>
     | Readonly<{ kind: 'setup_pending'; managedId: string; machineId: string; state: 'pending' | 'running';

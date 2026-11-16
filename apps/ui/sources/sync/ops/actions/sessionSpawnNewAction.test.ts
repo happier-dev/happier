@@ -120,6 +120,9 @@ describe('Session creation pending settlement', () => {
         try {
             await Promise.race([reading.promise, action.then(() => { throw new Error('Pending creation returned before settlement'); })]);
             expect(onAccepted).toHaveBeenCalledTimes(outcome === 'accepted' ? 1 : 0);
+            if (outcome === 'accepted') expect(onAccepted).toHaveBeenCalledWith({ operation: {
+                serverId: home.id, machineId: input.executionTarget.machineId, operationId: running.operationId,
+            } });
             terminal.resolve();
             await expect(action).resolves.toEqual(providerRefusal ? { ok: true, result: refusal }
                 : state === 'succeeded' ? { ok: true, result: { ...success, executionTarget: input.executionTarget } }

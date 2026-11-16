@@ -372,6 +372,7 @@ const actionFamilyTranslations = { ru: translated({
             client_files: "Файлы клиента",
             project_readiness: "Готовность проекта",
             deployments: "Развёртывания",
+            machine_isolation: "Изоляция",
             machine_agent_isolation: `Агенты работают как`,
             plugin_execution_origin: "Выполнение плагинов",
             machine_reachability: "Доступность машин",

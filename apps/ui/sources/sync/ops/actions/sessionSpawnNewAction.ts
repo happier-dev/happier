@@ -65,7 +65,9 @@ export type SessionSpawnNewCommittedReceipt = Readonly<{
 export type SessionSpawnNewActionObservation = Readonly<{
     operationProtocolCapabilities?: unknown;
     /** The target accepted this creation, or returned its validated terminal success. */
-    onAccepted?: () => void | Promise<void>;
+    onAccepted?: (receipt: Readonly<{
+        operation?: NonNullable<Extract<SessionSpawnNewResultV1, { type: 'pending' }>['operation']>;
+    }>) => void | Promise<void>;
     onCommitted?: (receipt: SessionSpawnNewCommittedReceipt) => void | Promise<void>;
 }>;
 
@@ -209,7 +211,8 @@ export async function executeSessionSpawnNewAction(
     const onCommitted = observation?.onCommitted;
     const observeCommit = onCommitted !== undefined
         && supportsMachineSessionSpawnProtocolVersionV1(observation?.operationProtocolCapabilities, 3);
-    const result = await execute('session.spawn_new', projectSessionSpawnNewActionInputV2({
+    const dispatch = input.isolationOverride === 'directly' ? execute.confirmed : execute;
+    const result = await dispatch('session.spawn_new', projectSessionSpawnNewActionInputV2({
         ...terminalInput, ...(observeCommit ? { observeSessionCommit: true } : {}),
     }), context);
     if (!result.ok) return qualifySessionSpawnNewActionResult(result, input.executionTarget);
@@ -221,7 +224,8 @@ export async function executeSessionSpawnNewAction(
         && spawn.operation.machineId !== input.executionTarget.machineId) return unavailable();
     const announceAccepted = async () => {
         try {
-            await observation?.onAccepted?.();
+            await observation?.onAccepted?.({ ...(spawn.type === 'pending' && spawn.operation
+                ? { operation: { ...spawn.operation, serverId: input.executionTarget.serverId } } : {}) });
         } catch {
             // Presentation cannot change the target's accepted creation verdict.
             recordBugReportUserAction('session.spawn_new.presentation_failure', { metadata: { phase: 'acceptance' } });
@@ -550,8 +554,8 @@ export async function executeManualSessionSpawnNewAction(
     const executeAction: SessionSpawnNewActionExecutor = params.executeAction ?? ((input, context, observation) =>
         executeSessionSpawnNewAction(input, context, undefined, observation));
     const observation = params.observation ? { ...params.observation,
-        ...(params.observation.onAccepted ? { onAccepted: async () => {
-            if (params.sourceAccountLifetime?.isCurrent() !== false) await params.observation?.onAccepted?.();
+        ...(params.observation.onAccepted ? { onAccepted: async (receipt: Parameters<NonNullable<SessionSpawnNewActionObservation['onAccepted']>>[0]) => {
+            if (params.sourceAccountLifetime?.isCurrent() !== false) await params.observation?.onAccepted?.(receipt);
         } } : {}),
         ...(params.observation.onCommitted ? { onCommitted: async (receipt: SessionSpawnNewCommittedReceipt) => {
             if (receipt.executionTarget.serverId !== input.executionTarget.serverId

@@ -5,6 +5,7 @@ import type { DaemonMachineVitalsRoutes } from '@/rpc/handlers/daemonMachineVita
 import type { DaemonProcessesRoutes } from '@/rpc/handlers/daemonProcesses';
 import type { DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
 import type { DaemonMachineRolesRoutes } from '@/rpc/handlers/daemonMachineRoles';
+import type { DaemonMachineIsolationRoutes } from '@/rpc/handlers/daemonMachineIsolation';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import type { DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import type { AgentIsolationEffectDependencies } from './agentIsolation/agentIsolationProvisioner';
@@ -24,6 +25,7 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerMachineProcessesRoutes'
   | 'registerMachineResourcesPolicyRoutes'
   | 'registerMachineRolesRoutes'
+  | 'registerMachineIsolationRoutes'
   | 'registerMachineAdminAccessRoutes'
   | 'registerMachineReachabilityRoutes'
   | 'registerMachineAgentIsolationRoutes'
@@ -49,6 +51,7 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachMachineProcessesRoutes(routes: DaemonProcessesRoutes): void;
   attachMachineResourcesPolicyRoutes(routes: DaemonMachineResourcesPolicyRoutes): void;
   attachMachineRolesRoutes(routes: DaemonMachineRolesRoutes): void;
+  attachMachineIsolationRoutes(routes: DaemonMachineIsolationRoutes): void;
   attachMachineAdminAccessRoutes(routes: DaemonMachineAdminAccessRoutes): void;
   attachMachineReachabilityRoutes(routes: DaemonMachineReachabilityRoutes): void;
   attachMachineAgentIsolationRoutes(routes: AgentIsolationEffectDependencies): void;
@@ -78,6 +81,7 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let machineProcessesRoutes: DaemonProcessesRoutes | null = null;
   let machineResourcesPolicyRoutes: DaemonMachineResourcesPolicyRoutes | null = null;
   let machineRolesRoutes: DaemonMachineRolesRoutes | null = null;
+  let machineIsolationRoutes: DaemonMachineIsolationRoutes | null = null;
   let machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
   let machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;
   let machineAgentIsolationRoutes: AgentIsolationEffectDependencies | null = null;
@@ -166,6 +170,10 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
     attachMachineRolesRoutes(routes) {
       machineRolesRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineRolesRoutes(routes);
+    },
+    attachMachineIsolationRoutes(routes) {
+      machineIsolationRoutes = routes;
+      input.getApiMachineForSessions()?.registerMachineIsolationRoutes(routes);
     },
     attachMachineReachabilityRoutes(routes) {
       machineReachabilityRoutes = routes;
@@ -261,6 +269,9 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       }
       if (machineRolesRoutes) {
         apiMachineForSessions.registerMachineRolesRoutes(machineRolesRoutes);
+      }
+      if (machineIsolationRoutes) {
+        apiMachineForSessions.registerMachineIsolationRoutes(machineIsolationRoutes);
       }
       if (machineReachabilityRoutes) {
         apiMachineForSessions.registerMachineReachabilityRoutes(machineReachabilityRoutes);

@@ -618,20 +618,22 @@ export function useCreateNewSession(params: Readonly<{
     const [managedProgress, setManagedProgress] = React.useState<Readonly<{ signature: string; value: ManagedMachineCreationProgress }>>({
         signature: launchIntentSignature, value: { kind: 'idle' },
     });
-    const managedOperationId = params.managedMachineAcquisition?.operation?.operationId;
+    const sessionOperationAddress = managedProgress.signature === launchIntentSignature && managedProgress.value.kind === 'session_starting'
+        ? managedProgress.value.operationAddress : undefined;
+    const managedOperationId = sessionOperationAddress?.operationId ?? params.managedMachineAcquisition?.operation?.operationId;
     const managedOperationServerId = params.targetAccountScope?.serverId ?? params.draftScope?.serverId ?? params.targetServerId ?? null;
     const managedOperationAccountId = (params.targetAccountScope ?? params.draftScope)?.accountId;
     const managedOperationControllerId = readManagedMachineSelectionReceipt(params.managedMachineSelection)?.controller?.machineId;
     const managedAcquisitionMatchesSelection = Boolean(params.managedMachineSelection && params.managedMachineAcquisition
         && sameStrictJsonValue(params.managedMachineSelection.selection, params.managedMachineAcquisition.selection));
     const readManagedOperation = React.useCallback(() => {
-        if (!managedOperationId || !managedAcquisitionMatchesSelection) return null;
+        if (!managedOperationId || !sessionOperationAddress && !managedAcquisitionMatchesSelection) return null;
         const operation = actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), {
-            serverId: managedOperationServerId, operationId: managedOperationId,
+            serverId: sessionOperationAddress?.serverId ?? managedOperationServerId, operationId: managedOperationId,
         });
         return operation && operation.snapshot.scope.accountId === managedOperationAccountId
-            && operation.snapshot.scope.machineId === managedOperationControllerId ? operation : null;
-    }, [managedOperationId, managedOperationServerId, managedOperationAccountId, managedOperationControllerId, managedAcquisitionMatchesSelection]);
+            && operation.snapshot.scope.machineId === (sessionOperationAddress?.machineId ?? managedOperationControllerId) ? operation : null;
+    }, [managedOperationId, managedOperationServerId, managedOperationAccountId, managedOperationControllerId, managedAcquisitionMatchesSelection, sessionOperationAddress]);
     const managedOperation = React.useSyncExternalStore(actionOperationStore.subscribe, readManagedOperation, readManagedOperation);
     const onManagedApprovalExecuted = React.useCallback(() => {}, []);
     const managedApproval = useActionApprovalContinuation({
@@ -1915,15 +1917,18 @@ export function useCreateNewSession(params: Readonly<{
                             seedNonce: launchAttempt.spawnNonce,
                             ...(current.authoringOrigin ? { authoringOriginPersistence: birthOrigin
                                 ? 'daemon-birth' as const : 'legacy-checkpoint' as const } : {}),
-                            ...(presentsAtCommit || afterSend === 'startAnother' ? { observation: {
-                                ...(afterSend === 'startAnother' ? { onAccepted: () => {
-                                    if (isLaunchScopeStillActive() && !sourceDraftCancellation.signal.aborted) handOffAdmittedLaunch();
-                                } } : {}),
+                            observation: {
+                                onAccepted: receipt => {
+                                    if (!isLaunchScopeStillActive() || sourceDraftCancellation.signal.aborted) return;
+                                    if (receipt.operation) setManagedProgress({ signature: submittedIntent.signature,
+                                        value: { kind: 'session_starting', operationAddress: receipt.operation } });
+                                    if (afterSend === 'startAnother') handOffAdmittedLaunch();
+                                },
                                 ...(presentsAtCommit ? {
                                     operationProtocolCapabilities: current.selectedMachine?.operationProtocolCapabilities,
                                     onCommitted: presentCommittedSession,
                                 } : {}),
-                            } } : {}),
+                            },
                             executeAction: async (input, context, observation) => {
                                 try {
                                     const hostSpawnExecutor = hostSpawnExecutorRef.current;
@@ -2726,7 +2731,7 @@ export function useCreateNewSession(params: Readonly<{
                 code: managedOperation.snapshot.error?.errorCode ?? (managedOperation.snapshot.state === 'cancelled' ? 'creation_canceled' : 'installation_failed') }
             : { kind: 'acquiring', managedId: retainedManagedId, operation: managedOperation.snapshot, operationObservation: managedOperation.observation }
         : visibleManagedProgress;
-    const managedMachineCreationProgress: ManagedMachineCreationProgress = recoveredManagedProgress.kind === 'acquiring' && managedOperation
+    const managedMachineCreationProgress: ManagedMachineCreationProgress = (recoveredManagedProgress.kind === 'acquiring' || recoveredManagedProgress.kind === 'session_starting') && managedOperation
         ? { ...recoveredManagedProgress, operation: managedOperation.snapshot, operationObservation: managedOperation.observation } : recoveredManagedProgress;
     // A creation no operation reports for (the Account recipe this device runs, or one whose app was closed):
     // its one retained row's recorded facts are the stages (58B-U1) and say when it was interrupted.

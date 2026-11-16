@@ -877,6 +877,7 @@ export async function startDaemon(
     };
     machineRpcRouteAttachments.attachMachineResourcesPolicyRoutes({ policy: machineResourcesPolicy, target: machineResourceTarget });
     machineRpcRouteAttachments.attachMachineRolesRoutes({ roles: bootMachineRoles, target: machineResourceTarget });
+    machineRpcRouteAttachments.attachMachineIsolationRoutes({ target: machineResourceTarget });
     const machineAdminAccessRoutes = createDaemonMachineAdminAccessRoutes({
       getMachineClient: () => apiMachine, target: machineResourceTarget,
     });

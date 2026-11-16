@@ -76,6 +76,7 @@ export type { MachineAgentIsolationActionInputById, MachineAgentIsolationActionR
 export type { MachineAgentSignInActionInputById, MachineAgentSignInActionResultById } from './machineAgentSignInActionDtos.generated.js';
 export type { MachineConnectionActionInputById, MachineConnectionActionResultById } from './machineConnectionActionDtos.generated.js';
 export type { MachineGuardActionInputById, MachineGuardActionResultById } from './machineGuardActionDtos.generated.js';
+export type { MachineIsolationActionInputById, MachineIsolationActionResultById } from './machineIsolationActionDtos.generated.js';
 export type { MachinePoolsActionInputById, MachinePoolsActionResultById } from './machinePoolsActionDtos.generated.js';
 export type { MachinePresetsActionInputById, MachinePresetsActionResultById } from './machinePresetsActionDtos.generated.js';
 export type { MachineProcessesActionInputById, MachineProcessesActionResultById } from './machineProcessesActionDtos.generated.js';

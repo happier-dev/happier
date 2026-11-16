@@ -330,6 +330,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET, 'destructive_or_recovery_mutation', 'Manage writes the Session owner’s ceiling override through its existing custody and live native scope.', 'machines.guard.sessionCeiling.set', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_RESOURCES_POLICY_SET, 'Manage resources policy edit; the daemon owns metadata compare-and-swap.', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_ROLES_SET, 'Manage Machine roles edit; the daemon owns metadata compare-and-swap.', 'manage') satisfies MachineRpcRoutePolicyV1,
+  directEphemeral(RPC_METHODS.MACHINES_ISOLATION_SET, 'Manage Machine isolation edit; the daemon owns reference validation and metadata compare-and-swap.', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS, 'Own execution protection read under exact requester Use admission; no provisioning or member roster.', 'use'),
   directEphemeral(RPC_METHODS.MACHINES_AGENT_ISOLATION_PREVIEW, 'Manage-admitted exact isolation effect review; no mutation or elevation.', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_AGENT_ISOLATION_SET, 'Manage-admitted isolation policy and target-daemon reconciliation.', 'manage') satisfies MachineRpcRoutePolicyV1,

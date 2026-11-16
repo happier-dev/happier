@@ -107,6 +107,7 @@ import { MACHINE_PROCESSES_ACTION_IDS } from './specs/machineProcessesActionIdsV
 import { MACHINE_STORAGE_ACTION_IDS } from './specs/storageActionIdsV1.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './specs/machineResourcesActionIdsV1.js';
 import { MACHINE_ROLES_ACTION_IDS } from './specs/machineRolesActionIdsV1.js';
+import { MACHINE_ISOLATION_ACTION_IDS } from './specs/machineIsolationActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';
 import { MACHINE_REBOOT_ACTION_IDS } from '../machines/rebootActionIdsV1.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
@@ -362,6 +363,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   machine_storage: MACHINE_STORAGE_ACTION_IDS,
   machine_resources: MACHINE_RESOURCES_ACTION_IDS,
   machine_roles: MACHINE_ROLES_ACTION_IDS,
+  machine_isolation: MACHINE_ISOLATION_ACTION_IDS,
   machine_agent_isolation: MACHINE_AGENT_ISOLATION_ACTION_IDS,
   machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
   machine_reachability: MACHINE_REACHABILITY_ACTION_IDS_V1,

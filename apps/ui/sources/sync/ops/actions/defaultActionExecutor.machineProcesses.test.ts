@@ -109,6 +109,57 @@ afterEach(async () => {
 });
 const kill = { machineId: 'm', tree: true, targets: [{ ref: 'r', expect: { level: 'proven' as const, owner: { kind: 'session' as const, sessionId: 's' } } }] };
 describe('machine process Actions through the captured UI Home', () => {
+    it('binds an explicitly selected one-Session Directly choice to the private reviewed host invocation', async () => {
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { SessionCreationKeyV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1');
+        const { executeSessionSpawnNewAction } = await import('./sessionSpawnNewAction');
+        const { computeActionInputApprovalDigestV1 } = await import('@happier-dev/protocol/actions/decisionAuthority');
+        const { projectSessionSpawnNewActionResultV1 } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+        const machineId = 'override-machine';
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: machineId, isShared: false })]);
+        const input = { creationKey: SessionCreationKeyV1Schema.parse('one-session-directly'),
+            executionTarget: { serverId, machineId }, directory: { kind: 'managed' as const },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            isolationOverride: 'directly' as const };
+        const created = { type: 'success', disposition: 'created', sessionId: 'direct-session',
+            executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+            initialInput: { status: 'notRequested' } } as const;
+        rpc.machine.mockResolvedValue(created);
+        const reviewed: unknown[] = [];
+        await answerExternalActionAccountForHome(homes, savedHomeId, { actionId: 'session.spawn_new',
+            machineId, installationId: 'installation', tokenEpoch: 0, execute: (value, context) => {
+                reviewed.push(context.invocation.presentUserConfirmation);
+                expect(value).toMatchObject({ isolationOverride: 'directly' });
+                return projectSessionSpawnNewActionResultV1(created);
+            } });
+        expect(await executeSessionSpawnNewAction(input, { surface: 'ui', serverId, expectedAccountId: 'owner',
+            actionRequestId: 'direct-confirmation' })).toMatchObject({ ok: true, result: { sessionId: 'direct-session' } });
+        expect(reviewed).toEqual([expect.objectContaining({ actionId: 'session.spawn_new',
+            inputDigest: computeActionInputApprovalDigestV1('session.spawn_new', input), accountId: 'owner' })]);
+        expect(rpc.machine).not.toHaveBeenCalled();
+    });
+    it('reads an offline Machine sandbox policy from opened metadata and refuses malformed policy', async () => {
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const policy = { configuredSandboxes: { local: { provisioner: { pluginId: 'third.party.compute', localId: 'local' }, presetId: 'preset' } },
+            workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+                botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } }, agentNativeSandboxEnabled: false };
+        const machine = createMachineFixture({ id: 'isolation-machine', metadataVersion: 3, active: false,
+            metadata: { ...createMachineFixture().metadata!, isolationPolicyV1: policy } });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
+        const executor = createDefaultActionExecutor();
+        expect(await executor.execute('machines.isolation.get', { serverId, machineId: machine.id }, {
+            surface: 'ui', serverId, expectedAccountId: 'owner',
+        })).toEqual({ ok: true, result: { status: 'ready', source: 'stored', policy, metadataVersion: 3 } });
+        expect(rpc.machine).not.toHaveBeenCalled();
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine,
+            metadata: { ...machine.metadata!, isolationPolicyV1: { malformed: true } } }]);
+        expect(await executor.execute('machines.isolation.get', { serverId, machineId: machine.id }, {
+            surface: 'ui', serverId, expectedAccountId: 'owner',
+        })).toMatchObject({ ok: true, result: { status: 'invalid' } });
+        expect(rpc.machine).not.toHaveBeenCalled();
+    });
     it('offers the Machine marker inventory to agents through the same scoped Action used by the UI', async () => {
         rpc.machine.mockResolvedValue({ runs: [] });
         const executor = createDefaultActionExecutor();
