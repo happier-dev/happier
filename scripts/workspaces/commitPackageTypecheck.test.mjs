@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { commitPackageTypecheckRefuses, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { commitPackageTypecheckRefuses, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -154,4 +154,53 @@ test('the rolling HEAD typecheck coalesces commits, bisects only when red, and a
   assert.deepEqual(green.attributions, []);
   assert.deepEqual(compiled, ['c5']);
   assert.equal(posts.length, 1);
+});
+
+test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {
+  const { repo, commit } = await workspace(t);
+  const appSha = await commit('apps/cli/src/index.ts', 'export const value = 4;\n');
+  assert.deepEqual(commitTypecheckApps({ repo, base: `${appSha}^`, tree: appSha }), ['apps/cli']);
+  const producerSha = await commit('packages/protocol/src/index.ts', 'export const value = 5;\n');
+  assert.deepEqual(commitTypecheckApps({ repo, base: `${producerSha}^`, tree: producerSha }), ['apps/cli'], 'apps/cli depends on @x/protocol');
+  const unrelatedSha = await commit('packages/leaf/src/index.ts', 'export const value = 6;\n');
+  assert.deepEqual(commitTypecheckApps({ repo, base: `${unrelatedSha}^`, tree: unrelatedSha }), []);
+});
+
+test('an app scope keeps a per-file, per-code baseline: only a count increase is new, and it is attributed to the commit that raised it', async t => {
+  const { repo } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-app-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const step = async (label, files) => {
+    for (const [path, content] of Object.entries(files)) await writeFile(join(repo, path), content);
+    await writeFile(join(repo, '.tree-marker'), `${label}\n`);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', label);
+    return git('rev-parse', 'HEAD');
+  };
+  // The app already has errors at HEAD (apps/server: 3,520 at 2026-11-16); they are the baseline, never posted.
+  await step('c0', { 'apps/cli/src/index.ts': 'export const a = 0;\n', 'apps/cli/errors.txt': '10:2322:old a\n20:2322:old b\n30:2339:old c\n' });
+  // The first pass checks the newest commit against its parent, so start from a commit that adds nothing.
+  const c0 = await step('c0b', { 'apps/cli/src/index.ts': 'export const a = 10;\n' });
+  const compiled = [];
+  const posts = [];
+  const options = { repo, env, scope: 'apps/cli', compile: fakeCompiler(compiled), bootstrap: () => {}, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
+  await rollingHeadTypecheckPass(options);
+  assert.equal(posts.length, 0, 'existing app errors are the baseline');
+  // c1 only shifts every line (an edit above them): the per-file, per-code counts are unchanged.
+  const c1 = await step('c1', { 'apps/cli/src/index.ts': 'export const a = 1;\n', 'apps/cli/errors.txt': '15:2322:old a\n25:2322:old b\n35:2339:old c\n' });
+  // c2 adds one TS2322 in the same file; c3 shifts again.
+  const c2 = await step('c2', { 'apps/cli/src/index.ts': 'export const a = 2;\n', 'apps/cli/errors.txt': '15:2322:old a\n25:2322:old b\n35:2339:old c\n40:2322:new d\n' });
+  await step('c3', { 'apps/cli/src/index.ts': 'export const a = 3;\n', 'apps/cli/errors.txt': '16:2322:old a\n26:2322:old b\n36:2339:old c\n41:2322:new d\n' });
+  const red = await rollingHeadTypecheckPass(options);
+  assert.equal(red.base, c0);
+  assert.deepEqual(red.attributions.map(entry => [entry.commit, entry.rows.map(row => `${row.file}:TS${row.code}`)]),
+    [[c2, ['apps/cli/src/index.ts:TS2322']]], `c1 (line shift only) is never blamed; got ${JSON.stringify(red.attributions)}`);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], new RegExp(c2.slice(0, 11)));
+  void c1;
+  // The packages scope keeps its own recorded HEAD: the app pass did not advance it.
+  assert.equal(existsSync(join(state, 'rolling-head')), false);
 });
