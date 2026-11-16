@@ -218,49 +218,43 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     },
   );
 
-  it.each(['before_persist', 'during_persist'] as const)(
-    'publishes successful refresh health when the caller cancels %s', async timing => {
-      const harness = await createBuiltInQualifiedRefreshHarness();
-      createdRegistries.push(harness);
-      const warn = vi.spyOn(logger, 'warn');
-      const controller = new AbortController();
-      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
-      }), { status: 200, headers: { 'content-type': 'application/json' } })));
-      if (timing === 'before_persist') {
-        harness.getAccountEncryptionMode.mockImplementation(async () => {
-          if (vi.mocked(fetch).mock.calls.length > 0) controller.abort();
-          return 'plain';
-        });
-      } else {
-        const persist = harness.mutateCredential.getMockImplementation()!;
-        harness.mutateCredential.mockImplementationOnce(async params => {
-          controller.abort();
-          if ('signal' in params && params.signal instanceof AbortSignal) params.signal.throwIfAborted();
-          return persist(params);
-        });
-      }
-      await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForRequestAuth({
-        account: harness.account, expectedCredentialRevision: harness.firstRevision, signal: controller.signal,
-      })).resolves.toBe(true);
-      expect(controller.signal.aborted).toBe(true);
-      const persisted = await harness.readCredential();
-      expect(persisted).toMatchObject({ credentialRevision: harness.secondRevision, health: {
-        status: 'connected', reconnectRequired: false, lastRefreshSuccessAt: harness.now,
-      } });
-      if (persisted.authenticationModeId === null) throw new Error('Refreshed credential lost its authentication mode');
-      expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
-        ref: persisted.ref, authenticationModeId: persisted.authenticationModeId,
-        metadata: persisted.metadata, plaintext: openQualifiedConnectedAccountContentEnvelope({
-          kind: 'credential', accountMode: 'plain', envelope: persisted.content,
-        }),
-      }).values).toMatchObject({ accessToken: 'access-new', refreshToken: 'refresh-new' });
-      expect(harness.mutateCredential).toHaveBeenCalledOnce();
-      expect(harness.mutateCredentialHealth).toHaveBeenCalledOnce();
-      expect(fetch).toHaveBeenCalledOnce();
-      expect(warn.mock.calls.filter(([event]) => typeof event === 'string' && event.includes('did not settle'))).toEqual([]);
-    },
-  );
+  it('publishes successful refresh health when the caller cancels at credential persistence', async () => {
+    const harness = await createBuiltInQualifiedRefreshHarness();
+    createdRegistries.push(harness);
+    const warn = vi.spyOn(logger, 'warn');
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    // The admitted Account mode is reused after exchange. Cancel at the Home
+    // write boundary, before the replacement is persisted, rather than relying
+    // on a second Account-mode read to trigger cancellation.
+    const persist = harness.mutateCredential.getMockImplementation()!;
+    harness.mutateCredential.mockImplementationOnce(async params => {
+      controller.abort();
+      if ('signal' in params && params.signal instanceof AbortSignal) params.signal.throwIfAborted();
+      return persist(params);
+    });
+    await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForRequestAuth({
+      account: harness.account, expectedCredentialRevision: harness.firstRevision, signal: controller.signal,
+    })).resolves.toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+    const persisted = await harness.readCredential();
+    expect(persisted).toMatchObject({ credentialRevision: harness.secondRevision, health: {
+      status: 'connected', reconnectRequired: false, lastRefreshSuccessAt: harness.now,
+    } });
+    if (persisted.authenticationModeId === null) throw new Error('Refreshed credential lost its authentication mode');
+    expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
+      ref: persisted.ref, authenticationModeId: persisted.authenticationModeId,
+      metadata: persisted.metadata, plaintext: openQualifiedConnectedAccountContentEnvelope({
+        kind: 'credential', accountMode: 'plain', envelope: persisted.content,
+      }),
+    }).values).toMatchObject({ accessToken: 'access-new', refreshToken: 'refresh-new' });
+    expect(harness.mutateCredential).toHaveBeenCalledOnce();
+    expect(harness.mutateCredentialHealth).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.filter(([event]) => typeof event === 'string' && event.includes('did not settle'))).toEqual([]);
+  });
 
   it.each(['write_failure', 'cancelled_write', 'quota_write_failure'] as const)('logs successful exchange with unconfirmed persistence without retrying the provider (%s)', async scenario => {
     const harness = await createBuiltInQualifiedRefreshHarness();
@@ -895,11 +889,10 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
           'openai-codex': { source: 'connected', profileId: 'work' },
         } },
       });
+      // Bound and unbound Accounts share the qualified health settlement and
+      // recovery deadline; an observed provider failure is settled health.
       const failedRefresh = async () => {
-        if (bound) await expect(coordinator.tickOnce()).rejects.toMatchObject({
-          errors: [expect.objectContaining({ message: expect.stringContaining('Connected services refresh failed') })],
-        });
-        else expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 30_000 });
+        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 30_000 });
       };
       await failedRefresh();
       expect(profileStatus).toBe('refresh_failed_retryable');
@@ -1127,8 +1120,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         expect(mutateCredentialHealth.mock.calls.at(-1)?.[0].patch).toMatchObject({
           health: { status: 'needs_reauth', reconnectRequired: true,
             lastRefreshFailureKind: 'invalid_grant',
-            providerErrorCode: serviceId === 'openai-codex'
-              ? 'invalid_grant' : 'claude_subscription_oauth_rejected' },
+            providerErrorCode: 'invalid_grant' },
         });
         expect(JSON.stringify(mutateCredentialHealth.mock.calls)).not.toMatch(/private-provider-detail|private-response-access|private-response-refresh/);
         return;
