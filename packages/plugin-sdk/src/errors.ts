@@ -9,5 +9,5 @@ export type {
     PluginErrorData,
 } from '@happier-dev/cli-common/plugins/errors';
 // Share the host's content-free exception projection with client Action recovery.
-export { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, ActionFailureCauseV1Schema, ActionFailureCauseV1ProtocolSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+export { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, ActionFailureCauseV1Schema, ActionFailureCauseV1ProtocolSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 export { withActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
