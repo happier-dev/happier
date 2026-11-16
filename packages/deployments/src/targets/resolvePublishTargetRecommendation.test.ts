@@ -43,3 +43,17 @@ describe('Publish target recommendation from owner facts', () => {
         });
     });
 });
+
+// Static output is portable to static hosts; Workers require a worker program.
+it('judges static starter output from declared target facts', () => {
+    const targets = [
+        { id: 'pages', targetClass: 'platform', availability: 'available', accepts: ['static'], needs: ['repository'] },
+        { id: 'workers', targetClass: 'platform', availability: 'available', accepts: ['workers'], needs: ['stateless'] },
+        { id: 'vercel', targetClass: 'platform', availability: 'available', accepts: ['static', 'server'], needs: ['repository'] },
+        { id: 'own', targetClass: 'ownServer', availability: 'available', accepts: ['static', 'server', 'container', 'compose'], needs: [] },
+    ] as const;
+    const result = resolvePublishTargetRecommendation({ definition: null, deploy: { framework: 'html', output: 'static' }, targets });
+    expect(result.compatibleTargetIds).toEqual(['pages', 'vercel', 'own']);
+    expect(result.offeredTargetIds).toEqual(['pages', 'vercel', 'own']);
+    expect(result.uncertainty).not.toContain('platform_source_capability_unknown');
+});

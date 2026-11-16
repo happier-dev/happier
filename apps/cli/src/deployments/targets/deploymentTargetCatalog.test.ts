@@ -11,6 +11,8 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { listDeploymentTargetsV1, OWN_SERVER_DEPLOYMENT_TARGET_V1, readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitOwnServerDeploymentTargetLink } from './ownServer/ownServerTargetAdmission';
+import { manifest as vercelManifest } from '../../../../../packages/plugins/deploy-vercel/src/manifest';
+import { manifest as cloudflareManifest } from '../../../../../packages/plugins/deploy-cloudflare/src/manifest';
 
 const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
 
@@ -41,6 +43,11 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime', previewInput = f
                     cancel: 'cancel', variables: { read: 'read' } } }],
         },
     });
+    return registryFromManifest(manifest);
+}
+
+function registryFromManifest(manifest: LoadedPlugin['manifest']) {
+    const pluginId = manifest.id;
     const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/example', manifestPath: '/plugins/example/plugin.json',
         daemonEntryPath: '/plugins/example/daemon.js', devDaemonEntryPath: null,
         sourceSpec: { kind: 'package', locator: pluginId, trustPolicy: 'local_trusted', installPolicy: 'copy' }, manifest };
@@ -50,6 +57,19 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime', previewInput = f
 }
 
 describe('deployment target catalog at the admitted registry boundary', () => {
+    it('preserves supported output and prerequisite facts from real target manifests through admission and normalization', () => {
+        const declarations = [vercelManifest, cloudflareManifest].flatMap(manifest =>
+            registryFromManifest(normalizePluginManifestV2(manifest)).deploymentTargets ?? []);
+        const targets = listDeploymentTargetsV1(declarations);
+        expect(Object.fromEntries(targets.map(target => [target.targetKind, { accepts: target.accepts, needs: target.needs }])))
+            .toEqual({
+                ownServer: { accepts: ['static', 'server', 'container', 'compose'], needs: [] },
+                vercel: { accepts: ['static', 'server'], needs: ['repository', 'stateless'] },
+                'cloudflare-workers': { accepts: ['workers'], needs: ['repository', 'stateless'] },
+                'cloudflare-pages': { accepts: ['static'], needs: ['repository', 'stateless'] },
+            });
+    });
+
     it('retains plugin preview bindings without treating their operands as contribution references', () => {
         const declarations = admittedRegistry('data', true).deploymentTargets ?? [];
         const target = readDeploymentTargetV1({ kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } }, declarations);
