@@ -9,6 +9,13 @@ import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/
  * projection: the column never decides a lifecycle, an attention state or a trigger's schedule.
  */
 
+/** A selected saved definition, excluding the destination's own routes. */
+export function readOpenWorkflowDefinition(pathname: string): string | null {
+    const match = /^\/workflows\/([^/?#]+)$/.exec(pathname);
+    if (!match || ['new', 'runs', 'settings', 'edit', 'events'].includes(match[1]!)) return null;
+    try { return decodeURIComponent(match[1]!); } catch { return match[1]!; }
+}
+
 /**
  * Your saved workflows and the ones shared with you. The definition list names the caller's access
  * on each row; a row without it, or with `owner`, is yours.

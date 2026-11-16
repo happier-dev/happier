@@ -49,16 +49,11 @@ import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
+import { readOpenWorkflowDefinition } from './workflowsColumnModel';
 
 
 function isRunPath(pathname: string): boolean {
     return /^\/workflows\/runs(?:\/|$)/.test(pathname);
-}
-
-function readOpenDefinition(pathname: string): string | null {
-    const match = /^\/workflows\/([^/?#]+)$/.exec(pathname);
-    if (!match || ['new', 'runs', 'settings', 'edit'].includes(match[1]!)) return null;
-    try { return decodeURIComponent(match[1]!); } catch { return match[1]!; }
 }
 
 /** Definitions and the canonical Sessions list's Runs view share the destination's column. */
@@ -86,7 +81,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     React.useEffect(() => {
         if (params.trigger) setView('definitions');
         else if (isRunPath(pathname)) setView('runs');
-        else if (readOpenDefinition(pathname)) setView('definitions');
+        else if (readOpenWorkflowDefinition(pathname)) setView('definitions');
     }, [pathname, params.trigger]);
     // As the page the switch is a row of its own on the sheets' edge; in the column it is the compact icon
     // switch in the band under the title (WorkflowsColumnList), never in the title row.
@@ -233,7 +228,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     const router = useRouter();
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string; serverId?: string | string[] }>();
-    const selectedDefinitionId = readOpenDefinition(pathname);
+    const selectedDefinitionId = readOpenWorkflowDefinition(pathname);
     const homeUnavailable = useActiveHomeUnavailable();
     const { library, isVisible, visibleLibraryRows, accountWorkflows } = props.libraryView;
     // One Library (Q7): saved workflows and the Account's step-holding triggers, in the owner's one

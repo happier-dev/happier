@@ -9,9 +9,18 @@ vi.mock('@/text', async () => {
 });
 
 import {
+    readOpenWorkflowDefinition,
     selectHistoryPreviewRuns,
     splitLibraryDefinitions,
 } from './workflowsColumnModel';
+
+describe('readOpenWorkflowDefinition', () => {
+    it('keeps Events navigation from selecting a saved definition', () => {
+        expect(readOpenWorkflowDefinition('/workflows/events')).toBeNull();
+        expect(readOpenWorkflowDefinition('/workflows/events/occurrence')).toBeNull();
+        expect(readOpenWorkflowDefinition('/workflows/definition%20one')).toBe('definition one');
+    });
+});
 
 describe('splitLibraryDefinitions', () => {
     it('keeps plugin catalog identities in From plugins instead of treating them as saved workflows', () => {
