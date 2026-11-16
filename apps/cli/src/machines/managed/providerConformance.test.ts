@@ -8,6 +8,7 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { compilePluginJsonSchema, parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { JsonValue } from '@happier-dev/protocol';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { AcquireResultV1Schema, ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { createManagedNativeBootstrapIO, executeManagedMachineAcquire, executeManagedMachinePowerIntent, reconcileManagedMachine,
@@ -109,7 +110,8 @@ for (const leaf of leaves) {
                 };
                 const input: ManagedMachineReconciliation = {
                     machine: row, requestId: 'conformance', action: 'machines.managed.acquire', provisioner,
-                    home: { correlation, submit: async machine => ({ submitted: true, machine: row = { ...machine, allocation: 'may-exist' } }),
+                    home: { correlation, projectEnrollmentCorrelation: projectManagedEnrollmentCorrelationV1,
+                        submit: async machine => ({ submitted: true, machine: row = { ...machine, allocation: 'may-exist' } }),
                         reportIssuedAcquireFact: report, preparePendingAcquireBoundReport: async machine => result => report(machine, result),
                         row: async (path, body) => {
                             outputs.push(body);
