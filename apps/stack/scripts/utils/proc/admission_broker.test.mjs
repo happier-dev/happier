@@ -519,6 +519,9 @@ const priorityIdentity = (root, kind) => ({
   // P03 rolling HEAD typecheck: admitted from its warm worktree, outside the repository.
   // The shared web export every QA browser consumes (repo-dev producer, 2026-11-16).
   export: { className: 'source-web-export', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_web_ui.mjs` },
+  // Systemic 2026-11-16 21:15Z: a stack's Expo dev-startup web UI build runs the same producer
+  // script as class validation; every borrowed-UI lane waits on it, so it ranks as a producer.
+  devUi: { className: 'validation', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_web_ui.mjs` },
   rolling: { className: 'compilation', component: '../../cache/commit-typecheck/wt',
     entry: `node ${root}/scripts/workspaces/commitPackageTypecheck.mjs` },
   // Owner ruling 2026-11-16: a focused test run (class named by the command policy).
@@ -528,6 +531,7 @@ for (const [scenario, earlier, later, laterFirst] of [
   ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
   ['rolling HEAD typecheck before an earlier ordinary job', 'ordinary', 'rolling', true],
   ['shared web export before an earlier commit compiler', 'commit', 'export', true],
+  ['dev-startup web UI build before an earlier commit compiler', 'commit', 'devUi', true],
   ['runtime producer before an earlier ordinary job', 'ordinary', 'producer', true],
   ['runtime producer before an earlier commit compiler', 'commit', 'producer', true],
   ['an ordinary caller cannot claim priority', 'ordinary', 'claimed', false],
@@ -545,7 +549,7 @@ for (const [scenario, earlier, later, laterFirst] of [
     const pledged = await requestAdmissionSample(root);
     assert.equal(pledged.head.headPriority > 0, pledging, 'the sample names a priority head');
     assert.equal(pledged.head.reservationActive, pledging, 'a priority head pledges releases at once, without the aging bound');
-    const producerHead = ['producer', 'export'].includes(laterFirst ? later : earlier);
+    const producerHead = ['producer', 'export', 'devUi'].includes(laterFirst ? later : earlier);
     assert.equal(pledged.head.reservationKiB, !pledging ? 0 : producerHead ? 60 : 30,
       'a producer head holds its whole floor; other priority heads hold released memory');
     assert.equal(pledged.waitingCount, 2, 'floors still apply: neither 60-unit waiter starts in 30 free units');

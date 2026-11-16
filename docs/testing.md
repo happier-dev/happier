@@ -621,7 +621,9 @@ pledges releases at once instead of after the 22m24s bound, and ordinary source
 bundles cannot borrow its pledge. A shared-producer head (rank 2) holds its whole
 floor, free or released, so nothing backfills past it and it lends nothing to EASY
 backfills (Systemic 2026-11-16 18:35Z: repo-dev's server bundle sat at position 1
-while smaller jobs took memory that was already free). Floors and capacity checks are
+while smaller jobs took memory that was already free). A stack's Expo dev-startup web UI
+build runs the same producer script as class `validation` and also ranks 2, because every
+borrowed-UI lane waits on it (Systemic 2026-11-16 21:15Z). Floors and capacity checks are
 unchanged. Waiting clients survive a broker succession: each reconnects with its
 original arrival and the successor admits it in that order. Focused test runs (the `focusedTest` classes in `command_resources.mjs`:
 an explicit selection of up to ten existing test files, owner ruling 2026-11-16) rank

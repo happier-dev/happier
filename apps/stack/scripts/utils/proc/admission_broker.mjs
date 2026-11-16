@@ -32,6 +32,9 @@ const HEAD_PRIORITY_RANKS = new Map([
   ['source-bundle apps/stack/scripts/build/build_source_runtime.mjs', 2],
   // The shared web export every stack's QA browsers consume (one per revision).
   ['source-web-export apps/stack/scripts/build/build_source_web_ui.mjs', 2],
+  // A stack's Expo dev-startup web UI build: same producer script, admitted as validation;
+  // every borrowed-UI lane waits on it (Systemic 2026-11-16 21:15Z, owner-approved).
+  ['validation apps/stack/scripts/build/build_source_web_ui.mjs', 2],
   ['compilation scripts/workspaces/checkCommitTypeCoherence.mjs', 1],
   ['compilation scripts/workspaces/commitPackageTypecheck.mjs', 1],
 ]);
