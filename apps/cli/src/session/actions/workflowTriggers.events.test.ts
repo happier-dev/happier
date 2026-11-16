@@ -155,7 +155,7 @@ describe('configured Event source writer consistency', () => {
           sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull' as const],
           sourceConfigSchema: { type: 'object' as const, additionalProperties: true },
           setupActionRef: { pluginId: fixture.caller.pluginId, localId: 'setup' },
-        } } }, watcherMaterializationRef: fixture.caller, invoke };
+        } } }, resolveWatcherMaterializationRef: () => fixture.caller, invoke };
       expect(await enrollPlatformFailureSource(request)).toMatchObject({ ok: true });
       baseline = 'later';
       expect(await enrollPlatformFailureSource(request)).toMatchObject({ ok: true });

@@ -160,7 +160,7 @@ it.each(['rpc', 'plugin'] as const)('preserves the canonical %s failureCause thr
     expect(JSON.stringify(result)).not.toMatch(/private rpc body|private plugin body/);
 });
 
-it.each(['reviewed_child_unavailable', 'watcher_materialization_unavailable', 'environment_read', 'setup.credential_scope_denied'] as const)(
+it.each(['reviewed_child_unavailable', 'environment_read', 'setup.credential_scope_denied'] as const)(
     'retains a persisted Link and names the unavailable observer step: %s', async step => {
         const fixture = createPlatformFailureNoticeFixture(true);
         const environment = await fixture.host.readEnvironment();
@@ -177,15 +177,14 @@ it.each(['reviewed_child_unavailable', 'watcher_materialization_unavailable', 'e
                 return environment;
             },
         });
-        const context = step === 'watcher_materialization_unavailable' || step === 'setup.credential_scope_denied'
+        const context = step === 'setup.credential_scope_denied'
             ? { hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'deployments.targets.link', input: {}, context: {},
                 async execute() { throw new Error('a child without an admitted plan cannot execute'); } }) } : {};
         const result = await enrollment.completeLink(linked, { environmentId: environment.environment.id, role: 'runtime',
             source: environment.targetLinks[0]!.targetLink.source }, context);
         expect(result).toEqual({ ...linked, failureObserver: { status: 'unavailable',
             requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
-            ...(step === 'environment_read' ? {} : { errorCode: step === 'watcher_materialization_unavailable'
-                ? 'source_unavailable' : 'credential_scope_denied' }), failureCause: {
+            ...(step === 'environment_read' ? {} : { errorCode: 'credential_scope_denied' }), failureCause: {
             phase: `target_link.failure_observer.${step}`, errorClass: 'Error',
             errorCode: step === 'setup.credential_scope_denied' ? 'credential_scope_denied' : null,
             httpStatus: step === 'environment_read' ? 401 : null,
@@ -204,4 +203,76 @@ it('does not open persisted Link content when automatic failure enrollment is un
     await expect(enrollment.enroll({ environmentId: 'environment', targetLinkId: 'persisted-link', role: 'runtime',
         source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } } }, {})).resolves.toBeNull();
     expect(contentReads).toBe(0);
+});
+
+it.each([
+    { provider: 'vercel', activates: true, content: { providerEnvironment: { kind: 'production' }, sourceMethod: 'gitIntegration',
+        repositoryAccess: { status: 'ready', repository: { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' } },
+        preparedNative: { projectName: 'cor4b-git-1115', gitSource: { type: 'github', repoId: '1424792902' } } } },
+    { provider: 'cloudflare-workers', activates: true, content: { providerEnvironment: { kind: 'production', scriptName: 'cor6-worker' },
+        sourceMethod: 'upload', preparedNative: { projectName: 'cor6-worker', scriptName: 'cor6-worker' } } },
+    { provider: 'uninstalled receipt-Event plugin', activates: false, content: {} },
+] as const)('enrolls the receipt observer for a $provider Link while the receipt-Event plugin is still cold', async ({ content, activates }) => {
+    // Live #162 (COR4B create-git.json, COR6 19:40Z): failureObserver unavailable at
+    // target_link.failure_observer.watcher_materialization_unavailable, so no watcher ever settled the receipt.
+    // Machine services activates on demand: its own setup Action is the first demand on a fresh controller.
+    const fixture = createPlatformFailureNoticeFixture(true);
+    fixture.changeEnvironment(value => ({ ...value, targetLinks: value.targetLinks.map(row => ({ ...row,
+        content: { ...row.content!, ...content } as typeof row.content })) }));
+    const environment = await fixture.host.readEnvironment();
+    const scope = { serverId: 'home', projectSourceId: environment.environment.projectSourceId, environmentId: environment.environment.id };
+    let activated = false;
+    const authored: unknown[] = [];
+    const app = fastify();
+    // The remote child executor is the boundary; an invoked setup Action activates its plugin like the runtime does.
+    app.post<{ Body: { actionId: string; input: { action?: { localId: string } } } }>('/child', async request => {
+        const { actionId, input } = request.body;
+        if (actionId === 'action.invoke') {
+            activated = activates;
+            return { ok: true, result: PluginEventAutomationSetupResultV1Schema.parse({ v: 1, sourceContractVersion: 1,
+                sourceInstanceId: input.action?.localId, displayLabel: 'Receipt Event', sourceConfig: { v: 1, serverId: 'home',
+                    environmentId: scope.environmentId, targetLinkId: 'target-link', credentialPrincipal: fixture.credentialPrincipal, observingSince: 1 } }) };
+        }
+        const trigger = WorkflowTriggerAddRequestV1Schema.parse(input).trigger;
+        if (trigger.kind !== 'pluginEvent' || 'triggerDefinitionEnvelope' in trigger) throw new Error('Expected authored Event');
+        authored.push(trigger.observationTransport);
+        const id = `trigger-${authored.length}`;
+        return { ok: true, result: { triggerId: id, triggerDefinition: { triggerId: id, definition: { v: 1,
+            sourceInstanceId: trigger.sourceInstanceId, sourceConfig: trigger.sourceConfig, displayLabel: trigger.displayLabel,
+            filter: null, maximumObservationAgeMs: null } },
+        set: { automationId: `automation-${authored.length}`, revision: 1, enabled: true, health: 'available', triggers: [
+            AutomationTriggerDetailSchema.parse({ kind: 'pluginEvent', id, revision: 0, enabled: true, createdAt: 1, updatedAt: 1,
+                eventRef: trigger.eventRef, sourceSelectorId: '00000000-0000-4000-8000-000000000001',
+                sourceContractVersion: trigger.sourceContractVersion,
+                observation: { kind: 'checkpointedPull', watcher: { ...fixture.caller, machineInstallationId: 'fixture-installation' } },
+                sourceStatus: null, sourceCatalogStatus: null, triggerDefinitionEnvelope: '{}' }) ],
+            observationOnly: { kind: 'observationOnly', templateVersion: 1, deploymentEnvironment: scope } } } };
+    });
+    const enrollment = createPlatformFailureEnrollmentForHost({ ...fixture.host,
+        async acquirePluginRuntimeRegistryLease() {
+            return { ...await fixture.host.acquirePluginRuntimeRegistryLease(),
+                resolveCurrentPluginMaterializationRef: () => activated ? fixture.caller : null };
+        },
+    });
+    const input = { environmentId: scope.environmentId, role: 'runtime', source: environment.targetLinks[0]!.targetLink.source };
+    const plan = await enrollment.prepare(input, {});
+    if (!plan) throw new Error('Expected receipt enrollment');
+    try {
+        const context = { hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'deployments.targets.link', input: {}, context: {}, plan,
+            async execute(child, _context, actionId) {
+                return ActionExecuteResultSchema.parse((await app.inject({ method: 'POST', url: '/child', payload: { actionId, input: child } })).json());
+            } }) };
+        const linked = { ok: true as const, environmentId: scope.environmentId, revision: environment.environment.revision,
+            targetLinkId: 'target-link', targetLinkRevision: 1 };
+        const result = DeploymentTargetLinkResultV1Schema.parse(await enrollment.completeLink(linked, input, context));
+        if (!activates) {
+            // A controller that cannot materialize the watcher still names that step and authors nothing.
+            expect(result).toMatchObject({ failureObserver: { status: 'unavailable', errorCode: 'source_unavailable',
+                failureCause: { phase: 'target_link.failure_observer.watcher_materialization_unavailable' } } });
+            expect(authored).toEqual([]);
+            return;
+        }
+        expect(result, JSON.stringify(result)).toMatchObject({ failureObserver: { status: 'enrolled' } });
+        expect(authored).toEqual([0, 1].map(() => ({ kind: 'checkpointedPull', watcherMaterializationRef: fixture.caller })));
+    } finally { await app.close(); }
 });

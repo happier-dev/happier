@@ -144,13 +144,14 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                         if (!event || events.length !== 1) return unavailable();
                         const source = event.event.automation.source;
                         if (!source.supportedObservationTransports.includes('checkpointedPull')) return unavailable();
-                        const watcher = await (lease.resolveCurrentPluginMaterializationRef ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(event.event.identity.pluginId);
-                        if (!watcher || watcher.machineId !== host.machineId) return unavailable('machine_unavailable');
                         const setupChild = context.hostReviewedChild?.preparedChildren?.find(child =>
                             child.role === SETUP_ROLE && sameStrictJsonValue(child.action, source.setupActionRef));
                         if (!setupChild) return unavailable('credential_scope_denied');
                         const setup = await invoke(setupChild);
                         if (!setup.ok) return refused(setup);
+                        // The watcher plugin activates on demand; its setup Action above is that demand.
+                        const watcher = await (lease.resolveCurrentPluginMaterializationRef ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(event.event.identity.pluginId);
+                        if (!watcher || watcher.machineId !== host.machineId) return unavailable('machine_unavailable');
                         const configured = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
                         if (configured.sourceContractVersion !== source.sourceContractVersion
                             || !compilePluginJsonSchema(source.sourceConfigSchema)(configured.sourceConfig)) return unavailable();
@@ -185,12 +186,12 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                             if (!receiptEvent) return unavailable();
                             const receiptSource = receiptEvent.event.automation.source;
                             if (!receiptSource.supportedObservationTransports.includes('checkpointedPull')) return unavailable();
-                            const receiptWatcher = await (lease.resolveCurrentPluginMaterializationRef
-                                ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(receiptEvent.event.identity.pluginId);
-                            if (!receiptWatcher || receiptWatcher.machineId !== host.machineId) return unavailable('machine_unavailable');
                             const receiptSetup = await invoke({ action: receiptSource.setupActionRef, role: SETUP_ROLE,
                                 input: { v: 1, serverId: host.serverId, environmentId: input.environmentId, previewChildren: true } });
                             if (!receiptSetup.ok) return refused(receiptSetup);
+                            const receiptWatcher = await (lease.resolveCurrentPluginMaterializationRef
+                                ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(receiptEvent.event.identity.pluginId);
+                            if (!receiptWatcher || receiptWatcher.machineId !== host.machineId) return unavailable('machine_unavailable');
                             const receiptConfigured = PluginEventAutomationSetupResultV1Schema.parse(receiptSetup.result);
                             if (receiptConfigured.sourceContractVersion !== receiptSource.sourceContractVersion
                                 || !compilePluginJsonSchema(receiptSource.sourceConfigSchema)(receiptConfigured.sourceConfig)) return unavailable();

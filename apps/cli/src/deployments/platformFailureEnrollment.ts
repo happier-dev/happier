@@ -62,7 +62,9 @@ type EnrolledSource = PlatformFailureEnrollmentSourceV1;
 /** Receipt setup owns the baseline; the Account writer owns private source custody and idempotent enrollment. */
 export async function enrollPlatformFailureSource(input: Readonly<{
     serverId: string; environment: DeploymentEnvironmentDetailV1; targetLinkId: string;
-    event: Event; watcherMaterializationRef: PluginMachineMaterializationRefV1; invoke: Invoke;
+    event: Event; invoke: Invoke;
+    /** Read after setup: the setup Action is the watcher plugin's activation demand on a fresh controller. */
+    resolveWatcherMaterializationRef(): PluginMachineMaterializationRefV1 | null | Promise<PluginMachineMaterializationRefV1 | null>;
 }>): Promise<EnrollmentResult<EnrolledSource>> {
     const source = input.event.automation.source;
     const row = input.environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId);
@@ -81,6 +83,8 @@ export async function enrollPlatformFailureSource(input: Readonly<{
     if (config === null || Array.isArray(config) || typeof config !== 'object'
         || config.serverId !== scope.serverId || config.environmentId !== scope.environmentId || config.targetLinkId !== scope.targetLinkId
         || !sameStrictJsonValue(config.credentialPrincipal, row.content.credentialPrincipal)) return unavailable('source_config_invalid');
+    const watcherMaterializationRef = await atStep('watcher_materialization_resolve', () => input.resolveWatcherMaterializationRef());
+    if (!watcherMaterializationRef) return unavailable('watcher_materialization_unavailable');
     const enrolled = childResult(await atStep('enroll', () => input.invoke({ action: 'workflow.trigger.add', role: PLATFORM_FAILURE_ENROLL_ROLE,
         input: normalizeStrictJsonValue({ includeEventDefinition: true, observationOnly: { kind: 'observationOnly', deploymentEnvironment: {
             serverId: input.serverId, projectSourceId: input.environment.environment.projectSourceId,
@@ -88,7 +92,7 @@ export async function enrollPlatformFailureSource(input: Readonly<{
         trigger: { kind: 'pluginEvent', enabled: true, eventRef: input.event.identity,
             sourceInstanceId: result.data.sourceInstanceId, sourceContractVersion: result.data.sourceContractVersion,
             sourceConfig: config, displayLabel: result.data.displayLabel,
-            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: input.watcherMaterializationRef },
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef },
             filter: null, maximumObservationAgeMs: null } }) })), 'enroll');
     if (!enrolled.ok) return enrolled;
     const written = await atStep('enroll', () => WorkflowTriggerWriteResultV1Schema.parse(enrolled.result));
@@ -137,9 +141,12 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
             if (!row || row.targetLink.role !== 'runtime') return null;
             if (environment.environment.controllerMachineId !== host.machineId) return unavailable('controller_unavailable', 'machine_unavailable');
             if (!context.hostReviewedChild) return unavailable('reviewed_child_unavailable', 'credential_scope_denied');
-            const watcher = await atStep('watcher_materialization_resolve', () =>
-                (lease.resolveCurrentPluginMaterializationRef ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId));
-            if (!watcher || watcher.machineId !== host.machineId) return unavailable('watcher_materialization_unavailable');
+            // The receipt-Event plugin activates on demand; its setup child is that demand, so read the ref after it.
+            const resolveWatcherMaterializationRef = () => {
+                const watcher = (lease.resolveCurrentPluginMaterializationRef ?? lease.registry.resolveCurrentPluginMaterializationRef)
+                    ?.(DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId);
+                return watcher?.machineId === host.machineId ? watcher : null;
+            };
             const sources: EnrolledSource[] = [];
             const readBack: PlatformFailureEnrollmentReadBackV1 = {
                 deploymentEnvironment: { serverId: host.serverId, projectSourceId: environment.environment.projectSourceId, environmentId },
@@ -148,7 +155,7 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
             };
             for (const event of events) {
                 const result = await enrollPlatformFailureSource({ serverId: host.serverId, environment, targetLinkId,
-                    event: event.event, watcherMaterializationRef: watcher, invoke: context.hostReviewedChild.invoke });
+                    event: event.event, resolveWatcherMaterializationRef, invoke: context.hostReviewedChild.invoke });
                 if (!result.ok) return result;
                 sources.push(result.result);
                 onEnrolled?.(readBack);
