@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
@@ -18,6 +18,42 @@ let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefin
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('WorkspaceLocalChangesBody', () => {
+    it.each([true, false])('keeps a retained checkout answer visible through a failed refresh and Retry (isRepo=%s)', async isRepo => {
+        const rootPath = `/repo/retained-${isRepo ? 'repository' : 'nonrepo'}`;
+        const refresh = createDeferred<unknown>();
+        const workspaceWatch = createDeferred<unknown>();
+        const recovered = fileViewSnapshot({ rootPath, entries: [{ path: 'src/new.ts', previousPath: null,
+            kind: 'modified', includeStatus: '', pendingStatus: 'M', hasIncludedDelta: false, hasPendingDelta: true,
+            stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false } }] });
+        let retrying = false;
+        const currentFixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            // The external filesystem watcher stays connected while this test drives snapshot reads.
+            if (request.method === 'scm.workspace.watch.v1') return workspaceWatch.promise;
+            if (request.method === 'scm.status.snapshot') return retrying ? { success: true, snapshot: recovered } : refresh.promise;
+            return undefined;
+        } });
+        fixture = currentFixture;
+        currentFixture.storage.getState().updateWorkspaceScmSnapshot(currentFixture.scope, fileViewSnapshot({ rootPath, isRepo }));
+        const screen = await currentFixture.render(<WorkspaceLocalChangesBody scope={currentFixture.scope} />);
+        const retainedAnswer = isRepo ? 'workspace-local-changes-clean' : 'workspace-local-changes-not-repo';
+        expect(screen.findHostByTestId(retainedAnswer)).not.toBeNull();
+        expect(screen.findHostByTestId('workspace-local-changes-stale')).toBeNull();
+
+        await act(async () => { refresh.resolve({ success: false, errorCode: 'BACKEND_UNAVAILABLE', error: 'Snapshot read failed' }); });
+        await vi.waitFor(() => expect(currentFixture.storage.getState().getWorkspaceScmSnapshotError(currentFixture.scope))
+            .toMatchObject({ errorCode: 'BACKEND_UNAVAILABLE' }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('workspace-local-changes-stale')).not.toBeNull());
+        expect(screen.findHostByTestId(retainedAnswer)).not.toBeNull();
+        expect(screen.findHostByTestId('workspace-local-changes-error')).toBeNull();
+
+        retrying = true;
+        await screen.pressByTestIdAsync('workspace-local-changes-stale-action');
+        await vi.waitFor(() => expect(screen.findHostByTestId('workspace-local-changes-stale')).toBeNull());
+        expect(screen.findHostByTestId(retainedAnswer)).toBeNull();
+        expect(screen.findHostByTestId('workspace-local-changes-files')).not.toBeNull();
+        expect(currentFixture.storage.getState().getWorkspaceScmSnapshotError(currentFixture.scope)).toBeNull();
+    });
+
     it('keeps changes readable without offering writes when the snapshot has no capability declaration', async () => {
         const snapshot = fileViewSnapshot({ rootPath: '/repo', capabilities: { writeCommit: true }, entries: [{ path: 'src/a.ts', previousPath: null,
             kind: 'modified', includeStatus: '', pendingStatus: 'M', hasIncludedDelta: false, hasPendingDelta: true,

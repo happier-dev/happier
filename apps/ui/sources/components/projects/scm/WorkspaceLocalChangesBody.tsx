@@ -10,6 +10,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
+import { SourceControlStaleSnapshotNotice } from '@/components/workspaces/scm/states/SourceControlStaleSnapshotNotice';
 import { activeReviewFileKeyForWorkspace } from '@/components/workspaces/scm/review/activeReviewFile';
 import { buildSessionScmSummary, sumChangedLines } from '@/components/sessions/sourceControl/status/statusSummary';
 import { CheckoutUnreachableState, describeCheckoutUnreachable, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
@@ -93,14 +94,20 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
             <SurfaceStateCard testID={`${testID}-loading`} size="line" kind="loading" title={t('common.loading')} />
         );
     }
+    const staleSnapshotNotice = <SourceControlStaleSnapshotNotice testID={`${testID}-stale`}
+        error={offline ? null : controls.error} onRetry={() => { void controls.refresh(); }} />;
     if (snapshot.repo.isRepo === false) {
-        return <SurfaceStateCard testID={`${testID}-not-repo`} size="line" kind="empty" title={t('files.notRepo')} />;
+        return <View style={styles.body}>
+            {staleSnapshotNotice}
+            <SurfaceStateCard testID={`${testID}-not-repo`} size="line" kind="empty" title={t('files.notRepo')} />
+        </View>;
     }
 
     const clean = changedFiles.length === 0 && ahead === 0;
 
     return (
         <View testID={testID} style={styles.body}>
+            {staleSnapshotNotice}
             {offline && !reachability.announced ? <SurfaceFreshnessLine testID={`${testID}-offline`} asOf={snapshot.fetchedAt}
                 reason={describeCheckoutUnreachable(reachability)} /> : null}
             {clean ? (
