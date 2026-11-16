@@ -49,7 +49,17 @@ const NOOP_DISMISS_CONTROLLER: SessionCockpitDismissController = {
     clearDismissing: () => {},
 };
 
-const SessionCockpitChromeRegistrationContext = React.createContext<SessionCockpitChromeRegistration | null>(null);
+/**
+ * The registration as a store: it names the Session the phone shows, so it moves on every Session switch. Its
+ * app chrome follows the whole value; a Session view reads only its own facts (a selector, or a read on a tap),
+ * so a retained Session's view draws nothing when another Session is shown or this one is shown again.
+ */
+type SessionCockpitChromeRegistrationStore = Readonly<{
+    get: () => SessionCockpitChromeRegistration | null;
+    subscribe: (listener: () => void) => () => void;
+}>;
+const NO_REGISTRATION_STORE: SessionCockpitChromeRegistrationStore = { get: () => null, subscribe: () => () => {} };
+const SessionCockpitChromeRegistrationContext = React.createContext<SessionCockpitChromeRegistrationStore>(NO_REGISTRATION_STORE);
 const SessionCockpitChromeRegisterContext = React.createContext<SessionCockpitChromeRegister>(NOOP_REGISTER);
 
 /**
@@ -199,7 +209,20 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
     }, []);
     const floatingBottomChromeHeight = React.useMemo(() => Math.max(0, ...Object.values(floatingBottomChromeById)), [floatingBottomChromeById]);
     const [composerChromeById, setComposerChromeById] = React.useState<Readonly<Record<string, SessionCockpitComposerChromeMeasurement>>>({});
-    const [registration, setRegistration] = React.useState<SessionCockpitChromeRegistration | null>(null);
+    const [registrationStore] = React.useState(() => {
+        let current: SessionCockpitChromeRegistration | null = null;
+        const listeners = new Set<() => void>();
+        return {
+            get: () => current,
+            subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            update: (next: (current: SessionCockpitChromeRegistration | null) => SessionCockpitChromeRegistration | null) => {
+                const value = next(current);
+                if (value === current) return;
+                current = value;
+                for (const listener of [...listeners]) listener();
+            },
+        };
+    });
     const [dismissingSessionId, setDismissingSessionId] = React.useState<string | null>(null);
     const latestRegistrationRef = React.useRef<SessionCockpitChromeRegistration | null>(null);
     const latestRegistrationTokenRef = React.useRef(0);
@@ -214,7 +237,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
         latestRegistrationTokenRef.current = registrationToken;
         latestRegistrationRef.current = nextRegistration;
 
-        setRegistration((currentRegistration) => {
+        registrationStore.update((currentRegistration) => {
             if (
                 currentRegistration?.sessionId === nextRegistration.sessionId
                 && currentRegistration.serverId === nextRegistration.serverId
@@ -255,14 +278,14 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                 if (latestRegistrationTokenRef.current !== registrationToken) return;
 
                 latestRegistrationRef.current = null;
-                setRegistration((currentRegistration) => (
+                registrationStore.update((currentRegistration) => (
                     currentRegistration?.sessionId === nextRegistration.sessionId
                         ? null
                         : currentRegistration
                 ));
             });
         };
-    }, []);
+    }, [registrationStore]);
 
     const setBottomChromeHeight = React.useCallback((height: number) => {
         const nextHeight = Number.isFinite(height) ? Math.max(0, Math.round(height)) : 0;
@@ -328,7 +351,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                                 <SessionCockpitComposerChromeTopContext.Provider value={composerChromeTop}>
                                     <SessionCockpitDismissControllerContext.Provider value={dismissController}>
                                         <SessionCockpitDismissingSessionIdContext.Provider value={dismissingSessionId}>
-                                            <SessionCockpitChromeRegistrationContext.Provider value={registration}>
+                                            <SessionCockpitChromeRegistrationContext.Provider value={registrationStore}>
                                                 <SessionCockpitPetRectReporterContext.Provider value={pet.reporter}>
                                                     <SessionCockpitPetRectContext.Provider value={pet.rect}>
                                                         <SessionCockpitActionRailRectReporterContext.Provider value={actionRail.reporter}>
@@ -371,8 +394,22 @@ export function useReportSessionCockpitActionRailRect(enabled: boolean): (rect: 
     return useMountedMeasuredRectReporter(React.useContext(SessionCockpitActionRailRectReporterContext), enabled);
 }
 
+/** The whole registration, for the app chrome that presents it. A Session view reads its own facts below. */
 export function useSessionCockpitChromeRegistration(): SessionCockpitChromeRegistration | null {
-    return React.useContext(SessionCockpitChromeRegistrationContext);
+    const store = React.useContext(SessionCockpitChromeRegistrationContext);
+    return React.useSyncExternalStore(store.subscribe, store.get, store.get);
+}
+
+/** One derived fact of the registration (return a primitive): its reader renders only when that fact changes. */
+export function useSessionCockpitChromeRegistrationSelector<T>(select: (registration: SessionCockpitChromeRegistration | null) => T): T {
+    const store = React.useContext(SessionCockpitChromeRegistrationContext);
+    const read = () => select(store.get());
+    return React.useSyncExternalStore(store.subscribe, read, read);
+}
+
+/** Reads the current registration when acting (a tap, a reveal), without following it. Its identity is stable. */
+export function useReadSessionCockpitChromeRegistration(): () => SessionCockpitChromeRegistration | null {
+    return React.useContext(SessionCockpitChromeRegistrationContext).get;
 }
 
 export function useSessionCockpitChromeRegister(): ((registration: SessionCockpitChromeRegistration) => () => void) {

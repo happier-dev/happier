@@ -4,7 +4,7 @@ import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projection
 import { usePluginLocalizedTextResolver } from "@/sync/domains/plugins/ui/i18n";
 import { isEmbedWindowContext } from "@/embed/isEmbedWindowContext";
 import { useAppPaneActionRailVisible } from "@/components/appShell/panes/hooks/useAppPaneActionRailVisible";
-import { useSessionCockpitChromeRegistration } from "@/components/workspaceCockpit/session/SessionCockpitChromeRegistry";
+import { useReadSessionCockpitChromeRegistration, useSessionCockpitChromeRegistrationSelector } from "@/components/workspaceCockpit/session/SessionCockpitChromeRegistry";
 import { requestSessionWorkTriggersReveal } from '@/components/sessions/work/sessionWorkTriggersReveal';
 import { useOpenSessionCollaboration } from "@/components/sessions/collaboration/useOpenSessionCollaboration";
 import { useSessionCollaborationDestinationEntryAdmitted } from "@/hooks/session/useSessionCollaborationAvailability";
@@ -1266,10 +1266,10 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const headerBrowserTargetsDecision = useFeatureDecision('browser.viewTargets', { scopeKind: 'runtime' });
     const browserMenuEntryAvailable = deviceType !== 'phone' && headerBrowserDecision?.state === 'enabled'
         && headerBrowserTargetsDecision?.state === 'enabled';
-    const cockpitChrome = useSessionCockpitChromeRegistration();
-    const mobileTerminalTabAvailable = deviceType === 'phone'
-        && cockpitChrome?.sessionId === sessionId
-        && cockpitChrome.terminalTabAvailable;
+    // The cockpit chrome names the shown Session: this view follows only whether its own has a Terminal tab.
+    const cockpitTerminalTabAvailable = useSessionCockpitChromeRegistrationSelector(
+        registration => registration?.sessionId === sessionId && registration.terminalTabAvailable);
+    const mobileTerminalTabAvailable = deviceType === 'phone' && cockpitTerminalTabAvailable;
     const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
     const {
         mobileWorkspaceExperience,
@@ -2318,8 +2318,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     const onMainColumnControlsChange = React.useCallback((controls: PaneMainColumnState | null) => {
         presentationMainColumnRef.current = controls;
     }, []);
-    const pathname = useDestinationPathname();
-    const safeArea = useChromeSafeAreaInsets();
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
     const multiPaneDeviceType = resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType });
@@ -2714,15 +2712,13 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         </PaneMainComposerAnchor>
     ) : null;
 
-    const companionCockpit = useSessionCockpitChromeRegistration();
-    const companionCockpitRef = React.useRef(companionCockpit);
-    companionCockpitRef.current = companionCockpit;
+    const readCockpitChrome = useReadSessionCockpitChromeRegistration();
     const openCompanionFullSurface = React.useCallback((): SessionPresentationMutationOutcome => {
         if (routeMobileSurface === 'companion') return { status: 'unchanged' };
         // A mounted Cockpit (a phone, or a window narrowed to one) presents the Companion as its own surface,
         // through the same switch its bottom bar uses. Beside the chat, the Companion is the side panel's
         // Companion tab, opened through the pane owner like Work (QA-RERUN-1113 R2-2, QA-SHELL C4).
-        const cockpit = companionCockpitRef.current;
+        const cockpit = readCockpitChrome();
         if (cockpit?.sessionId === sessionId) {
             cockpit.switchSurface('companion');
             return { status: 'applied' };
@@ -2730,7 +2726,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         pane.openRight({ tabId: 'companion' });
         pane.setRightTab('companion');
         return { status: 'applied' };
-    }, [pane, routeMobileSurface, sessionId]);
+    }, [pane, readCockpitChrome, routeMobileSurface, sessionId]);
     const boardPresentationUndoCurrentRef = React.useRef(isBoardPresentationUndoCurrent);
     boardPresentationUndoCurrentRef.current = isBoardPresentationUndoCurrent;
     const {

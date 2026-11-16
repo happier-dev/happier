@@ -49,7 +49,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 }));
 
 vi.mock('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry', () => ({
-    useSessionCockpitChromeRegistration: () => cockpitState.registration,
+    useReadSessionCockpitChromeRegistration: () => () => cockpitState.registration,
 }));
 
 vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({

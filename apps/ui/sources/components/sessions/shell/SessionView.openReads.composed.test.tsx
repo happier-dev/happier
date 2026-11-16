@@ -21,6 +21,7 @@ import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
 import { ChatListInternal } from '@/components/sessions/transcript/ChatListInternal';
 import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
+import { SessionCockpitChromeRegistryProvider, useSessionCockpitChromeRegister, type SessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import type { Socket } from 'socket.io-client';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -227,6 +228,65 @@ it('renders only its focus readers when its retained Session tab is hidden and s
         // (test IDs, display/inert, the atmosphere stage), is a null leaf that runs focus-gated effects, or is
         // this harness's wrapper; see P03-UI-RESIDUALS.
         expect(total, summary).toBeLessThan(100);
+    } finally {
+        await screen.unmount();
+    }
+});
+
+const NO_COCKPIT_CATALOG: SessionCockpitChromeRegistration['catalog'] = [];
+const closedCockpitColumn = () => ({ present: false, visible: false, available: false, setVisible: () => {} });
+/** The phone's shown Session registers the bottom cockpit chrome; another Session's show replaces it. */
+function CockpitChromeRegistrar(props: Readonly<{ initialSessionId: string; serverId: string; show: { current: (sessionId: string) => void } }>) {
+    const register = useSessionCockpitChromeRegister();
+    const [sessionId, setSessionId] = React.useState(props.initialSessionId);
+    props.show.current = setSessionId;
+    React.useLayoutEffect(() => register({ sessionId, serverId: props.serverId, activeSurface: 'chat',
+        terminalTabAvailable: false, openDetailsTabCount: 0, catalog: NO_COCKPIT_CATALOG, readColumn: closedCockpitColumn,
+        switchSurface: () => {} }), [props.serverId, sessionId, register]);
+    return null;
+}
+
+it('renders nothing of a retained Session view when the phone shows another Session and then this one again', async () => {
+    installShippedNativeFrameScheduler();
+    const id = 'cockpit-switch';
+    storage.getState().applySessions([createSessionFixture({ id, serverId: runtime.serverId, seq: 4, encryptionMode: 'plain' })]);
+    await sync.ensureSessionVisibleForMessageRoute(id, { serverId: runtime.serverId, hydrateMessages: false });
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+    const view = <DestinationInstanceHost tabId={id} ref={{ kind: 'session', params: { id, serverId: runtime.serverId } }}
+        pathname={`/session/${id}`} focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+        <SessionDestinationBody />
+    </DestinationInstanceHost>;
+    const show = { current: (_sessionId: string) => {} };
+    const screen = await renderScreen(<React.Profiler id="session-tab" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+        <SessionCockpitChromeRegistryProvider>
+            <CockpitChromeRegistrar initialSessionId={id} serverId={runtime.serverId} show={show} />
+            {view}
+        </SessionCockpitChromeRegistryProvider>
+    </React.Profiler>, { wrapper: runtime.Wrapper });
+    try {
+        await act(async () => {
+            await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect(screen.getTextContent()).toContain('Turn 1');
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counts.start();
+        // A rail switch: the other Session's screen takes the cockpit chrome, then this one takes it back.
+        await act(async () => { show.current('other-session'); });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        await act(async () => { show.current(id); });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        counts.stop();
+        const renders = counts.read().renders;
+        const summary = JSON.stringify(Object.fromEntries([...renders].sort((a, b) => b[1] - a[1])));
+        // The chrome names the shown Session. This view reads only whether it is its own (and acts through it on a
+        // tap), so its frame and everything under it draw nothing. HEAD before: the frame, its body and pane
+        // drivers re-rendered on both registrations (~1.1-1.6k renders per Android switch-back).
+        expect([...renders].filter(([name]) => /^SessionViewLoadedFrame\d*$/.test(name)), summary).toEqual([]);
+        const viewRenders = [...renders].filter(([name]) => name !== 'CockpitChromeRegistrar');
+        expect(viewRenders.reduce((sum, [, count]) => sum + count, 0), summary).toBe(0);
     } finally {
         await screen.unmount();
     }

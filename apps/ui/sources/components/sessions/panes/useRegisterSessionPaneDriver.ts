@@ -13,7 +13,7 @@ import { SessionDetailsPanel } from './SessionDetailsPanelHost';
 import { createSessionPaneScopeId } from './sessionPaneScopeId';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { useSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { useReadSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveSessionTerminalDockLocation } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -78,7 +78,8 @@ export function useRegisterSessionPaneDriver(
     optionsRef.current = options;
     const instanceKey = useDestinationInstanceKey();
     const paneCtx = useOptionalAppPaneContext(value => ({ registerDriver: value.registerDriver }));
-    const cockpitChrome = useSessionCockpitChromeRegistration();
+    // Read on reveal: the cockpit chrome follows the shown Session, and following it re-registered this driver on every switch.
+    const readCockpitChrome = useReadSessionCockpitChromeRegistration();
     // The bottom pane exists only where the terminal docks there. A phone shows it as the Terminal
     // page, yet every cockpit scene mounts this scope's pane host, so a bottom pane a wider layout
     // left open would otherwise duplicate the terminal under Chat.
@@ -164,6 +165,7 @@ export function useRegisterSessionPaneDriver(
             get resourceNavigation() { return optionsRef.current?.readResourceNavigation?.() ?? null; },
             openResource,
             onTerminalWorkspaceReveal: () => {
+                const cockpitChrome = readCockpitChrome();
                 const matchingHome = serverId
                     ? areServerProfileIdentifiersEquivalent(cockpitChrome?.serverId, serverId)
                     : !cockpitChrome?.serverId;
@@ -235,7 +237,7 @@ export function useRegisterSessionPaneDriver(
         detailsPaneEnabled,
         deviceType,
         rightPaneAvailable,
-        cockpitChrome,
+        readCockpitChrome,
         pluginRuntime.accountLifetime,
         pluginRuntime.interactionEnabled,
         pluginRuntime.phase,

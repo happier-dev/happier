@@ -6,7 +6,7 @@ import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestH
 import { resolveCompactAppDestinations, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
-import { DestinationInstanceHost, useDestinationParams, useDestinationPathname, useDestinationRouter } from './DestinationInstanceHost';
+import { DestinationInstanceHost, useDestinationGlobalParams, useDestinationParams, useDestinationPathname, useDestinationRouter } from './DestinationInstanceHost';
 import { useDestinationFocus, useDestinationInstanceKey, useDestinationVisibility } from './destinationInstanceContext';
 import { WorkspaceDestinationBody } from './WorkspaceDestinationBody';
 
@@ -68,6 +68,25 @@ describe('params-only update of one destination', () => {
         const before = renderSession.mock.calls.length;
         await screen.update(<>{body()}</>);
         expect(renderSession.mock.calls.length).toBe(before);
+    });
+
+    it('keeps a hosted body\'s path and params readers still when the focused route moves to another destination', async () => {
+        // A phone keeps several Session bodies mounted; showing another one moves the workspace's focused route.
+        const path = counted(() => { useDestinationPathname(); });
+        const params = counted(() => { useDestinationGlobalParams(); });
+        const hosted = <DestinationInstanceHost tabId="session-a" ref={{ kind: 'session', params: { id: 'a' } }} pathname="/session/a"
+            focused={false} visible={false} navigation={navigation} stackOwned><path.Probe /><params.Probe /></DestinationInstanceHost>;
+        const value = (state: ReturnType<typeof createWorkspaceState>): WorkspaceNavigationContextValue => ({
+            active: true, state, catalog, canGoBack: false, canGoForward: false,
+            openHref: () => true, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {},
+            dispatch: () => {}, navigationForTab: () => navigation, registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+        });
+        const sessionB = createWorkspaceState({ id: 'b', target: { kind: 'session', params: { id: 'b' } }, pinned: false, preview: false });
+        const sessionC = reduceWorkspaceState(sessionB, { type: 'setTarget', tabId: 'b', target: { kind: 'session', params: { id: 'c' } } });
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={value(sessionB)}>{hosted}</WorkspaceNavigationProvider>);
+        const before = { path: path.renders(), params: params.renders() };
+        await screen.update(<WorkspaceNavigationProvider value={value(sessionC)}>{hosted}</WorkspaceNavigationProvider>);
+        expect({ path: path.renders(), params: params.renders() }).toEqual(before);
     });
 
     it('serves path readers from the provider while no tab is focused, without subscribing to the router', async () => {

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { isAttachedSessionTerminalAvailableForSession } from '@/agents/registry/registryUiBehavior';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import { useSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { useReadSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { getStorage, useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
 
 import { openEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
@@ -53,7 +53,7 @@ export function useOpenAttachedSessionTerminal(sessionId: string | null, serverI
     const normalizedSessionId = sessionId?.trim() ?? '';
     const normalizedServerId = serverId?.trim() || null;
     const pane = useAppPaneScope(useDestinationPaneScopeId(createSessionPaneScopeId(normalizedSessionId, normalizedServerId)));
-    const cockpitChrome = useSessionCockpitChromeRegistration();
+    const readCockpitChrome = useReadSessionCockpitChromeRegistration();
     // Subscription width: this hook feeds `SessionHeaderRightElement`, whose
     // `onSelectExtraItem` identity gates `SessionHeaderActionMenu`'s comparator. Subscribing
     // to the whole `Session` record re-rendered the header chrome on every turn-lifecycle
@@ -85,6 +85,7 @@ export function useOpenAttachedSessionTerminal(sessionId: string | null, serverI
     const open = React.useCallback(() => {
         if (!available) return;
         setSessionTerminalMode(normalizedSessionId, 'session_attach', normalizedServerId, pane.scopeId);
+        const cockpitChrome = readCockpitChrome();
         if (
             cockpitChrome?.sessionId === normalizedSessionId
             && (!normalizedServerId || areServerProfileIdentifiersEquivalent(cockpitChrome.serverId, normalizedServerId))
@@ -94,6 +95,6 @@ export function useOpenAttachedSessionTerminal(sessionId: string | null, serverI
             return;
         }
         openEmbeddedTerminalInDockLocation({ pane, dockLocation: terminalAvailability.dockLocation });
-    }, [available, cockpitChrome, normalizedSessionId, normalizedServerId, pane, terminalAvailability.dockLocation]);
+    }, [available, readCockpitChrome, normalizedSessionId, normalizedServerId, pane, terminalAvailability.dockLocation]);
     return React.useMemo(() => ({ available, unavailableReason, open }), [available, open, unavailableReason]);
 }

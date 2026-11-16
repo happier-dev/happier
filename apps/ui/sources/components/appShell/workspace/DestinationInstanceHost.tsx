@@ -337,10 +337,12 @@ export function useDestinationParamsSelector<T>(selector: (params: Readonly<Reco
 
 export function useDestinationGlobalParams<T extends Record<string, string | string[] | undefined>>(): T {
     const hostedParams = useDestinationInstance(selectDestinationParams, sameValue);
+    // A hosted body's own params: the focused route is another tab's fact (see useDestinationPathname).
+    if (hostedParams) return hostedParams as T;
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     const focused = useWorkspaceFocusedRoute();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    const params = hostedParams ? null : useGlobalSearchParams();
-    if (hostedParams) return hostedParams as T;
+    const params = useGlobalSearchParams();
     if (focused) return focused.target.params as T;
     return params as T;
 }
@@ -367,10 +369,13 @@ const NO_FOCUSED_SELECTION: unique symbol = Symbol('no focused route');
 
 export function useDestinationPathname(): string {
     const hostedPathname = useDestinationInstance(selectDestinationPathname, sameValue);
+    // A hosted body names its own path. The focused pathname is another tab's fact (on a phone, the shown
+    // Session's): following it rendered every hosted path reader on each tab or Session switch.
+    if (hostedPathname !== null) return hostedPathname;
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     const focused = useWorkspaceFocusedPathname();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    const pathname = hostedPathname !== null || focused !== null ? null : usePathname();
-    if (hostedPathname !== null) return hostedPathname;
+    const pathname = focused !== null ? null : usePathname();
     // The shell column follows the same tab owner as its body. Expo mirrors that route after
     // navigation and must not retain a previous tab's selection in the meantime.
     if (focused !== null) return focused;
