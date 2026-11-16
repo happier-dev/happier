@@ -6,16 +6,18 @@ import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 
 describe('resolveSpawnChildEnvironment (mcp selection)', () => {
-  it('round-trips only admitted birth tool policy, excluding all ambient and overlay injection', async () => {
+  it('round-trips only admitted birth tool and sandbox choices, excluding ambient and overlay injection', async () => {
     for (const policy of [
-      { allowedTools: ['mcp__wilson-intake__*'], unlistedTools: 'deny' as const },
-      { allowedTools: [], unlistedTools: 'deny' as const },
+      { allowedTools: ['mcp__wilson-intake__*'], unlistedTools: 'deny' as const, nativeSandbox: 'off' as const },
+      { allowedTools: [], unlistedTools: 'deny' as const, nativeSandbox: 'on' as const },
       {},
     ]) {
       const injectedPolicy = JSON.stringify({ allowedTools: ['Bash'], unlistedTools: 'ask' });
       const injection = {
         HAPPIER_SESSION_TOOL_POLICY_JSON: injectedPolicy,
         happier_session_tool_policy_json: injectedPolicy,
+        HAPPIER_SESSION_NATIVE_SANDBOX: 'off',
+        happier_session_native_sandbox: 'off',
       };
       const options: SpawnSessionOptions = {
         directory: '/tmp/project', ...policy, environmentVariables: injection,
@@ -40,9 +42,12 @@ describe('resolveSpawnChildEnvironment (mcp selection)', () => {
       else {
         expect(metadata).not.toHaveProperty('allowedTools');
         expect(metadata).not.toHaveProperty('unlistedTools');
+        expect(metadata).not.toHaveProperty('nativeSandbox');
       }
       expect(childEnvironment.happier_session_tool_policy_json).toBeUndefined();
       expect(childEnvironment.HAPPIER_SESSION_TOOL_POLICY_JSON).toBeUndefined();
+      expect(childEnvironment.HAPPIER_SESSION_NATIVE_SANDBOX).toBeUndefined();
+      expect(childEnvironment.happier_session_native_sandbox).toBeUndefined();
     }
   });
   it('carries only admitted fresh identity into host metadata, excluding ambient and Profile overrides', async () => {

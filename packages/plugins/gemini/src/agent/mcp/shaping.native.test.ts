@@ -25,6 +25,21 @@ afterEach(async () => {
 });
 
 describe('prepareGeminiNativeMcpShaping', () => {
+  it('disables native sandboxing in the private launch settings without changing approvals or the source policy', async () => {
+    const sourceHome = createSourceHome();
+    const sourcePath = join(sourceHome, 'system.json');
+    const sourceSettings = { tools: { sandbox: true }, security: { toolSandboxing: true,
+      auth: { selectedType: 'oauth-personal' } }, approvalMode: 'default' };
+    writeFileSync(sourcePath, JSON.stringify(sourceSettings));
+    const shaped = await prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: sourcePath }, { nativeSandbox: 'off' });
+    cleanups.push(() => shaped.cleanup());
+    expect(shaped.env.GEMINI_SANDBOX).toBe('false');
+    const effective = JSON.parse(readFileSync(shaped.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH!, 'utf8'));
+    expect(effective).toEqual({ ...sourceSettings, tools: { sandbox: false },
+      security: { ...sourceSettings.security, toolSandboxing: false } });
+    expect(JSON.parse(readFileSync(sourcePath, 'utf8'))).toEqual(sourceSettings);
+  });
   it('inherits only native path selectors and honors explicit launch values and unsets on every platform', () => {
     const inherited = { GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/native/policy.json',
       GEMINI_CLI_SYSTEM_DEFAULTS_PATH: '/native/defaults.json', UNRELATED_SECRET: 'must-not-forward' };

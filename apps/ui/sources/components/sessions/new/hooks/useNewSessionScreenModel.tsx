@@ -2,6 +2,7 @@ import { createApprovalProfileComposerChip } from '@/components/approvals/create
 import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { normalizeSessionConfigOptionValueId } from '@/sync/domains/sessionControl/configOptionsControl';
@@ -2596,6 +2597,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         backendTarget,
         externalSessionsFeatureEnabled,
     });
+    const nativeSandboxMachineIsolation = React.useMemo(
+        () => readMachineIsolationV1(selectedMachine?.metadata),
+        [selectedMachine?.metadata],
+    );
     const isolationSnapshot = React.useMemo(() => readSyncedMachineIsolationPolicy(selectedMachine ?? null), [selectedMachine]);
     const {
         permissionMode,
@@ -2621,10 +2626,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
         enabledAgentIds,
         sessionDefaultPermissionModeByTargetKey,
         managedDefaults: managedSessionDefaults.read.context,
-        openedMachineMetadata: selectedMachine?.metadata,
+        machineIsolation: nativeSandboxMachineIsolation,
+        machineIsolationPolicy: isolationSnapshot.status === 'ready' ? isolationSnapshot.policy : null,
+        retainedNativeProfile: resumeSessionId.trim().length > 0,
         nativeSandboxAvailable: selectedRuntimeCarrierAgentId
-            ? (currentProjectionInputs?.pluginProjectionV2?.agentsById[selectedRuntimeCarrierAgentId]?.capabilities.nativeSandbox?.off
-                ?? (isBundledAgentId(selectedRuntimeCarrierAgentId) ? getAgentCore(selectedRuntimeCarrierAgentId).nativeSandbox?.off : false)) === true
+            ? (currentProjectionInputs?.pluginProjectionV2?.agentsById[selectedRuntimeCarrierAgentId]?.capabilities?.nativeSandbox?.off
+                ?? (isBundledAgentId(selectedRuntimeCarrierAgentId) ? getAgentCore(selectedRuntimeCarrierAgentId)?.nativeSandbox?.off : false)) === true
             : false,
     });
 

@@ -142,6 +142,7 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
     windowsRemoteSessionConsole: normalizeNonEmptyString(options.windowsRemoteSessionConsole),
     windowsTerminalWindowName: normalizeNonEmptyString(options.windowsTerminalWindowName),
     permissionMode: normalizeNonEmptyString(options.permissionMode),
+    nativeSandbox: options.nativeSandbox ?? null,
     agentModeId: normalizeNonEmptyString(options.agentModeId),
     modelSelection: normalizeModelSelectionForFingerprint(options.modelSelection),
     // The Agent's own opaque session id: two requests that differ only in its

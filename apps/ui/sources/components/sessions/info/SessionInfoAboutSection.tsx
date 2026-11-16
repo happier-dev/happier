@@ -206,6 +206,19 @@ export const SessionInfoAboutSection = React.memo(
         ),
       });
     }
+    if (metadata?.nativeSandbox) {
+      lead.push({
+        key: 'native-sandbox',
+        node: (
+          <Item
+            testID="session-info-native-sandbox"
+            title={t('agentInput.permissionMode.nativeSandbox')}
+            detail={metadata.nativeSandbox === 'off' ? t('common.off') : t('common.on')}
+            showChevron={false}
+          />
+        ),
+      });
+    }
     lead.push({
       key: 'started',
       node: (

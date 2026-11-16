@@ -67,10 +67,11 @@ const REMOTE_DEV_NATIVE_RESPAWN_DESCRIPTOR_V1 = {
 describe('sessionRunnerRespawnDescriptor', () => {
   it('keeps a placed Session on its target across a daemon restart (reattach and respawn read the marker)', () => {
     const managedTargetPlacement = { managedId: 'managed-row-1', workspaceRoot: '/workspace' };
-    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({ directory: '/tmp/p03-cmuse', managedTargetPlacement } as SpawnSessionOptions);
+    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({ directory: '/tmp/p03-cmuse', managedTargetPlacement, nativeSandbox: 'on' } as SpawnSessionOptions);
     const persisted = JSON.parse(JSON.stringify(writeSessionRunnerRespawnDescriptorForPersistence(descriptor!)));
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(SessionRunnerRespawnDescriptorV1Schema.parse(persisted));
     expect(restored.managedTargetPlacement).toEqual(managedTargetPlacement);
+    expect(restored.nativeSandbox).toBe('on');
     expect(buildSpawnSessionOptionsFromRespawnDescriptorV1(SessionRunnerRespawnDescriptorV1Schema.parse({ version: 1, directory: '/tmp/x' })))
       .not.toHaveProperty('managedTargetPlacement');
     expect(SessionRunnerRespawnDescriptorV1Schema.safeParse({ version: 1, directory: '/tmp/x', managedTargetPlacement: { managedId: '' } }).success).toBe(false);

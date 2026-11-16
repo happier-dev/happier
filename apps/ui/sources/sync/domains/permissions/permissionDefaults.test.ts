@@ -1,9 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { PermissionMode } from './permissionTypes';
-import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode } from './permissionDefaults';
+import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode, resolveNewSessionDefaultPermissionModeDecision } from './permissionDefaults';
 
 describe('resolveNewSessionDefaultPermissionMode', () => {
+    it('previews policy-enabled sandbox availability without changing approval intent', () => {
+        const params = {
+            agentType: 'codex', accountDefaults: readAccountPermissionDefaults({}, ['codex']),
+            nativeSandboxAvailable: true,
+            machineIsolation: { environment: 'managed-guest', provisionerId: 'example.machine/guest' } as const,
+            machineIsolationPolicy: { agentNativeSandboxEnabled: true },
+        };
+        expect(resolveNewSessionDefaultPermissionModeDecision(params)).toMatchObject({
+            permissionMode: 'default', nativeSandbox: { value: 'on', availability: {
+                status: 'unavailable', reason: 'not_available_in_sandbox_type',
+            } },
+        });
+        expect(resolveNewSessionDefaultPermissionModeDecision({ ...params, sandboxTypeSupportsNativeSandbox: true })).toMatchObject({
+            permissionMode: 'default', nativeSandbox: { value: 'on', availability: { status: 'enabled' } },
+        });
+    });
+
+    it('preserves a retained native profile instead of applying a fresh Machine default', () => {
+        const params = {
+            agentType: 'codex', accountDefaults: readAccountPermissionDefaults({}, ['codex']),
+            nativeSandboxAvailable: true, retainedNativeProfile: true,
+            machineIsolation: { environment: 'managed-guest', provisionerId: 'example.machine/guest' } as const,
+        };
+        expect(resolveNewSessionDefaultPermissionModeDecision(params).nativeSandbox.value).toBeUndefined();
+    });
+    it('previews the machine sandbox default separately from approval intent and keeps explicit sandbox choices', () => {
+        const params = {
+            agentType: 'codex', accountDefaults: readAccountPermissionDefaults({}, ['codex']),
+            nativeSandboxAvailable: true,
+            machineIsolation: { environment: 'managed-guest', provisionerId: 'example.machine/guest' } as const,
+        };
+        expect(resolveNewSessionDefaultPermissionModeDecision(params)).toMatchObject({
+            permissionMode: 'default', nativeSandbox: { value: 'off' },
+        });
+        expect(resolveNewSessionDefaultPermissionModeDecision({ ...params, explicitAgentSandbox: 'on' })).toMatchObject({
+            permissionMode: 'default', nativeSandbox: { value: 'on' },
+        });
+    });
     const accountDefaultsByTargetKey = {
         [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'plan' as PermissionMode,
         [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'safe-yolo' as PermissionMode,

@@ -48,6 +48,7 @@ export const AGENT_DEFINITION = Object.freeze({
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'geminiSessionId' },
     sessionStorage: { direct: false, persisted: true },
+    nativeSandbox: { off: true as const },
     sessionCapabilities: {
       sessionListing: 'unsupported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },

@@ -1298,6 +1298,7 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
           cwd: request.cwd,
           launchSettings: {},
           workspaceWrites: request.configuration?.workspaceWrites,
+          nativeSandbox: request.configuration?.nativeSandbox,
           allowedTools: request.configuration?.allowedTools,
           unlistedTools: request.configuration?.unlistedTools,
         }),
@@ -1481,6 +1482,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     allowedTools: input.request.configuration?.allowedTools,
     unlistedTools: input.request.configuration?.unlistedTools,
     workspaceWrites: input.request.configuration?.workspaceWrites,
+    nativeSandbox: input.request.configuration?.nativeSandbox,
     supportsEffort: input.supportsEffort === true,
     supportsSystemPromptSnapshotOff: input.supportsSystemPromptSnapshotOff === true,
     ...(input.request.kind !== 'fork' && input.request.startupInstructions
@@ -1547,6 +1549,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
     allowedTools: input.request.configuration?.allowedTools,
     unlistedTools: input.request.configuration?.unlistedTools,
     workspaceWrites: input.request.configuration?.workspaceWrites,
+    nativeSandbox: input.request.configuration?.nativeSandbox,
     supportsEffort: input.supportsEffort,
     supportsSystemPromptSnapshotOff: input.supportsSystemPromptSnapshotOff,
     initialModelId,

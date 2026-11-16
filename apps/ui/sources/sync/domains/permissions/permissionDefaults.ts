@@ -12,6 +12,9 @@ export type AccountPermissionDefaults = Readonly<{
     byTargetKey: Record<string, PermissionMode>;
 }>;
 
+export type NewSessionNativeSandboxInput = Pick<Parameters<typeof resolveManagedSessionDefaults>[0],
+    'machineIsolation' | 'machineIsolationPolicy' | 'sandboxTypeSupportsNativeSandbox' | 'nativeSandboxAvailable' | 'explicitAgentSandbox' | 'retainedNativeProfile'>;
+
 export function readAccountPermissionDefaults(
     raw: unknown,
     enabledAgentIds: readonly AgentId[],
@@ -39,12 +42,13 @@ type NewSessionPermissionModeInput = Readonly<{
     legacyProfileDefaultPermissionMode?: PermissionMode | null | undefined;
     explicitPermissionMode?: PermissionMode;
     managedDefaults?: ManagedSessionDefaultsContext;
-}>;
+}> & NewSessionNativeSandboxInput;
 
 export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessionPermissionModeInput): Readonly<{
     permissionMode: PermissionMode;
     lock: OrganizationPolicyLock | null;
     source: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
+    nativeSandbox: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['agentSandbox'];
 }> {
     const { agentType, backendTarget, accountDefaults, profileDefaultsByTargetKey, legacyProfileDefaultPermissionMode } = params;
     const effectiveTarget = backendTarget ?? { kind: 'backend', backendId: agentType };
@@ -58,16 +62,23 @@ export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessio
     const decision = resolveManagedSessionDefaults({
         ...params.managedDefaults,
         agentTargetKey: targetKey,
+        machineIsolation: params.machineIsolation,
+        machineIsolationPolicy: params.machineIsolationPolicy,
+        sandboxTypeSupportsNativeSandbox: params.sandboxTypeSupportsNativeSandbox,
+        nativeSandboxAvailable: params.nativeSandboxAvailable,
+        explicitAgentSandbox: params.explicitAgentSandbox,
+        retainedNativeProfile: params.retainedNativeProfile,
         memberDefaults: {
             ...(params.managedDefaults?.memberDefaults ?? {}),
             ...(memberIntent ? { permissionModeByAgentTargetKey: { [targetKey]: memberIntent } } : {}),
         },
         ...(explicitIntent ? { explicitChoices: { permissionModeByAgentTargetKey: { [targetKey]: explicitIntent } } } : {}),
-    }).permissionMode;
+    });
     return {
-        permissionMode: normalizePermissionModeForAgentType(decision.value ?? 'default', agentType, params.sessionModeDescriptor),
-        lock: decision.lock,
-        source: decision.source,
+        permissionMode: normalizePermissionModeForAgentType(decision.permissionMode.value ?? 'default', agentType, params.sessionModeDescriptor),
+        lock: decision.permissionMode.lock,
+        source: decision.permissionMode.source,
+        nativeSandbox: decision.agentSandbox,
     };
 }
 

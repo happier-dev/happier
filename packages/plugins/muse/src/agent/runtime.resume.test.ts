@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,19 +6,50 @@ import { gunzipSync } from 'node:zlib';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+
+let admittedRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+beforeAll(async () => {
+  admittedRuntime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+    pluginIds: ['happier.agent.muse'],
+    scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() },
+  } });
+});
+afterAll(async () => { await admittedRuntime?.dispose(); });
 
 it.each([
   { historyMode: 'inline', permissionIntent: null },
+  { historyMode: 'inline', permissionIntent: null, nativeSandbox: 'off' },
+  { historyMode: 'inline', permissionIntent: null, nativeSandbox: 'off', nativeProfile: ':read-only' },
   { historyMode: 'snapshot', permissionIntent: 'read-only' },
   { historyMode: 'inline', permissionIntent: 'yolo' },
   { historyMode: 'inline', permissionIntent: 'safe-yolo' },
   { historyMode: 'inline', permissionIntent: 'default' },
-] as const)('resumes the same native conversation with $historyMode history and $permissionIntent permissions, then continues once', async ({ historyMode, permissionIntent }) => {
+] as const)('resumes the same native conversation with $historyMode history and $permissionIntent/$nativeSandbox/$nativeProfile permissions, then continues once', async selection => {
+  const { historyMode, permissionIntent } = selection;
+  const nativeSandbox = 'nativeSandbox' in selection ? selection.nativeSandbox : undefined;
+  const nativeProfile = 'nativeProfile' in selection ? selection.nativeProfile : undefined;
   const providerSessionId = '00000000-0000-7000-8000-000000000002';
   const after = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-resume-fork-after.json', import.meta.url), 'utf8')));
   const pending = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-empty-pending.json', import.meta.url), 'utf8')));
   if (!Array.isArray(after.rows) || !Array.isArray(pending.rows)) throw new Error('Expected captured native rows');
   let resumeRows = after.rows.slice(0, 5);
+  if (nativeProfile === ':read-only') {
+    const readOnly = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-read-only-shell-unavailable.json', import.meta.url), 'utf8')));
+    if (!Array.isArray(readOnly.rows)) throw new Error('Expected captured native read-only rows');
+    const readOnlySession = readOnly.rows.map(row => readMuseRecord(readMuseRecord(readMuseRecord(row).message).result).session)
+      .map(readMuseRecord).find(session => readMuseRecord(session.permissionState).profileId === ':read-only');
+    if (!readOnlySession) throw new Error('Expected captured native read-only permissions');
+    const frame = readMuseRecord(resumeRows[4]);
+    const message = readMuseRecord(frame.message);
+    const result = readMuseRecord(message.result);
+    // Preserve the observed read-only native profile and approval mode on resume.
+    resumeRows = [...resumeRows.slice(0, 4), { ...frame, message: { ...message, result: { ...result,
+      session: { ...readMuseRecord(result.session), permissionState: readOnlySession.permissionState,
+        approvalMode: readOnlySession.approvalMode },
+    } } }];
+  }
   if (historyMode === 'snapshot') {
     const before = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-resume-fork-before.json', import.meta.url), 'utf8')));
     if (!Array.isArray(before.rows)) throw new Error('Expected captured native usage rows');
@@ -41,7 +72,7 @@ it.each([
   // composition with the separate isolated no-turn capture, not a combined vendor recording.
   const recording = { rows: [...resumeRows, ...pending.rows, ...after.rows.slice(5, 23)] };
   const events = createAgentSessionRuntimeHarness();
-  const fixture = await createAdmittedMuseSessionFixture({ native: { recording, playbackSteps: [
+  const fixture = await createAdmittedMuseSessionFixture({ admittedRuntime, native: { recording, playbackSteps: [
     { requestRow: 3, receiveUntilRow: 5 },
     { requestRow: 5, receiveUntilRow: 7 },
     { requestRow: 7, receiveUntilRow: 25 },
@@ -50,9 +81,9 @@ it.each([
     const session = await fixture.open({ kind: 'resume', sessionId: 'host-admitted-muse',
       cwd: process.cwd(), providerSessionId, strictNativeResumeIdentity: true,
       launchEnvironment: { values: { MUSE_TEST_SELECTED_HOME: '/selected/native/home' }, unset: [] },
-      ...(permissionIntent ? { configuration: {
+      ...(permissionIntent || nativeSandbox ? { configuration: {
         model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
-        permissionIntent: { value: permissionIntent, updatedAtMs: 0 }, options: {},
+        permissionIntent: { value: permissionIntent, updatedAtMs: 0 }, nativeSandbox, options: {},
       } } : {}),
     });
     session.watch(events.recordRuntimeEvent);
@@ -84,6 +115,16 @@ it.each([
     expect(audit.commandTargets.find(command => command.method === 'session/resume')?.permissionProfile)
       .toBe(permissionIntent === null ? undefined : permissionIntent === 'yolo' ? ':unrestricted'
         : permissionIntent === 'read-only' ? ':read-only' : ':ask-me');
+    if (nativeProfile === ':read-only') {
+      expect(audit.commandTargets.filter(command => command.method === 'session/setPermissionProfile'
+        || command.method === 'session/setApprovalMode')).toEqual([]);
+    } else if (nativeSandbox === 'off') {
+      expect(audit.commandTargets.find(command => command.method === 'session/setPermissionProfile'))
+        .toMatchObject({ profileId: ':unrestricted' });
+      const native = readMuseRecord(readMuseRecord(readMuseRecord(readMuseRecord(resumeRows[4]).message).result).session);
+      expect(audit.commandTargets.find(command => command.method === 'session/setApprovalMode'))
+        .toMatchObject({ mode: readMuseRecord(native.approvalMode).mode });
+    }
   } finally {
     events.dispose();
     await fixture.dispose();

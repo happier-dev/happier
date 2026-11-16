@@ -428,8 +428,8 @@ export function mergeSessionMetadataForStartup(opts: {
         // when the physical checkout is unchanged; process defaults are never an observation.
         if (preserveCurrentCheckout && opts.current.branch !== undefined) merged.branch = opts.current.branch;
         else delete merged.branch;
-        // Tool policy belongs to the retained Session, never runner defaults.
-        for (const key of ['allowedTools', 'unlistedTools', 'workspaceWrites'] as const) {
+        // Launch policy belongs to the retained Session, never runner defaults.
+        for (const key of ['allowedTools', 'unlistedTools', 'workspaceWrites', 'nativeSandbox'] as const) {
             if (opts.current[key] === undefined) delete merged[key];
             else Object.assign(merged, { [key]: opts.current[key] });
         }

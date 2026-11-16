@@ -111,6 +111,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'selectedIndicatorColor'
         | 'profileMap'
         | 'permissionMode'
+        | 'nativeSandbox'
         | 'permissionModeLock'
         | 'permissionModeSource'
         | 'handlePermissionModeChange'

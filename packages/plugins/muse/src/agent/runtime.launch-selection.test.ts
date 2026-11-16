@@ -1,9 +1,25 @@
 import { readFile } from 'node:fs/promises';
-import { expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentSessionConfigurationUpdate } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildExecutionRunConfiguration } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
+
+describe('native sandbox selection', () => {
+  let fixture: Awaited<ReturnType<typeof createAdmittedMuseSessionFixture>>;
+  beforeAll(async () => { fixture = await createAdmittedMuseSessionFixture(); });
+  afterAll(async () => { await fixture?.dispose(); });
+
+  it('disables only the native sandbox while retaining default approval prompts', async () => {
+    await fixture.open({ kind: 'create', sessionId: fixture.context.session.id, cwd: process.cwd(),
+      configuration: { model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'default', updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
+    await fixture.closeSession();
+    expect((await fixture.readAudit()).commandTargets).toMatchObject([
+      { method: 'session/start', permissionProfile: ':unrestricted', approvalMode: 'promptUnmatched' },
+    ]);
+  });
+});
 
 // An explicit workspace denial takes precedence over every launch intent.
 it.each(['yolo', 'safe-yolo', 'plan'] as const)('keeps explicit %s read-only when workspace writes are denied', async intent => {
@@ -11,7 +27,7 @@ it.each(['yolo', 'safe-yolo', 'plan'] as const)('keeps explicit %s read-only whe
   try {
     await fixture.open({ kind: 'create', sessionId: fixture.context.session.id, cwd: process.cwd(),
       configuration: { model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
-        permissionIntent: { value: intent, updatedAtMs: 0 }, workspaceWrites: 'deny', options: {} } });
+        permissionIntent: { value: intent, updatedAtMs: 0 }, nativeSandbox: 'off', workspaceWrites: 'deny', options: {} } });
     await fixture.closeSession();
     expect((await fixture.readAudit()).commandTargets).toMatchObject([
       { method: 'session/start', permissionProfile: ':read-only', approvalMode: 'promptUnmatched' },
@@ -21,7 +37,7 @@ it.each(['yolo', 'safe-yolo', 'plan'] as const)('keeps explicit %s read-only whe
 
 // M4: the shared host normalizes read_only before it reaches the plugin. Muse's
 // characterized :read-only profile also represents an explicit workspace-write denial.
-it.each(['intent', 'workspaceWrites'] as const)('opens native read-only permissions from %s without inventing an in-place profile control', async source => {
+it.each(['intent', 'workspaceWrites'] as const)('opens native read-only permissions from %s and reconfigures through the native profile control', async source => {
   const fixture = await createAdmittedMuseSessionFixture();
   const configuration: AgentSessionConfigurationUpdate = {
     model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
@@ -34,11 +50,15 @@ it.each(['intent', 'workspaceWrites'] as const)('opens native read-only permissi
     expect(await session.updateConfiguration?.(configuration)).toMatchObject({ status: 'applied' });
     expect(await session.updateConfiguration?.({ ...configuration,
       permissionIntent: { value: 'default', updatedAtMs: 1 }, workspaceWrites: 'allow',
-    })).toMatchObject({ status: 'unsupported' });
+    })).toMatchObject({ status: 'applied' });
     await fixture.closeSession();
     const audit = await fixture.readAudit();
-    expect(audit.commandTargets).toMatchObject([{ method: 'session/start', permissionProfile: ':read-only' }]);
-    expect(audit.methods).toEqual(['initialize', 'initialized', 'session/start']);
+    expect(audit.commandTargets.find(command => command.method === 'session/start'))
+      .toMatchObject({ permissionProfile: ':read-only' });
+    expect(audit.commandTargets.filter(command => command.method === 'session/setPermissionProfile'))
+      .toMatchObject([{ profileId: ':ask-me' }]);
+    expect(audit.methods.filter(method => method.startsWith('session/')))
+      .toEqual(['session/start', 'session/setPermissionProfile', 'session/setApprovalMode']);
   } finally { await fixture.dispose(); }
 });
 

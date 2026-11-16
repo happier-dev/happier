@@ -19,6 +19,43 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('describeEffectivePermissionMode', () => {
+    it('reports unavailable native sandbox selection before launch without changing approval intent', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codex', selectedMode: 'read-only', metadata: null, applyTiming: 'immediate',
+            nativeSandbox: { value: 'on', source: 'machine', availability: {
+                status: 'unavailable', reason: 'not_available_in_sandbox_type',
+            } },
+        });
+        expect(res.effectiveMode).toBe('read-only');
+        expect(res.reasons).toContainEqual({ code: 'native_sandbox_unavailable', params: { reason: 'not_available_in_sandbox_type' } });
+        expect(reasonCodes(res)).not.toContain('native_sandbox_on');
+        expect(res.notes).toContain(t('agentInput.permissionMode.nativeSandboxUnavailable'));
+    });
+    it('describes native sandbox independently while preserving approval intent', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codex', selectedMode: 'read-only', metadata: buildMetadata(),
+            nativeSandbox: { value: 'off', source: 'machine', availability: { status: 'disabled' } }, applyTiming: 'immediate',
+        });
+        expect(res.effectiveMode).toBe('read-only');
+        expect(reasonCodes(res)).toContain('native_sandbox_off');
+        expect(res.notes).toContain(t('agentInput.permissionMode.nativeSandboxOff'));
+    });
+
+    it('does not infer a native sandbox state from approval intent', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codex', selectedMode: 'yolo', metadata: buildMetadata(), applyTiming: 'immediate',
+        });
+        expect(reasonCodes(res)).not.toContain('native_sandbox_off');
+        expect(reasonCodes(res)).not.toContain('native_sandbox_on');
+    });
+    it('uses the running Session sandbox report without reapplying machine defaults', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codex', selectedMode: 'default',
+            metadata: buildMetadata({ nativeSandbox: 'on' }), applyTiming: 'immediate',
+        });
+        expect(reasonCodes(res)).toContain('native_sandbox_on');
+        expect(reasonCodes(res)).not.toContain('native_sandbox_off');
+    });
     it.each(['codebuddy', 'devin', 'fx'] as const)('describes %s native policy native approval policy while preserving host permission enforcement', (agentType) => {
         const res = describeEffectivePermissionMode({
             agentType,

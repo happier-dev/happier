@@ -234,6 +234,7 @@ function renderDescriptorGeneratedUiProjectionLines(source: DescriptorAgentUiPro
   const lines: string[] = [];
   lines.push(`const ${source.coreConst}: AgentCoreConfig = {`);
   lines.push(`    id: ${agentId},`);
+  lines.push(`    nativeSandbox: getSharedAgentCore(${agentId})?.nativeSandbox,`);
   lines.push(`    displayNameKey: ${renderTsStringLiteral(descriptor.display.nameKey)},`);
   lines.push(`    subtitleKey: ${renderTsStringLiteral(descriptor.display.subtitleKey)},`);
   lines.push(`    permissionModeI18nPrefix: ${renderTsStringLiteral(descriptor.display.permissionModeI18nPrefix)},`);
@@ -379,7 +380,7 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push('import { buildAgentResumeUiConfig } from \'@/agents/registry/buildAgentResumeUiConfig\';');
   lines.push('import { buildAgentSessionStorageUiConfig } from \'@/agents/registry/buildAgentSessionStorageUiConfig\';');
   lines.push('import { buildAgentToolsUiConfig } from \'@/agents/registry/buildAgentToolsUiConfig\';');
-  lines.push('import { getAgentModelConfig, getAgentSessionModesKind } from \'@happier-dev/agents\';');
+  lines.push('import { getAgentCore as getSharedAgentCore, getAgentModelConfig, getAgentSessionModesKind } from \'@happier-dev/agents\';');
   lines.push('import { readBundledAgentPresentation } from \'@happier-dev/agents/presentation\';');
   lines.push('');
   for (const source of selectedProjectionSources) {

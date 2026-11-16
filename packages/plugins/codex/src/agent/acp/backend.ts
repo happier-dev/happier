@@ -49,6 +49,8 @@ export function buildCodexNativeAcpRuntimeOptions(
   const spawn = resolveCodexAcpSpawnWithOptions({
     env,
     permissionMode,
+    workspaceWrites: request.configuration?.workspaceWrites,
+    nativeSandbox: request.configuration?.nativeSandbox,
     currentWorkingDirectory: request.cwd,
   });
   const timeouts = resolveCodexAcpBackendTimeouts({

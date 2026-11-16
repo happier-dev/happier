@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import { createCodexAppServerRpcError } from './compatibility.js';
+import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
 import {
   buildCodexAppServerLegacyPermissionParams,
   buildCodexAppServerPermissionParams,
@@ -8,6 +9,13 @@ import {
 } from './permissionProfile.js';
 
 describe('Codex app-server permission profile params', () => {
+  test.each(['thread', 'turn'] as const)('retains default approval prompts when sandbox is disabled for %s', target => {
+    expect(buildCodexAppServerPermissionParams({
+      policy: resolveCodexTerminalPermissionPolicy('default', undefined, undefined, 'off'),
+      support: 'supported', target,
+    })).toEqual({ approvalPolicy: 'untrusted', ...(target === 'thread'
+      ? { sandbox: 'danger-full-access' } : { sandboxPolicy: { type: 'dangerFullAccess' } }) });
+  });
   test('preserves a granular MCP-only approval policy instead of replacing it with a never-approval profile', () => {
     const approvalPolicy = { granular: { sandbox_approval: false, rules: false,
       mcp_elicitations: true, request_permissions: false, skill_approval: false } };

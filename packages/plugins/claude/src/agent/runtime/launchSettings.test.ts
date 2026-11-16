@@ -10,6 +10,14 @@ import {
 } from './launchSettings.js';
 
 describe('resolveClaudeNativeLaunchSettings', () => {
+  it.each(['interactive_terminal', 'noninteractive_sdk'] as const)('disables only the sandbox for %s launches', interactionKind => {
+    const args = resolveClaudeLaunchSettingsOverlayArgs({ args: ['--settings', JSON.stringify({
+      sandbox: { enabled: true, excludedCommands: ['trusted-tool'] }, permissions: { defaultMode: 'default' },
+    })], interactionKind, permissionMode: 'default', launchSettings: {}, nativeSandbox: 'off' });
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}');
+    expect(settings.sandbox).toEqual({ enabled: false, excludedCommands: ['trusted-tool'] });
+    expect(settings.permissions.defaultMode).toBe('default');
+  });
   it('reads explicit settings files relative to the actual child working directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'claude-relative-settings-'));
     try {

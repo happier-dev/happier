@@ -525,14 +525,18 @@ const PluginAgentProviderStateSharingCapabilityV2Schema = lazyZodSchema(() => z.
   }),
 }));
 
-const PluginAgentCapabilitiesV2Shape = {
+const PluginAgentCommonCapabilitiesV2Shape = {
   surfaces: z.optional(PluginAgentCapabilitySurfacesV2Schema),
-  sessions: z.optional(PluginAgentSessionCapabilitiesV2Schema),
-  executionRuns: z.optional(PluginAgentExecutionRunCapabilitiesV2Schema),
   tools: z.optional(PluginAgentToolsCapabilityV2Schema),
   skills: z.optional(PluginAgentSkillsCapabilityV2Schema),
   structuredOutput: z.optional(PluginAgentStructuredOutputCapabilityV2Schema),
+  nativeSandbox: z.optional(z.strictObject({ off: z.literal(true) })),
   providerStateSharing: z.optional(PluginAgentProviderStateSharingCapabilityV2Schema),
+};
+const PluginAgentCapabilitiesV2Shape = {
+  ...PluginAgentCommonCapabilitiesV2Shape,
+  sessions: z.optional(PluginAgentSessionCapabilitiesV2Schema),
+  executionRuns: z.optional(PluginAgentExecutionRunCapabilitiesV2Schema),
 };
 
 /**
@@ -660,12 +664,8 @@ const PluginAgentDisplayV2Shape = {
   ui: z.optional(PluginAgentUiBehaviorContributionV2Schema),
 };
 const PluginAgentSessionCapabilitiesShape = {
-  surfaces: z.optional(PluginAgentCapabilitySurfacesV2Schema),
+  ...PluginAgentCommonCapabilitiesV2Shape,
   sessions: PluginAgentSessionCapabilitiesV2Schema,
-  tools: z.optional(PluginAgentToolsCapabilityV2Schema),
-  skills: z.optional(PluginAgentSkillsCapabilityV2Schema),
-  structuredOutput: z.optional(PluginAgentStructuredOutputCapabilityV2Schema),
-  providerStateSharing: z.optional(PluginAgentProviderStateSharingCapabilityV2Schema),
 };
 const PluginAgentSessionPrimaryShape = {
   primary: z.literal('sessions'),
@@ -678,12 +678,8 @@ const PluginAgentSessionPrimaryShape = {
 const PluginAgentExecutionPrimaryShape = {
   primary: z.literal('executionRuns'),
   capabilities: z.strictObject({
-    surfaces: z.optional(PluginAgentCapabilitySurfacesV2Schema),
+    ...PluginAgentCommonCapabilitiesV2Shape,
     executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema,
-    tools: z.optional(PluginAgentToolsCapabilityV2Schema),
-    skills: z.optional(PluginAgentSkillsCapabilityV2Schema),
-    structuredOutput: z.optional(PluginAgentStructuredOutputCapabilityV2Schema),
-    providerStateSharing: z.optional(PluginAgentProviderStateSharingCapabilityV2Schema),
   }),
 };
 const PluginAgentPrimaryContributionV2Schema = lazyZodSchema(() => z.union([

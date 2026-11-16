@@ -9,6 +9,7 @@ import { ModuleKind, transpileModule } from 'typescript';
 import { ScriptKind, ScriptTarget, createSourceFile, isCallExpression, isIdentifier, isObjectLiteralExpression, isPropertyAssignment, isSatisfiesExpression, isVariableStatement } from 'typescript';
 
 import { renderBundledAgentPresentationTs, renderUiBundledPluginEntriesTs } from './agentUi.ts';
+import { renderRetainedUiBundledPluginEntriesTs } from './retainedUi.ts';
 import { renderBundledAgentDeclarationTypeTs, renderBundledAgentDeclarationsTs, renderBundledUiDeclarationImportsTs } from './uiDeclarations.ts';
 import { CLAUDE_UI_DESCRIPTOR } from '../../../../../packages/plugins/claude/src/ui/descriptor';
 import { PLUGIN_MANIFEST as CLAUDE_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
@@ -18,6 +19,7 @@ import { renderCliBundledPluginEntriesTs, renderCliBundledPluginManifestEntriesT
 import { renderAgentIdsTs } from './agentFacts.ts';
 import type { BundledPluginPackage } from './projectionFacts.ts';
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../../packages/agents/src/generated/agentIds';
+import * as sharedAgents from '@happier-dev/agents';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../../../src/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { readBundledPluginManifest } from '../../../src/plugins/projection/registry/builtIn/locators';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
@@ -42,6 +44,67 @@ function emittedMapKeys(source: string, name: string): string[] {
 }
 
 describe('bundled Agent exclusion projections', () => {
+    it('publishes shared native sandbox support through fresh and retained UI core projections', () => {
+        const pluginPackages: readonly BundledPluginPackage[] = [
+            { agentId: 'claude', manifest: CLAUDE_MANIFEST, descriptor: CLAUDE_UI_DESCRIPTOR },
+            { agentId: 'muse', manifest: MUSE_MANIFEST, descriptor: MUSE_UI_DESCRIPTOR },
+            { agentId: 'novel-routing-id', manifest: CLAUDE_MANIFEST,
+                descriptor: { ...CLAUDE_UI_DESCRIPTOR, agentId: 'novel-routing-id' } },
+        ].map(({ agentId, manifest, descriptor }) => {
+            // Retained declaration bytes can predate the shared runtime fact.
+            const admitted = ingestPluginManifestV2({ ...manifest, contributes: { ...manifest.contributes,
+                agents: manifest.contributes.agents.map(agent => {
+                    const { nativeSandbox: _previous, ...capabilities } = agent.capabilities;
+                    return { ...agent, capabilities };
+                }),
+            } });
+            if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+            return { pluginPackageId: agentId, pluginId: admitted.manifest.id,
+                packageName: `@happier-dev/plugins-${agentId}`, packageVersion: '0.0.0',
+                agentId, manifest: admitted.manifest, agentUiDescriptor: descriptor };
+        });
+        const nativeSandbox = (source: string, coreName: string): unknown => {
+            const file = createSourceFile('projection.ts', source, ScriptTarget.Latest, true, ScriptKind.TS);
+            for (const statement of file.statements) {
+                if (!isVariableStatement(statement)) continue;
+                for (const declaration of statement.declarationList.declarations) {
+                    if (!isIdentifier(declaration.name) || declaration.name.text !== coreName) continue;
+                    if (!declaration.initializer || !isObjectLiteralExpression(declaration.initializer)) throw new Error(`Missing ${coreName}`);
+                    const property = declaration.initializer.properties.filter(isPropertyAssignment)
+                        .find(entry => entry.name.getText(file) === 'nativeSandbox');
+                    if (!property) return undefined;
+                    const exports: Record<string, unknown> = {};
+                    const imports = file.statements.filter(statement => statement.getText(file).startsWith('import {')
+                        && statement.getText(file).includes("'@happier-dev/agents'"));
+                    // Resolve the emitted binding to the real shared owner; no capability decisions are stubbed.
+                    runInNewContext(transpileModule([
+                        ...imports.map(entry => entry.getText(file)),
+                        `export const nativeSandbox = ${property.initializer.getText(file)};`,
+                    ].join('\n'), { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, {
+                        exports, require: () => sharedAgents,
+                    });
+                    return exports.nativeSandbox;
+                }
+            }
+            throw new Error(`Missing ${coreName}`);
+        };
+        const fresh = renderUiBundledPluginEntriesTs({ packageNames: [], pluginPackages });
+        expect(sharedAgents.getAgentCore('claude').nativeSandbox).toEqual({ off: true });
+        expect(sharedAgents.getAgentCore('novel-routing-id')).toBeNull();
+        const cases = [['claude', 'CLAUDE_CORE'], ['muse', 'MUSE_CORE'], ['novel-routing-id', 'NOVEL_ROUTING_ID_CORE']] as const;
+        for (const [agentId, coreName] of cases) {
+            expect(nativeSandbox(fresh, coreName)).toEqual(sharedAgents.getAgentCore(agentId)?.nativeSandbox);
+        }
+        // Before this projection existed, published CORE constants had neither field nor getter import.
+        const legacy = fresh.replace(/\s+nativeSandbox: [\s\S]*?,(?=\n    displayNameKey:)/gu, '')
+            .replace('getAgentCore as getSharedAgentCore, ', '');
+        const retained = renderRetainedUiBundledPluginEntriesTs(legacy, pluginPackages, 'projection.ts');
+        expect(renderRetainedUiBundledPluginEntriesTs(retained, pluginPackages, 'projection.ts')).toBe(retained);
+        for (const [agentId, coreName] of cases) {
+            expect(nativeSandbox(retained, coreName)).toEqual(sharedAgents.getAgentCore(agentId)?.nativeSandbox);
+        }
+    });
+
     it('keeps released UI order and appends admitted descriptor routing ids generically', () => {
         const claude = ingestPluginManifestV2(CLAUDE_MANIFEST);
         const muse = ingestPluginManifestV2(MUSE_MANIFEST);

@@ -198,7 +198,7 @@ function prepareCopiedProviderAuthentication(params: {
 /** Native sessions own this temporary home for exactly their composer lifetime. */
 export async function prepareGeminiNativeMcpShaping(
   sourceEnv: EnvLike = process.env,
-  configuration?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>,
+  configuration?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools' | 'nativeSandbox'>,
   skills?: AgentSessionSkillDelivery,
   providerAuth?: Readonly<{ type: 'gemini-api-key'; cwd: string }>,
 ) {
@@ -210,6 +210,7 @@ export async function prepareGeminiNativeMcpShaping(
     XDG_CONFIG_HOME: join(cliHomeDir, '.config'),
   };
   const noTools = configuration?.unlistedTools === 'deny' && configuration.allowedTools?.length === 0;
+  const nativeSandbox = configuration?.nativeSandbox;
   const toolSettingsPath = join(cliHomeDir, 'no-tools-settings.json');
   let providerDefaultsPath: string | undefined;
 
@@ -221,13 +222,26 @@ export async function prepareGeminiNativeMcpShaping(
       if (noTools) providerDefaultsPath = nativePaths.systemDefaultsPath;
     }
     scrubCopiedGeminiSettingsMcpServers(baseEnv);
-    if (noTools) {
+    if (noTools || nativeSandbox !== undefined) {
+      const nativeSettings: ReturnType<typeof readJsonObjectWithComments> = nativeSandbox === undefined ? { ok: true, value: {} }
+        : readJsonObjectWithComments(resolveGeminiNativePolicyPaths(sourceEnv).systemSettingsPath);
+      if (!nativeSettings.ok) throw new PluginError({ code: 'gemini_provider_native_policy_unsupported', retryable: false,
+        message: 'Gemini native sandbox selection cannot preserve unreadable System settings.' });
+      const settings = nativeSettings.value;
+      const tools = isRecord(settings.tools) ? settings.tools : {};
+      const security = isRecord(settings.security) ? settings.security : {};
+      const admin = isRecord(settings.admin) ? settings.admin : {};
       // Gemini's system settings override workspace/user settings. An empty
       // core allowlist removes built-ins; admin controls also stop ambient MCP
       // and extension discovery rather than denying a later model tool call.
       writeFileSync(toolSettingsPath, JSON.stringify({
-        tools: { core: [] },
-        admin: { mcp: { enabled: false }, extensions: { enabled: false } },
+        ...settings,
+        tools: { ...tools, ...(noTools ? { core: [] } : {}),
+          ...(nativeSandbox === undefined ? {} : { sandbox: nativeSandbox === 'on' }) },
+        ...(nativeSandbox === undefined ? {} : { security: { ...security, toolSandboxing: nativeSandbox === 'on' } }),
+        ...(noTools ? { admin: { ...admin,
+          mcp: { ...(isRecord(admin.mcp) ? admin.mcp : {}), enabled: false },
+          extensions: { ...(isRecord(admin.extensions) ? admin.extensions : {}), enabled: false } } } : {}),
       }), 'utf8');
     }
     const sourceHome = resolveGeminiConfigPaths(sourceEnv).cliHomeDir;
@@ -273,7 +287,8 @@ export async function prepareGeminiNativeMcpShaping(
 
   let cleaned = false;
   return {
-    env: { ...baseEnv, ...(noTools ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: toolSettingsPath } : {}),
+    env: { ...baseEnv, ...(noTools || nativeSandbox !== undefined ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: toolSettingsPath } : {}),
+      ...(nativeSandbox === undefined ? {} : { GEMINI_SANDBOX: nativeSandbox === 'on' ? 'true' : 'false' }),
       ...(providerDefaultsPath ? { GEMINI_CLI_SYSTEM_DEFAULTS_PATH: providerDefaultsPath } : {}) },
     async cleanup() {
       if (cleaned) return;

@@ -438,6 +438,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "supported": true,
       "topology": "exclusive"
     },
+    "nativeSandbox": {
+      "off": true
+    },
     "resume": {
       "vendorResume": "supported",
       "vendorResumeContinuityProofField": "claudeTranscriptPath",
@@ -1275,6 +1278,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "emitsSessionMedia": "supported",
       "nativeImageGeneration": "unsupported"
     },
+    "nativeSandbox": {
+      "off": true
+    },
     "resume": {
       "vendorResume": "supported",
       "vendorResumeIdField": "codebuddySessionId"
@@ -1508,6 +1514,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "remoteWritable": true,
       "supported": true,
       "topology": "shared"
+    },
+    "nativeSandbox": {
+      "off": true
     },
     "resume": {
       "vendorResume": "experimental",
@@ -1844,6 +1853,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorStateTransfer": "unsupported"
     },
     "id": "copilot",
+    "nativeSandbox": {
+      "off": true
+    },
     "resume": {
       "vendorResume": "supported",
       "vendorResumeIdField": "copilotSessionId"
@@ -2006,6 +2018,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "attachStrategy": "unsupported",
       "supported": true,
       "topology": "exclusive"
+    },
+    "nativeSandbox": {
+      "off": true
     },
     "resume": {
       "experimentalResumePolicy": "runtime_checked",
@@ -2697,6 +2712,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorStateTransfer": "unsupported"
     },
     "id": "gemini",
+    "nativeSandbox": {
+      "off": true
+    },
     "resume": {
       "vendorResume": "supported",
       "vendorResumeIdField": "geminiSessionId"
@@ -3505,6 +3523,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorStateTransfer": "unsupported"
     },
     "id": "muse",
+    "nativeSandbox": {
+      "off": true
+    },
     "resume": {
       "vendorResume": "supported"
     },

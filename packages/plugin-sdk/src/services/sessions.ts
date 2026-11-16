@@ -240,6 +240,7 @@ export type SkillMentionV1 = {
     agentId?: string;
 };
 export type HappierStructuredInputV1 = {
+    [key: string]: unknown;
     v: 1;
     mentions?: MentionRefV1[];
     vendorPluginMentions?: VendorPluginMentionV1[];

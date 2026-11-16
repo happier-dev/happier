@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { readMachineIsolationPolicyV1, readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
+import { readAgentNativeSandboxCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { FollowPolicyV1Schema, resolveWorkerUpdateFollowDeliveryV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { ExecutionRunOutputObservation } from '@happier-dev/protocol/reviews/reviewNarration';
@@ -216,6 +219,7 @@ export function buildExecutionRunSessionPromptContext(params: Readonly<{
 }
 
 type ExecutionRunRuntimeCreateOptions = Readonly<{
+  nativeSandbox?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionConfigurationSnapshot['nativeSandbox'];
   functionTools?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['functionTools'];
   projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
@@ -313,6 +317,7 @@ async function prepareExecutionRunManagerStartParams(
 }
 
 export type ExecutionRunHostBridgeOptions = Readonly<{
+  readMachineMetadataSnapshot?: () => import('@happier-dev/protocol/machines/machineMetadataFieldV1').MachineMetadataFieldReadV1;
   admitStart?: () => Promise<void>;
   /** Installed host Account, captured by composition rather than supplied by a Run request. */
   runtimeAccountId?: string;
@@ -439,6 +444,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly happyHomeDir: string | null;
   private readonly parentSessionStateTarget: ExecutionRunSessionStateTarget | null;
   private readonly sessionInteractionHost: NativeAgentSessionInteractionHostBinding | null;
+  private readonly readMachineMetadataSnapshot: ExecutionRunHostBridgeOptions['readMachineMetadataSnapshot'];
   private readonly prepareRunTeamCredentialProviderBinding: ExecutionRunTeamCredentialProviderBindingPreparer | null;
   private readonly materializeReviewHostAction: ExecutionRunHostBridgeOptions['materializeReviewHostAction'];
   private readonly reviewComments: ReviewRunCommentService | undefined;
@@ -1217,6 +1223,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       : configuration.happyHomeDir;
     this.parentSessionStateTarget = opts.parentSessionStateTarget ?? null;
     this.sessionInteractionHost = opts.sessionInteractionHost ?? null;
+    this.readMachineMetadataSnapshot = opts.readMachineMetadataSnapshot;
     this.prepareRunTeamCredentialProviderBinding = opts.prepareRunTeamCredentialProviderBinding ?? null;
     this.materializeReviewHostAction = opts.materializeReviewHostAction;
     this.reviewComments = opts.reviewComments;
@@ -1411,6 +1418,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ? opts.resolveAccountSettingsSnapshot
       : this.bindInvocationAccountSettingsSnapshot(opts.projectLaunchContext?.ingress);
     const runtime = createExecutionRunBridgeRuntime({
+      nativeSandbox: opts.nativeSandbox,
       ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
       onToolNormalizationSource: (source) => { toolNormalizationSource = source; },
       ...(scope === 'detached' && opts.runId ? { workflowActionContext: {
@@ -2275,6 +2283,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId).catch((error: unknown) => {
       throw markExecutionRunStartPreparationFailure(error, 'execution_run_contribution_snapshot_unavailable');
     });
+    let nativeSandbox: ExecutionRunRuntimeCreateOptions['nativeSandbox'];
     const runtimeSnapshot = retained ? {
       createRuntime: () => {
         const controller = retained.controller;
@@ -2289,12 +2298,37 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       },
       releaseOwner: async () => { await resolution.release?.(); },
     } : this.bindExecutionRunRuntimeSnapshot(resolution, options => this.createExecutionRunRuntime({ ...options,
+      nativeSandbox,
       resolveAccountSettingsSnapshot: accountSnapshotResolver,
       ...(params.projectSetupOperation ? { projectSetupOperation: params.projectSetupOperation } : {}),
       ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}) }));
     try {
       if (params.intent === 'voice_agent') params.signal?.throwIfAborted();
-      params = { ...params, roleSessionMetadata: this.sessionInteractionHost?.session.getMetadataSnapshot(),
+      const roleSessionMetadata = this.sessionInteractionHost?.session.getMetadataSnapshot();
+      if (!retained) {
+        if (params.sessionId !== null) {
+          nativeSandbox = roleSessionMetadata?.nativeSandbox;
+        } else {
+          const machineMetadata = this.readMachineMetadataSnapshot?.();
+          const openedMachineMetadata = machineMetadata?.status === 'ready' ? machineMetadata.metadata : undefined;
+          const agent = resolution.engineRegistry?.contributions.agentDefinitionsById
+            .get(resolveExecutionRunRuntimeBackendId(params.backendTarget));
+          const agentSandbox = resolveManagedSessionDefaults({
+            agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(params.backendTarget)),
+            machineIsolation: readMachineIsolationV1(openedMachineMetadata),
+            machineIsolationPolicy: readMachineIsolationPolicyV1(openedMachineMetadata ?? {}),
+            nativeSandboxAvailable: readAgentNativeSandboxCapabilities(agent?.richDefinition?.definition)?.off === true,
+          }).agentSandbox;
+          if (agentSandbox.availability?.status === 'unavailable') {
+            throw markExecutionRunStartPreparationFailure(Object.assign(
+              createExecutionRunCodedError('target_unavailable', 'Agent native sandbox is unavailable'), {
+                details: { issues: [{ code: agentSandbox.availability.reason, path: ['configuration', 'nativeSandbox'] }] },
+              }), 'execution_run_profile_preparation_failed');
+          }
+          nativeSandbox = agentSandbox.value;
+        }
+      }
+      params = { ...params, roleSessionMetadata,
         ...(resolution.readNativeOfferedModel ? { readNativeOfferedModel: resolution.readNativeOfferedModel } : {}) };
       let summarySelection: ResolvedExecutionRunChildSelection | undefined;
       try {

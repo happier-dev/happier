@@ -3,6 +3,7 @@ import type { AgentAcpRuntimeOptions, AgentAcpToolNameResolver, AgentRuntimeCont
 import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from '../acp/runtimeDeclaration.js';
 import { CODEBUDDY_TERMINAL_SURFACE } from '../terminal/contribution.js';
 import { prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
+import { codeBuddyNativeSandboxSettings } from './launchSettings.js';
 export { codeBuddyExternalSessionsContribution } from '../externalSessions/contribution.js';
 
 // CodeBuddy Code 2.162 invokes lazily discovered tools through this native ACP wrapper.
@@ -28,9 +29,12 @@ function withDispose<T extends object>(runtime: T, dispose: unknown): T {
 }
 
 async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding'>, context: AgentRuntimeContext) {
-  const account = await prepareCodeBuddyConnectedAccount({ modelId: request.configuration?.model.value, providerBinding: request.providerBinding }, context);
+  const account = await prepareCodeBuddyConnectedAccount({ modelId: request.configuration?.model.value,
+    providerBinding: request.providerBinding, nativeSandbox: request.configuration?.nativeSandbox }, context);
   const { transport, definition } = CODEBUDDY_ACP_RUNTIME_DECLARATION;
-  const options: AgentAcpRuntimeOptions = { transport: { ...transport, args: [...transport.args, ...(account?.args ?? [])], ...(account ? { env: account.env } : {}) },
+  const nativeSettingsArgs = request.configuration?.nativeSandbox === undefined ? []
+    : ['--settings', JSON.stringify(codeBuddyNativeSandboxSettings(request.configuration.nativeSandbox))];
+  const options: AgentAcpRuntimeOptions = { transport: { ...transport, args: [...transport.args, ...(account?.args ?? nativeSettingsArgs)], ...(account ? { env: account.env } : {}) },
     definition: { ...definition, toolNameResolver: resolveCodeBuddyAcpToolName,
       ...(account ? { models: account.models } : {}) } };
   return { options, dispose: () => account?.dispose() };

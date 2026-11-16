@@ -343,6 +343,7 @@ type CodexAppServerRuntimeParams = CodexAppServerRuntimeTarget & Readonly<{
   initialModelId?: string | null;
   initialCollaborationModeId?: string | null;
   initialWorkspaceWrites?: 'allow' | 'deny';
+  initialNativeSandbox?: 'on' | 'off';
   initialPermissionMode?: string;
   initialProviderBinding?: CodexProviderBindingEngineConfigV1 | null;
   initialProviderConnectionId?: string | null;
@@ -3813,7 +3814,7 @@ export function createCodexAppServerRuntime(
       const nextWorkspaceWrites = updateRecord?.workspaceWrites === 'allow' || updateRecord?.workspaceWrites === 'deny'
         ? updateRecord.workspaceWrites : currentWorkspaceWrites;
       const nextPermissionPolicy = nextPermissionMode
-        ? resolveCodexTerminalPermissionPolicy(nextPermissionMode, nextWorkspaceWrites, params.toolRestriction?.unlistedTools)
+        ? resolveCodexTerminalPermissionPolicy(nextPermissionMode, nextWorkspaceWrites, params.toolRestriction?.unlistedTools, params.initialNativeSandbox)
         : null;
       if (nextWorkspaceWrites !== currentWorkspaceWrites && (pendingTurn !== null || realtimeConversation.isActive())) {
         const nextPolicyKey = serializeCodexAppServerPolicy(resolveCurrentPolicy(nextPermissionPolicy));

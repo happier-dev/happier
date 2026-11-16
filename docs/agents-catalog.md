@@ -265,6 +265,21 @@ native turn checkpoint in the existing transcript anchor; imported messages with
 one return the existing typed invalid-request result. No host turn IDs or cuts are
 reconstructed from history text.
 
+In 0.3 development, `resolveManagedSessionDefaults` independently resolves the
+native Agent sandbox selection. An Agent declaring native sandbox support defaults
+that sandbox off on a Machine whose opened metadata has the O-MACH-owned
+`isolationV1` fact, read through `readMachineIsolationV1`. The Machine's Isolation
+policy may enable it with `isolationPolicyV1.agentNativeSandboxEnabled`; an absent
+setting means off. An explicit sandbox choice wins. Enabling it requires both
+the Agent's declared native sandbox capability and the selected sandbox type's
+`sessionPlacement.supportsAgentNativeSandbox` declaration. An incapable type
+returns `unavailable` with `not_available_in_sandbox_type`, displayed before
+launch. Hosts without the isolation fact retain their native defaults. This changes
+neither permission intent nor approval policy; plugins translate the resolved
+selection to their native sandbox/profile, and the existing launch and Session
+permission presentation reports it. A retained native resume profile remains
+authoritative when no replacement configuration is selected.
+
 Muse's permission mapping is shared by Session and finite Run startup, resume,
 fork and runtime configuration. Default uses `:ask-me` with `promptUnmatched`;
 safe-yolo keeps that sandbox with `onRequest`; yolo uses `:unrestricted` with

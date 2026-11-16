@@ -558,7 +558,7 @@ type _LaunchEnvironmentShapeMustStayDataOnly = AssertTrue<
 >;
 
 type _ConfigurationSnapshotShapeMustStayDataOnly = AssertTrue<
-  Equal<keyof AgentSessionConfigurationSnapshot, 'mode' | 'model' | 'permissionIntent' | 'workspaceWrites' | 'options' | 'allowedTools' | 'unlistedTools'>
+  Equal<keyof AgentSessionConfigurationSnapshot, 'mode' | 'model' | 'permissionIntent' | 'workspaceWrites' | 'nativeSandbox' | 'options' | 'allowedTools' | 'unlistedTools'>
 >;
 
 type _ConfigurationToolRulesMustStayDataOnly = AssertTrue<

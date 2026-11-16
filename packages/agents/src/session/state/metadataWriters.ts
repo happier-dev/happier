@@ -389,7 +389,7 @@ export function clearAcpConfigOptionIntentSessionMetadata<TMetadata extends Sess
 
 
 type SessionBirthMetadataFieldsV1 = Pick<SessionOwnerMetadataV1, 'work'>
-  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'approvalProfileId'>
+  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'nativeSandbox' | 'approvalProfileId'>
   & Pick<NonNullable<SessionOwnerMetadataV1['system']>, 'attestedContext'>;
 
 export type CommittedLaunchMetadataOptionsV1 = Readonly<{
@@ -409,6 +409,7 @@ export type CommittedLaunchMetadataOptionsV1 = Readonly<{
   allowedTools?: readonly string[];
   unlistedTools?: 'ask' | 'deny';
   workspaceWrites?: 'allow' | 'deny';
+  nativeSandbox?: 'on' | 'off';
   identity?: SessionIdentityAdditions;
   attestedContext?: SessionAttestedContextV1;
   memoryEnabled?: boolean;
@@ -420,15 +421,16 @@ export type CommittedLaunchMetadataOptionsV1 = Readonly<{
 /** All fresh row creators use the same birth facts; source metadata cannot choose a child's kind. */
 export function applyInitialSessionCreationFactsToMetadata<TMetadata extends SessionMetadata & Pick<SessionBirthMetadataFieldsV1, 'work' | 'approvalProfileId'>>(
     metadata: TMetadata,
-    facts: Readonly<{ allowedTools?: readonly string[]; unlistedTools?: 'ask' | 'deny'; workspaceWrites?: 'allow' | 'deny'; identity?: SessionIdentityAdditions;
+    facts: Readonly<{ allowedTools?: readonly string[]; unlistedTools?: 'ask' | 'deny'; workspaceWrites?: 'allow' | 'deny'; nativeSandbox?: 'on' | 'off'; identity?: SessionIdentityAdditions;
         attestedContext?: SessionAttestedContextV1; memoryEnabled?: boolean; promptStack?: SessionPromptStackV1; approvalProfileId?: string | null;
         authoringOrigin?: PluginUiNewSessionSeedOriginV1;
         accountSettings?: Readonly<Record<string, unknown>> }>,
-): Omit<TMetadata, keyof SessionIdentityAdditions | 'work' | 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'attestedContext' | 'approvalProfileId'> & SessionIdentityAdditions
-    & Pick<SessionBirthMetadataFieldsV1, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'attestedContext' | 'approvalProfileId'> & { work: NonNullable<SessionBirthMetadataFieldsV1['work']> } {
+): Omit<TMetadata, keyof SessionIdentityAdditions | 'work' | 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'nativeSandbox' | 'attestedContext' | 'approvalProfileId'> & SessionIdentityAdditions
+    & Pick<SessionBirthMetadataFieldsV1, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'nativeSandbox' | 'attestedContext' | 'approvalProfileId'> & { work: NonNullable<SessionBirthMetadataFieldsV1['work']> } {
     const { bot: _inheritedBot, botFace: _inheritedBotFace, createdAsBot: _inheritedCreatedAsBot,
         approvalProfileId: inheritedApprovalProfileId, allowedTools: _inheritedAllowedTools,
         unlistedTools: _inheritedUnlistedTools, workspaceWrites: _inheritedWorkspaceWrites,
+        nativeSandbox: _inheritedNativeSandbox,
         attestedContext: _inheritedAttestation, work, ...base } = metadata;
     const identity = facts.identity === undefined ? undefined : SessionIdentityAdditionsV1Schema.parse(facts.identity);
     const approvalProfileId = facts.approvalProfileId === undefined ? inheritedApprovalProfileId
@@ -442,6 +444,7 @@ export function applyInitialSessionCreationFactsToMetadata<TMetadata extends Ses
         ...(facts.allowedTools === undefined ? {} : { allowedTools: [...facts.allowedTools] }),
         ...(facts.unlistedTools === undefined ? {} : { unlistedTools: facts.unlistedTools }),
         ...(facts.workspaceWrites === undefined ? {} : { workspaceWrites: facts.workspaceWrites }),
+        ...(facts.nativeSandbox === undefined ? {} : { nativeSandbox: facts.nativeSandbox }),
         work: { ...work,
             ...(facts.authoringOrigin === undefined ? {} : { authoringOriginV1: PluginUiNewSessionSeedOriginV1Schema.parse(facts.authoringOrigin) }),
             ...(facts.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(facts.promptStack) }),

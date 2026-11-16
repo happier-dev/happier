@@ -1130,6 +1130,7 @@ export async function openCodexNativeAppServerSession(
       && selection.account.service.localId === 'openai-codex')?.account.service,
     initialCollaborationModeId: request.configuration?.mode.value,
     initialWorkspaceWrites: request.configuration?.workspaceWrites,
+    initialNativeSandbox: request.configuration?.nativeSandbox,
     initialPermissionMode: readPermissionMode(request),
     toolRestriction: request.configuration,
     ...(request.functionTools?.length ? { functionTools: request.functionTools } : {}),
@@ -1139,7 +1140,7 @@ export async function openCodexNativeAppServerSession(
     ...(request.mcpServers ? { mcpServers: request.mcpServers } : {}),
     ...(request.mcpToolPolicy ? { mcpToolPolicy: request.mcpToolPolicy } : {}),
     ...(request.skills ? { skills: request.skills } : {}),
-    resolveCurrentPolicy: () => resolveCodexTerminalPermissionPolicy(readPermissionMode(request), request.configuration?.workspaceWrites, request.configuration?.unlistedTools),
+    resolveCurrentPolicy: () => resolveCodexTerminalPermissionPolicy(readPermissionMode(request), request.configuration?.workspaceWrites, request.configuration?.unlistedTools, request.configuration?.nativeSandbox),
     ...(goalProjection
       ? {
           goalProjection,
@@ -1297,6 +1298,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     initialProviderConnectionId: request.providerBinding?.connectionId,
     initialCollaborationModeId: request.configuration?.mode.value,
     initialWorkspaceWrites: request.configuration?.workspaceWrites,
+    initialNativeSandbox: request.configuration?.nativeSandbox,
     initialPermissionMode: readPermissionMode(request),
     toolRestriction: request.configuration,
     ...(initialProviderBinding ? { initialProviderBinding } : {}),
@@ -1304,7 +1306,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     ...(request.mcpServers ? { mcpServers: request.mcpServers } : {}),
     ...(request.mcpToolPolicy ? { mcpToolPolicy: request.mcpToolPolicy } : {}),
     ...(request.skills ? { skills: request.skills } : {}),
-    resolveCurrentPolicy: () => resolveCodexTerminalPermissionPolicy(readPermissionMode(request), request.configuration?.workspaceWrites, request.configuration?.unlistedTools),
+    resolveCurrentPolicy: () => resolveCodexTerminalPermissionPolicy(readPermissionMode(request), request.configuration?.workspaceWrites, request.configuration?.unlistedTools, request.configuration?.nativeSandbox),
   });
   let startupStage: 'configuration' | 'skills' | 'native_session' = 'configuration';
   try {

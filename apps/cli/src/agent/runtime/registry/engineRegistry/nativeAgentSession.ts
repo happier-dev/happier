@@ -1194,6 +1194,7 @@ function buildNativeAgentSessionOpenInputs(
     const configuration = AgentSessionConfigurationSnapshotV1Schema.parse({
         ...(metadata.allowedTools === undefined ? {} : { allowedTools: metadata.allowedTools }),
         ...(metadata.unlistedTools === undefined ? {} : { unlistedTools: metadata.unlistedTools }),
+        ...(metadata.nativeSandbox === undefined ? {} : { nativeSandbox: metadata.nativeSandbox }),
         ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
         mode: {
             value: sessionMode?.id ?? null,
@@ -1327,6 +1328,7 @@ export function applyNativeAgentConfigurationUpdate(
     const snapshot = projectNativeAgentProviderBindingConfiguration(AgentSessionConfigurationSnapshotV1Schema.parse({
         ...(current.allowedTools === undefined ? {} : { allowedTools: current.allowedTools }),
         ...(current.unlistedTools === undefined ? {} : { unlistedTools: current.unlistedTools }),
+        ...(current.nativeSandbox === undefined ? {} : { nativeSandbox: current.nativeSandbox }),
         ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
         mode: typeof update.modeId === 'string'
             ? { value: update.modeId, updatedAtMs }

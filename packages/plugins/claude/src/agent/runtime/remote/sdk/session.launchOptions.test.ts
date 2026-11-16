@@ -35,10 +35,11 @@ describe('Claude SDK turn/control launch parity', () => {
           ...(sandbox === undefined ? {} : { IS_SANDBOX: sandbox }),
           ...(bubblewrap === undefined ? {} : { CLAUDE_CODE_BUBBLEWRAP: bubblewrap }) },
         permissionMode: 'plan', happierSessionId: 'launch-parity', initialModelId: 'claude-sonnet-4-6',
+        nativeSandbox: 'off',
         initialEffort: 'high', supportsEffort: true, supportsSystemPromptSnapshotOff: true,
         startupInstructions: 'Keep the same startup prefix.', settingSources: ['user', 'project'],
         mcpServers: { fixture: { type: 'stdio', command: '/fixture/mcp' } },
-        advancedOptions: { fallbackModel: 'claude-haiku-4-5', maxTurns: 4 },
+        advancedOptions: { fallbackModel: 'claude-haiku-4-5', maxTurns: 4, sandbox: { enabled: true } },
         publishSdkMessages: true,
       });
       try {
@@ -62,6 +63,7 @@ describe('Claude SDK turn/control launch parity', () => {
         const [turn, control] = launches;
         expect(turn!.args.includes('--allow-dangerously-skip-permissions')).toBe(allowed);
         expect(turn!.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+        expect(JSON.parse(turn!.args[turn!.args.indexOf('--settings') + 1]!)).toMatchObject({ sandbox: { enabled: false } });
         const withoutResume = (args: readonly string[]) => args.filter((_, i) => args[i] !== '--resume' && args[i - 1] !== '--resume');
         expect(withoutResume(control!.args)).toEqual(withoutResume(turn!.args));
         expect(control!.args).toEqual(expect.arrayContaining(['--resume', 'native-parity', '--include-partial-messages']));

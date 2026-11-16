@@ -14,6 +14,7 @@ export const MUSE_AGENT = Object.freeze({
     connectedServices: { supportedServiceIds: [MUSE_ACCOUNT_SERVICE_ID] },
     resume: { vendorResume: 'supported' as const },
     sessionStorage: { direct: true, persisted: true },
+    nativeSandbox: { off: true as const },
     sessionCapabilities: {
       compaction: { events: true, manual: true },
       sessionListing: 'unsupported',

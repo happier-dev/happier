@@ -67,6 +67,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       vendorResumeContinuityProofField: 'claudeTranscriptPath',
     },
     sessionStorage: { direct: true, persisted: true },
+    nativeSandbox: { off: true as const },
     structuredOutput: { formats: ['json'] },
     sessionCapabilities: {
       sessionListing: 'supported',

@@ -11805,6 +11805,10 @@ const enAgentInput = {
   },
   permissionMode: {
     nativeModeOverrides: ({ mode }: { mode: string }) => `Agent Mode ${mode} overrides the approval preset. Clear the Mode override to use the permission setting.`,
+    nativeSandbox: "Native sandbox",
+    nativeSandboxOn: "Native sandbox on. Approval permissions still apply.",
+    nativeSandboxOff: "Native sandbox off. Approval permissions still apply.",
+    nativeSandboxUnavailable: "Native sandbox: not available in this sandbox type. Approval permissions still apply.",
     usePermissionSetting: 'Use permission setting',
     title: 'Permission mode',
     effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,

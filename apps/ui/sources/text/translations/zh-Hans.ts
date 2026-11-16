@@ -9742,6 +9742,10 @@ export const zhHans: TranslationStructure = {
     },
     permissionMode: {
       nativeModeOverrides: ({ mode }: { mode: string }) => `代理模式 ${mode} 会覆盖审批预设。清除模式覆盖以使用权限设置。`,
+      nativeSandbox: "原生沙箱",
+      nativeSandboxOn: "原生沙箱已开启。审批权限仍然适用。",
+      nativeSandboxOff: "原生沙箱已关闭。审批权限仍然适用。",
+      nativeSandboxUnavailable: "此沙箱类型不支持原生沙箱。审批权限仍然适用。",
       usePermissionSetting: '使用权限设置',
       title: "权限模式",
       effectiveLabel: ({ label }: { label: string }) => `生效：${label}`,

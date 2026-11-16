@@ -708,6 +708,8 @@ export type AgentSessionConfigurationSnapshot = Readonly<{
   permissionIntent: TimestampedAgentValue<AgentPermissionIntent | null>;
   /** Host-resolved role restriction. An Agent that cannot enforce deny must refuse before effects. */
   workspaceWrites?: 'allow' | 'deny';
+  /** Resolved native sandbox choice, independent of permission intent and approval policy. */
+  nativeSandbox?: 'on' | 'off';
   options: Readonly<Record<string, TimestampedAgentValue<AgentConfigurationScalar>>>;
 }>;
 

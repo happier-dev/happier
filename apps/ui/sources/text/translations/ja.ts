@@ -10391,6 +10391,10 @@ localTailscale: {
     },
     permissionMode: {
       nativeModeOverrides: ({ mode }: { mode: string }) => `エージェントモード ${mode} は承認設定を上書きします。権限設定を使うにはモードの上書きを解除してください。`,
+      nativeSandbox: "ネイティブサンドボックス",
+      nativeSandboxOn: "ネイティブサンドボックスはオンです。承認の権限は引き続き適用されます。",
+      nativeSandboxOff: "ネイティブサンドボックスはオフです。承認の権限は引き続き適用されます。",
+      nativeSandboxUnavailable: "ネイティブサンドボックスはこのサンドボックスの種類では利用できません。承認の権限は引き続き適用されます。",
       usePermissionSetting: '権限設定を使用',
       title: "権限モード",
       effectiveLabel: ({ label }: { label: string }) => `適用中: ${label}`,

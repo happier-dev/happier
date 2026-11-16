@@ -6,7 +6,13 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
-import { openCursorAcpSession } from './connection.js';
+import { buildCursorAcpArgs, openCursorAcpSession } from './connection.js';
+
+it('selects the Cursor sandbox independently of its approval arguments', () => {
+  expect(buildCursorAcpArgs('safe-yolo', '', undefined, 'off')).toEqual(['--force', '--sandbox', 'disabled', 'acp']);
+  expect(buildCursorAcpArgs('default', '', undefined, 'off')).toEqual(['--sandbox', 'disabled', 'acp']);
+  expect(buildCursorAcpArgs('yolo', '', undefined, 'on')).toEqual(['--force', '--sandbox', 'enabled', 'acp']);
+});
 
 function createFixture(request: AgentSessionOpenRequest) {
   const composedSession: AgentSessionRuntime = {

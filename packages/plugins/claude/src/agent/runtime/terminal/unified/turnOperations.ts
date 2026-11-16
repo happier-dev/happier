@@ -414,6 +414,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
   allowedTools?: readonly string[];
   unlistedTools?: 'ask' | 'deny';
   workspaceWrites?: 'allow' | 'deny';
+  nativeSandbox?: 'on' | 'off';
   responseLocations?: ReturnType<typeof resolveClaudeUnifiedTerminalResponseLocations>;
   /** Persisted workflow headline from the session snapshot that created this runtime. */
   initialWorkflowActivityHeadline?: unknown;
@@ -2032,6 +2033,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
             cwd: params.directory,
             idleCompaction: params.idleCompaction,
             workspaceWrites: launchWorkspaceWrites,
+            nativeSandbox: params.nativeSandbox,
             helperModelEnv: params.helperModelEnv,
             allowedTools: params.allowedTools,
             unlistedTools: params.unlistedTools,

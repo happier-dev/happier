@@ -23,6 +23,12 @@ const MINIMAL_SESSIONS = {
 } as const;
 
 describe('projectAgentCapabilitiesV2FromDefinition', () => {
+  it('publishes the declared native sandbox control through the strict capability reader', () => {
+    expect(projectAgentCapabilitiesV2FromDefinition({ ...NO_CAPABILITIES, nativeSandbox: { off: true } },
+      { sessions: MINIMAL_SESSIONS })).toHaveProperty('nativeSandbox', { off: true });
+    expect(projectAgentCapabilitiesV2FromDefinition(NO_CAPABILITIES, { sessions: MINIMAL_SESSIONS }))
+      .not.toHaveProperty('nativeSandbox');
+  });
   it('projects the single definition-owned compaction descriptor to its manifest', () => {
     const compaction = { events: true, idle: { mode: 'native', defaultEnabled: true, nativeHonorsMinimum: true, defaultMinContextTokens: 200000 } } as const;
     const projected = projectAgentCapabilitiesV2FromDefinition({

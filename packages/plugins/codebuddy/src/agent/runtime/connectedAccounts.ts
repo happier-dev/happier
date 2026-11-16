@@ -5,6 +5,7 @@ import type { AgentAcpModelControls, AgentSessionOpenRequest } from '@happier-de
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
+import { codeBuddyNativeSandboxSettings } from './launchSettings.js';
 
 export const CODEBUDDY_KEY_ACCOUNTS = [
   { purpose: 'openai-api-key', service: OPENAI_CONNECTED_ACCOUNT_SERVICE, key: OPENAI_SELECTED_API_KEY_ENV, base: 'https://api.openai.com/v1', baseKey: null },
@@ -25,6 +26,7 @@ function modelSelectionRequired(): never {
 
 export function buildCodeBuddyNativeConfiguration(input: Readonly<{
   modelId: string; api: string; url: string; apiKey?: string; customHeaders: string; supportsReasoning?: true;
+  nativeSandbox?: 'on' | 'off';
 }>) {
   const { modelId, customHeaders } = input;
   // CodeBuddy 2.181.0 EnvProductProvider accepts this per-process overlay. The
@@ -47,6 +49,7 @@ export function buildCodeBuddyNativeConfiguration(input: Readonly<{
     CODEBUDDY_CUSTOM_HEADERS: customHeaders,
   };
   return { env, args: ['--model', modelId], settings: { alwaysThinkingEnabled: true as const,
+    ...codeBuddyNativeSandboxSettings(input.nativeSandbox),
     env: { CODEBUDDY_CUSTOM_HEADERS: customHeaders } }, models: {
     catalogConfidence: 'account_unverified',
     projectModel: (_raw, normalized) => normalized,
@@ -71,7 +74,7 @@ export function createCodeBuddySubscriptionLaunch(configuration: ReturnType<type
 }
 
 export async function prepareCodeBuddyConnectedAccount(
-  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding'] }>,
+  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding']; nativeSandbox?: 'on' | 'off' }>,
   context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ): Promise<ReturnType<typeof createCodeBuddySubscriptionLaunch> | null> {
   const accounts = context.services.connectedAccounts;
@@ -96,5 +99,6 @@ export async function prepareCodeBuddyConnectedAccount(
   const base = row.baseKey ? materialized.env[row.baseKey] : row.base;
   if (!key || !base) refuse('codebuddy_key_materialization_invalid', 'The selected account did not supply its API key and endpoint.');
   return createCodeBuddySubscriptionLaunch(buildCodeBuddyNativeConfiguration({ modelId,
+    nativeSandbox: request.nativeSandbox,
     api: 'openai-completions', url: `${base.replace(/\/+$/, '')}/chat/completions`, apiKey: key, customHeaders: '' }));
 }

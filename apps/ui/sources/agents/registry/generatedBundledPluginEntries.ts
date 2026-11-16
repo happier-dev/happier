@@ -25,11 +25,12 @@ import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLoca
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
-import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
+import { getAgentCore as getSharedAgentCore, getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 import { readBundledAgentPresentation } from '@happier-dev/agents/presentation';
 
 const CLAUDE_CORE: AgentCoreConfig = {
     id: 'claude',
+    nativeSandbox: getSharedAgentCore("claude")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.claude',
     subtitleKey: 'profiles.aiBackend.claudeSubtitle',
     permissionModeI18nPrefix: 'agentInput.permissionMode',
@@ -84,6 +85,7 @@ const CLAUDE_UI: AgentUiConfig = {
 
 const CODEX_CORE: AgentCoreConfig = {
     id: 'codex',
+    nativeSandbox: getSharedAgentCore("codex")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.codex',
     subtitleKey: 'profiles.aiBackend.codexSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -133,6 +135,7 @@ const CODEX_UI: AgentUiConfig = {
 
 const CURSOR_CORE: AgentCoreConfig = {
     id: 'cursor',
+    nativeSandbox: getSharedAgentCore("cursor")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.cursor',
     subtitleKey: 'profiles.aiBackend.cursorSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -181,6 +184,7 @@ const CURSOR_UI: AgentUiConfig = {
 
 const OPENCODE_CORE: AgentCoreConfig = {
     id: 'opencode',
+    nativeSandbox: getSharedAgentCore("opencode")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.opencode',
     subtitleKey: 'profiles.aiBackend.opencodeSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -231,6 +235,7 @@ const OPENCODE_UI: AgentUiConfig = {
 
 const ANTIGRAVITY_CORE: AgentCoreConfig = {
     id: 'antigravity',
+    nativeSandbox: getSharedAgentCore("antigravity")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.antigravity',
     subtitleKey: 'profiles.aiBackend.antigravitySubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -279,6 +284,7 @@ const ANTIGRAVITY_UI: AgentUiConfig = {
 
 const GEMINI_CORE: AgentCoreConfig = {
     id: 'gemini',
+    nativeSandbox: getSharedAgentCore("gemini")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.gemini',
     subtitleKey: 'profiles.aiBackend.geminiSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.geminiPermissionMode',
@@ -327,6 +333,7 @@ const GEMINI_UI: AgentUiConfig = {
 
 const GROK_CORE: AgentCoreConfig = {
     id: 'grok',
+    nativeSandbox: getSharedAgentCore("grok")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.grok',
     subtitleKey: 'profiles.aiBackend.grokSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -375,6 +382,7 @@ const GROK_UI: AgentUiConfig = {
 
 const AUGGIE_CORE: AgentCoreConfig = {
     id: 'auggie',
+    nativeSandbox: getSharedAgentCore("auggie")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.auggie',
     subtitleKey: 'profiles.aiBackend.auggieSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -423,6 +431,7 @@ const AUGGIE_UI: AgentUiConfig = {
 
 const QWEN_CORE: AgentCoreConfig = {
     id: 'qwen',
+    nativeSandbox: getSharedAgentCore("qwen")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.qwen',
     subtitleKey: 'profiles.aiBackend.qwenSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -478,6 +487,7 @@ const QWEN_UI: AgentUiConfig = {
 
 const KIMI_CORE: AgentCoreConfig = {
     id: 'kimi',
+    nativeSandbox: getSharedAgentCore("kimi")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.kimi',
     subtitleKey: 'profiles.aiBackend.kimiSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -526,6 +536,7 @@ const KIMI_UI: AgentUiConfig = {
 
 const KILO_CORE: AgentCoreConfig = {
     id: 'kilo',
+    nativeSandbox: getSharedAgentCore("kilo")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.kilo',
     subtitleKey: 'profiles.aiBackend.kiloSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -573,6 +584,7 @@ const KILO_UI: AgentUiConfig = {
 
 const KIRO_CORE: AgentCoreConfig = {
     id: 'kiro',
+    nativeSandbox: getSharedAgentCore("kiro")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.kiro',
     subtitleKey: 'profiles.aiBackend.kiroSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -622,6 +634,7 @@ const KIRO_UI: AgentUiConfig = {
 
 const DEVIN_CORE: AgentCoreConfig = {
     id: 'devin',
+    nativeSandbox: getSharedAgentCore("devin")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.devin',
     subtitleKey: 'profiles.aiBackend.devinSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -678,6 +691,7 @@ const DEVIN_UI: AgentUiConfig = {
 
 const FX_CORE: AgentCoreConfig = {
     id: 'fx',
+    nativeSandbox: getSharedAgentCore("fx")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.fx',
     subtitleKey: 'profiles.aiBackend.fxSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -737,6 +751,7 @@ const FX_UI: AgentUiConfig = {
 
 const DROID_CORE: AgentCoreConfig = {
     id: 'droid',
+    nativeSandbox: getSharedAgentCore("droid")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.droid',
     subtitleKey: 'profiles.aiBackend.droidSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -786,6 +801,7 @@ const DROID_UI: AgentUiConfig = {
 
 const CODEBUDDY_CORE: AgentCoreConfig = {
     id: 'codebuddy',
+    nativeSandbox: getSharedAgentCore("codebuddy")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.codebuddy',
     subtitleKey: 'profiles.aiBackend.codebuddySubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -841,6 +857,7 @@ const CODEBUDDY_UI: AgentUiConfig = {
 
 const PI_CORE: AgentCoreConfig = {
     id: 'pi',
+    nativeSandbox: getSharedAgentCore("pi")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.pi',
     subtitleKey: 'profiles.aiBackend.piSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -941,6 +958,7 @@ const OH_MY_PI_UI: AgentUiConfig = {
 
 const COPILOT_CORE: AgentCoreConfig = {
     id: 'copilot',
+    nativeSandbox: getSharedAgentCore("copilot")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.copilot',
     subtitleKey: 'profiles.aiBackend.copilotSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -988,6 +1006,7 @@ const COPILOT_UI: AgentUiConfig = {
 
 const CODERABBIT_CORE: AgentCoreConfig = {
     id: 'coderabbit',
+    nativeSandbox: getSharedAgentCore("coderabbit")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.coderabbit',
     subtitleKey: 'profiles.aiBackend.coderabbitSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -1035,6 +1054,7 @@ const CODERABBIT_UI: AgentUiConfig = {
 
 const DEEPSEC_CORE: AgentCoreConfig = {
     id: 'deepsec',
+    nativeSandbox: getSharedAgentCore("deepsec")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.deepsec',
     subtitleKey: 'profiles.aiBackend.deepsecSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
@@ -1082,6 +1102,7 @@ const DEEPSEC_UI: AgentUiConfig = {
 
 const MUSE_CORE: AgentCoreConfig = {
     id: 'muse',
+    nativeSandbox: getSharedAgentCore("muse")?.nativeSandbox,
     displayNameKey: 'agentInput.agent.muse',
     subtitleKey: 'profiles.aiBackend.museSubtitle',
     permissionModeI18nPrefix: 'agentInput.permissionMode',

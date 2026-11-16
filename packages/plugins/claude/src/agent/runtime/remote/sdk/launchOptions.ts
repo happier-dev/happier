@@ -24,14 +24,17 @@ export function buildClaudeSdkQueryLaunchOptions(params: ClaudeAgentSdkTurnOpera
     resolvePermission: NonNullable<QueryOptions['canCallTool']>;
     getOAuthToken: QueryOptions['getOAuthToken'] | null;
 }>): Readonly<{ options: QueryOptions; launchEffort: string | null }> {
+    const { sandbox, ...advancedOptions } = params.advancedOptions ?? {};
     const launchSettings = {
         ...buildClaudeHookSettingsOverlay(),
+        ...(sandbox === undefined ? {} : { sandbox }),
         ...(state.ultracode && isClaudeUltracodeSupportedModelId(state.modelId, state.providerModel)
             ? { ultracode: true } : {}),
     };
     const args = resolveClaudeLaunchSettingsOverlayArgs({
         args: [], interactionKind: 'noninteractive_sdk', permissionMode: state.permissionMode,
         launchSettings, workspaceWrites: state.workspaceWrites,
+        nativeSandbox: params.nativeSandbox,
         launchEnv: params.launchEnv,
         cwd: params.directory,
         skillOverrides: state.skillOverrides,
@@ -59,7 +62,7 @@ export function buildClaudeSdkQueryLaunchOptions(params: ClaudeAgentSdkTurnOpera
             ...(settingsJson ? { settingsJson } : {}),
             ...(params.unlistedTools !== 'deny' || !state.hookPluginDir ? { canCallTool: state.resolvePermission } : {}),
             ...(state.getOAuthToken ? { getOAuthToken: state.getOAuthToken } : {}),
-            ...params.advancedOptions,
+            ...advancedOptions,
             allowedTools: params.allowedTools, unlistedTools: params.unlistedTools,
             settingSources: params.unlistedTools === 'deny' && !state.hookPluginDir ? [] : params.settingSources,
             ...(params.unlistedTools === 'deny' ? { strictMcpConfig: true } : {}),

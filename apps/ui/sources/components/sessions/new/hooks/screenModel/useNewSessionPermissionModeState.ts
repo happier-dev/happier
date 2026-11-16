@@ -8,6 +8,7 @@ import {
     readAccountPermissionDefaults,
     resolveNewSessionDefaultPermissionMode,
     resolveNewSessionDefaultPermissionModeDecision,
+    type NewSessionNativeSandboxInput,
 } from '@/sync/domains/permissions/permissionDefaults';
 import { isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -35,8 +36,9 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     enabledAgentIds: ReadonlyArray<AgentId>;
     sessionDefaultPermissionModeByTargetKey: Settings['sessionDefaultPermissionModeByTargetKey'];
     managedDefaults?: ManagedSessionDefaultsContext;
-}>): Readonly<{
+}> & NewSessionNativeSandboxInput): Readonly<{
     permissionMode: PermissionMode;
+    nativeSandbox: ReturnType<typeof resolveNewSessionDefaultPermissionModeDecision>['nativeSandbox'];
     permissionModeForPersistence: PermissionMode;
     permissionModeExplicit: boolean;
     permissionModeLock: OrganizationPolicyLock | null;
@@ -93,8 +95,14 @@ export function useNewSessionPermissionModeState(params: Readonly<{
             legacyProfileDefaultPermissionMode: selectedProfile?.defaultPermissionMode as PermissionMode | undefined,
             managedDefaults: params.managedDefaults,
             explicitPermissionMode,
+            machineIsolation: params.machineIsolation,
+            machineIsolationPolicy: params.machineIsolationPolicy,
+            sandboxTypeSupportsNativeSandbox: params.sandboxTypeSupportsNativeSandbox,
+            nativeSandboxAvailable: params.nativeSandboxAvailable,
+            explicitAgentSandbox: params.explicitAgentSandbox,
+            retainedNativeProfile: params.retainedNativeProfile,
         });
-    }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults, params.sessionModeDescriptor, selectedProfile]);
+    }, [accountDefaults, params.agentType, params.backendTarget, params.explicitAgentSandbox, params.machineIsolation, params.machineIsolationPolicy, params.managedDefaults, params.nativeSandboxAvailable, params.retainedNativeProfile, params.sandboxTypeSupportsNativeSandbox, params.sessionModeDescriptor, selectedProfile]);
     const decision = resolvePermissionModeDecision(explicitPermissionMode);
     const permissionMode = decision.permissionMode;
 
@@ -118,6 +126,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
 
     return {
         permissionMode,
+        nativeSandbox: decision.nativeSandbox,
         permissionModeForPersistence: explicitPermissionMode ?? 'default',
         permissionModeExplicit: explicitPermissionMode !== undefined,
         permissionModeLock: decision.lock,

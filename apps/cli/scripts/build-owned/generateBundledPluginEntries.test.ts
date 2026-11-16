@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { ModuleKind, transpileModule } from 'typescript';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from '../../../../packages/plugins/claude/src/agent/transcripts/internalEventTypes';
 import * as piDefinition from '../../../../packages/plugins/pi/src/agent/definition';
 import * as codexDefinition from '../../../../packages/plugins/codex/src/agent/definition';
@@ -31,6 +31,7 @@ import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBun
 import { writeRetainedCatalogAgent } from '../__tests__/testkit/bundledPluginProjectionSandbox';
 import { prepareBundledWorkspaceDependenciesForCli } from '../buildSharedDeps.mjs';
 import { ensureWorkspacePackagesBuiltByName } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { PLUGIN_HOST_SHARED_RUNTIME_PACKAGES } from '../pluginHostSharedRuntimePackages.mjs';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID, BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS } from '../../../../packages/agents/src/generated/bundledAgentDefinitions';
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../packages/agents/src/generated/agentIds';
 import { collectBundledAgentContributionIdentities, importPluginAuthorRuntimeModules, main, runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries.ts';
@@ -1312,15 +1313,21 @@ describe('CLI bundled plugin registry projection', () => {
 
   it.each([false, true])('scoped publication retains published peers and strict source checks (packageArtifacts=%s)', async (packageArtifacts) => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-authored-projection-');
-    const packages = ['inspector', 'neighbor'];
-    for (const id of packages) {
+    const packages = ['inspector', 'neighbor', ...(packageArtifacts ? ['producer'] : [])];
+    for (const id of [...packages, 'retired']) {
       const packageRoot = writeWorkspacePackageFixture({
         repoRoot, workspacePath: `packages/plugins/${id}`, packageName: `@happier-dev/plugins-${id}`,
+        ...(packageArtifacts ? { manifestOverrides: {
+          scripts: { build: 'fixture compiler' },
+          files: ['dist', '.happier-plugin', 'runtime.mjs'],
+          ...(id === 'inspector' ? { dependencies: { '@happier-dev/plugins-producer': 'workspace:*' } } : {}),
+        }, files: { 'src/index.ts': `export const fresh = 42;\n`, 'tsconfig.json': '{}\n' } } : {}),
       });
       writeBundledPluginSourceInputs({ repoRoot, pluginId: id, writePackageJson: false });
       writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify({
         schemaVersion: 2, id: `happier.${id}`, version: '0.0.0', displayName: `Authored ${id}`,
         engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+        ...(packageArtifacts && id === 'inspector' ? { entrypoints: { daemon: './runtime.mjs' } } : {}),
         hostAccess: { required: [], optional: [] }, contributes: {},
       })};`);
       mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
@@ -1331,27 +1338,87 @@ describe('CLI bundled plugin registry projection', () => {
       }));
     }
     writeRetainedCatalogAgent(repoRoot, happyCliDir);
-    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: [...packages, 'fixture-acp'].map(id => `@happier-dev/plugins-${id}`) });
+    const priorNpmExecPath = process.env.npm_execpath;
+    if (packageArtifacts) {
+      for (const app of ['ui', 'server']) {
+        mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
+        writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+      }
+      writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ private: true,
+        workspaces: ['apps/*', 'packages/*', 'packages/plugins/*'] }));
+      writeWorkspacePackageFixture({ repoRoot, workspacePath: 'packages/attention', packageName: '@happier-dev/attention',
+        manifestOverrides: { scripts: { build: 'fixture compiler' } },
+        files: { 'src/index.ts': 'export const shared = 1;\n', 'tsconfig.json': '{}\n' } });
+      for (const packageName of PLUGIN_HOST_SHARED_RUNTIME_PACKAGES) {
+        writeWorkspacePackageFixture({ repoRoot, workspacePath: `packages/${packageName.split('/').at(-1)}`, packageName,
+          manifestOverrides: { scripts: { build: 'fixture compiler' } },
+          files: { 'src/index.ts': 'export {};\n', 'tsconfig.json': '{}\n' } });
+      }
+      const agentPackagePath = join(repoRoot, 'packages/plugins/fixture-acp/package.json');
+      writeFileSync(agentPackagePath, JSON.stringify({ ...JSON.parse(readFileSync(agentPackagePath, 'utf8')),
+        scripts: { build: 'fixture compiler' } }));
+      writeFileSync(join(repoRoot, 'packages/plugins/fixture-acp/tsconfig.json'), '{}\n');
+      writeFileSync(join(repoRoot, 'packages/plugins/inspector/src/index.ts'),
+        `export { PLUGIN_MANIFEST as manifest } from './manifest.js';\n`
+        + `export function activate() {}\n`
+        + `export async function readFresh() { return (await import('@happier-dev/plugins-producer')).fresh; }\n`);
+      // Replace only the package-manager/compiler OS boundary. Main still owns
+      // real dependency closure, freshness, locks, staging and publication.
+      const compilerPath = join(repoRoot, 'fixture-compiler.mjs');
+      writeFileSync(compilerPath, `import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+assert.deepEqual(process.argv.slice(2), ['run', '--silent', 'build']);
+const { name } = JSON.parse(readFileSync('package.json', 'utf8'));
+if (name === '@happier-dev/plugins-neighbor') throw new Error('unrelated plugin cannot compile');
+const output = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+assert.ok(output);
+mkdirSync(output, { recursive: true });
+for (const entry of readdirSync('src')) {
+  if (entry.endsWith('.ts')) writeFileSync(join(output, entry.replace(/\\.ts$/u, '.js')), readFileSync(join('src', entry)));
+}
+writeFileSync(join(output, 'index.d.ts'), 'export declare const fresh: number;\\n');
+`);
+      vi.stubEnv('npm_execpath', compilerPath);
+    }
+    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: [
+      ...[...packages, 'fixture-acp'].map(id => `@happier-dev/plugins-${id}`),
+      ...(packageArtifacts ? ['@happier-dev/attention', ...PLUGIN_HOST_SHARED_RUNTIME_PACKAGES] : []),
+    ] });
     try {
       await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
         parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write', '--aggregate']),
         { protocol: { ingestPluginManifestV2 } }, lease,
       ), { lockPath: join(repoRoot, 'publication.lock') });
-      await main(['--root', repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector',
+      const metadataPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+      expect(readFileSync(metadataPath, 'utf8')).toContain('@happier-dev/plugins-retired');
+      rmSync(join(repoRoot, 'packages/plugins/retired'), { recursive: true });
+      rmSync(join(happyCliDir, 'assets/bundled-plugin-manifests/retired.json'));
+      const publication = await main(['--root', repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector',
         ...(packageArtifacts ? ['--package-artifacts'] : [])]);
+      expect(publication, JSON.stringify(publication)).toMatchObject({ failures: [] });
+      expect(readFileSync(metadataPath, 'utf8')).not.toContain('@happier-dev/plugins-retired');
       for (const id of packages) {
         expect(JSON.parse(readFileSync(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`), 'utf8')))
           .toMatchObject({ id: `happier.${id}`, displayName: `${id === 'inspector' ? 'Authored' : 'Stale'} ${id}` });
         expect(JSON.parse(readFileSync(join(repoRoot, `packages/plugins/${id}/.happier-plugin/plugin.json`), 'utf8')))
           .toMatchObject({ displayName: packageArtifacts && id === 'inspector' ? `Authored ${id}` : `Stale ${id}` });
       }
+      if (packageArtifacts) {
+        const runtime = await import(pathToFileURL(join(repoRoot, 'packages/plugins/inspector/runtime.mjs')).href);
+        expect(await runtime.readFresh()).toBe(42);
+        expect(readFileSync(join(repoRoot, 'packages/plugins/producer/dist/index.js'), 'utf8')).toContain('fresh = 42');
+        expect(readFileSync(join(repoRoot, 'packages/attention/dist/index.js'), 'utf8')).toContain('shared = 1');
+      }
       // Check mode still reads all current source and rejects serialized drift.
       await expect(main(['--root', repoRoot, '--mode', 'check', '--scope', 'projections', '--workspace', 'plugins-inspector']))
         .rejects.toThrow(/plugin\.json.*Run .*generateBundledPluginEntries\.ts.*--package-artifacts/u);
       // Align the peer's authored facts with its retained publication, then
       // repair the package artifacts through the canonical serializer.
-      const peerSource = join(repoRoot, 'packages/plugins/neighbor/src/manifest.ts');
-      writeFileSync(peerSource, readFileSync(peerSource, 'utf8').replace('Authored neighbor', 'Stale neighbor'));
+      for (const id of packages.filter(id => id !== 'inspector')) {
+        const peerSource = join(repoRoot, `packages/plugins/${id}/src/manifest.ts`);
+        writeFileSync(peerSource, readFileSync(peerSource, 'utf8').replace(`Authored ${id}`, `Stale ${id}`));
+      }
       for (const id of [...packages, 'fixture-acp']) {
         const ingestion = ingestPluginManifestV2(JSON.parse(readFileSync(join(happyCliDir,
           `assets/bundled-plugin-manifests/${id}.json`), 'utf8')));
@@ -1360,7 +1427,15 @@ describe('CLI bundled plugin registry projection', () => {
           serializeCanonicalPluginManifest(ingestion.manifest));
       }
       await main(['--root', repoRoot, '--mode', 'check', '--scope', 'projections', '--workspace', 'plugins-inspector']);
-    } finally { cleanup(); }
+      // Current members must retain their published declaration; a missing
+      // active peer is corruption, whereas a retired member is no longer a peer.
+      rmSync(join(happyCliDir, 'assets/bundled-plugin-manifests/neighbor.json'));
+      await expect(main(['--root', repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector']))
+        .rejects.toThrow(/ENOENT.*bundled-plugin-manifests[/\\]neighbor\.json/u);
+    } finally {
+      if (packageArtifacts) vi.stubEnv('npm_execpath', priorNpmExecPath);
+      cleanup();
+    }
   });
 
   it.each([

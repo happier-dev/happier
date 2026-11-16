@@ -121,6 +121,8 @@ type AdmittedSessionRunOptions = Readonly<{
   parentRuntime?: boolean;
   /** External executable lookup/process environment; native host composition stays real. */
   nativeToolEnvironment?: Readonly<Record<string, string>>;
+  nativeSandboxAvailable?: boolean;
+  machineMetadata?: Readonly<Record<string, unknown>>;
   acpCatalog?(directory: string): ReturnType<typeof AcpCatalogRecordV1Schema.parse>;
   run(fixture: AdmittedSessionRunFixture): Promise<void>;
 }>;
@@ -132,6 +134,7 @@ export type AdmittedSessionRunFixture = Readonly<{
   directory: string;
   agentIdentity: Readonly<{ pluginId: string; localId: string }>;
   nativeOpen: typeof nativeOpen;
+  nativeDetachedOpen: typeof nativeDetachedOpen;
   daemonObservations: readonly Readonly<{ operation: string; status: number; errorCode?: string; schemaIssuePaths?: readonly string[] }>[];
   readHomeBoundary(): readonly Readonly<{ operation: string; count: number }>[];
   bridge?: ExecutionRunHostBridge;
@@ -158,7 +161,8 @@ const createTestAgentPlugin = (skills: boolean, options?: AdmittedSessionRunOpti
         capabilities: { sessions: { open: options?.resume ? ['create', 'resume'] : ['create'], delivery: ['newTurn'], cancel: true,
           // This external SDK leaf emits observations only; it has no workspace effects.
           workspaceWrites: 'deny',
-          executionRunContext: { versions: [1] } }, skills: {
+          executionRunContext: { versions: [1] } },
+          ...(options?.nativeSandboxAvailable ? { nativeSandbox: { off: true } } : {}), skills: {
             delivery: skills ? 'session_dir' : 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',
           } } },
       factory: () => ({ sessions: { open: request => nativeOpen(request),
@@ -868,6 +872,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     parentProvider: readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(
       admittedFixture.registry.contributes.agents), agentIdentity)!,
     cwd: directory, machineId: attribution.machineId,
+    ...(options.machineMetadata ? { readMachineMetadataSnapshot: () => ({ status: 'ready' as const,
+      metadata: { ...options.machineMetadata }, metadataVersion: 1 }) } : {}),
     resolveExecutionRunProfileCatalog: createRunnerExecutionRunSnapshotResolver({ sessionId: session.sessionId,
       machineId: attribution.machineId }),
     resolveAccountSettings: () => accountSettings.rawSettings ?? null,
@@ -924,7 +930,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     }
     if (options) {
       if (!session) throw new Error('The composed Session Run fixture requires a real Session');
-      await options.run({ rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
+      await options.run({ rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, nativeDetachedOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
         readHomeBoundary: () => [...homeBoundary].map(([operation, count]) => ({ operation, count })),
         get admittedRuntime() { return admittedRuntimeFixture!; },
         async replaceAgent(selection) {

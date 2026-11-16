@@ -33,6 +33,19 @@ describe('buildCodexNativeAcpRuntimeOptions', () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it('disables the ACP native sandbox without changing approval policy', () => {
+    const options = buildCodexNativeAcpRuntimeOptions({ kind: 'create', sessionId: 'sandbox', cwd: '/workspace',
+      configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'safe-yolo', updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
+    expect(options.transport.args).toEqual(['-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="danger-full-access"']);
+  });
+  it('preserves native ACP approvals when only a sandbox choice is supplied', () => {
+    const options = buildCodexNativeAcpRuntimeOptions({ kind: 'resume', sessionId: 'sandbox',
+      providerSessionId: 'native-sandbox', cwd: '/workspace',
+      configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: null, updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
+    expect(options.transport.args).toEqual(['-c', 'sandbox_mode="danger-full-access"']);
+  });
   it('preserves each admitted Session PATH, including an explicitly empty value', () => {
     vi.stubEnv('PATH', '/ambient-host-bin');
     try {

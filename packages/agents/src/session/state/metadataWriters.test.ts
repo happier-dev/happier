@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import * as metadataWriters from './metadataWriters.js';
+import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol';
 
 describe('metadataWriters', () => {
+  it('retains an admitted native sandbox choice through birth metadata and its strict owner envelope', () => {
+    const metadata = metadataWriters.applyInitialSessionCreationFactsToMetadata({}, { nativeSandbox: 'off' });
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) throw new Error('Invalid owner metadata');
+    expect(owner.ownerMetadata.runtime?.nativeSandbox).toBe('off');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata }),
+      ownerMetadata: JSON.parse(JSON.stringify(owner.ownerMetadata)) }).nativeSandbox).toBe('off');
+    expect(metadataWriters.applyInitialSessionCreationFactsToMetadata(metadata, {})).not.toHaveProperty('nativeSandbox');
+  });
   it('applies and clears only the private Session voice preference through the registered binding', () => {
     const preference = { providerContributionId: 'happier.voice.xai/realtime', settingFieldPath: 'voice', value: { kind: 'custom', id: 'my-voice' } };
     const metadata = { work: { memoryEnabled: false, sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep' } }, provider: 'unchanged' };

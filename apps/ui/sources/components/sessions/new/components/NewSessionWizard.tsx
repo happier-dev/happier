@@ -34,6 +34,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
+import { describeNativeSandbox } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 import { OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import type { SecretSatisfactionResult } from '@/utils/secrets/secretSatisfaction';
 import type { CLIAvailability } from '@/agents/machineAgents/machineAgentCliAvailability';
@@ -198,6 +199,7 @@ export interface NewSessionWizardAgentProps {
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
+    nativeSandbox?: React.ComponentProps<typeof AgentInput>['nativeSandbox'];
     permissionModeLock?: OrganizationPolicyLock | null;
     permissionModeSource?: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
     handlePermissionModeChange: (mode: PermissionMode) => void;
@@ -799,6 +801,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onAgentPickerSelect={props.agent.onAgentPickerSelect}
                                         agentPickerProbe={props.agent.agentPickerProbe}
                                         permissionMode={permissionMode}
+                                        nativeSandbox={props.agent.nativeSandbox}
                                         onPermissionModeChange={permissionModeLock ? undefined : handlePermissionModeChange}
                                         permissionModeAttribution={describeInheritedDefaultSource(permissionModeSource)}
                                         onPermissionClick={handleAgentInputPermissionClick}
@@ -1232,7 +1235,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     <ItemGroup
                                         title={t('newSession.wizardSection.permission')}
                                         description={[t('newSession.selectPermissionModeDescription'),
-                                            describeInheritedDefaultSource(permissionModeSource)].filter(Boolean).join(' · ')}
+                                            describeInheritedDefaultSource(permissionModeSource),
+                                            describeNativeSandbox(props.agent.nativeSandbox)].filter(Boolean).join(' · ')}
                                     >
                                         {permissionModeLock ? <Item
                                             testID="new-session-managed-permission"

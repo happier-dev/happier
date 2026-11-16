@@ -766,6 +766,7 @@ export type ClaudeAgentSdkTurnOperationsParams = Readonly<{
     allowedTools?: readonly string[];
     unlistedTools?: 'ask' | 'deny';
     workspaceWrites?: 'allow' | 'deny';
+    nativeSandbox?: 'on' | 'off';
     happierSessionId?: string | null;
     executionRunId?: string;
     abortSignal?: AbortSignal;
@@ -2480,6 +2481,7 @@ export function createClaudeAgentSdkTurnOperations(
                         launchSettings: currentUltracode && isClaudeUltracodeSupportedModelId(currentModelId, currentProviderModel)
                             ? { ultracode: true } : {},
                         workspaceWrites: currentWorkspaceWrites,
+                        nativeSandbox: params.nativeSandbox,
                         helperModelEnv: params.helperModelEnv,
                         allowedTools: noToolsLaunchOptions?.allowedTools ?? params.allowedTools,
                         unlistedTools: noToolsLaunchOptions?.unlistedTools ?? params.unlistedTools,

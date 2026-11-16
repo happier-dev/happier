@@ -233,6 +233,14 @@ describe('agents/registryCore', () => {
         }
     });
 
+    it('surfaces declared native sandbox support without a daemon projection', () => {
+        const supported = AGENT_IDS.filter(agentId => getSharedAgentCore(agentId).nativeSandbox?.off === true);
+        expect(supported.length).toBeGreaterThan(0);
+        for (const agentId of AGENT_IDS) {
+            expect(getUiAgentCore(agentId)?.nativeSandbox).toEqual(getSharedAgentCore(agentId).nativeSandbox);
+        }
+    });
+
     it('surfaces shared flavor aliases from @happier-dev/agents', () => {
         for (const agentId of AGENT_IDS) {
             const sharedAliases = [...(getSharedAgentCore(agentId).flavorAliases ?? [])];

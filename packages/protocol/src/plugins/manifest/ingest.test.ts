@@ -45,6 +45,13 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('optional connected-account reference admission', () => {
+  it('admits a native sandbox declaration through the strict Session-primary manifest reader', () => {
+    const declaration = ingestPluginManifestV2(manifest({ contributes: { agents: [{
+      id: 'consumer', title: 'Consumer', runtime: { kind: 'custom' }, primary: 'sessions',
+      capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true }, nativeSandbox: { off: true } },
+    }] } }));
+    expect(declaration).toMatchObject({ ok: true, manifest: { contributes: { agents: [{ capabilities: { nativeSandbox: { off: true } } }] } } });
+  });
   it('reports optional missing services without refusing the manifest reference set', () => {
     const declaration = ingestPluginManifestV2(manifest({ contributes: { agents: [{
       id: 'consumer', title: 'Consumer', runtime: { kind: 'custom' }, primary: 'sessions',

@@ -244,6 +244,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         attachmentDropHint={attachmentDropHint}
                         hasSendableAttachments={composerHasSendableAttachments}
                         permissionMode={props.permissionMode}
+                        nativeSandbox={props.nativeSandbox}
                         allowedPermissionModes={props.allowedPermissionModes}
                         onPermissionModeChange={props.permissionModeLock ? undefined : props.handlePermissionModeChange}
                         permissionModeAttribution={describeInheritedDefaultSource(props.permissionModeSource)}

@@ -3,8 +3,9 @@ import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agents/runti
 export function buildCopilotAcpArgv(params: Readonly<{
   baseArgs: readonly string[];
   permissionIntent: AgentPermissionIntent | null;
+  nativeSandbox?: 'on' | 'off';
 }>): readonly string[] {
-  return params.permissionIntent === 'yolo'
-    ? [...params.baseArgs, '--yolo']
-    : [...params.baseArgs];
+  return [...params.baseArgs,
+    ...(params.permissionIntent === 'yolo' ? ['--yolo'] : []),
+    ...(params.nativeSandbox === undefined ? [] : [params.nativeSandbox === 'on' ? '--sandbox' : '--no-sandbox'])];
 }

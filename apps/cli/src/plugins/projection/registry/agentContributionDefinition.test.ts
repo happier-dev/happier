@@ -3,6 +3,7 @@ import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 
 import {
     readAgentExecutionRunCapabilities,
+    readAgentNativeSandboxCapabilities,
     readAgentPrimaryRuntime,
     readAgentSessionCapabilities,
 } from './agentContributionDefinition';
@@ -28,6 +29,26 @@ describe('Agent contribution definition discriminants', () => {
         expect(readAgentPrimaryRuntime(auxiliaryOnly)).toBeNull();
         expect(readAgentSessionCapabilities(auxiliaryOnly)).toBeNull();
         expect(readAgentExecutionRunCapabilities(auxiliaryOnly)).toBeNull();
+        expect(readAgentNativeSandboxCapabilities(auxiliaryOnly)).toBeNull();
+    });
+
+    it.each(['sessions', 'executionRuns'] as const)('reads declared native sandbox support for %s-primary Agents', primary => {
+        for (const supported of [false, true]) {
+            const definition = PluginAgentContributionV2Schema.parse({
+                id: 'primary-agent',
+                title: 'Primary Agent',
+                runtime: { kind: 'custom' },
+                primary,
+                capabilities: {
+                    ...(primary === 'sessions'
+                        ? { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } }
+                        : { executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
+                    ...(supported ? { nativeSandbox: { off: true } } : {}),
+                },
+            });
+
+            expect(readAgentNativeSandboxCapabilities(definition)).toEqual(supported ? { off: true } : null);
+        }
     });
 
     it('rejects a Session-primary executionRuns block and derives Runs only from Session facts', () => {

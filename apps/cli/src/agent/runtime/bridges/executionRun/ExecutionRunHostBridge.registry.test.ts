@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// The fixture's real publication policy imports fs; load it before replacing that boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+  import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
+
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
   return createBundledPluginPublicationFsFixture(actual);
 });
 
@@ -38,6 +42,41 @@ const rawStart = (fixture: AdmittedSessionRunFixture, input: Record<string, unkn
   }, presentUser);
 
 describe('ExecutionRunHostBridge admitted registry integration', () => {
+  it('refuses an unavailable Machine sandbox choice before creating a detached Run', async () => {
+    await withAdmittedSessionRun({ directOwner: true,
+      machineMetadata: {
+        isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' },
+        isolationPolicyV1: { configuredSandboxes: {}, workKinds: {
+          sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
+        }, agentNativeSandboxEnabled: true },
+      },
+      run: async fixture => {
+        await expect(fixture.start({ sessionId: null, intent: 'plan' })).rejects.toMatchObject({
+          rpcErrorCode: 'target_unavailable', details: {
+            executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+            issues: [{ code: 'not_available_in_sandbox_type', path: ['configuration', 'nativeSandbox'] }],
+          },
+        });
+        expect(fixture.nativeDetachedOpen).not.toHaveBeenCalled();
+        expect(await listExecutionRunMarkers()).toEqual([]);
+      } });
+  });
+
+  it('uses the isolated Machine sandbox default for a detached Run while preserving approvals', async () => {
+    await withAdmittedSessionRun({ directOwner: true, nativeSandboxAvailable: true,
+      machineMetadata: { isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' } },
+      run: async fixture => {
+        const started = await fixture.start({ sessionId: null, intent: 'plan' });
+        try {
+          await vi.waitFor(() => expect(fixture.nativeDetachedOpen.mock.calls[0]?.[0].configuration)
+            .toMatchObject({ nativeSandbox: 'off', permissionIntent: { value: 'read-only' } }));
+        } finally {
+          await fixture.bridge!.stop(started.runId);
+          await fixture.bridge!.waitForTerminal(started.runId);
+        }
+      } });
+  });
+
   it('persists streamed child tool provenance from its admitted runtime through the Run scope', async () => {
     const observations: unknown[] = [];
     await withAdmittedSessionRun({ directOwner: true, observeTranscriptObservation: payload => observations.push(payload), run: async fixture => {
@@ -79,9 +118,11 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
     await withAdmittedSessionRun({ run: async fixture => {
       const native = createNativeSessionBoundary();
       fixture.nativeOpen.mockImplementation(native.open);
+      await fixture.session.updateMetadata(metadata => ({ ...metadata, nativeSandbox: 'off' }));
       const started = await fixture.start({ modelId: 'requested-child-model' });
       await native.waitForInputs(1);
-      expect(native.opens).toMatchObject([{ configuration: { model: { value: 'requested-child-model' } } }]);
+      expect(native.opens).toMatchObject([{ configuration: { nativeSandbox: 'off',
+        model: { value: 'requested-child-model' }, permissionIntent: { value: 'read-only' } } }]);
       await vi.waitFor(async () => expect((await listExecutionRunMarkers()).find(marker => marker.runId === started.runId))
         .toMatchObject({ status: 'running', intent: 'delegate', permissionMode: 'read_only' }));
       await vi.waitFor(() => expect(fixture.lifecycleEvents).toContainEqual(expect.objectContaining({

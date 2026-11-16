@@ -48,6 +48,7 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
     mcpToolCallIdMetaKey?: string;
   }> | null;
   structuredOutput?: Readonly<{ formats: readonly string[] }>;
+  nativeSandbox?: PluginAgentCapabilitiesV2['nativeSandbox'];
 }>;
 
 /**
@@ -222,6 +223,7 @@ export function projectAgentCapabilitiesV2FromDefinition(
     ...(!sessions && authored.executionRuns ? { executionRuns: authored.executionRuns } : {}),
     ...(tools ? { tools } : {}),
     ...(structuredOutput ? { structuredOutput } : {}),
+    ...(facts.nativeSandbox ? { nativeSandbox: facts.nativeSandbox } : {}),
     ...(authored.skills ? { skills: authored.skills } : {}),
   };
 }

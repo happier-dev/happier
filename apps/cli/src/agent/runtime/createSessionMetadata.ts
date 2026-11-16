@@ -103,6 +103,7 @@ export interface CreateSessionMetadataOptions {
 }
 
 type LaunchControlEnvKey =
+    | 'HAPPIER_SESSION_NATIVE_SANDBOX'
     | 'HAPPIER_SESSION_PROFILE_ID'
     | 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'
     | 'HAPPIER_SESSION_TOOL_POLICY_JSON'
@@ -114,6 +115,7 @@ type LaunchControlEnvKey =
     | typeof HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY;
 
 const ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS = [
+    'HAPPIER_SESSION_NATIVE_SANDBOX',
     'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON',
     'HAPPIER_SESSION_TOOL_POLICY_JSON',
     'HAPPIER_SESSION_INITIAL_IDENTITY_JSON',
@@ -125,6 +127,7 @@ const ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS = [
 ] as const satisfies readonly LaunchControlEnvKey[];
 
 export type SessionLaunchControlMetadata = Readonly<{
+    nativeSandbox?: 'on' | 'off';
     allowedTools?: readonly string[];
     unlistedTools?: 'ask' | 'deny';
     identity?: SessionIdentityAdditions;
@@ -168,6 +171,9 @@ export function captureSessionLaunchControlMetadata(params: Readonly<{
         throw new Error('Invalid initial Session memory choice');
     }
     const captured: SessionLaunchControlMetadata = Object.freeze({
+        ...(read('HAPPIER_SESSION_NATIVE_SANDBOX') === undefined ? {} : {
+            nativeSandbox: z.enum(['on', 'off']).parse(read('HAPPIER_SESSION_NATIVE_SANDBOX')),
+        }),
         ...toolPolicy,
         ...(identity !== undefined ? { identity } : {}),
         ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
@@ -311,6 +317,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
             applyInitialIntentMetadata(applyInitialSessionCreationFactsToMetadata(metadataBase, {
                 allowedTools: opts.allowedTools ?? launchControlMetadata.allowedTools,
                 unlistedTools: opts.unlistedTools ?? launchControlMetadata.unlistedTools,
+                nativeSandbox: launchControlMetadata.nativeSandbox,
                 identity: opts.identity ?? launchControlMetadata.identity,
                 memoryEnabled: opts.memoryEnabled ?? launchControlMetadata.memoryEnabled,
                 promptStack: opts.promptStack,

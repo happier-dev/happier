@@ -156,6 +156,7 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   skillOverrides?: Readonly<Record<string, 'off'>>;
   mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
   workspaceWrites?: 'allow' | 'deny';
+  nativeSandbox?: 'on' | 'off';
 }> & ClaudeNativeToolPolicy): readonly string[] {
   const args = resolveClaudeNativeToolPolicyArgs(input.args, input);
   const poolNativeWaiting = readClaudePoolNativeWaitingPreferenceFromEnv(input.launchEnv);
@@ -222,10 +223,18 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   }
 
   const mergedSettings: Record<string, unknown> = { ...baseSettings, ...launchSettings };
+  if (input.nativeSandbox !== undefined) {
+    const sandbox = mergedSettings.sandbox;
+    mergedSettings.sandbox = {
+      ...(sandbox && typeof sandbox === 'object' && !Array.isArray(sandbox) ? sandbox : {}),
+      enabled: input.nativeSandbox === 'on',
+    };
+  }
   const sharedNativeRetention = resolveSharedNativeTranscriptRetention(
     input.launchEnv, readClaudeCleanupPeriodDays(mergedSettings.cleanupPeriodDays),
   );
   if (input.interactionKind !== 'interactive_terminal' && input.workspaceWrites !== 'deny'
+    && input.nativeSandbox === undefined
     && input.helperModelEnv === undefined && input.unlistedTools !== 'deny'
     && Object.keys(input.skillOverrides ?? {}).length === 0 && mcpPolicies.length === 0
     && poolNativeWaiting === undefined && sharedNativeRetention === undefined) {

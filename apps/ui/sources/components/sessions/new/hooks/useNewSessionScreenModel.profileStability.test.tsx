@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createMachineMetadataFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
@@ -34,6 +35,58 @@ afterEach(async () => { standardCleanup(); clearDaemonMergedProjectionCacheForTe
 afterAll(() => network.dispose());
 
 describe('remembered launch profile through real New Session state', () => {
+    it('reports the enabled native sandbox preference from a pushed isolated Machine policy', async () => {
+        const savedHome = await network.addHome('https://native-sandbox-policy.test', 'owner');
+        const policy = { configuredSandboxes: {}, workKinds: {
+            sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
+        }, agentNativeSandboxEnabled: false } as const;
+        let machine = createMachineFixture({ id: 'studio', active: true, activeAt: Date.now(), storageMode: 'plain',
+            metadata: createMachineMetadataFixture({ isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' }, isolationPolicyV1: policy }) });
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'owner', machine })]);
+            return createPlainMachineReadHttpResponseFixture(path, init, 'owner', machine);
+        });
+        network.setRpcResponder(async request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+            ? { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+                claude: { id: 'claude', title: 'Claude', capabilities: { nativeSandbox: { off: true },
+                    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+            } } } : {});
+        await upsertAndActivateServer({ serverUrl: savedHome.serverUrl });
+        await restoreConnectionToActiveServer({ token: savedHome.token });
+        const scope = { serverId: savedHome.id, accountId: 'owner' };
+        await vi.waitFor(() => {
+            expect(storage.getState().isDataReady).toBe(true);
+            expect(storage.getState().settingsScope).toEqual(scope);
+        });
+        storage.setState({ profileScope: scope, settingsScope: scope,
+            settings: { ...settingsDefaults, useEnhancedSessionWizard: false } });
+        storage.getState().applyMachines([machine], false, { sourceServerId: savedHome.id });
+        observeMachinePresenceForTest(scope, ['studio']);
+        const projection = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'studio', serverId: savedHome.id }));
+        await act(async () => { await vi.waitFor(() => expect(projection.getCurrent().phase, projection.getCurrent().failureReason).toBe('ready')); });
+        const model = await renderHook(() => useNewSessionScreenModel({ draftId: 'native-sandbox-policy' }));
+        const simple = () => {
+            const current = model.getCurrent();
+            if (current.variant !== 'simple') throw new Error('Expected simple New Session surface');
+            return current.simpleProps;
+        };
+        expect(projection.getCurrent().inputs?.pluginProjectionV2?.agentsById.claude?.capabilities.nativeSandbox).toEqual({ off: true });
+        expect(simple().selectedMachineId).toBe('studio');
+        expect(simple().agentPickerSelectedOptionId).toBe(explicitTargetKey);
+        await act(async () => { await vi.waitFor(() => expect(simple().nativeSandbox?.value).toBe('off')); });
+        const permissionMode = simple().permissionMode;
+        machine = { ...machine, metadataVersion: machine.metadataVersion + 1,
+            metadata: { ...machine.metadata!, isolationPolicyV1: { ...policy, agentNativeSandboxEnabled: true } } };
+        await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: savedHome.id }));
+        expect(simple().nativeSandbox).toMatchObject({ value: 'on', source: 'machine',
+            availability: { status: 'unavailable', reason: 'not_available_in_sandbox_type' } });
+        expect(simple().permissionMode).toBe(permissionMode);
+        await model.unmount();
+        await projection.unmount();
+    });
+
     it.each(['route', 'cold-home'] as const)('settles a deleted remembered profile on %s', async surface => {
         const savedHome = await network.addHome(`https://profile-stability-${surface}.test`, 'owner');
         network.setHttpResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption'

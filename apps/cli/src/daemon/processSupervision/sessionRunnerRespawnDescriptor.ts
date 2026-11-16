@@ -347,6 +347,7 @@ export const SessionRunnerRespawnDescriptorSchema = lazyZodSchema(() => (<I exte
     modelUpdatedAt: z.optional(z.number().check(z.int())),
     providerBindingMetadataV1: z.optional(SessionProviderBindingMetadataV1Schema),
     sessionConfigOptionOverrides: z.optional(z.unknown()),
+    nativeSandbox: z.optional(z.enum(['on', 'off'])),
     environmentVariables: z.optional(z.record(z.string(), z.string())),
     sealedEnvironmentVariables: z.optional(SealedRespawnEnvironmentVariablesSchema),
     connectedServices: z.optional(z.unknown()),
@@ -608,6 +609,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
       ? { providerBindingMetadataV1: spawnOptions.providerBindingMetadataV1 }
       : {}),
     ...(spawnOptions.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: spawnOptions.sessionConfigOptionOverrides } : {}),
+    ...(spawnOptions.nativeSandbox !== undefined ? { nativeSandbox: spawnOptions.nativeSandbox } : {}),
     ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
     ...(sealedEnvironmentVariables ? { sealedEnvironmentVariables } : {}),
     ...(spawnOptions.connectedServices ? { connectedServices: spawnOptions.connectedServices } : {}),
@@ -669,6 +671,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
       ? { providerBindingMetadataV1: descriptor.providerBindingMetadataV1 }
       : {}),
     ...(descriptor.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: descriptor.sessionConfigOptionOverrides as any } : {}),
+    ...(descriptor.nativeSandbox !== undefined ? { nativeSandbox: descriptor.nativeSandbox } : {}),
     ...(environmentVariables ? { environmentVariables } : {}),
     ...(descriptor.connectedServices ? { connectedServices: descriptor.connectedServices } : {}),
     ...(descriptor.connectedServiceMaterializationIdentityV1

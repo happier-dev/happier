@@ -3,6 +3,7 @@ import type { AgentExecutionTargetV1, BackendTargetRefV2 } from '@happier-dev/pr
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { readAgentNativeSandboxCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import {
   indexAgentRoutingIdsByContributionIdentity,
   readAgentRoutingIdForContributionIdentity,
@@ -44,7 +45,7 @@ export function resolveSessionCreationAgentTarget(
 
   return {
     agentId: agentContribution.id,
-    nativeSandboxAvailable: agentContribution.richDefinition?.definition.capabilities.nativeSandbox?.off === true,
+    nativeSandboxAvailable: readAgentNativeSandboxCapabilities(agentContribution.richDefinition?.definition)?.off === true,
     backendTarget: projectResolvedAgentBackendTarget(selectedTarget.data, agentContribution.id),
   };
 }

@@ -194,7 +194,7 @@ import { useAgentInputActionMenuControls } from './controls/useAgentInputActionM
 import { AGENT_INPUT_COMPACT_CONTROL_IDS } from './controls/agentInputControlRegistry';
 import { useAgentInputCoreControlHandlers } from './controls/useAgentInputCoreControlHandlers';
 import { useRenderedAgentInputControlRows } from './controls/useRenderedAgentInputControlRows';
-import { useSessionAuthoringControls } from '@/components/sessions/authoring/controls/useSessionAuthoringControls';
+import { useSessionAuthoringControls, type SessionAuthoringControlsInput } from '@/components/sessions/authoring/controls/useSessionAuthoringControls';
 import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
 import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
 import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
@@ -471,8 +471,11 @@ interface AgentInputProps {
     composerFileScope?: FileSuggestionScope | null;
     /** The Session host supplies its normalized access capability and exact Home. */
     sessionTypingPresence?: Readonly<{ serverId: string; canSubmitAgentInput: boolean }>;
-    /** The retaining Session surface's existing presented fact; absent hosts are mounted/presented. */
-    surfacePresented?: boolean;
+    /**
+     * The retaining Session surface's presented fact as a subscription; absent hosts are mounted/presented.
+     * Its host follows it without rendering; this input reads it where it gates its own controls.
+     */
+    surfacePresentation?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
     /**
      * Submits the composer. Absent means authoring only (a workflow step's
      * prompt): no send or stop affordance, Enter always inserts a newline
@@ -494,6 +497,8 @@ interface AgentInputProps {
     submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
     permissionMode?: PermissionMode;
+    /** Resolved launch preview; running Sessions report this through metadata. */
+    nativeSandbox?: SessionAuthoringControlsInput['nativeSandbox'];
     /** An embed's allowed permission modes; the mode picker offers only these. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
     onPermissionModeChange?: (mode: PermissionMode) => void;
@@ -1327,10 +1332,14 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 /** How long the recalled message's place in the history stays on screen after a flick. */
 const HISTORY_POSITION_HINT_MS = 1200;
 
+const ALWAYS_PRESENTED_SURFACE = Object.freeze({ get: () => true, subscribe: () => () => {} });
+
 export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputProps>((props, ref) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+    const surfacePresentation = props.surfacePresentation ?? ALWAYS_PRESENTED_SURFACE;
+    const surfacePresented = React.useSyncExternalStore(surfacePresentation.subscribe, surfacePresentation.get, surfacePresentation.get);
     const transcriptSource = useOptionalSessionTranscriptSource();
     // Interactive local samples have conversation presentation without live Session runtime authority.
     const localSampleSource = transcriptSource?.kind === 'readOnly' && transcriptSource.actions !== null ? transcriptSource : null;
@@ -1534,7 +1543,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         [props.sessionTypingPresence?.serverId, props.sessionId],
     );
     const typingEditable = dictationEditable
-        && props.surfacePresented !== false
+        && surfacePresented
         && props.sessionTypingPresence?.canSubmitAgentInput === true;
     // Only this input's activity is ours to clear. An idle retained composer for
     // the same Session must not stop another mounted input's typing intent.
@@ -1636,6 +1645,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sessionActive: props.sessionActive,
         currentRunnerProcessIdentity: props.currentRunnerProcessIdentity,
         permissionMode: props.permissionMode ?? null,
+        nativeSandbox: armedComposerTarget ? undefined : props.nativeSandbox,
         allowedPermissionModes: props.allowedPermissionModes ?? null,
         modelMode: props.modelMode ?? null,
         modelOptionsOverride: props.modelOptionsOverride ?? null,
@@ -1711,8 +1721,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         inputRef.current?.blur();
     }, []);
     const mainColumn = usePaneMainColumn();
-    const focusAdmissionRef = React.useRef({ mainColumn, presented: props.surfacePresented !== false });
-    focusAdmissionRef.current = { mainColumn, presented: props.surfacePresented !== false };
+    const focusAdmissionRef = React.useRef({ mainColumn, presented: surfacePresented });
+    focusAdmissionRef.current = { mainColumn, presented: surfacePresented };
     const pendingComposerFocusRef = React.useRef(false);
     // A host's explicit focus request puts the caret where the composer's document has it: after a host
     // writes the text (the Discussion composer's `@`), the field opens at the end, not where it last was.
@@ -1737,7 +1747,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [focusComposerInput]);
     React.useLayoutEffect(() => {
         if (!pendingComposerFocusRef.current) return;
-        if (props.surfacePresented === false) {
+        if (!surfacePresented) {
             pendingComposerFocusRef.current = false;
             return;
         }
@@ -1745,7 +1755,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // The retained field can receive focus only after the reveal has committed.
         pendingComposerFocusRef.current = false;
         focusComposerInput();
-    }, [focusComposerInput, mainColumn?.hidden, props.surfacePresented]);
+    }, [focusComposerInput, mainColumn?.hidden, surfacePresented]);
     const flushComposerInput = React.useCallback(() => {
         inputRef.current?.flushPendingTextChange?.();
     }, []);
@@ -2043,7 +2053,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             promptPickerSessionAddress ? sessionAddressKey(promptPickerSessionAddress) : null,
             composerRef ? composerRefV1Key(composerRef) : mountedComposerId,
         ]),
-        editable: promptLibraryAvailable && dictationEditable && !controlsOnly && props.surfacePresented !== false,
+        editable: promptLibraryAvailable && dictationEditable && !controlsOnly && surfacePresented,
         canSend: submitEnabled && !sendActionDisabled,
         inputRef,
         stateRef: inputStateRef,
@@ -2068,7 +2078,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const dictation = useSessionAuthoringComposerDictation({
         composerRef,
         enabled: voiceEnabled && props.submitDictation !== false,
-        presented: props.surfacePresented !== false,
+        presented: surfacePresented,
         editable: dictationEditable,
         transcriptionSessionId: props.sessionId ?? null,
         inputRef,
@@ -2119,10 +2129,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const voiceComposerPlanet = React.useMemo(
         () => <VoiceComposerPlanetMount
             target={voiceComposerTarget}
-            isPresented={props.surfacePresented}
+            isPresented={surfacePresented}
             setupAnchorRef={composerCardRef}
         />,
-        [props.surfacePresented, voiceComposerTarget],
+        [surfacePresented, voiceComposerTarget],
     );
     const availableFieldAccessory = props.fieldAccessory
         ?? (ownsFieldDictation
@@ -2443,13 +2453,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const currentAttachmentIntakeScope = React.useRef(attachmentIntakeScope);
     currentAttachmentIntakeScope.current = attachmentIntakeScope;
     const handleNativeAttachmentsDropped = React.useCallback((drop: import('@/components/ui/forms/nativeComposerInput').NativeComposerAttachmentDrop) => {
-        if (currentAttachmentIntakeScope.current !== attachmentIntakeScope || !dictationEditable || props.surfacePresented === false) return;
+        if (currentAttachmentIntakeScope.current !== attachmentIntakeScope || !dictationEditable || !surfacePresented) return;
         if (drop.error) {
             Modal.alert(t('files.transfers.uploadFailed'));
             return;
         }
         mentionAddedUploads(props.onAttachmentsAdded?.([], { sources: drop.sources }), { kind: 'offset', offset: drop.offset });
-    }, [attachmentIntakeScope, dictationEditable, mentionAddedUploads, props.onAttachmentsAdded, props.surfacePresented]);
+    }, [attachmentIntakeScope, dictationEditable, mentionAddedUploads, props.onAttachmentsAdded, surfacePresented]);
     const handleFilesDroppedToComposer = React.useCallback(async (event: WebFileDragEvent, mention = true) => {
         const onAttachmentsAdded = props.onAttachmentsAdded;
         const input = inputRef.current;
@@ -2472,12 +2482,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (mention) mentionAddedUploads(added, typeof point === 'number' ? { kind: 'offset', offset: point } : { kind: 'caret' });
     }, [attachmentIntakeScope, mentionAddedUploads, props.onAttachmentsAdded]);
     const composerDropZoneHandlers = useWebFileDropZone({
-        enabled: Platform.OS === 'web' && dictationEditable && !controlsOnly && props.surfacePresented !== false && typeof props.onAttachmentsAdded === 'function',
+        enabled: Platform.OS === 'web' && dictationEditable && !controlsOnly && surfacePresented && typeof props.onAttachmentsAdded === 'function',
         onFilesDropped: handleFilesDroppedToComposer,
         onFileDragActiveChange: typeof props.onAttachmentsAdded === 'function' ? setFileDragActive : undefined,
     });
     const trayDropZoneHandlers = useWebFileDropZone({
-        enabled: Platform.OS === 'web' && dictationEditable && !controlsOnly && props.surfacePresented !== false && typeof props.onAttachmentsAdded === 'function',
+        enabled: Platform.OS === 'web' && dictationEditable && !controlsOnly && surfacePresented && typeof props.onAttachmentsAdded === 'function',
         present: typeof props.onAttachmentsAdded === 'function',
         onFilesDropped: event => handleFilesDroppedToComposer(event, false),
     });
@@ -3656,9 +3666,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [messageHistory, stepMessageHistory]);
 
     const handleComposerFocusShortcut = React.useCallback(() => {
-        if (props.disabled || props.surfacePresented === false) return false;
+        if (props.disabled || !surfacePresented) return false;
         requestComposerFocus();
-    }, [props.disabled, props.surfacePresented, requestComposerFocus]);
+    }, [props.disabled, surfacePresented, requestComposerFocus]);
 
     const handleComposerAbortShortcut = React.useCallback(() => {
         const escapeAction = resolveComposerEscapeAction({ key: 'Escape', shiftKey: true }, {
@@ -3679,11 +3689,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (canStopFromComposer) {
             handlers['composer.abortConfirm'] = handleComposerAbortShortcut;
         }
-        if (promptLibraryAvailable && isInputFocused && dictationEditable && !controlsOnly && props.surfacePresented !== false) {
+        if (promptLibraryAvailable && isInputFocused && dictationEditable && !controlsOnly && surfacePresented) {
             handlers['composer.prompts.open'] = openPromptPicker;
         }
         return handlers;
-    }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut, isInputFocused, dictationEditable, controlsOnly, props.surfacePresented, openPromptPicker, promptLibraryAvailable]);
+    }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut, isInputFocused, dictationEditable, controlsOnly, surfacePresented, openPromptPicker, promptLibraryAvailable]);
     useKeyboardShortcutHandlers(keyboardShortcutHandlers);
 
     // Identity-stable handlers: these feed the action-menu and control-row memos, which an inline
@@ -4515,7 +4525,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         maxHeight={resolvedInputMaxHeight}
                                         editable={!props.disabled && !composerInputEditLocked}
                                         onFilesPasted={props.onAttachmentsAdded ? handleFilesPastedToComposer : undefined}
-                                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && props.surfacePresented !== false ? handleNativeAttachmentsDropped : undefined}
+                                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && surfacePresented ? handleNativeAttachmentsDropped : undefined}
                                         attachmentDropScope={attachmentIntakeScope}
                                         onContentHeightChange={handleInputContentHeightChange}
                                     />
@@ -4591,7 +4601,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         maxHeight={resolvedInputMaxHeight}
                                         editable={!props.disabled && !composerInputEditLocked}
                                         onFilesPasted={props.onAttachmentsAdded ? handleFilesPastedToComposer : undefined}
-                                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && props.surfacePresented !== false ? handleNativeAttachmentsDropped : undefined}
+                                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && surfacePresented ? handleNativeAttachmentsDropped : undefined}
                                         attachmentDropScope={attachmentIntakeScope}
                                         onContentHeightChange={handleInputContentHeightChange}
                                     />
@@ -4614,7 +4624,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 {/* After the panel, so its drop outline paints over the panel's own fill (it is the target's one visible mark). */}
                 {composerRef && composerDropScope ? <ComposerEntityDropTarget
                     id={composerDropTargetId} scope={composerDropScope} refValue={composerRef}
-                    bounds={composerDropBounds} clearBounds={composerBlockBounds} presented={props.surfacePresented !== false}
+                    bounds={composerDropBounds} clearBounds={composerBlockBounds} presented={surfacePresented}
                     editable={dictationEditable && !controlsOnly} kinds={props.autocompleteKinds}
                     inputRef={inputRef} externalFilesActive={fileDragActive}
                     referenceHost={props.composerReferenceHost} fileScope={props.composerFileScope}

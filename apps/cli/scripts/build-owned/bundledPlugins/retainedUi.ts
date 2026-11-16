@@ -1,6 +1,6 @@
 /** Refresh manifest facts while retaining unavailable peer UI descriptors. */
 import {
-  createSourceFile, isIdentifier, isImportDeclaration, isObjectLiteralExpression, isPropertyAssignment,
+  createSourceFile, isIdentifier, isImportDeclaration, isNamedImports, isObjectLiteralExpression, isPropertyAssignment,
   isStringLiteral, isTypeAliasDeclaration, isVariableStatement, ScriptTarget,
 } from 'typescript';
 import type { Expression, ObjectLiteralExpression, PropertyAssignment, Statement } from 'typescript';
@@ -39,6 +39,17 @@ export function renderRetainedUiBundledPluginEntriesTs(
     }
   }
   const edits: { start: number; end: number; text: string }[] = [];
+  const sharedCoreImport = parsed.statements.find(statement => isImportDeclaration(statement)
+    && isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === '@happier-dev/agents'
+    && !statement.importClause?.isTypeOnly);
+  const sharedBindings = sharedCoreImport && isImportDeclaration(sharedCoreImport)
+    ? sharedCoreImport.importClause?.namedBindings : undefined;
+  if (!sharedBindings || !isNamedImports(sharedBindings)) throw new Error(`Missing bundled shared Agent imports: ${outPath}`);
+  if (!sharedBindings.elements.some(binding => binding.name.text === 'getSharedAgentCore'
+    && binding.propertyName?.text === 'getAgentCore')) {
+    const afterBrace = sharedBindings.getStart(parsed) + 1;
+    edits.push({ start: afterBrace, end: afterBrace, text: ' getAgentCore as getSharedAgentCore,' });
+  }
   // Protocol type imports belong to the manifest declarations. Descriptor
   // imports and executable expressions remain exactly as published by peers.
   const imports = parsed.statements.filter(statement => isImportDeclaration(statement)
@@ -64,13 +75,25 @@ export function renderRetainedUiBundledPluginEntriesTs(
   }
 
   // CORE/UI map entries reference descriptor constants, not manifest payloads.
-  // The two manifest fields embedded in CORE constants must still advance.
+  // Manifest fields embedded in CORE constants must still advance. Runtime
+  // facts delegate to the same shared Agent core as fresh projections.
   // Use syntax spans so nested permission mappings and field removal are safe.
   for (const entry of pluginPackages) {
     if (!entry.agentId) continue;
     const core = constants.get(`${toAgentConstPrefix(entry.agentId)}_CORE`);
     // Declarative catalog Agents without a bundled UI descriptor have no CORE.
     if (!core || !isObjectLiteralExpression(core)) continue;
+    const nativeSandbox = property(core, 'nativeSandbox');
+    const nativeSandboxExpression = `getSharedAgentCore(${JSON.stringify(entry.agentId)})?.nativeSandbox`;
+    if (nativeSandbox) {
+      edits.push({ start: nativeSandbox.initializer.getStart(parsed), end: nativeSandbox.initializer.end,
+        text: nativeSandboxExpression });
+    } else {
+      const id = property(core, 'id');
+      if (!id) throw new Error(`Missing bundled Agent id for '${entry.agentId}': ${outPath}`);
+      const afterId = id.end + (source[id.end] === ',' ? 1 : 0);
+      edits.push({ start: afterId, end: afterId, text: `\n    nativeSandbox: ${nativeSandboxExpression},` });
+    }
     const environmentKeys = property(core, 'providerOwnedEnvironmentKeys');
     if (!environmentKeys) throw new Error(`Missing bundled Agent environment keys for '${entry.agentId}': ${outPath}`);
     edits.push({ start: environmentKeys.initializer.getStart(parsed), end: environmentKeys.initializer.end,

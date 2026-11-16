@@ -176,6 +176,11 @@ describe('Agent session VB4 open inputs', () => {
     },
   } as const;
 
+  it.each(['on', 'off'] as const)('retains the independent native sandbox %s selection', nativeSandbox => {
+    expect(AgentSessionConfigurationSnapshotV1Schema.parse({ ...configuration, nativeSandbox }))
+      .toHaveProperty('nativeSandbox', nativeSandbox);
+  });
+
   it.each(['explicit', 'inherited'] as const)('preserves %s model-selection provenance through strict configuration readers', selectionSource => {
     const snapshot = { ...configuration, model: { ...configuration.model, selectionSource } };
     expect(AgentSessionConfigurationSnapshotV1Schema.parse(snapshot)).toEqual(snapshot);

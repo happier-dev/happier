@@ -32,6 +32,21 @@ function createMetadata(
 }
 
 describe('createSessionMetadata', () => {
+    it('captures sandbox choice at birth without leaking it into the shared host environment', () => {
+        const processEnvironment = { HAPPIER_SESSION_NATIVE_SANDBOX: 'off' };
+        const launchControlMetadata = captureSessionLaunchControlMetadata({ processEnvironment });
+        const { metadata } = createMetadata({ flavor: 'codex', directory: '/repo', launchControlMetadata });
+        expect(metadata).toMatchObject({ nativeSandbox: 'off' });
+        expect(processEnvironment).not.toHaveProperty('HAPPIER_SESSION_NATIVE_SANDBOX');
+    });
+    it('preserves the retained Session sandbox choice when a runner attaches', () => {
+        const current = createTestMetadata({ nativeSandbox: 'on' });
+        const next = createTestMetadata({ nativeSandbox: 'off' });
+        expect(mergeSessionMetadataForStartup({ current, next, nowMs: 2, mode: 'attach' }))
+            .toMatchObject({ nativeSandbox: 'on' });
+        expect(mergeSessionMetadataForStartup({ current: createTestMetadata(), next, nowMs: 2, mode: 'attach' }))
+            .not.toHaveProperty('nativeSandbox');
+    });
     it('publishes each hosted Session home alongside its own expanded workspace', async () => {
         await Promise.all(['first', 'second'].map(name => {
             const home = process.platform === 'win32' ? `C:\\Users\\${name}` : `/home/${name}`;

@@ -2,11 +2,14 @@ import { resolveManagedDependencyCommand } from '@happier-dev/plugin-sdk/managed
 import { CODEX_ACP_MANAGED_DEPENDENCY } from '../installables/definition.js';
 import { readCodexMcpServerKeysFromConfigToml } from '../mcp/configServers.js';
 import { codexNativeUpstreamConfigOverrides } from '../providerBinding/runtimeConfig.js';
+import { resolveCodexTerminalPermissionPolicy } from '../runtime/terminal/permissionPolicy.js';
 
 export type CodexAcpSpawnSpec = { command: string; args: string[] };
 
 export type ResolveCodexAcpSpawnOptions = Readonly<{
   permissionMode?: string;
+  workspaceWrites?: 'allow' | 'deny';
+  nativeSandbox?: 'on' | 'off';
   disableUserMcpServers?: boolean;
   env?: Readonly<Record<string, string | undefined>>;
   currentWorkingDirectory?: string;
@@ -34,7 +37,7 @@ function appendPermissionModeDerivedOverrides(
   opts: ResolveCodexAcpSpawnOptions,
 ): CodexAcpSpawnSpec {
   const mode = opts.permissionMode;
-  if (!mode) return spec;
+  if (!mode && opts.nativeSandbox === undefined && opts.workspaceWrites !== 'deny') return spec;
 
   const derivedByMode: Readonly<Partial<Record<string, readonly string[]>>> = {
     yolo: ['approval_policy="never"', 'sandbox_mode="danger-full-access"'],
@@ -44,9 +47,14 @@ function appendPermissionModeDerivedOverrides(
     default: ['approval_policy="on-request"', 'sandbox_mode="read-only"'],
     plan: ['approval_policy="on-request"', 'sandbox_mode="read-only"'],
   };
-  const derived = derivedByMode[mode] ?? null;
-
-  if (!derived) return spec;
+  const inherited = mode ? derivedByMode[mode] ?? [] : [];
+  // ACP retains its transport's approval mapping. Explicit sandbox selection
+  // uses the same native sandbox policy as App Server, including role ceilings.
+  const derived = opts.nativeSandbox === undefined && opts.workspaceWrites !== 'deny' ? inherited
+    : [...inherited.filter(entry => !entry.startsWith('sandbox_mode=')),
+      `sandbox_mode=${JSON.stringify(resolveCodexTerminalPermissionPolicy(mode ?? 'default', opts.workspaceWrites,
+        undefined, opts.nativeSandbox).sandbox)}`];
+  if (derived.length === 0) return spec;
   return { command: spec.command, args: [...spec.args, ...derived.flatMap((entry) => ['-c', entry])] };
 }
 

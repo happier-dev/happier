@@ -27,14 +27,16 @@ export const CURSOR_ACP_RUNTIME_DEFINITION = Object.freeze({
 
 function buildCursorPermissionIntentArgs(
   permissionIntent: AgentPermissionIntent | null,
+  nativeSandbox?: 'on' | 'off',
 ): readonly string[] {
+  const sandboxArgs = nativeSandbox === undefined ? [] : ['--sandbox', nativeSandbox === 'on' ? 'enabled' : 'disabled'];
   switch (permissionIntent) {
     case 'safe-yolo':
-      return Object.freeze(['--force', '--sandbox', 'enabled']);
+      return Object.freeze(['--force', ...(nativeSandbox === undefined ? ['--sandbox', 'enabled'] : sandboxArgs)]);
     case 'yolo':
-      return Object.freeze(['--force']);
+      return Object.freeze(['--force', ...sandboxArgs]);
     default:
-      return Object.freeze([]);
+      return Object.freeze(sandboxArgs);
   }
 }
 
@@ -42,10 +44,11 @@ export function buildCursorAcpArgs(
   permissionIntent: AgentPermissionIntent | null,
   apiEndpoint: string,
   skills?: Pick<AgentSessionSkillDelivery, 'pluginRoot'>,
+  nativeSandbox?: 'on' | 'off',
 ): readonly string[] {
   return Object.freeze([
     ...buildCursorEndpointArgs(apiEndpoint),
-    ...buildCursorPermissionIntentArgs(permissionIntent),
+    ...buildCursorPermissionIntentArgs(permissionIntent, nativeSandbox),
     ...(skills ? ['--plugin-dir', skills.pluginRoot] : []),
     'acp',
   ]);
@@ -68,7 +71,8 @@ async function resolveCursorAcpOptions(
             : 'cursor-agent-no-fallback',
         }),
         ...(settings.binaryPath ? { preferredPath: settings.binaryPath } : {}),
-        args: buildCursorAcpArgs(request.configuration?.permissionIntent.value ?? null, settings.apiEndpoint, request.skills),
+        args: buildCursorAcpArgs(request.configuration?.permissionIntent.value ?? null, settings.apiEndpoint, request.skills,
+          request.configuration?.nativeSandbox),
       }),
       definition: CURSOR_ACP_RUNTIME_DEFINITION,
     },

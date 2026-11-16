@@ -162,6 +162,8 @@ export type AgentCoreRuntimeControlSurface = Readonly<{
     tools: AgentToolsConfig;
     /** Prompted JSON output accepted by the host's strict structured profiles. */
     structuredOutput?: Readonly<{ formats: readonly ['json'] }>;
+    /** The native adapter can select its sandbox independently of approval policy. */
+    nativeSandbox?: Readonly<{ off: true }>;
 }>;
 
 export type AgentCore = Readonly<{

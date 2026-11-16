@@ -31,6 +31,7 @@ function createCopilotAcpOptions(configuration: AgentSessionConfigurationSnapsho
       args: buildCopilotAcpArgv({
         baseArgs: [...COPILOT_ACP_COMMAND.args],
         permissionIntent: configuration.permissionIntent.value,
+        nativeSandbox: configuration.nativeSandbox,
       }),
     },
     definition: COPILOT_ACP_RUNTIME_DEFINITION,

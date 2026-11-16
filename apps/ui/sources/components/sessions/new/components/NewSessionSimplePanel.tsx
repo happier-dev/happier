@@ -104,6 +104,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     agentPickerProbe?: React.ComponentProps<typeof AgentInput>['agentPickerProbe'];
     onAgentPickerVisibilityChange?: React.ComponentProps<typeof AgentInput>['onAgentPickerVisibilityChange'];
     permissionMode: React.ComponentProps<typeof AgentInput>['permissionMode'];
+    nativeSandbox?: React.ComponentProps<typeof AgentInput>['nativeSandbox'];
     permissionModeLock?: OrganizationPolicyLock | null;
     permissionModeSource?: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
     allowedPermissionModes?: React.ComponentProps<typeof AgentInput>['allowedPermissionModes'];

@@ -3242,6 +3242,7 @@ function assertUniqueBundledPluginIdentities(pluginPackages: readonly BundledPlu
 async function readPublishedBundledPluginPackages(
   repoRoot: string,
   selectedPackageNames: ReadonlySet<string>,
+  bundledPluginPackageNames: readonly string[],
 ): Promise<readonly BundledPluginPackage[]> {
   const metadataPath = resolve(repoRoot,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
@@ -3254,10 +3255,11 @@ async function readPublishedBundledPluginPackages(
   ), metadataPath);
   const metadata = metadataModule.BUNDLED_FIRST_PARTY_PLUGIN_METADATA;
   if (!Array.isArray(metadata)) throw new Error(`Missing published bundled plugin metadata: ${metadataPath}`);
+  const currentPackageNames = new Set(bundledPluginPackageNames);
   return metadata.flatMap((value): BundledPluginPackage[] => {
     const row = readRequiredRecord(value, metadataPath);
     const packageName = readRequiredString(row, 'packageName', metadataPath);
-    if (selectedPackageNames.has(packageName)) return [];
+    if (!currentPackageNames.has(packageName) || selectedPackageNames.has(packageName)) return [];
     const pluginPackageId = pluginPackageNameToPackageId(packageName);
     const manifestPath = resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId));
     // These bytes were admitted by this publisher. Re-parsing them with today's
@@ -4615,7 +4617,8 @@ async function generateBundledPluginEntries(
         new Set(),
       );
       const sourceResult = options.mode === 'write'
-        ? { sourcePluginPackages: await readPublishedBundledPluginPackages(options.rootDir, new Set(selectedPluginPackages.map(entry => entry.packageName))), failures: [] }
+        ? { sourcePluginPackages: await readPublishedBundledPluginPackages(options.rootDir,
+          new Set(selectedPluginPackages.map(entry => entry.packageName)), bundledPluginPackageNames), failures: [] }
         : await collectBundledPluginSourcePackages({
         repoRoot: options.rootDir,
         // Selected declarations already passed the same source admission above.
@@ -4668,7 +4671,7 @@ async function generateBundledPluginEntries(
     // Reuse scoped publication's retained executable bindings and declarations.
     // Failed packages supply only their last admitted manifests, never new source.
     const peers = await readPublishedBundledPluginPackages(options.rootDir,
-      new Set(discoveredPluginPackages.pluginPackages.map(entry => entry.packageName)));
+      new Set(discoveredPluginPackages.pluginPackages.map(entry => entry.packageName)), bundledPluginPackageNames);
     return await publishBundledPluginSemanticProjection({ ...options,
       workspaceNames: bundledPluginPackageNames.map(name => name.replace('@happier-dev/', '')),
     }, dependencies, publicationLease, [], failures, {
@@ -4924,9 +4927,10 @@ export type BundledPluginPublicationResult = Readonly<{
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<BundledPluginPublicationResult | void> {
   const parsed = parseGeneratorCliArgs(argv);
+  const bundledPluginPackageNames = readBundledPluginPackageNames(parsed.rootDir,
+    { requireManifestSource: !parsed.daemonOutputRoot && parsed.mode !== 'write' });
   const { options } = normalizeCanonicalGeneratorPublication(argv, parsed,
-    readBundledPluginPackageNames(parsed.rootDir, { requireManifestSource: !parsed.daemonOutputRoot && parsed.mode !== 'write' })
-      .map((name) => name.replace('@happier-dev/', '')));
+    bundledPluginPackageNames.map((name) => name.replace('@happier-dev/', '')));
   const timing = createBundledPluginTimingReporter();
   if (options.daemonOutputRoot) {
     if (resolve(options.daemonOutputRoot) === resolve(options.rootDir)) {
@@ -4946,11 +4950,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // buildSharedDeps callers. Prepare before taking publication custody so
       // nested compilers can acquire their own capacity and package leases.
       const workspaces = await importCanonicalWorkspaceModule('@happier-dev/cli-common', 'workspaces') as CliCommonWorkspacesModule;
+      const selectedPackageNames = options.workspaceNames.length > 0
+        ? new Set(resolveSelectedBundledPluginPackageNames(bundledPluginPackageNames, options.workspaceNames))
+        : undefined;
+      const bundledPackageNames = new Set(bundledPluginPackageNames);
       await prepareCanonicalRuntimeWorkspacePackages(options.rootDir,
         workspaces.resolveWorkspaceBundlesFromPackageJson({
           repoRoot: options.rootDir,
           hostPackageDir: resolve(options.rootDir, 'apps', 'cli'),
-        }));
+        }).filter(bundle => !selectedPackageNames || !bundledPackageNames.has(bundle.packageName)
+          || selectedPackageNames.has(bundle.packageName)));
       timing.phase('runtime-workspaces-ready');
     }
     const generate = async (lease?: WorkspaceBundleLockContext) => {

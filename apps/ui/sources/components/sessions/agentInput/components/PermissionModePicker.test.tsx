@@ -4,6 +4,8 @@ import { renderScreen } from '@/dev/testkit';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { PermissionModePicker } from './PermissionModePicker';
 import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
+import { describeEffectivePermissionMode } from '@/sync/domains/permissions/describeEffectivePermissionMode';
+import { t } from '@/text';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,6 +65,19 @@ async function renderPicker(params: {
 }
 
 describe('PermissionModePicker', () => {
+    it('shows the resolved unavailable sandbox reason while retaining the selected approval option', async () => {
+        const { screen } = await renderPicker({
+            selected: 'default',
+            effectivePermissionPolicy: describeEffectivePermissionMode({
+                agentType: 'codex', selectedMode: 'default', metadata: null, applyTiming: 'immediate',
+                nativeSandbox: { value: 'on', source: 'machine', availability: {
+                    status: 'unavailable', reason: 'not_available_in_sandbox_type',
+                } },
+            }),
+        });
+        expect(screen.getTextContent()).toContain(t('agentInput.permissionMode.nativeSandboxUnavailable'));
+        expect(screen.findByTestId('permission-mode-default')?.props.accessibilityState).toEqual({ checked: true });
+    });
     it('renders option descriptions', async () => {
         const { screen } = await renderPicker({ selected: 'default' });
         expect(screen.getTextContent()).toContain('Ask each time');

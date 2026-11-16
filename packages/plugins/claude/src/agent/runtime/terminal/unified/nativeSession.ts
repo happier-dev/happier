@@ -222,6 +222,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     allowedTools: input.request.configuration?.allowedTools,
     unlistedTools: input.request.configuration?.unlistedTools,
     workspaceWrites: input.request.configuration?.workspaceWrites,
+    nativeSandbox: input.request.configuration?.nativeSandbox,
     knownProviderSession: resume.knownProviderSession,
     launchIntent: resume.launchIntent,
     resumeChoice: normalizeClaudeUnifiedResumeChoice(resumeChoiceSetting)

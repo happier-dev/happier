@@ -17,6 +17,7 @@ export const AGENT_DEFINITION = Object.freeze({
       experimentalResumePolicy: 'runtime_checked',
     },
     sessionStorage: { direct: true, persisted: true },
+    nativeSandbox: { off: true as const },
     sessionCapabilities: {
       sessionListing: 'unsupported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },

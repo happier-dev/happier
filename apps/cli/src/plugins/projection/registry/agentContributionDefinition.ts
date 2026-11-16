@@ -54,6 +54,14 @@ export function readAgentStructuredOutputCapabilities(
         : null;
 }
 
+export function readAgentNativeSandboxCapabilities(
+    definition: PluginAgentContributionV2 | null | undefined,
+): NonNullable<PrimaryAgentContributionDefinition['capabilities']['nativeSandbox']> | null {
+    return definition && isPrimaryAgentContributionDefinition(definition)
+        ? definition.capabilities.nativeSandbox ?? null
+        : null;
+}
+
 /**
  * The one effective Execution Run capability reader.
  *

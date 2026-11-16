@@ -44,6 +44,7 @@ export type MachineLoginKey = string;
 export type AgentCoreConfig = Readonly<{
     /** A UI core exists only for a bundled Agent; external Agents ship their own. */
     id: BundledAgentId;
+    nativeSandbox?: SharedAgentCore['nativeSandbox'];
     /**
      * Translation key for the agent display name in UI.
      * (Resolved via `t(...)` in UI modules.)

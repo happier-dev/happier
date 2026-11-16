@@ -92,6 +92,7 @@ export type SessionAuthoringControlsInput = Readonly<{
     sessionActive?: boolean;
     currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     permissionMode?: PermissionMode | null;
+    nativeSandbox?: Parameters<typeof describeEffectivePermissionMode>[0]['nativeSandbox'];
     /** An embed's allowed modes (`grant.permissionModes`); the options narrow to them. `null` = all. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
     modelMode?: ModelMode | null;
@@ -172,10 +173,11 @@ export function useSessionAuthoringControls(
             agentType: permissionAgentId,
             sessionModeDescriptor: input.sessionModeDescriptor,
             selectedMode: input.permissionMode ?? 'default',
+            nativeSandbox: input.nativeSandbox,
             metadata: permissionMetadata,
             applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
         });
-    }, [permissionAgentId, input.permissionMode, input.sessionModeDescriptor, permissionMetadata, sessionPermissionModeApplyTiming]);
+    }, [permissionAgentId, input.permissionMode, input.nativeSandbox, input.sessionModeDescriptor, permissionMetadata, sessionPermissionModeApplyTiming]);
 
     const effectivePermissionLabel = React.useMemo(() => {
         return effectivePermissionPolicy.nativeModeLabel ?? getPermissionModeLabelForAgentType(permissionAgentId, effectivePermissionPolicy.effectiveMode);

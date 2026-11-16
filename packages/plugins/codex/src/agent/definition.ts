@@ -93,6 +93,7 @@ export const AGENT_DEFINITION = Object.freeze({
     },
     resume: { vendorResume: 'experimental' as const, vendorResumeIdField: 'codexSessionId' },
     sessionStorage: { direct: true, persisted: true },
+    nativeSandbox: { off: true as const },
     structuredOutput: { formats: ['json'] },
     sessionCapabilities: {
       sessionListing: 'supported',

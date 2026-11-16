@@ -157,6 +157,9 @@
           ]
         },
         "capabilities": {
+          "nativeSandbox": {
+            "off": true
+          },
           "providerStateSharing": {
             "config": {
               "modes": [
@@ -518,6 +521,13 @@
               "title": "Strongest"
             }
           ],
+          "reasoningEffortValues": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
           "required": {
             "streaming": true,
             "toolRoundTrips": true
@@ -773,7 +783,7 @@
                 },
                 "checklist": [
                   {
-                    "fallback": "Create an API key in the Anthropic Console, then paste it here.",
+                    "fallback": "Create an API key in the [Anthropic Console], then paste it here.",
                     "key": "connectedServicesSettings.keyCreateAnthropic"
                   }
                 ],
@@ -839,6 +849,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -2835,7 +2846,7 @@
   "description": "Claude Code coding agent.",
   "displayName": "Claude",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],
@@ -3008,7 +3019,7 @@
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },
-        "normalizedModulePath": ".happier-plugin/agent/runtime/factory.js"
+        "normalizedModulePath": ".happier-plugin-build/agent/runtime/factory.js"
       }
     ],
     "apiVersion": 1

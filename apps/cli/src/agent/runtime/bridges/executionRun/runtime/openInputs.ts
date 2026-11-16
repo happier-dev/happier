@@ -264,6 +264,7 @@ export function buildExecutionRunConfiguration(input: Readonly<{
     allowedTools?: AgentSessionConfigurationSnapshot['allowedTools'];
     unlistedTools?: AgentSessionConfigurationSnapshot['unlistedTools'];
     workspaceWrites?: 'allow' | 'deny';
+    nativeSandbox?: AgentSessionConfigurationSnapshot['nativeSandbox'];
     updatedAtMs: number;
 }>): Readonly<{
     modelSelection?: ProviderBoundModelRef;
@@ -286,6 +287,7 @@ export function buildExecutionRunConfiguration(input: Readonly<{
             updatedAtMs: input.updatedAtMs,
         },
         ...(input.workspaceWrites !== undefined ? { workspaceWrites: input.workspaceWrites } : {}),
+        ...(input.nativeSandbox !== undefined ? { nativeSandbox: input.nativeSandbox } : {}),
         ...(input.allowedTools !== undefined ? { allowedTools: input.allowedTools } : {}),
         ...(input.unlistedTools !== undefined ? { unlistedTools: input.unlistedTools } : {}),
         // Permission intent alone cannot distinguish no-tools from read-only.

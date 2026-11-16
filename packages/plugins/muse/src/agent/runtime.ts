@@ -32,9 +32,13 @@ const MUSE_PERMISSIONS = {
 
 
 
-function musePermissions(configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'> | undefined) {
-  return MUSE_PERMISSIONS[configuration?.workspaceWrites === 'deny' ? 'read-only'
+type MusePermissionConfiguration = Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites' | 'nativeSandbox'>;
+
+function musePermissions(configuration: MusePermissionConfiguration | undefined) {
+  const selected = MUSE_PERMISSIONS[configuration?.workspaceWrites === 'deny' ? 'read-only'
     : configuration?.permissionIntent.value ?? 'default'];
+  return selected.permissionProfile === ':read-only' || configuration?.nativeSandbox === undefined ? selected
+    : { ...selected, permissionProfile: configuration.nativeSandbox === 'off' ? ':unrestricted' : ':ask-me' };
 }
 
 function museStartupConfigurationError(message: string) {
@@ -116,8 +120,9 @@ async function openMuseConversation<SessionId extends string | undefined>(
   }]));
   const nativeMcpConfig: Readonly<Record<string, JsonValue>> = selectedMcp.length ? { config: { mcpServers: nativeMcpServers } } : {};
   const permissions = musePermissions(request.configuration);
-  const explicitPermissions = request.configuration?.permissionIntent.value != null
+  const explicitNativeProfile = request.configuration?.permissionIntent.value != null
     || request.configuration?.workspaceWrites === 'deny';
+  const explicitPermissions = explicitNativeProfile || request.configuration?.nativeSandbox !== undefined;
   if (request.configuration?.mode.value) throw new PluginError({ code: 'unsupported', message: 'Native Muse behavior modes are unavailable.' });
   const workflowSnapshots = new Map<string, SessionWorkflowRunSnapshotV1>();
   const workflowAddress = (runId: string) => ({ owner: 'host' as const,
@@ -233,7 +238,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
       : request.kind === 'resume'
       ? msp.command('session/resume', { sessionId: resumeId!, excludeItems: false,
         // Omission retains native authority; explicit selections use the same launch mapping.
-        ...(explicitPermissions ? { permissionProfile: permissions.permissionProfile } : {}),
+        ...(explicitNativeProfile ? { permissionProfile: permissions.permissionProfile } : {}),
         ...nativeMcpConfig }, { signal: context.signal })
       : msp.command('session/start', { workspaceRoot: request.cwd,
         ...permissions,
@@ -257,31 +262,38 @@ async function openMuseConversation<SessionId extends string | undefined>(
           if (!context.signal.aborted && !closing && !ended) context.services.logger.warn('Muse initial usage refresh was unavailable', readMuseUsageRefreshFailure(error));
         });
     }
-    if (request.kind === 'fork' && (selectedMcp.length || explicitPermissions)) {
+    if (request.kind === 'fork' && (selectedMcp.length || explicitNativeProfile)) {
       // Fork inherits its profile and omits MCP bindings. Both launch selections
       // use the existing construction-only release/resume path.
       await releaseMuseForkForConfiguration(msp, nativeSessionId, context.signal);
       opened = readMuseRecord(await msp.command('session/resume', {
         sessionId: nativeSessionId, excludeItems: false, ...nativeMcpConfig,
-        ...(explicitPermissions ? { permissionProfile: permissions.permissionProfile } : {}),
+        ...(explicitNativeProfile ? { permissionProfile: permissions.permissionProfile } : {}),
       }, { signal: context.signal }));
       native = readMuseRecord(opened.session);
       if (native.sessionId !== nativeSessionId) throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR',
         message: 'Muse returned a different native Session identity during fork configuration.' });
     }
     const nativeProfile = readMuseRecord(native.permissionState).profileId;
-    let currentProfile: string | undefined = explicitPermissions || request.kind === 'create'
+    let currentProfile: string | undefined = explicitNativeProfile || request.kind === 'create'
       ? permissions.permissionProfile : typeof nativeProfile === 'string' ? nativeProfile : undefined;
     const nativeApproval = readMuseRecord(native.approvalMode).mode;
     let currentApproval: string | undefined = request.kind === 'create' ? permissions.approvalMode
       : typeof nativeApproval === 'string' ? nativeApproval : undefined;
-    const applyPermissions = async (configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'>,
+    let currentNativeSandbox = request.configuration?.nativeSandbox;
+    const applyPermissions = async (configuration: MusePermissionConfiguration,
       options?: { signal?: AbortSignal }) => {
-      if (configuration.permissionIntent.value === null && configuration.workspaceWrites !== 'deny') {
+      const hasPermissionIntent = configuration.permissionIntent.value !== null || configuration.workspaceWrites === 'deny';
+      const nativeSandbox = configuration.nativeSandbox ?? currentNativeSandbox;
+      if (!hasPermissionIntent && nativeSandbox === undefined) {
         return { status: 'applied' as const, changed: [] };
       }
-      const selected = musePermissions(configuration);
-      if (selected.permissionProfile === currentProfile && selected.approvalMode === currentApproval) {
+      const selected = !hasPermissionIntent && currentProfile === ':read-only'
+        ? MUSE_PERMISSIONS['read-only'] : musePermissions({ ...configuration, nativeSandbox });
+      // A sandbox-only resume retains the approval mode returned by native Muse.
+      const approvalMode = hasPermissionIntent ? selected.approvalMode : currentApproval;
+      if (selected.permissionProfile === currentProfile && approvalMode === currentApproval) {
+        currentNativeSandbox = nativeSandbox;
         return { status: 'applied' as const, changed: [] };
       }
       let method = 'session/setPermissionProfile';
@@ -313,16 +325,22 @@ async function openMuseConversation<SessionId extends string | undefined>(
           // separate approval axis rather than assuming the prior override survived.
           currentApproval = undefined;
         }
-        method = 'session/setApprovalMode';
-        const result = readMuseRecord(await msp.command('session/setApprovalMode', {
-          sessionId: nativeSessionId, mode: selected.approvalMode,
-        }, { signal: options?.signal ?? context.signal }));
-        if (result.status !== 'accepted' || readMuseRecord(result.effectiveMode).mode !== selected.approvalMode) {
-          return { status: 'rejected' as const, retryable: false,
-            diagnostic: { code: 'provider_request_rejected', severity: 'error' as const } };
+        if (approvalMode !== undefined) {
+          method = 'session/setApprovalMode';
+          const result = readMuseRecord(await msp.command('session/setApprovalMode', {
+            sessionId: nativeSessionId, mode: approvalMode,
+          }, { signal: options?.signal ?? context.signal }));
+          if (result.status !== 'accepted' || readMuseRecord(result.effectiveMode).mode !== approvalMode) {
+            return { status: 'rejected' as const, retryable: false,
+              diagnostic: { code: 'provider_request_rejected', severity: 'error' as const } };
+          }
+          currentApproval = approvalMode;
         }
-        currentApproval = selected.approvalMode;
-        return { status: 'applied' as const, changed: ['permissionIntent' as const] };
+        currentNativeSandbox = nativeSandbox;
+        return { status: 'applied' as const, changed: [
+          ...(hasPermissionIntent ? ['permissionIntent' as const] : []),
+          ...(configuration.nativeSandbox === undefined ? [] : ['nativeSandbox' as const]),
+        ] };
       } catch (error) {
         const failure = classifyJsonRpcSubmissionFailure(error, { method, effectObserved: false });
         const data = error instanceof Error && 'data' in error ? error.data : undefined;

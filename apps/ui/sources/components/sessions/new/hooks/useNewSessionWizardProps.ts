@@ -129,6 +129,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
+    nativeSandbox?: NewSessionWizardAgentProps['nativeSandbox'];
     permissionModeLock?: NewSessionWizardAgentProps['permissionModeLock'];
     permissionModeSource?: NewSessionWizardAgentProps['permissionModeSource'];
     handlePermissionModeChange: (mode: PermissionMode) => void;
@@ -433,6 +434,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             selectedIndicatorColor: params.selectedIndicatorColor,
             profileMap: params.profileMap,
             permissionMode: params.permissionMode,
+            nativeSandbox: params.nativeSandbox,
             permissionModeLock: params.permissionModeLock,
             permissionModeSource: params.permissionModeSource,
             handlePermissionModeChange: params.handlePermissionModeChange,
@@ -474,6 +476,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.acpConfigOptionsProbe,
         params.acpConfigOptionOverrides,
         params.permissionMode,
+        params.nativeSandbox,
         params.permissionModeLock,
         params.permissionModeSource,
         params.profileMap,

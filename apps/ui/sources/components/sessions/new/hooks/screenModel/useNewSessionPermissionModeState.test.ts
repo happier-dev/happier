@@ -11,6 +11,18 @@ describe('useNewSessionPermissionModeState authored draft intent', () => {
         selectedProfileId: null, profileMap: new Map(), enabledAgentIds: ['claude'],
         sessionDefaultPermissionModeByTargetKey: { 'agent:happier.agent.claude/claude': 'yolo' as const },
     };
+    it('updates the native sandbox preview when the execution machine changes without changing approval intent', async () => {
+        const initialProps: Parameters<typeof useNewSessionPermissionModeState>[0] = {
+            ...input, nativeSandboxAvailable: true,
+            machineIsolation: { environment: 'managed-guest', provisionerId: 'example.machine/guest' },
+        };
+        const hook = await renderHook(useNewSessionPermissionModeState, { initialProps });
+        expect(hook.getCurrent().nativeSandbox.value).toBe('off');
+        expect(hook.getCurrent().permissionMode).toBe('yolo');
+        await hook.rerender({ ...initialProps, machineIsolation: null });
+        expect(hook.getCurrent().nativeSandbox.value).toBeUndefined();
+        expect(hook.getCurrent().permissionMode).toBe('yolo');
+    });
     it.each(['read-only', 'default'])('protects explicit temporary %s intent from profile/backend defaults', async permissionMode => {
         const hook = await renderHook(useNewSessionPermissionModeState, {
             initialProps: { ...input, hydratedTempAuthoringDraft: { permissionMode } },

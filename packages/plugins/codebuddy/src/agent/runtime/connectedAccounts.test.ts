@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH } from './continuity.js';
 import { CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
@@ -13,10 +14,15 @@ describe('CodeBuddy connected-account declaration', () => {
       expectedAccounts.push(options?.expectedAccount?.accountId ?? 'missing');
       return { kind: 'environment' as const, env: { [OPENAI_SELECTED_API_KEY_ENV]: 'selected-key' } };
     });
-    const prepared = await prepareCodeBuddyConnectedAccount({ modelId: 'gpt-5.6-sol' }, {
+    const prepared = await prepareCodeBuddyConnectedAccount({ modelId: 'gpt-5.6-sol', nativeSandbox: 'off' }, {
       services: { connectedAccounts: { getBinding, materialize } },
     });
-    try { expect(expectedAccounts).toEqual(['session-selected']); } finally { prepared?.dispose(); }
+    try {
+      expect(expectedAccounts).toEqual(['session-selected']);
+      const settingsIndex = prepared!.args.indexOf('--settings');
+      expect(JSON.parse(readFileSync(prepared!.args[settingsIndex + 1]!, 'utf8')))
+        .toMatchObject({ alwaysThinkingEnabled: true, sandbox: { enabled: false } });
+    } finally { prepared?.dispose(); }
   });
 
   it('retains the native launch when no supported account is selected', async () => {

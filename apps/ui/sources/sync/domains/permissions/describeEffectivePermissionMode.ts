@@ -1,6 +1,7 @@
 import type { AgentType } from '@/sync/domains/models/modelOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
+import type { ResolvedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import {
@@ -29,6 +30,9 @@ export type EffectivePermissionModeReasonCode =
     | 'mcp_sandbox_restrictions_apply_on_spawn'
     | 'native_mode_overrides_permissions'
     | 'native_mode_pending'
+    | 'native_sandbox_on'
+    | 'native_sandbox_off'
+    | 'native_sandbox_unavailable'
     | 'applies_on_next_message';
 
 export type EffectivePermissionModeReason = Readonly<{
@@ -36,8 +40,26 @@ export type EffectivePermissionModeReason = Readonly<{
     params?: Readonly<Record<string, string>>;
 }>;
 
+function nativeSandboxReason(nativeSandbox: Pick<ResolvedManagedSessionDefaults['agentSandbox'], 'value' | 'availability'>): EffectivePermissionModeReason | null {
+    if (nativeSandbox.availability?.status === 'unavailable') {
+        return { code: 'native_sandbox_unavailable', params: { reason: nativeSandbox.availability.reason } };
+    }
+    return nativeSandbox.value ? { code: nativeSandbox.value === 'off' ? 'native_sandbox_off' : 'native_sandbox_on' } : null;
+}
+
+export function describeNativeSandbox(nativeSandbox: ResolvedManagedSessionDefaults['agentSandbox'] | undefined): string {
+    const reason = nativeSandbox ? nativeSandboxReason(nativeSandbox) : null;
+    return reason ? noteForReason(reason) : '';
+}
+
 function noteForReason(reason: EffectivePermissionModeReason): string {
     switch (reason.code) {
+        case 'native_sandbox_on':
+            return t('agentInput.permissionMode.nativeSandboxOn');
+        case 'native_sandbox_off':
+            return t('agentInput.permissionMode.nativeSandboxOff');
+        case 'native_sandbox_unavailable':
+            return t('agentInput.permissionMode.nativeSandboxUnavailable');
         case 'native_mode_overrides_permissions':
             return t('agentInput.permissionMode.nativeModeOverrides', { mode: reason.params?.mode ?? '' });
         case 'native_mode_pending':
@@ -69,6 +91,7 @@ export function describeEffectivePermissionMode(_params: {
     metadata: Metadata | null;
     applyTiming: 'immediate' | 'next_prompt';
     sessionModeDescriptor?: AgentSessionModeDescriptor | null;
+    nativeSandbox?: ResolvedManagedSessionDefaults['agentSandbox'];
 }): EffectivePermissionModeDescription {
     const agentId = resolveAgentIdFromFlavor(_params.agentType);
     const core = agentId ? getAgentCore(agentId) : null;
@@ -83,6 +106,8 @@ export function describeEffectivePermissionMode(_params: {
         ? getAgentSessionModeDescriptor(agentId) : _params.sessionModeDescriptor;
     const normalized = normalizePermissionModeForAgentType(selected, _params.agentType, descriptor);
     const reasons: EffectivePermissionModeReason[] = [];
+    const sandboxReason = nativeSandboxReason(_params.nativeSandbox ?? { value: _params.metadata?.nativeSandbox, availability: undefined });
+    if (sandboxReason) reasons.push(sandboxReason);
 
     let effectiveMode: PermissionMode = normalized;
 

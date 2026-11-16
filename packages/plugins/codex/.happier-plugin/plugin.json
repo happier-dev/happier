@@ -6,6 +6,9 @@
     "agents": [
       {
         "capabilities": {
+          "nativeSandbox": {
+            "off": true
+          },
           "providerStateSharing": {
             "config": {
               "modes": [

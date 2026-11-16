@@ -8124,6 +8124,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         permissionMode: {
             nativeModeOverrides: ({ mode }: { mode: string }) => `代理程式模式 ${mode} 覆寫核准預設。清除模式覆寫後即可使用權限設定。`,
+            nativeSandbox: '原生沙箱',
+            nativeSandboxOn: '原生沙箱已開啟。核准權限仍然適用。',
+            nativeSandboxOff: '原生沙箱已關閉。核准權限仍然適用。',
+            nativeSandboxUnavailable: "此沙箱類型不支援原生沙箱。核准權限仍然適用。",
             usePermissionSetting: '使用權限設定',
             title: '權限模式',
             default: '預設',

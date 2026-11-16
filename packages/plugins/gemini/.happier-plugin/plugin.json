@@ -6,6 +6,9 @@
     "agents": [
       {
         "capabilities": {
+          "nativeSandbox": {
+            "off": true
+          },
           "providerStateSharing": {
             "config": {
               "modes": [
@@ -16,10 +19,11 @@
             },
             "state": {
               "modes": [
-                "isolated"
+                "isolated",
+                "shared"
               ],
-              "supported": false,
-              "unavailableReason": "not_implemented"
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
             }
           },
           "sessions": {
@@ -291,7 +295,7 @@
               "outcomeReconciliation": "none",
               "setup": {
                 "checklist": [
-                  "Create a Gemini API key in Google AI Studio for the project you want to use.",
+                  "Create a Gemini API key in [Google AI Studio] for the project you want to use.",
                   "Copy the key and paste it here."
                 ],
                 "createKeyTitle": "Open Google AI Studio API keys",
@@ -318,7 +322,7 @@
               "outcomeReconciliation": "none",
               "setup": {
                 "checklist": [
-                  "Select your Google Cloud project and a service account with the Vertex AI access you need.",
+                  "Select your Google Cloud project and a [service account] with the Vertex AI access you need.",
                   "Open its Keys tab, choose Add key > Create new key, and select JSON.",
                   "Paste the full downloaded JSON file here."
                 ],
@@ -367,6 +371,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -547,7 +552,7 @@
   },
   "displayName": "Gemini",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],
@@ -574,10 +579,18 @@
         "scope": {
           "envKeys": [
             "GEMINI_API_KEY",
+            "GEMINI_MODEL",
+            "GOOGLE_GEMINI_BASE_URL",
+            "GEMINI_CLI_CUSTOM_HEADERS",
+            "GEMINI_API_KEY_AUTH_MECHANISM",
             "GOOGLE_API_KEY",
             "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_GENAI_USE_GCA",
+            "GEMINI_CLI_AUTH_OVERRIDE",
             "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_PROJECT_ID",
             "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_VERTEX_BASE_URL",
             "GOOGLE_APPLICATION_CREDENTIALS",
             "HAPPIER_GEMINI_ACP_AUTH_METHOD",
             "HAPPIER_GEMINI_ACP_AUTH_META",
@@ -607,7 +620,7 @@
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },
-        "normalizedModulePath": ".happier-plugin/agent/runtime/factory.js"
+        "normalizedModulePath": ".happier-plugin-build/agent/runtime/factory.js"
       }
     ],
     "apiVersion": 1
