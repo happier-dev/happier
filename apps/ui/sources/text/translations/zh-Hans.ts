@@ -18765,6 +18765,7 @@ settingsSession: {
       restoreRecoveryRequired: "恢复中途停止，数据需要修复",
       restoreSuperseded: "较新的激活已取代此恢复操作。此恢复操作无需数据修复。",
       restoreCodeUnchanged: "正在运行的代码保持不变。",
+      restoreIntegrityUnavailable: "数据已恢复，但由于未安装 amcheck，无法检查完整性。请让数据库管理员安装 amcheck 并运行 pg_amcheck。运行中的代码保持不变。",
       restoreCheckAgain: "该检查已过期。请重新检查备份。",
       addOpenStore: "在 Store 中查找数据库",
       addTitle: "添加服务或数据库",

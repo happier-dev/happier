@@ -1,3 +1,4 @@
+import { DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import { resolveApprovalRequestApproveAdmission } from '../actions/actionApprovalPresentation.js';
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
@@ -1279,4 +1280,14 @@ it('binds a draft DNS child to its exact preview and projects only admission ref
   expect(routing.input).not.toHaveProperty('content');
   expect(DeploymentChildRoutingV1Schema.safeParse({ ...routing, input: { ...routing.input, content: input.content } }).success).toBe(false);
   expect(DeploymentActionInputSchemasV1['deployments.domains.verify'].safeParse({ ...input, domainId: 'invented' }).success).toBe(false);
+});
+
+describe('restore integrity availability', () => {
+  it('retains an activated but unchecked restore and requires its remedy', () => {
+    const result = { kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck', evidence: {},
+      integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' } };
+    expect(DeploymentBackupRestoreResultV1Schema.parse(result)).toEqual(result);
+    expect(DeploymentBackupRestoreResultV1Schema.safeParse({ ...result, integrity: undefined }).success).toBe(false);
+    expect(DeploymentBackupRestoreResultV1Schema.safeParse({ ...result, verified: true }).success).toBe(false);
+  });
 });

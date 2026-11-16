@@ -19146,6 +19146,7 @@ settingsSession: {
       restoreRecoveryRequired: "La restauración se detuvo a medias y hay que recuperar los datos",
       restoreSuperseded: "Una activación más reciente reemplazó esta restauración. Esta restauración no necesita recuperación.",
       restoreCodeUnchanged: "El código en ejecución no cambia.",
+      restoreIntegrityUnavailable: "Los datos se han restaurado, pero la comprobación de integridad no está disponible porque amcheck no está instalado. Pide a un administrador de la base de datos que instale amcheck y ejecute pg_amcheck. El código en ejecución no cambia.",
       restoreCheckAgain: "Esa comprobación ya no está al día. Comprueba la copia otra vez.",
       addOpenStore: "Buscar una base de datos en Store",
       addTitle: "Añadir un servicio o una base de datos",

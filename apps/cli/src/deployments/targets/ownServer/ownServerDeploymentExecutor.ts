@@ -1241,15 +1241,16 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             if (!generationId) refuse('deployment_generation_required');
                             const generation = generationId === current.deployment.id ? current : await host.readReceipt({
                                 environmentId: receipt.deployment.environmentId, deploymentId: generationId, context: request.context });
-                            const writeRestoreStep = async (state: 'running' | 'succeeded' | 'failed' | 'outcome_unknown', code?: string) => {
+                            const writeRestoreStep = async (state: 'running' | 'succeeded' | 'failed' | 'outcome_unknown', code?: string,
+                                label = 'Restore recorded database backup') => {
                                 const content = { ...receipt.content, steps: [...receipt.content.steps.filter(step => step.id !== restoreStepId),
-                                    { id: restoreStepId, label: 'Restore recorded database backup', state }],
+                                    { id: restoreStepId, label, state }],
                                     ...(code ? { failure: { code, phase: 'restore' as const } } : {}) };
                                 await publishContent(content);
                             };
                             const delivery = await readEnvironmentAlertDeliveryForHost(host, snapshot.environment.environment.id, snapshot.signal);
                             try {
-                                await withNativeRestoreRuntime({ backupDelivery: delivery, request: { ...request, materialization: { kind: 'restoration',
+                                const restored = await withNativeRestoreRuntime({ backupDelivery: delivery, request: { ...request, materialization: { kind: 'restoration',
                                     deploymentId: receipt.deployment.id, sourceDeploymentId: generation.deployment.id } },
                                     snapshot, generation, installationId: input.installationId, context,
                                     onIncumbentServicesChanged,
@@ -1260,12 +1261,15 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                         revision: snapshot.environment.environment.revision, target: backup.target });
                                     await writeRestoreStep('running');
                                     await prepared.stageOutput?.beginStep({ stepId: restoreStepId });
-                                    await executeOwnServerNativeRestore(createInput, { receipt: captureReceipt,
+                                    return executeOwnServerNativeRestore(createInput, { receipt: captureReceipt,
                                         operationId: receipt.deployment.actionOperationId, restoreBackupId, destination,
                                         safetyBackup: { environmentId: destination.environmentId, configuration: backup.configuration,
                                             data: [{ engine: 'postgres', service: destination.service, logicalBackup: { adapter: 'postgres-v1' } }] } });
                                 });
-                                await writeRestoreStep('succeeded');
+                                const integrityWarning = restored.verified ? undefined
+                                    : 'Data restored; integrity check unavailable because amcheck is not installed. Ask a database administrator to install amcheck and run pg_amcheck.';
+                                if (integrityWarning) await prepared.stageOutput?.appendRedacted('stderr', Buffer.from(`${integrityWarning}\n`));
+                                await writeRestoreStep('succeeded', undefined, integrityWarning);
                                 await publishBackupSettlementNotice({ environment: snapshot.environment, targetLinkId: snapshot.link.id,
                                     operationId: receipt.deployment.actionOperationId, configRevision: backup.configuration.configRevision,
                                     check: 'restore', outcome: 'succeeded', delivery });

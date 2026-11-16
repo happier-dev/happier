@@ -460,6 +460,28 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
     } finally { view.dispose(); }
   });
 
+  it('shows restored data with an unavailable integrity warning and administrator remedy', async () => {
+    const view = await renderRestore(input => input.mode === 'prepare'
+      ? { ok: true, result: prepared(String(input.environmentId), true) }
+      : { ok: true, result: { kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck',
+        integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' }, evidence: {} } });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until('project-deployments.restore');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.fact.safety');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.result.restored');
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const card = view.screen.findAllByType(SurfaceStateCard)
+        .find(item => item.props.testID === 'project-deployments.restore.result.restored');
+      expect(card?.props.kind).toBe('warning');
+      expect(card?.props.reason).toContain('amcheck');
+      expect(card?.props.reason).toContain('administrator');
+    } finally { view.dispose(); }
+  });
+
   it('checks the kept backup first, then replaces data with exactly that check and says the code is unchanged', async () => {
     const view = await renderRestore((input) =>
       input.mode === 'prepare'

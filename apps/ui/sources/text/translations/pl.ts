@@ -18971,6 +18971,7 @@ settingsSession: {
       restoreRecoveryRequired: "Przywracanie zatrzymało się w połowie i dane wymagają odzyskania",
       restoreSuperseded: "Nowsza aktywacja zastąpiła to przywracanie. To przywracanie nie wymaga odzyskiwania danych.",
       restoreCodeUnchanged: "Działający kod pozostaje bez zmian.",
+      restoreIntegrityUnavailable: "Dane zostały przywrócone, ale sprawdzenie integralności jest niedostępne, ponieważ amcheck nie jest zainstalowany. Poproś administratora bazy danych o zainstalowanie amcheck i uruchomienie pg_amcheck. Uruchomiony kod nie zmienia się.",
       restoreCheckAgain: "To sprawdzenie jest już nieaktualne. Sprawdź kopię ponownie.",
       addOpenStore: "Znajdź bazę danych w Store",
       addTitle: "Dodaj usługę lub bazę danych",

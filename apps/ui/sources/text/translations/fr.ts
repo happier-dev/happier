@@ -19020,6 +19020,7 @@ settingsSession: {
       restoreRecoveryRequired: "La restauration s’est arrêtée en cours de route et les données doivent être récupérées",
       restoreSuperseded: "Une activation plus récente a remplacé cette restauration. Aucune récupération n’est nécessaire pour cette restauration.",
       restoreCodeUnchanged: "Le code en cours d’exécution ne change pas.",
+      restoreIntegrityUnavailable: "Les données sont restaurées, mais le contrôle d’intégrité est indisponible car amcheck n’est pas installé. Demandez à un administrateur de base de données d’installer amcheck et d’exécuter pg_amcheck. Le code en cours d’exécution ne change pas.",
       restoreCheckAgain: "Cette vérification n’est plus à jour. Vérifie à nouveau la sauvegarde.",
       addOpenStore: "Trouver une base de données dans le Store",
       addTitle: "Ajouter un service ou une base de données",

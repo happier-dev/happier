@@ -126,14 +126,25 @@ export function buildDeploymentRestoreRecoveryActionV1(input: DeploymentBackupRe
   return { actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
     input: z.object(DeploymentBackupRestoreRecoverInputV1Schema.shape).parse({ ...input, mode: 'recover', operationId }) };
 }
+/** The restore is active; an administrator must enable the engine check separately. */
+export const DeploymentRestoreIntegrityUnavailableV1Schema = z.strictObject({
+  kind: z.literal('unavailable'), reason: z.literal('amcheck_extension_missing'),
+  nextAction: z.literal('installAmcheckAndRunIntegrityCheck'),
+});
+export type DeploymentRestoreIntegrityUnavailableV1 = z.infer<typeof DeploymentRestoreIntegrityUnavailableV1Schema>;
 /** Evidence is a nonsecret native receipt retained by the existing Action operation owner. */
-export const DeploymentBackupRestoreResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('prepared'), operationId: id, evidence: StrictJsonValueSchema, ...restoreSteps() }),
-  z.strictObject({ kind: z.literal('restored'), verified: z.literal(true), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
-  z.strictObject({ kind: z.literal('rolledBack'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
-  z.strictObject({ kind: z.literal('outcome_unknown'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
-  z.strictObject({ kind: z.literal('recoveryRequired'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps(), ...restoreRecovery() }),
-  z.strictObject({ kind: z.literal('superseded'), verified: z.literal(false), nextAction: z.literal('none'),
-    newerActivation: DeploymentRestoreActivationReferenceV1Schema, evidence: StrictJsonValueSchema, ...restoreSteps() }),
+export const DeploymentBackupRestoreResultV1Schema = lazyZodSchema(() => z.union([
+  z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('prepared'), operationId: id, evidence: StrictJsonValueSchema, ...restoreSteps() }),
+    z.strictObject({ kind: z.literal('restored'), verified: z.literal(true), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
+    z.strictObject({ kind: z.literal('rolledBack'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
+    z.strictObject({ kind: z.literal('outcome_unknown'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
+    z.strictObject({ kind: z.literal('recoveryRequired'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps(), ...restoreRecovery() }),
+    z.strictObject({ kind: z.literal('superseded'), verified: z.literal(false), nextAction: z.literal('none'),
+      newerActivation: DeploymentRestoreActivationReferenceV1Schema, evidence: StrictJsonValueSchema, ...restoreSteps() }),
+  ]),
+  z.strictObject({ kind: z.literal('restored'), verified: z.literal(false),
+    nextAction: DeploymentRestoreIntegrityUnavailableV1Schema.shape.nextAction,
+    integrity: DeploymentRestoreIntegrityUnavailableV1Schema, evidence: StrictJsonValueSchema, ...restoreSteps() }),
 ]));
 export type DeploymentBackupRestoreResultV1 = z.infer<typeof DeploymentBackupRestoreResultV1Schema>;

@@ -422,6 +422,7 @@ function DeploymentRestoreSheet(
   if (step.kind === 'settled') {
     const { result } = step;
     const restored = result.kind === 'restored';
+    const integrityUnavailable = restored && !result.verified;
     const superseded = result.kind === 'superseded';
     const code = isRecord(result.evidence) && typeof result.evidence.code === 'string' ? result.evidence.code : result.kind;
     const failure = restored || superseded ? null : presentActionFailureOutcome({ errorCode: code, error: code,
@@ -435,7 +436,7 @@ function DeploymentRestoreSheet(
             layout="inline"
             kind={
               restored
-                ? 'success'
+                ? integrityUnavailable ? 'warning' : 'success'
                 : result.kind === 'rolledBack' || superseded
                   ? 'warning'
                   : 'error'
@@ -453,7 +454,7 @@ function DeploymentRestoreSheet(
                     ? t('projects.deployments.restoreUnknown')
                     : t('projects.deployments.restoreRecoveryRequired')
             }
-            reason={t('projects.deployments.restoreCodeUnchanged')}
+            reason={t(integrityUnavailable ? 'projects.deployments.restoreIntegrityUnavailable' : 'projects.deployments.restoreCodeUnchanged')}
             diagnosticCode={restored || superseded ? undefined : code}
             diagnosticDetail={failure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
           />

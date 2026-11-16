@@ -19060,6 +19060,7 @@ settingsSession: {
       restoreRecoveryRequired: "復元が途中で止まり、データの回復が必要です",
       restoreSuperseded: "新しい有効化によって、この復元は置き換えられました。この復元のリカバリーは不要です。",
       restoreCodeUnchanged: "実行中のコードは変わりません。",
+      restoreIntegrityUnavailable: "データは復元されましたが、amcheck がインストールされていないため整合性を確認できません。データベース管理者に amcheck のインストールと pg_amcheck の実行を依頼してください。実行中のコードは変更されません。",
       restoreCheckAgain: "この確認は最新ではありません。バックアップをもう一度確認してください。",
       addOpenStore: "Store でデータベースを探す",
       addTitle: "サービスまたはデータベースを追加",

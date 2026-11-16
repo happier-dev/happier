@@ -19148,6 +19148,7 @@ settingsSession: {
       restoreRecoveryRequired: "Il ripristino si è fermato a metà e i dati vanno recuperati",
       restoreSuperseded: "Un’attivazione più recente ha sostituito questo ripristino. Questo ripristino non richiede recupero.",
       restoreCodeUnchanged: "Il codice in esecuzione non cambia.",
+      restoreIntegrityUnavailable: "I dati sono stati ripristinati, ma il controllo di integrità non è disponibile perché amcheck non è installato. Chiedi a un amministratore del database di installare amcheck ed eseguire pg_amcheck. Il codice in esecuzione non cambia.",
       restoreCheckAgain: "Questa verifica non è più attuale. Verifica di nuovo il backup.",
       addOpenStore: "Trova un database nello Store",
       addTitle: "Aggiungi un servizio o un database",

@@ -1,3 +1,4 @@
+import type { DeploymentRestoreIntegrityUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1,
     type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployment-protocol';
 export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployment-protocol';
@@ -56,7 +57,8 @@ export type DeploymentRestoreNativeResultV1 = Readonly<{ kind: 'outcome_unknown'
     | (Omit<Extract<DeploymentBackupNativeResultV1, { kind: 'completed' }>, 'producer'> & Readonly<{
         producer?: Readonly<{ exitCode: number; checksumSha256: string; bytes: number }>;
     }>)
-    | Readonly<{ kind: 'health'; status: 'healthy' | 'unhealthy' | 'unknown' }>;
+    | Readonly<{ kind: 'health'; status: 'healthy' | 'unhealthy' | 'unknown' }>
+    | DeploymentRestoreIntegrityUnavailableV1;
 type NativeExecute = (request: DeploymentRestoreNativeRequestV1) => Promise<DeploymentRestoreNativeResultV1>;
 type RestoreCapture = Readonly<{
     source: DeploymentBackupManifestV1 | DeploymentRestoreUploadSourceV1; destination: DeploymentRestoreDestinationV1;
@@ -90,6 +92,8 @@ export type DeploymentRestoreResultV1 = Readonly<{
     recoveryFailureCause?: ActionFailureCauseV1;
     steps?: readonly DeploymentRestoreStepV1[];
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
+    | Readonly<{ kind: 'restored'; verified: false; nextAction: DeploymentRestoreIntegrityUnavailableV1['nextAction'];
+        integrity: DeploymentRestoreIntegrityUnavailableV1 }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
         nextAction: 'none' | 'inspectStagingDatabase' | 'observeDatabaseNames' | 'restoreRecoveryDatabase' | 'checkServiceHealth'
             | 'inspectStagingVolume' | 'restorePreviousVolume' }>);
@@ -284,14 +288,17 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
     if (!sameSource(input.source, prepare.source) || input.sourceFormat !== prepare.sourceFormat
         || !sameDestination(destination, prepare.destination)) refuse('stale_input');
     if (destination.hasMeaningfulData && !prepare.safetyBackup) refuse('backup_required');
-    const result = (kind: DeploymentRestoreResultV1['kind'], nextAction: DeploymentRestoreResultV1['nextAction'],
+    let integrity: DeploymentRestoreIntegrityUnavailableV1 | undefined;
+    const result = (kind: DeploymentRestoreResultV1['kind'], nextAction: Exclude<DeploymentRestoreResultV1, { kind: 'restored' }>['nextAction'],
         code?: RestoreFailureCode, error?: unknown): DeploymentRestoreResultV1 => {
         const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
         const evidence = { source: prepare.source, destination, steps: steps.snapshot(),
             ...(error === undefined ? {} : { failureCause: projectActionFailureCauseV1(error, 'restore') }),
             ...(nativeFailure ? { nativeFailure } : {}),
             ...(prepare.safetyBackup ? { safetyBackup: prepare.safetyBackup } : {}), ...(code ? { code } : {}) };
-        return kind === 'restored' ? { ...evidence, kind, verified: true, nextAction: 'none' }
+        return kind === 'restored' ? integrity
+            ? { ...evidence, kind, verified: false, nextAction: integrity.nextAction, integrity }
+            : { ...evidence, kind, verified: true, nextAction: 'none' }
             : { ...evidence, kind, verified: false, nextAction };
     };
     const execute = async (request: DeploymentRestoreNativeRequestV1) => {
@@ -489,7 +496,12 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             if (!input.signal.aborted) await roleCommand(`ALTER ROLE ${identifier(role)} NOLOGIN PASSWORD NULL;`);
             throw error;
         }
-        completed(await execute({ kind: 'integrity', service: destination.service, database: destination.stagingDatabase }));
+        const checkIntegrity = async (database: string) => {
+            const checked = await execute({ kind: 'integrity', service: destination.service, database });
+            if (checked.kind === 'unavailable') integrity = checked;
+            else completed(checked);
+        };
+        await checkIntegrity(destination.stagingDatabase);
         return await input.runProtectedStage(async () => {
             let activationAttempted = false;
             let outcome: DeploymentRestoreResultV1;
@@ -504,7 +516,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                 activationAttempted = true;
                 if (destination.databaseExists) completed(await execute(rename(destination, destination.database, destination.recoveryDatabase)));
                 completed(await execute(rename(destination, destination.stagingDatabase, destination.database)));
-                completed(await execute({ kind: 'integrity', service: destination.service, database: destination.database }));
+                await checkIntegrity(destination.database);
                 steps.record('restore', 'completed');
                 if (writersStopped) {
                     // A lost start acknowledgement may mean writers are already live;

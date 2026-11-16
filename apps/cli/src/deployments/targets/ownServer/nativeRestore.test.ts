@@ -44,7 +44,7 @@ describe('native restore adapter', () => {
             { signal: new AbortController().signal }, async () => { throw failure; })).rejects.toBe(failure);
     });
 
-    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreUnknown', 'publicRestoreFailure', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
+    it.each(['success', 'amcheckMissing', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreMissing', 'publicRestoreUnknown', 'publicRestoreFailure', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
         'settles the real restore and releases its one backup preparation: %s', async mode => {
             await withFiniteComposeFixture(async ({ project, docker, source, root, exec, io }) => {
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
@@ -62,7 +62,7 @@ describe('native restore adapter', () => {
                 await source.commit();
                 const copying = mode === 'copySafety' || mode === 'copySafetyFailure';
                 const boundary = await installRestoreBoundary(root, mode === 'cancelPublication' ? 'healthFailure'
-                    : mode === 'publicRestoreFailure' ? 'failure' : copying ? 'safety' : mode);
+                    : mode === 'publicRestoreMissing' ? 'amcheckMissing' : mode === 'publicRestoreFailure' ? 'failure' : copying ? 'safety' : mode);
                 if (mode === 'volumeRestoreFailure') onTestFailed(async () => {
                     const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
                         .map(line => JSON.parse(line)).map(row => ({ kind: row.kind, operation: row.operation,
@@ -413,7 +413,7 @@ describe('native restore adapter', () => {
                             } };
                             return restoreInput;
                         };
-                        if (mode === 'receiptCapture' || mode === 'publicRestore' || mode === 'publicRestoreUnknown' || mode === 'publicRestoreFailure' || mode === 'dumpFailure') {
+                        if (mode === 'receiptCapture' || mode === 'publicRestore' || mode === 'publicRestoreMissing' || mode === 'publicRestoreUnknown' || mode === 'publicRestoreFailure' || mode === 'dumpFailure') {
                             const seedReceipt = createDeploymentReceiptDetailV1();
                             const approvedInputBasis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1,
                                 environmentId: source.environmentId, environmentRevision: 1, targetLinkId: seedReceipt.deployment.targetLinkId,
@@ -490,7 +490,7 @@ describe('native restore adapter', () => {
                                 receipt: recoveryReceipt, restoreBackupId: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'backup_required' });
                             expect(passwordPath).toBeUndefined();
                         }
-                        if (mode === 'publicRestore' || mode === 'publicRestoreUnknown' || mode === 'publicRestoreFailure') {
+                        if (mode === 'publicRestore' || mode === 'publicRestoreMissing' || mode === 'publicRestoreUnknown' || mode === 'publicRestoreFailure') {
                             if (!recoveryReceipt) throw new Error('Expected the completed pre-migration receipt');
                             const action = DeploymentRollbackActionInputV1Schema.parse({ serverId: 'home',
                                 environmentId: source.environmentId, deploymentId: 'retained-code', restoreBackupId: 'd'.repeat(64) });
@@ -538,7 +538,9 @@ describe('native restore adapter', () => {
                             }, {
                                 receipt: recoveryReceipt, operationId: 'public-restore', destination, restoreBackupId: action.restoreBackupId!,
                             });
-                            expect(restored).toMatchObject({ kind: 'restored', verified: true,
+                            expect(restored).toMatchObject({ kind: 'restored', verified: mode !== 'publicRestoreMissing',
+                                ...(mode === 'publicRestoreMissing' ? { integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing',
+                                    nextAction: 'installAmcheckAndRunIntegrityCheck' } } : {}),
                                 source: recoveryReceipt.content.ownServer!.preMigrationBackup!.source, destination });
                             const recorded = recoveryReceipt.content.ownServer!.preMigrationBackup!;
                             expect(admitted).toEqual([{ source: recorded.source, sourceFormat: recorded.sourceFormat,
@@ -596,6 +598,8 @@ describe('native restore adapter', () => {
                                 ? { kind: 'recoveryRequired', verified: false, code: 'restore_failed',
                                     nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false } }
                                 : mode === 'healthFailure' || mode === 'cancelPublication' ? { kind: 'rolledBack', verified: false, code: 'restore_failed' }
+                                    : mode === 'amcheckMissing' ? { kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck',
+                                        integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' } }
                                     : { kind: 'restored', verified: true });
                             if (mode === 'success') {
                                 expect(progressPhases).toContain('restore.restore.running');
@@ -667,8 +671,15 @@ describe('native restore adapter', () => {
                     expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names)
                         .toEqual(mode === 'safety' ? [destination.recoveryDatabase, destination.database]
                             : [mode === 'healthFailure' || mode === 'cancelPublication' ? destination.stagingDatabase : destination.database]);
-                    expect(events.some(row => row.argv?.[0] === 'pg_amcheck' && row.argv.includes('--install-missing')
-                        && row.argv.at(-1) === "dbname='live\\\\db\\''")).toBe(true);
+                    if (mode === 'success' || mode === 'amcheckMissing') {
+                        const integrityProbes = events.filter(row => row.argv?.[0] === 'psql'
+                            && row.argv.at(-1) === "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'amcheck')");
+                        expect(integrityProbes.map(row => row.argv.find((arg: string) => arg.startsWith('--dbname='))))
+                            .toEqual(["--dbname=dbname='restore-stage'", "--dbname=dbname='live\\\\db\\'=literal'"]);
+                    }
+                    expect(events.some(row => row.argv?.includes('--install-missing'))).toBe(false);
+                    expect(events.some(row => row.argv?.[0] === 'pg_amcheck' && !row.argv.includes('--version')
+                        && row.argv.at(-1) === "dbname='live\\\\db\\'=literal'")).toBe(mode !== 'amcheckMissing' && mode !== 'publicRestoreMissing');
                 }
                 if (mode === 'healthFailure' || mode === 'cancelPublication') {
                     expect(stoppedServices).toEqual([['writer'], [], ['writer'], []]);
@@ -682,7 +693,7 @@ describe('native restore adapter', () => {
                 }
                 if (mode === 'safety' || mode === 'receiptCapture') {
                     expect(events.find(row => row.argv?.[0] === 'pg_dump' && !row.argv.includes('--version'))?.argv)
-                        .toEqual(['pg_dump', `--username=${username}`, '-Fc', '--no-owner', '--no-acl', "dbname='live\\\\db\\''"]);
+                        .toEqual(['pg_dump', `--username=${username}`, '-Fc', '--no-owner', '--no-acl', "dbname='live\\\\db\\'=literal'"]);
                     expect(events.find(row => row.kind === 'safetyBytes')).toMatchObject({ bytes: archive.length });
                 }
                 if (mode === 'receiptCapture') {

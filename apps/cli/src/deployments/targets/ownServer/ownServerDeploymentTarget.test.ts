@@ -1203,7 +1203,7 @@ describe('own-server target at the Action host boundary', () => {
                         migration: { service: 'app', argv: ['migrate', '--candidate-release'] } } });
                 if (scenario.startsWith('public_backup')) {
                     await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
-                    const boundary = await installRestoreBoundary(root, 'success',
+                    const boundary = await installRestoreBoundary(root, scenario === 'public_backup_retention' ? 'amcheckMissing' : 'success',
                         { toolDirectory: join(root, 'docker'), environmentId: environment.environment.id });
                     const backupRuntimes: Array<ReturnType<typeof createHostActionOperationRuntime>> = [];
                     const backupEffects = new Set<Promise<unknown>>();
@@ -1641,7 +1641,8 @@ describe('own-server target at the Action host boundary', () => {
                         phase('retention-confirm');
                         expect(await executor.execute('deployments.backups.restore', { ...prepareInput, mode: 'confirm',
                             prepareOperationId: prepared.operationId }, { ...actionContext, actionRequestId: 'retention-confirm' }))
-                            .toMatchObject({ ok: true, result: { kind: 'restored', verified: true, nextAction: 'none' } });
+                            .toMatchObject({ ok: true, result: { kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck',
+                                integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' } } });
                         phase('retention-settled-prune');
                         expect(await executor.execute('deployments.backups.prune', pruneInput,
                             { ...actionContext, actionRequestId: 'retention-after-confirm' }))

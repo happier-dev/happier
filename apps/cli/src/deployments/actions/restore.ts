@@ -140,7 +140,8 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                 const recovery = result.kind === 'recoveryRequired' ? buildDeploymentRestoreRecoveryActionV1(input,
                     acceptance.operationId, result.nextAction) : undefined;
                 return DeploymentBackupRestoreResultV1Schema.parse({ kind: result.kind, steps: result.steps,
-                    verified: result.verified, nextAction: result.nextAction, ...(recovery ? { recovery } : {}),
+                    verified: result.verified, nextAction: result.nextAction, ...('integrity' in result ? { integrity: result.integrity } : {}),
+                    ...(recovery ? { recovery } : {}),
                     evidence: normalizeStrictJsonValue({ ...result, ...(snapshot ? { snapshot } : {}) }) });
             };
             if (input.mode === 'recover') {

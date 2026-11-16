@@ -3467,7 +3467,8 @@ manifest and destination and takes a verified safety backup for meaningful
 existing data. Confirm restores into an operation-owned database, checks
 integrity before activation, preserves the incumbent under its recovery name,
 and requires activated integrity and service health before `restored` with
-`verified: true`. A rollback is not successful restoration. The approved native
+`verified: true`. If the amcheck extension is absent, an otherwise correct restore
+activates with `verified: false` and the typed integrity-unavailable remedy below. A rollback is not successful restoration. The approved native
 integration requires one P30-protected stage for the swap through verification
 or proven undo and writer restart. Ordinary Stop is pending until that stage
 settles; it does not start recovery commands under an already-aborted context.
@@ -3560,8 +3561,24 @@ restore producers, and leaves deployment receipts and the active code pointer
 unchanged. Its signed native admission admits the Source/deployer once and scopes
 capture/current-generation reads and installed-secret acquisition to that job.
 PostgreSQL integrity uses the engine's `pg_amcheck` default corruption checks
-with `--install-missing`, not a connectivity query; its supported object scope
+when the amcheck extension is already installed; it never installs extensions or
+elevates the restore operator. Its supported object scope
 is documented by [PostgreSQL](https://www.postgresql.org/docs/15/app-pgamcheck.html).
+An absent extension returns `kind: restored`, `verified: false`, and
+`integrity: { kind: unavailable, reason: amcheck_extension_missing,
+nextAction: installAmcheckAndRunIntegrityCheck }`; the top-level next action is
+the same. A database administrator can install amcheck in the restored database
+and run `pg_amcheck` separately. This is a warning, not an executable recovery
+Action or permission to escalate. An actual native integrity-check failure still
+prevents activation or invokes the existing rollback path. Completed restores
+retire their prepare receipt's temporary prune protection even when integrity
+is unavailable; normal retention still governs their backups. Data-safe Move
+continues to require `verified: true` before its separate connection cutover.
+The matching Protocol, CLI and UI readers must reload together: the new strict
+result arm is an unpublished 0.3 direct cut, with no migration or compatibility
+adapter. The inspected clean `../0.2` deployment corridor at
+`b4ed33827a0bbd1bb3afac7fd1b6833918e33e68` has no deployment restore contract.
+
 The development PostgreSQL restore owner imports both uploads and repository
 archives through an actual restricted login, preserving that non-superuser
 object owner after activation. Successful import disables its login and removes

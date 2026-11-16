@@ -120,7 +120,7 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                 if (snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || snapshot.state !== 'succeeded'
                     || !('mode' in authoredInput) || authoredInput.mode !== 'confirm') continue;
                 const result = DeploymentBackupRestoreResultV1Schema.safeParse(snapshot.result);
-                if (result.success && result.data.kind === 'restored' && result.data.verified && result.data.nextAction === 'none') {
+                if (result.success && result.data.kind === 'restored') {
                     completedPreparations.add(authoredInput.prepareOperationId);
                 }
             }

@@ -37,7 +37,7 @@ function safetyBackup(producerExitCode = 0, onPayloadRead?: () => void): Deploym
 }
 
 function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boolean; unknownActivation?: boolean;
-    unknownObservation?: boolean; failSecondRename?: boolean; wrongRepository?: boolean; integrityFails?: boolean;
+    unknownObservation?: boolean; failSecondRename?: boolean; wrongRepository?: boolean; integrityFails?: boolean; integrityUnavailable?: boolean;
     abortAfterActivation?: AbortController; abortAfterFirstRename?: AbortController; abortAfterWriterStop?: AbortController; nativeSignal?: AbortSignal;
     initialNames?: readonly string[]; unknownFirstWriterStart?: boolean; source?: DeploymentBackupManifestV1 }> = {}) {
     const source = options.source ?? manifest;
@@ -76,7 +76,9 @@ function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boole
             if (names.has('restore_stage')) return { ...complete(), exitCode: 1 };
             names.add('restore_stage'); return complete();
         }
-        if (request.kind === 'integrity') return { ...complete(), exitCode: options.integrityFails ? 1 : 0 };
+        if (request.kind === 'integrity') return options.integrityUnavailable
+            ? { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' }
+            : { ...complete(), exitCode: options.integrityFails ? 1 : 0 };
         const sql = argv.at(-1) ?? '';
         if (sql.startsWith('SELECT current_user =')) return complete('t');
         if (sql.startsWith('SELECT')) return options.unknownObservation && names.has('restore_old') ? { kind: 'outcome_unknown' }
@@ -388,6 +390,15 @@ describe('exact PostgreSQL restore semantic owner', () => {
             nativeFailure: { exitCode: 1, stderr: 'pg_restore: native import failed [REDACTED]', stderrTruncated: false } });
         expect(native.names).toContain('app');
         expect(native.effects.some(effect => effect.includes('ALTER DATABASE'))).toBe(false);
+    });
+
+    it('activates correct data with unavailable integrity and the administrator next action', async () => {
+        const native = boundary({ integrityUnavailable: true }); const receipt = await prepare(native);
+        const result = await confirm(native, receipt);
+        expect(result).toMatchObject({ kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck',
+            integrity: { kind: 'unavailable', reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' } });
+        expect(native.names).toEqual(['app', 'restore_old']);
+        expect(native.writersRunning).toBe(true);
     });
 
     it('does not activate a staged database whose integrity check fails', async () => {

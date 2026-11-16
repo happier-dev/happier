@@ -22595,6 +22595,7 @@ const enProjects = {
       restoreRecoveryRequired: "The restore stopped partway and the data needs recovery",
       restoreSuperseded: "A newer activation replaced this restore. No recovery is needed for this restore.",
       restoreCodeUnchanged: "The running code is unchanged.",
+      restoreIntegrityUnavailable: "The data is restored, but its integrity check is unavailable because amcheck is not installed. Ask a database administrator to install amcheck and run pg_amcheck. The running code is unchanged.",
       restoreCheckAgain: "That check is no longer current. Check the backup again.",
       addOpenStore: "Find a database in Store",
       addTitle: "Add a service or database",

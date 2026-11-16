@@ -77,7 +77,7 @@ const completedControl = { kind: 'completed' as const, exitCode: 0, stdout: '', 
 
 /** P41's PostgreSQL integrity codec: default pg_amcheck corruption checks of
  * supported tables/TOAST/materialized views/sequences/btree indexes, not SELECT 1.
- * --install-missing prevents an absent amcheck extension silently skipping DBs.
+ * Missing amcheck is reported separately; this operator never installs extensions.
  * https://www.postgresql.org/docs/15/app-pgamcheck.html
  * Positional conninfo selects ONE literal database, unlike --database patterns.
  * https://www.postgresql.org/docs/15/libpq-connect.html#LIBPQ-CONNSTRING
@@ -87,7 +87,7 @@ function databaseConninfo(database: string): string {
     return `dbname='${escaped}'`;
 }
 function integrityCommand(database: string): readonly string[] {
-    return ['pg_amcheck', '--no-password', '--install-missing', databaseConninfo(database)];
+    return ['pg_amcheck', '--no-password', databaseConninfo(database)];
 }
 
 type NativeRestoreServiceInput = Pick<OwnServerNativeRestoreInput, 'project' | 'activation' | 'io' | 'render' | 'context' | 'readDatabaseUsername'>;
@@ -270,7 +270,17 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
                         producer: await admitRestic(request.producer),
                         consumer: await admitService(request.consumer.service, request.consumer.argv, request.consumer.environmentOverrides),
                     }));
-                    case 'integrity': return executeAdmittedServiceCommand(await admitService(request.service, integrityCommand(request.database)));
+                    case 'integrity': {
+                        const installed = await executeAdmittedServiceCommand(await admitService(request.service,
+                            ['psql', '-X', '-v', 'ON_ERROR_STOP=1', `--dbname=${databaseConninfo(request.database)}`, '-At', '-c',
+                                "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'amcheck')"]));
+                        if (installed.kind !== 'completed' || installed.exitCode !== 0) return installed;
+                        if (installed.stdout.trim() === 'f' && !installed.stdoutTruncated) return { kind: 'unavailable',
+                            reason: 'amcheck_extension_missing', nextAction: 'installAmcheckAndRunIntegrityCheck' } satisfies DeploymentRestoreNativeResultV1;
+                        if (installed.stdout.trim() !== 't' || installed.stdoutTruncated) throw new PluginError({
+                            code: 'restore_failed', message: 'The PostgreSQL integrity prerequisite could not be read' });
+                        return executeAdmittedServiceCommand(await admitService(request.service, integrityCommand(request.database)));
+                    }
                     case 'stageVolume': {
                         if (!attachment || !input.runtimeImage) return unsupported();
                         return executeAdmittedServiceCommand(await input.project.admitVolumeRestoreCommand({
@@ -550,9 +560,9 @@ export async function executeOwnServerNativeRestore(factory: OwnServerNativeRest
         return confirmDeploymentRestoreV1({ prepare, source: prepare.source,
             sourceFormat: prepare.sourceFormat, destination: prepare.destination, ...native });
     }, operation);
-    if (result.kind !== 'restored' || result.verified !== true) {
+    if (result.kind !== 'restored') {
         throw new PluginError({ code: result.kind === 'outcome_unknown' ? 'outcome_unknown' : result.code ?? 'restore_failed',
-            message: 'Native database recovery did not verify restoration',
+            message: 'Native database recovery did not complete restoration',
             ...(result.failureCause ? { failureCause: result.failureCause } : {}),
             details: { kind: result.kind, nextAction: result.nextAction, ...(result.steps ? { steps: result.steps } : {}),
                 ...(result.nativeFailure ? { nativeFailure: result.nativeFailure } : {}) } });

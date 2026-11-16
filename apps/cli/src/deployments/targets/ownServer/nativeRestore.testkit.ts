@@ -15,7 +15,7 @@ export const volumeTarFixture = (() => {
     bytes.write('restored\n', 512);
     return bytes;
 })();
-export const database = "live\\db'";
+export const database = "live\\db'=literal";
 export const snapshot = { id: 'a'.repeat(64), tree: 'b'.repeat(64), hostname: 'happier-env-finite-environment',
     time: '2026-10-31T12:00:00Z', paths: ['/database.dump'],
     tags: ['happier', 'env:finite-environment', 'kind:dump', 'src:database'] };
@@ -325,7 +325,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     } else if (argv.includes('--version')) {
         if (state.mode === 'missingTool' && argv[0] === 'pg_amcheck') process.exitCode = 127;
     } else if (argv[0] === 'pg_amcheck') {
-        if (state.mode === 'failure') process.exitCode = 1;
+        if (state.mode === 'failure' || state.mode === 'amcheckMissing') process.exitCode = 1;
     } else if (argv[0] === 'pg_dump') {
         process.stdout.write(Buffer.from(state.archive,'base64'));
         if (state.mode === 'dumpFailure') {
@@ -356,7 +356,9 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             });
         } else {
         const sql = argv.at(-1);
-        if (sql.startsWith('SELECT current_user =')) {
+        if (sql.startsWith('SELECT EXISTS (SELECT 1 FROM pg_extension')) {
+            process.stdout.write(state.mode === 'amcheckMissing' ? 'f\n' : 't\n');
+        } else if (sql.startsWith('SELECT current_user =')) {
             if (!argv.some(arg => arg.startsWith('--username=')) || !process.env.PGPASSWORD) throw new Error('missing_import_role_connection');
             process.stdout.write('t\n');
         }
