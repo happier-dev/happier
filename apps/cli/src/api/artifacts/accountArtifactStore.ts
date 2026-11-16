@@ -221,8 +221,13 @@ export type ArtifactQueryHintBackfillResult = ArtifactKindCoverageV1
   | Readonly<{ status: 'unsupported' | 'retired' }>
   | Readonly<{ status: 'unavailable'; reason: 'read_unavailable' | 'write_unavailable' | 'write_refused' }>;
 export type ArtifactQueryHintFeatures = () => CliServerFeaturesSnapshot | undefined | Promise<CliServerFeaturesSnapshot | undefined>;
+/** The Account Artifact owner's typed, fail-closed refusal. It carries the Action failure
+ * shape so the canonical Action normalizer keeps this code instead of `action_failed`. */
 export class ArtifactEncryptionMaterialUnavailableError extends Error {
   readonly code = ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE;
+  readonly ok = false;
+  readonly errorCode = ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE;
+  readonly error = ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE;
   constructor() { super('Artifact encryption material is unavailable'); this.name = 'ArtifactEncryptionMaterialUnavailableError'; }
 }
 
