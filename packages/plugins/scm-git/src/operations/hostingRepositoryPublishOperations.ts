@@ -253,7 +253,14 @@ async function createOrReuseRepository(input: Readonly<{
         runtimeServices: input.runtimeServices,
     };
     const existing = await input.adapter.getRepository(getInput);
-    if (existing) return existing;
+    if (existing) {
+        if (existing.visibility !== input.request.visibility) {
+            throw Object.assign(new Error('The existing repository visibility does not match the requested visibility.'), {
+                errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            });
+        }
+        return existing;
+    }
     return input.adapter.createRepository({
         provider: input.provider,
         owner: input.request.owner,

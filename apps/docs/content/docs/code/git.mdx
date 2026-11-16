@@ -91,6 +91,8 @@ If neither is available, Happier explains the missing auth and points you toward
 
 In the **0.3 development build**, repository authentication follows the selected SCM plugin. A signed-out GitHub account offers **Connect GitHub** and uses Happier's connected account; it does not fall back to ambient `gh` credentials. For an Azure DevOps CLI sign-in, **Connect Azure DevOps** shows the plugin's `az login` command to run on the repository's machine. After signing in, retry publishing. A failed authentication check stays an unavailable result rather than claiming that you are signed out.
 
+In **0.3 development**, publishing reuses an existing repository only when its visibility matches your selection. A mismatch stops before changing the remote or pushing; choose a repository with the intended visibility or a different name and retry.
+
 Current scope:
 
 - GitHub repository publishing is supported.

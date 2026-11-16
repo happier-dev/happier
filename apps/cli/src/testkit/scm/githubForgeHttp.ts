@@ -8,6 +8,7 @@ import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/scm-github/src/
 /** Fake Forge HTTP and token acquisition with the real registry and GitHub adapters. */
 export function createGithubForgeHttpFixture(input: Readonly<{
   nameWithOwner: string; cloneUrl: string; repositoryExists?: boolean; pullRequestWriteStatus?: number;
+  repositoryVisibility?: 'private' | 'public';
   omitRestMergeCommit?: boolean;
 }>) {
   const provider = { id: GITHUB_SCM_HOSTING_PROVIDER_ID, kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com',
@@ -44,7 +45,7 @@ export function createGithubForgeHttpFixture(input: Readonly<{
       repositoryCreated = true;
     else if (parsed.pathname !== `/repos/${input.nameWithOwner}`) throw new Error(`Unexpected Forge fixture request: ${parsed.pathname}`);
     return repositoryCreated ? response({ full_name: input.nameWithOwner, html_url: `https://github.com/${input.nameWithOwner}`,
-      clone_url: input.cloneUrl, visibility: 'private', default_branch: 'main' }) : response({}, 404);
+      clone_url: input.cloneUrl, visibility: input.repositoryVisibility ?? 'private', default_branch: 'main' }) : response({}, 404);
   };
   const resolveToken = async () => { tokenRequests += 1; return { kind: 'available' as const, token: 'fixture' }; };
   const declaration = PLUGIN_MANIFEST.contributes.scmHostingProviders![0]!;

@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import {
@@ -32,6 +33,7 @@ import { PLUGIN_MANIFEST as AZURE_PLUGIN_MANIFEST } from '../../../scm-azure-dev
 import { azureDevopsOperationsAdapter } from '../../../scm-azure-devops/src/operations/azureDevopsAdapter.js';
 import { PLUGIN_MANIFEST as BITBUCKET_PLUGIN_MANIFEST } from '../../../scm-bitbucket/src/manifest.js';
 import { bitbucketApiAdapter } from '../../../scm-bitbucket/src/operations/bitbucketApiAdapter.js';
+import { createGithubForgeHttpFixture } from '../../../../../apps/cli/src/testkit/scm/githubForgeHttp';
 
 const provider: ScmHostingProviderRef = {
     id: GITHUB_SCM_HOSTING_PROVIDER_ID,
@@ -237,6 +239,46 @@ function publishRequest(overrides: Partial<ScmHostingRepositoryPublishRequest> =
 }
 
 describe('git hosting repository publish operation', { timeout: 20_000 }, () => {
+    it.each([
+        { existingVisibility: 'public', requestedVisibility: 'private' },
+        { existingVisibility: 'private', requestedVisibility: 'public' },
+        { existingVisibility: 'private', requestedVisibility: 'private' },
+        { existingVisibility: 'public', requestedVisibility: 'public' },
+    ] as const)('reuses an existing $existingVisibility repository only for a $requestedVisibility publication', async ({ existingVisibility, requestedVisibility }) => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-publish-visibility-'));
+        const bareRemote = mkdtempSync(join(tmpdir(), 'happier-publish-visibility-remote-'));
+        const cloneUrl = 'https://github.com/happier-dev/project.git';
+        try {
+            git(bareRemote, ['init', '--bare']);
+            git(workspace, ['init', '-b', 'main']);
+            git(workspace, ['config', 'user.email', 'test@example.com']);
+            git(workspace, ['config', 'user.name', 'Test User']);
+            git(workspace, ['config', `url.${pathToFileURL(bareRemote).href}.insteadOf`, cloneUrl]);
+            writeFileSync(join(workspace, 'private.txt'), 'application contents\n');
+            git(workspace, ['add', 'private.txt']);
+            git(workspace, ['commit', '-m', 'initial']);
+            const forge = createGithubForgeHttpFixture({ nameWithOwner: 'happier-dev/project', cloneUrl,
+                repositoryVisibility: existingVisibility });
+            const operation = createGitHostingRepositoryPublishOperation({ registry: forge.hosting, runtimeServices: {} });
+            const response = await publishWithRealGitRuntime(operation, {
+                context: { ...context, cwd: workspace, detection: { ...context.detection, rootPath: workspace } },
+                request: publishRequest({ cwd: workspace, visibility: requestedVisibility, pushCurrentBranch: true }),
+            });
+            if (existingVisibility !== requestedVisibility) {
+                expect(response).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST });
+                expect(git(workspace, ['remote'])).toBe('');
+                expect(gitExitStatus(bareRemote, ['show-ref'])).toBe(1);
+            } else {
+                expect(response).toMatchObject({ success: true, pushed: true, repository: { visibility: existingVisibility } });
+                expect(git(bareRemote, ['show-ref', '--verify', 'refs/heads/main'])).toContain('refs/heads/main');
+            }
+            // Reuse admits from the one existing repository read, without creating another repository.
+            expect(forge.httpRequests).toEqual([{ method: 'GET', path: '/repos/happier-dev/project' }]);
+        } finally {
+            rmSync(workspace, { recursive: true, force: true });
+            rmSync(bareRemote, { recursive: true, force: true });
+        }
+    });
     it.each([
         { manifest: AZURE_PLUGIN_MANIFEST, adapter: azureDevopsOperationsAdapter,
             remoteUrl: 'https://dev.azure.com/happier-dev/platform/_git/happier',
