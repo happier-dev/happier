@@ -1614,9 +1614,11 @@ describe('Custom ACP fresh daemon launch composition', () => {
     });
     let cleanupCompletion: Promise<void> | undefined;
     const cleanup = () => cleanupCompletion ??= (async () => {
-      requesterLifetime.abort();
       releaseStopWrite.resolve();
       await localStop?.catch(() => {});
+      // Retire the real supervisor before ending its synthetic runner. A bare
+      // child exit admits automatic respawn work into the next fixture's Home.
+      await daemon?.stopSession(sessionId);
       storage.runnerExited = true;
       const hostedEnds = [...trackedSessions.values()].flatMap(tracked => tracked.hostedSession ? [tracked.hostedSession.observed] : []);
       if (child) {
@@ -1630,6 +1632,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       // that owner before shutdown and before removing this case's Home.
       await daemon?.retireEndedRunnerOwnedState();
       await daemon?.stopControlServer();
+      requesterLifetime.abort();
       for (const requester of requesterRuntimes) await requester.dispose();
       await originalRequester?.cleanupOnFailure();
       await projectMachine?.shutdown();
