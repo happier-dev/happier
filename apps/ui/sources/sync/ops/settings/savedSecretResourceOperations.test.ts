@@ -152,6 +152,11 @@ afterEach(async () => { await standardCleanup(); clearActiveUnsavedChangesGuard(
 let accountFixtureSequence = 0;
 
 /** Only HTTP, credentials and Socket transport are substituted; Account/Action/Settings/crypto owners stay real. */
+// Since 87d625db617 the person's own UI press on an Ask row confirms in place (docs/actions.md);
+// the approval Artifact path belongs to another caller, here an Account automation agent.
+const agentCaller = { surface: 'agent', authority: 'account_automation' } as const;
+const agentMutation: typeof runTeamAction = mutation => runTeamAction({ ...mutation, actionContext: { ...agentCaller } });
+
 async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: boolean; askAgentUpdate?: boolean; teams?: boolean; home?: string;
     raw?: Record<string, unknown>; captureSourceTrace?: boolean; historySnapshot?: Record<string, unknown>; encryptedVaultMachine?: boolean } = {}) {
     // Each fixture replaces its HTTP database with version 7. Do not rewind
@@ -165,14 +170,14 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
     // Server fixture material remains available when the client deliberately has token-only credentials.
     let serverCredentials = { token: credentials.token, secret: encodeBase64(new Uint8Array(32).fill(24), 'base64url') };
     const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, ...(options.ask || options.askAgentUpdate ? { actions: {
-        'secrets.create': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.update': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.delete': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.shared.create': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.shared.promote': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.shared.update': { approvalRequiredSurfaces: [options.askAgentUpdate ? 'agent' : 'ui'] },
-        'secrets.shared.delete': { approvalRequiredSurfaces: ['ui'] },
-        'secrets.shared.grants.set': { approvalRequiredSurfaces: ['ui'] },
+        'secrets.create': { approvalRequiredSurfaces: ['ui', 'agent'] },
+        'secrets.update': { approvalRequiredSurfaces: ['ui', 'agent'] },
+        'secrets.delete': { approvalRequiredSurfaces: ['ui', 'agent'] },
+        'secrets.shared.create': { approvalRequiredSurfaces: ['ui', 'agent'] },
+        'secrets.shared.promote': { approvalRequiredSurfaces: ['ui', 'agent'] },
+        'secrets.shared.update': { approvalRequiredSurfaces: options.askAgentUpdate ? ['agent'] : ['ui', 'agent'] },
+        'secrets.shared.delete': { approvalRequiredSurfaces: ['ui', 'agent'] },
+        'secrets.shared.grants.set': { approvalRequiredSurfaces: ['ui', 'agent'] },
     } } : { approvalWaivedSurfaces: {
         'secrets.delete': ['ui'],
         'secrets.shared.create': ['ui'], 'secrets.shared.promote': ['ui'], 'secrets.shared.update': ['ui'],
@@ -1084,7 +1089,8 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(account.raw.originalCommand).toBe('original');
         expect(account.writes).toHaveLength(1);
     });
-    it('private creation approval remains presented by the existing editor without replaying its Action', async () => {
+    it('private creation on an Ask-on-UI row confirms in place and creates once (87d625db617)', async () => {
+        // The person's own press answers its explicit Ask with the local confirmation; no self-approval Artifact.
         const account = await openAccount('plain', { ask: true });
         let resourceRef: string | undefined;
         account.setEffect((path, body) => {
@@ -1094,35 +1100,22 @@ describe('Saved Secret operations through their real Account and Action owners',
             account.materialRow(input.resourceId, 'plain', input.storedContent, 1);
             return Response.json({ resourceId: input.resourceId, revision: 1 });
         });
-        const onCreated = vi.fn();
-        const screen = await renderScreen(React.createElement(PrivateSavedSecretCreateHarness, { scope: account.scope, onCreated }));
-        await act(async () => {
-            screen.findByTestId('saved-secret-create-name')!.props.onChangeText('Private key');
-            screen.findByTestId('saved-secret-create-value')!.props.onChangeText('private-value');
-        });
-        await act(async () => { screen.findByTestId('saved-secret-create-submit')!.props.onPress(); });
-        await vi.waitFor(() => expect(Boolean(screen.findByTestId('saved-secret-create-approval'))).toBe(true));
-        expect(account.artifacts).toHaveLength(1);
-        expect(account.writes).toEqual([]);
-        expect(onCreated).not.toHaveBeenCalled();
-        const artifact = account.artifacts[0]!;
-        const body = decodePlainArtifactStoredContent(artifact.body!);
-        if (!body || typeof body !== 'object') throw new Error('Expected actual Plain approval body');
-        const request = StoredApprovalRequestSchema.parse(JSON.parse(String(Reflect.get(body, 'body'))));
-        expect(request.actionId).toBe('secrets.create');
-        expect(JSON.stringify(request)).not.toContain('private-value');
-        // The live private-input owner, not a fabricated terminal observation,
-        // executes once after the Inbox commits the actual approval decision.
-        await expect(decideApprovalAsInbox(account.scope.serverId, artifact.id, 'approve')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => {
-            expect(typeof resourceRef).toBe('string');
+        const { Modal } = await import('@/modal');
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+        try {
+            const onCreated = vi.fn();
+            const screen = await renderScreen(React.createElement(PrivateSavedSecretCreateHarness, { scope: account.scope, onCreated }));
+            await act(async () => {
+                screen.findByTestId('saved-secret-create-name')!.props.onChangeText('Private key');
+                screen.findByTestId('saved-secret-create-value')!.props.onChangeText('private-value');
+            });
+            await act(async () => { screen.findByTestId('saved-secret-create-submit')!.props.onPress(); });
+            await vi.waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+            expect(confirm).toHaveBeenCalled();
             expect(onCreated).toHaveBeenCalledWith(resourceRef, 'personal');
-        });
-        await decideApprovalAsInbox(account.scope.serverId, artifact.id, 'approve');
-        expect(onCreated).toHaveBeenCalledTimes(1);
-        expect(account.artifacts).toHaveLength(1);
-        expect(account.writes).toHaveLength(1);
-        expect(account.artifacts[0]?.body).not.toContain('private-value');
+            expect(account.artifacts).toEqual([]);
+            expect(account.writes).toHaveLength(1);
+        } finally { confirm.mockRestore(); }
     });
     it('keeps a reviewed configuration selection revision when promoting a different entered Secret', async () => {
         const account = await openAccount('plain', { home: '-configuration-selected-revision' });
@@ -1958,7 +1951,7 @@ describe('Saved Secret operations through their real Account and Action owners',
             }
         } finally { context.dispose(); }
     });
-    it('full reference credential save settles its captured approval with the actual Settings receipt and no replay', async () => {
+    it('full reference credential save on an Ask-on-UI row writes nothing when the person declines (87d625db617)', async () => {
         const account = await openAccount('plain', { ask: true });
         const record = ProfileRecordV1Schema.parse({ v: 1, id: 'full-approval-profile', enabled: true, promptStack: [],
             definition: { kind: 'legacy', profile: { id: 'full-approval-profile', name: 'Profile', environmentVariables: [], createdAt: 1, updatedAt: 1 } },
@@ -1966,48 +1959,22 @@ describe('Saved Secret operations through their real Account and Action owners',
         account.rows.push({ id: record.id, revision: 2, content: { t: 'plain', v: record } });
         const draft = { id: 'full-approval-draft', name: 'Profile key', kind: 'token' as const,
             encryptedValue: { _isSecretValue: true as const, value: 'private-profile-key' }, createdAt: 10, updatedAt: 10 };
-        const succeeded = vi.fn();
-        const failed = vi.fn();
-        const { createSavedSecretResourcesWithCatalogMutation } = await import('./savedSecretResourceOperations');
-        const pending = await createSavedSecretResourcesWithCatalogMutation({ scope: account.scope,
-            resources: [draft], referenceScope: 'full', onApprovalSucceeded: succeeded, onApprovalFailed: failed,
-            mutateCatalogs: ({ rawSettings, catalogs }) => ({ settings: { ...rawSettings, secrets: [draft] },
-                catalogs: { ...catalogs, profileRecords: catalogs.profileRecords.map(current => current.id === record.id
-                    ? { ...current, secretBindings: { TOKEN: draft.id } } : current) } }),
-        }).catch((error: unknown) => error);
-        expect(pending).toBeInstanceOf(TeamActionApprovalPendingError);
-        if (!(pending instanceof TeamActionApprovalPendingError) || typeof pending.registration === 'string') throw new Error('Expected full result-bearing approval');
-        expect(account.artifacts).toHaveLength(1);
-        const artifact = account.artifacts[0]!;
-        const body = decodePlainArtifactStoredContent(artifact.body!);
-        if (!body || typeof body !== 'object' || typeof Reflect.get(body, 'body') !== 'string') throw new Error('Expected Plain Artifact body');
-        const request = StoredApprovalRequestSchema.parse(JSON.parse(Reflect.get(body, 'body')));
-        if (request.v !== 2) throw new Error('Expected canonical immutable approval origin');
-        const input = SharedSavedSecretPromoteInputV1Schema.parse(request.actionArgs);
-        expect(input).toMatchObject({ resourceId: draft.id, expectedSettingsVersion: 7,
-            nextSettings: { t: 'plain', v: { secrets: [] } },
-            referenceCensus: { profiles: { rows: [{ id: record.id, revision: 2 }] } },
-            profileMutations: [{ id: record.id, content: { t: 'plain', v: { secretBindings: {
-                TOKEN: `happier:shared-secret:v1:${draft.id}`,
-            } } } }],
-        });
-        const settledAt = request.createdAtMs + 1;
-        const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: settledAt,
-            decision: { kind: 'approve', decidedAtMs: settledAt }, execution: { ok: true, executedAtMs: settledAt,
-                result: { resourceId: input.resourceId, settingsVersion: 23 } } });
-        const observation: DecryptedArtifact = { id: artifact.id, header: buildApprovalRequestArtifactHeaderV1(settled),
-            title: buildApprovalRequestArtifactHeaderV1(settled).title,
-            body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, isDecrypted: true };
-        expect(await pending.registration.onExecuted(observation)).toBe('consumed');
-        expect(succeeded).toHaveBeenCalledWith({ ok: true, settingsVersion: 23,
-            resourceRefs: new Map([[draft.id, `happier:shared-secret:v1:${draft.id}`]]),
-            resourceFingerprints: new Map([[draft.id, formatSavedSecretCatalogFingerprintV1({
-                ref: `happier:shared-secret:v1:${draft.id}`, source: 'shared_resource', revision: 1,
-            })]]),
-        });
-        expect(failed).not.toHaveBeenCalled();
-        expect(account.writes).toEqual([]);
-        expect(account.resources.size).toBe(0);
+        const { Modal } = await import('@/modal');
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        try {
+            const { createSavedSecretResourcesWithCatalogMutation } = await import('./savedSecretResourceOperations');
+            const result = await createSavedSecretResourcesWithCatalogMutation({ scope: account.scope,
+                resources: [draft], referenceScope: 'full',
+                mutateCatalogs: ({ rawSettings, catalogs }) => ({ settings: { ...rawSettings, secrets: [draft] },
+                    catalogs: { ...catalogs, profileRecords: catalogs.profileRecords.map(current => current.id === record.id
+                        ? { ...current, secretBindings: { TOKEN: draft.id } } : current) } }),
+            });
+            expect(confirm).toHaveBeenCalled();
+            expect(result).toMatchObject({ ok: false });
+            expect(account.artifacts).toEqual([]);
+            expect(account.writes).toEqual([]);
+            expect(account.resources.size).toBe(0);
+        } finally { confirm.mockRestore(); }
     });
     it.each([
         { mode: 'plain', observation: 'matching' }, { mode: 'plain', observation: 'unchanged-settings' },
@@ -2394,8 +2361,10 @@ describe('Saved Secret operations through their real Account and Action owners',
             encryptedValue: { _isSecretValue: true as const, value: 'legacy-approval-value' }, createdAt: 1, updatedAt: 2 };
         const account = await openAccount('plain', { ask: true, raw: { secrets: [legacy] } });
         const outcome = await withProfileAccount(account.scope, undefined, (context, mode) =>
-            importLegacySavedSecretsInContext(context, mode, account.scope)).then(
+            importLegacySavedSecretsInContext(context, mode, account.scope, undefined, undefined, 'maintenance', undefined,
+                { actionContext: { ...agentCaller } })).then(
                 value => ({ kind: 'resolved' as const, value }), error => ({ kind: 'rejected' as const, error: error as unknown }));
+        // An agent caller's Ask (87d625db617: the person's own press confirms in place instead).
         // A real pending Artifact proves that admission reached Ask, rather than
         // failing upstream on capture or fixture setup.
         expect(account.artifacts).toHaveLength(1);
@@ -2425,7 +2394,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         await refreshCatalogAndWaitForLegacyImport(account.scope);
         const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
         const replayed = await scopedHomeActionExecutor(account.scope)(ApprovalRequestV2Schema.parse(original).actionId, original.actionArgs, {
-            surface: 'ui', authority: 'present_user', serverId: account.scope.serverId,
+            ...agentCaller, serverId: account.scope.serverId,
             actionRequestId: original.executionOriginV1.requestId,
         });
         const pendingForRequest = account.artifacts.map(artifact => {
@@ -2460,7 +2429,9 @@ describe('Saved Secret operations through their real Account and Action owners',
                     ...(request.v === 2 ? { requestId: request.executionOriginV1.requestId,
                         serverId: request.executionOriginV1.serverId } : {}) };
             });
-            expect(account.artifacts, JSON.stringify(identities)).toHaveLength(1);
+            // The app's own background import is the person's own invocation: since 87d625db617
+            // its Ask is a local confirmation, never a self-approval Artifact. Unanswered, nothing is written.
+            expect(account.artifacts, JSON.stringify(identities)).toEqual([]);
             expect(account.resources.size).toBe(0);
             expect(account.writes).toEqual([]);
             expect(account.raw.secrets).toEqual([legacy]);
@@ -4015,17 +3986,31 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
     });
 
-    it.each(['create', 'update', 'delete', 'grants'] as const)('settles the exact approved %s result without redispatching the mutation', async operation => {
+    it('grants on an Ask-on-UI row ask the person in place and write nothing when declined (87d625db617)', async () => {
+        const account = await openAccount('plain', { ask: true });
+        account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'private-value' } });
+        const { Modal } = await import('@/modal');
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        try {
+            const result = await setSavedSecretResourceGrants({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3,
+                encryptionMode: 'plain', accountGrants: ['account-b'], teamGrants: [], groupGrants: [], decryptDataKeyEnvelope: async () => null });
+            expect(confirm).toHaveBeenCalled();
+            expect(result).toMatchObject({ ok: false });
+            expect(account.artifacts).toEqual([]);
+            expect(account.writes).toEqual([]);
+        } finally { confirm.mockRestore(); }
+    });
+
+    it.each(['create', 'update', 'delete'] as const)('settles the exact approved %s result without redispatching the mutation', async operation => {
         const account = await openAccount('plain', { ask: true });
         account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'private-value' } });
         if (operation === 'delete') await refreshSavedSecretCatalog(account.scope);
         const succeeded = vi.fn();
         const failed = vi.fn();
-        const common = { scope: account.scope, onApprovalSucceeded: succeeded, onApprovalFailed: failed };
+        const common = { scope: account.scope, onApprovalSucceeded: succeeded, onApprovalFailed: failed, executeAdmittedMutation: agentMutation };
         const execution = operation === 'create' ? createSavedSecretResource({ ...common, name: 'Key', kind: 'token', value: 'private-value', accountGrants: [], teamGrants: [], groupGrants: [] })
             : operation === 'update' ? updateSavedSecretResource({ ...common, resourceId: 'resource-a', expectedRevision: 3, nextName: 'New', decryptDataKeyEnvelope: async () => null })
-            : operation === 'delete' ? deleteSavedSecretResource({ ...common, resourceId: 'resource-a', expectedRevision: 3, expectedSettingsVersion: 7 })
-            : setSavedSecretResourceGrants({ ...common, resourceId: 'resource-a', expectedRevision: 3, encryptionMode: 'plain', accountGrants: ['account-b'], teamGrants: [], groupGrants: [], decryptDataKeyEnvelope: async () => null });
+            : deleteSavedSecretResource({ ...common, resourceId: 'resource-a', expectedRevision: 3, expectedSettingsVersion: 7 });
         const pending = await execution.catch((error: unknown) => error);
         expect(pending).toBeInstanceOf(TeamActionApprovalPendingError);
         if (!(pending instanceof TeamActionApprovalPendingError) || typeof pending.registration === 'string') throw new Error('Expected result-bearing approval');
