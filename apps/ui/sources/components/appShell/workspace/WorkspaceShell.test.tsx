@@ -401,7 +401,34 @@ describe('WorkspaceShell retained member layer', () => {
         // Budget measured on 2026-11-15 (P03-REGRESSION-GUARDS): the parked tab 'a' is neither shown nor hidden by
         // these switches, so neither its retained host nor its body renders; the shown and hidden bodies render once each (focus/visibility),
         // in 4 shell commits. Growth in any count is a regression in the retained-tab owner, not noise.
-        expect(perSwitch).toEqual(Array.from({ length: 4 }, () => ({ a: 0, aHost: 0, b: 1, c: 1, commits: 4 })));
+        // 2026-11-16 (W2, UI refinements ruling 00:44Z): the press commits the strip first and the reveal follows in
+        // its own deferred commits (4 -> 6); each body still renders exactly once per switch.
+        expect(perSwitch).toEqual(Array.from({ length: 4 }, () => ({ a: 0, aHost: 0, b: 1, c: 1, commits: 6 })));
+    });
+
+    it('paints the pressed tab before the revealed body commits, with the owner current at once', async () => {
+        let initial = createWorkspaceState(restoredTab('a'));
+        for (const id of ['b', 'c']) initial = reduceWorkspaceState(initial, { type: 'openTab', groupId: 'group:1', tab: restoredTab(id) });
+        const screen = await renderWorkspace(initial);
+        const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
+        for (const id of ['a', 'b', 'c']) await act(async () => { navigation.activateTab('group:1', id); });
+        await settle(() => { expect(screen.root.findAllByType('StatefulRouteBodyProbe')).toHaveLength(3); });
+        // One frame per commit: the strip's selected tab, the shown body, and what the workspace owner says.
+        const frames: { strip: string | undefined; shown: string[]; owner: string }[] = [];
+        const stop = screen.subscribe(() => {
+            const strip = screen.root.findAll(node => typeof node.type !== 'string'
+                && node.props?.group?.id === 'group:1' && typeof node.props.group.activeTabId === 'string')[0]?.props.group.activeTabId;
+            const shown = screen.root.findAllByType('StatefulRouteBodyProbe').filter(node => node.props.focused).map(node => node.props.tabId);
+            frames.push({ strip, shown, owner: stateOf(screen).groups['group:1'].activeTabId });
+        });
+        await act(async () => { navigation.activateTab('group:1', 'b'); });
+        await settle(() => { expect(screen.root.findAllByType('StatefulRouteBodyProbe').filter(node => node.props.focused)
+            .map(node => node.props.tabId)).toEqual(['b']); });
+        stop();
+        const press = frames.findIndex(frame => frame.strip === 'b');
+        // The press commit carries the strip (and the owner's value, which Save/Send read) but not the heavy reveal.
+        expect(frames[press], JSON.stringify(frames)).toEqual({ strip: 'b', shown: ['c'], owner: 'b' });
+        expect(frames.findIndex(frame => frame.shown.includes('b')), JSON.stringify(frames)).toBeGreaterThan(press);
     });
 
     it('re-renders a member layer when its tab changes', async () => {

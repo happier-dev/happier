@@ -167,6 +167,12 @@ function WorkspaceCanvas(props: Readonly<{
         </WorkspaceLeafSafeArea>;
     }, [props.catalog, props.presentation, titleBarGroupIds, visibleGroups, workspace]);
     const previousMembers = React.useRef<ReadonlyMap<string, WorkspaceRetainedMember>>(new Map());
+    // The heavy reveal (a tab body shown or hidden) follows the selection one deferred render later, so the
+    // press commit carries only the strip and paints first; the workspace owner's value is current at once
+    // (UI refinements ruling 2026-11-16 00:44Z, W2). Membership stays current: a closed tab leaves at once.
+    const selectionKey = Object.values(visibleGroups).map(group => `${group.id}\u0000${group.activeTabId ?? ''}`).join('\u0001');
+    const presentedSelectionKey = React.useDeferredValue(selectionKey);
+    const presentedActiveTabs = React.useMemo(() => new Set(presentedSelectionKey.split('\u0001')), [presentedSelectionKey]);
     const retainedLeafContents = React.useMemo(() => {
         const nextMembers = new Map<string, WorkspaceRetainedMember>();
         const members = Object.values(visibleGroups).flatMap(group =>
@@ -177,7 +183,10 @@ function WorkspaceCanvas(props: Readonly<{
                 if (!tab) return [];
                 const navigation = workspace.navigationForTab(tabId);
                 const phone = workspace.phone !== null && workspace.phone !== undefined;
-                const isActive = tabId === group.activeTabId;
+                // A destination presentation lists only the active tab, so its member and selection move together.
+                const isActive = props.presentation === 'destination'
+                    ? tabId === group.activeTabId
+                    : presentedActiveTabs.has(`${group.id}\u0000${tabId}`);
                 const previous = previousMembers.current.get(tabId);
                 // A member keeps its identity while its facts stand, so another tab's write leaves its layer alone.
                 const member: WorkspaceRetainedMember = previous && previous.leafId === group.id && previous.isActive === isActive
@@ -194,7 +203,7 @@ function WorkspaceCanvas(props: Readonly<{
             }));
         previousMembers.current = nextMembers;
         return members;
-    }, [props.catalog, props.presentation, visibleGroups, workspace]);
+    }, [presentedActiveTabs, props.catalog, props.presentation, visibleGroups, workspace]);
     return <SplitCanvasHost
         entityDrop={scope ? {
             runtime, id: 'workspace', scope, acceptedKinds: WORKSPACE_ENTITY_KINDS,
