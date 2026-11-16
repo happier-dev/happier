@@ -592,13 +592,48 @@ export async function recordClaudeRateLimitQuotaEvidence(
 function buildClaudeRuntimeIssueUsageLimit(params: Readonly<{
     details: NormalizedProviderUsageLimitDetailsV1;
     connectedService: RuntimeIssueConnectedService;
+    observedWindows?: readonly NormalizedProviderUsageLimitDetailsV1[];
+    isUsageLimit: boolean;
 }>): RuntimeIssueUsageLimitDetails {
     const providerLimitId = params.details.providerLimitId ?? params.details.limitCategory ?? 'account';
-    const resetAtMs = params.details.resetAtMs ?? params.details.overage?.resetAtMs ?? null;
-    const remainingPct = params.details.utilization === null
+    const observedWindow = params.observedWindows?.find((window) => (
+        resolveClaudeQuotaProviderLimitId(window) === providerLimitId
+    ));
+    // The failure identifies the exhausted window, while the matching quota evidence carries
+    // its measured percentage (the failure's top-level utilization can be absent or stale).
+    const utilization = observedWindow?.utilization ?? params.details.utilization;
+    const resetAtMs = params.details.resetAtMs ?? observedWindow?.resetAtMs ?? params.details.overage?.resetAtMs ?? null;
+    const remainingPct = utilization === null
         ? null
-        : Math.max(0, 100 - params.details.utilization);
+        : Math.max(0, 100 - utilization);
     const { sourceProviderOrganizationId: _internalOrganizationId, ...publicDetails } = params.details;
+    const observedAllWindows = params.observedWindows?.flatMap((window) => {
+        if (window.utilization === null) return [];
+        const meterId = resolveClaudeQuotaProviderLimitId(window);
+        return [{
+            meterId,
+            scope: resolveClaudeUsageWindowLabel(meterId) ?? window.quotaScope,
+            remainingPct: Math.max(0, 100 - window.utilization),
+            ...(window.resetAtMs === null ? {} : { resetAtMs: window.resetAtMs }),
+            status: 'ok',
+        }];
+    }) ?? [];
+    const hasObservedPrimaryWindow = observedAllWindows.some((window) => window.meterId === providerLimitId);
+    const needsPrimaryFallback = observedAllWindows.length === 0
+        ? remainingPct !== null || params.isUsageLimit
+        : Boolean(params.details.providerLimitId) && !hasObservedPrimaryWindow;
+    const primaryWindow = needsPrimaryFallback
+        ? [{
+            meterId: providerLimitId,
+            scope: resolveClaudeUsageWindowLabel(providerLimitId) ?? params.details.quotaScope,
+            remainingPct: remainingPct ?? 0,
+            ...(resetAtMs === null ? {} : { resetAtMs }),
+            status: 'ok',
+        }]
+        : [];
+    const allWindows = observedAllWindows.length > 0 || primaryWindow.length > 0
+        ? [...observedAllWindows, ...primaryWindow]
+        : undefined;
     return {
         ...publicDetails,
         limitCategory: normalizeClaudePublicLimitCategory(params.details.limitCategory),
@@ -608,14 +643,8 @@ function buildClaudeRuntimeIssueUsageLimit(params: Readonly<{
             : {
                 effectiveMeterId: providerLimitId,
                 effectiveRemainingPct: remainingPct,
-                allWindows: [{
-                    meterId: providerLimitId,
-                    scope: params.details.quotaScope,
-                    remainingPct,
-                    ...(resetAtMs === null ? {} : { resetAtMs }),
-                    status: 'ok',
-                }],
             }),
+        ...(allWindows ? { allWindows } : {}),
     };
 }
 
@@ -624,6 +653,7 @@ function buildClaudeRateLimitRuntimeIssue(params: Readonly<{
     classification: NonNullable<ReturnType<typeof classifyClaudeConnectedServiceRuntimeAuthFailure>>;
     connectedService: RuntimeIssueConnectedService;
     occurredAt: number;
+    observedWindows?: readonly NormalizedProviderUsageLimitDetailsV1[];
 }>): SessionRuntimeIssueV1 {
     if (params.classification.kind === 'temporary_throttle') {
         return {
@@ -657,6 +687,8 @@ function buildClaudeRateLimitRuntimeIssue(params: Readonly<{
         usageLimit: buildClaudeRuntimeIssueUsageLimit({
             details: params.details,
             connectedService: params.connectedService,
+            observedWindows: params.observedWindows,
+            isUsageLimit: params.classification.kind === 'usage_limit',
         }),
     };
 }
@@ -710,6 +742,7 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
             classification: initialClassification,
             connectedService,
             occurredAt,
+            observedWindows: options?.observedWindows,
         });
         if (selection) {
             runtimeIssueFingerprint = beginConnectedClaudeTurnFailure(session, issue, logPrefix);

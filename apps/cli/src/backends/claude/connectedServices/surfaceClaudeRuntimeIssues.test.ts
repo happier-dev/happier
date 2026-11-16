@@ -386,6 +386,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
   it.each([null, 95])('keeps measured rejected and other windows even with top-level usage %s', async (utilization) => {
     const previousSelectionEnv = process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
     delete process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+    const failTurn = createClaudeFailTurnSpy();
     const window = {
       v: 1 as const,
       retryAfterMs: null,
@@ -398,7 +399,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
     };
     try {
       await surfaceClaudeRateLimitRuntimeIssue({
-        client: { sessionId: 'sess_claude_rejected_windows', sessionTurnLifecycle: { failTurn: createClaudeFailTurnSpy() } },
+        client: { sessionId: 'sess_claude_rejected_windows', sessionTurnLifecycle: { failTurn } },
       } as any, {
         ...window,
         limitCategory: 'usage_limit',
@@ -412,6 +413,17 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
           { ...window, providerLimitId: 'seven_day', utilization: 42, resetAtMs: 1_790_928_000_000 },
         ],
       });
+
+      expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
+        issue: expect.objectContaining({
+          usageLimit: expect.objectContaining({
+            allWindows: [
+              expect.objectContaining({ meterId: 'five_hour', remainingPct: 0 }),
+              expect.objectContaining({ meterId: 'seven_day', remainingPct: 58 }),
+            ],
+          }),
+        }),
+      }));
 
       // Reaching one limit must not drop the other window from the account's usage.
       expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledWith(expect.objectContaining({
