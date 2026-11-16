@@ -118,11 +118,28 @@ function revisionView(repo, git, rev) {
     if (specifier.startsWith('.') || alias || workspaces.has(workspace)) {
       const resolved = ts.resolveModuleName(specifier, resolve(repo, file), options, host).resolvedModule;
       const target = resolved && repoPath(resolved.resolvedFileName);
-      if (!resolved) result = ignoredOnDisk(file, specifier, options) ? { kind: 'external' } : { kind: 'missing' };
+      if (!resolved) result = trackedAsset(file, specifier, options) || ignoredOnDisk(file, specifier, options)
+        ? { kind: 'external' } : { kind: 'missing' };
       else if (blobs.has(target)) result = { kind: 'file', path: target };
     }
     resolutions.set(key, result);
     return result;
+  };
+  // Bundlers load a non-module asset (fonts, images) by its path, relative or through a
+  // tsconfig path alias; TypeScript resolves modules only. A tracked asset is present.
+  const trackedAsset = (file, specifier, options) => {
+    if (!/\.[A-Za-z0-9]+$/u.test(specifier) || /\.(?:[cm]?[jt]sx?|json)$/u.test(specifier)) return false;
+    const candidates = specifier.startsWith('.') ? [posix.join(posix.dirname(file), specifier)] : [];
+    const base = options.pathsBasePath ?? options.baseUrl ?? repo;
+    for (const [pattern, targets] of Object.entries(options.paths ?? {})) {
+      const star = pattern.indexOf('*');
+      const head = star < 0 ? pattern : pattern.slice(0, star);
+      const tail = star < 0 ? '' : pattern.slice(star + 1);
+      if (star < 0 ? specifier !== pattern : !(specifier.startsWith(head) && specifier.endsWith(tail))) continue;
+      const middle = star < 0 ? '' : specifier.slice(head.length, specifier.length - tail.length);
+      for (const target of targets) candidates.push(repoPath(resolve(base, target.replace('*', middle))));
+    }
+    return candidates.some(path => blobs.has(path));
   };
   // Build output (generated routes, dist) is ignored by Git and never a committed producer.
   const ignoredOnDisk = (file, specifier, options) => {
