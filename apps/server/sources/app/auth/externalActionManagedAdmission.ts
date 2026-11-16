@@ -99,6 +99,8 @@ export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1): Promise<boolean | null> {
     const acquiring = binding.actionId === 'machines.managed.acquire';
     if (!acquiring && !isManagedEnrollmentRecoveryChildV1(binding.actionId, 'machines.agentIsolation.preview')) return null;
+    // Custodian Inspect uses current credentials, not the creator's retained job.
+    if (binding.actionId === 'machines.managed.inspect' && binding.accountId === binding.custodianAccountId) return null;
     const recovery = ExternalActionManagedRecoveryAdmissionV1Schema.safeParse(binding.managedAdmission);
     if (!acquiring && !(recovery.success && recovery.data.actionId === binding.actionId)) return null;
     try {
