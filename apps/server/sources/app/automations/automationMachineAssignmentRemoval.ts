@@ -3,7 +3,7 @@ import { TransactionReplayRequiredError } from "@/storage/inTx";
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 
 import {
-    emitAutomationMutationAfterTx,
+    emitAutomationAssignmentMutationAfterTx,
     ensureAutomationEventCatalogStateTx,
     loadAutomationTx,
     markAutomationChangedTx,
@@ -269,10 +269,6 @@ export async function removeAutomationMachineAssignmentsTx(
             });
         }
 
-        const cursor = await markAutomationChangedTx(params.tx, {
-            accountId: automationAccountId,
-            automationId,
-        });
         // Reload after the mutation so the post-commit publication carries the
         // committed definition state.
         const publishedAutomation = await loadAutomationTx(params.tx, {
@@ -280,7 +276,11 @@ export async function removeAutomationMachineAssignmentsTx(
             automationId,
         });
         if (!publishedAutomation) continue;
-        emitAutomationMutationAfterTx({
+        const cursor = await markAutomationChangedTx(params.tx, {
+            accountId: automationAccountId, automationId,
+            publication: { previous: automation, current: publishedAutomation },
+        });
+        emitAutomationAssignmentMutationAfterTx({
             tx: params.tx,
             accountId: automationAccountId,
             automation: publishedAutomation,

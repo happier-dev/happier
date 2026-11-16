@@ -166,7 +166,7 @@ function generateProviderSchemaFromPostgres(
 	        body = body.replace(/^(\s*policyJson\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*stateJson\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
             body = body.replace(/^(\s*workspaceJson\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
-            body = body.replace(/^(\s*(?:runLifecycleConfigurationJson|causeRunLifecycleEvidenceJson)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+            body = body.replace(/^(\s*(?:runLifecycleConfigurationJson|causeRunLifecycleEvidenceJson|causeActionEvidenceJson|causePluginEventEvidenceJson|actionIdsJson)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowAcceptedSnapshotEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowCheckpointEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowDisplaySummaryEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
@@ -596,6 +596,11 @@ function annotateMySqlPluginAvailabilityFields(schemaBody: string): string {
 
 function annotateMySqlEventAutomationFields(schemaBody: string): string {
     return schemaBody
+        .replace(
+            /^model\s+AutomationTrigger\s+\{[\s\S]*?^\}\s*$/gm,
+            // Qualified plugin Action ids are not bounded by MySQL's default VARCHAR(191).
+            (model) => model.replace(/^(\s*actionId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
+        )
         .replace(
             /^model\s+Automation\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model

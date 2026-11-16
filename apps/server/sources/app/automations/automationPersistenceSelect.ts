@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS } from '@happier-dev/protocol/automations/automationApiV3';
+import { automationActionTriggerConfigurationSelect } from './automationActionTriggerConfiguration';
 
 /** The predecessor started transaction committed before any Session effect.
  * Reclaimed pre-start claims remain safe; attempt count is not effect evidence.
@@ -17,6 +18,7 @@ export const automationRunWithoutExecutionWhere = {
 } satisfies Prisma.AutomationRunWhereInput;
 
 export const automationTriggerSelect = {
+    ...automationActionTriggerConfigurationSelect,
     id: true, automationId: true, kind: true, enabled: true, revision: true, deletedAt: true,
     scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true, scheduledAt: true,
     eventPluginId: true, eventLocalId: true, sourceSelectorId: true, sourceContractVersion: true,
@@ -37,6 +39,7 @@ export const automationTriggerSelect = {
  * select loads the unused status relation.
  */
 export const automationTriggerListItemSelect = {
+    ...automationActionTriggerConfigurationSelect,
     id: true, automationId: true, kind: true, enabled: true, revision: true, deletedAt: true,
     scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true, scheduledAt: true,
     eventPluginId: true, eventLocalId: true, sourceSelectorId: true, sourceContractVersion: true,
@@ -96,6 +99,7 @@ export const automationRunCauseSelect = {
     causeEventPluginId: true, causeEventLocalId: true, causeScheduledFor: true,
     causeSessionLifecycleEvent: true, causeSourceSessionId: true, causeSourceTurnId: true,
     causeRunLifecycleEvidenceJson: true,
+    causeActionEvidenceJson: true,
     causeOriginRunId: true,
     causeSessionLifecycleRequestId: true, causeSessionLifecycleRequestKind: true,
     causeSessionLifecyclePolicyKind: true, causeSessionLifecycleConfiguredCount: true,

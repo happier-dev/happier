@@ -38,6 +38,8 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { projectAdmittedTemplateAcceptedVersionsInTx, writeAdmittedTemplateAcceptedVersionInTx } from './artifactTemplateAcceptedVersionStorage';
 
+import { publishWorkflowActionIndexChangedInTx } from '@/app/automations/automationActionIndex';
+
 export type ArtifactAccess = ResourceGrantAccess;
 
 /** Retained anonymous or authenticated links both expose replacement Artifact bytes. */
@@ -851,9 +853,13 @@ export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGr
         ownerAccountId: access.ownerAccountId, principal: input.principal, hasExistingGrant: mutation.previous !== null });
     if (principalError) return { ok: false, error: `artifact_${principalError}` };
     const changed = mutation.previous?.accessLevel !== input.accessLevel;
+    const previousAudience = changed ? await resolveArtifactAudienceInTx(tx, input.artifactId) : [];
     if (changed) await mutation.upsert();
     if (changed) {
-        await markAccountsChanged(tx, { accountIds: await resolveArtifactAudienceInTx(tx, input.artifactId), kind: "artifact", entityId: input.artifactId });
+        const audience = await resolveArtifactAudienceInTx(tx, input.artifactId);
+        const recipients = await markAccountsChanged(tx, { accountIds: audience, kind: "artifact", entityId: input.artifactId });
+        await publishWorkflowActionIndexChangedInTx(tx, { workflowId: input.artifactId, recipients,
+            admittedAccountIds: audience, previousAccountIds: previousAudience });
     }
     const listed = await listArtifactAccessGrantsInTx(tx, input);
     return listed.ok ? { ok: true, value: { ...listed.value, changed } } : listed;
@@ -899,8 +905,12 @@ export async function joinArtifactSignedInLinkAccessInTx(tx: Tx, input: Readonly
     const mutation = await readArtifactGrantMutationInTx(tx, { artifactId: input.artifactId, actorAccountId: input.authorAccountId,
         principal: { kind: 'account', accountId: input.actorAccountId }, accessLevel: 'view' });
     if (!mutation.previous) await mutation.upsert();
-    if (input.keyEnvelope) await artifactRecipientEnvelopeStorageAdapter.writeRecipientEnvelopeInTx(tx, input.artifactId, input.keyEnvelope);
-    await markAccountsChanged(tx, { accountIds: [input.authorAccountId, input.actorAccountId], kind: 'artifact', entityId: input.artifactId });
+    const becameReadable = input.keyEnvelope
+        ? await writeArtifactRecipientEnvelopeInTx(tx, input.artifactId, input.keyEnvelope) : false;
+    const admittedAccountIds = [input.authorAccountId, input.actorAccountId];
+    const recipients = await markAccountsChanged(tx, { accountIds: admittedAccountIds, kind: 'artifact', entityId: input.artifactId });
+    await publishWorkflowActionIndexChangedInTx(tx, { workflowId: input.artifactId, recipients, admittedAccountIds,
+        previousAccountIds: current && !becameReadable ? admittedAccountIds : [input.authorAccountId] });
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: input.authorAccountId, access: current?.level ?? 'view' } } as const;
 }
 
@@ -945,7 +955,9 @@ export async function removeArtifactAccessGrantInTx(tx: Tx, input: ArtifactAcces
     const audience = await resolveArtifactAudienceInTx(tx, input.artifactId);
     await tx.artifactKeyEnvelope.deleteMany({ where: { artifactId: input.artifactId, recipientAccountId: { notIn: audience } } });
     if (deleted.count > 0) {
-        await markAccountsChanged(tx, { accountIds: previousAudience, kind: "artifact", entityId: input.artifactId });
+        const recipients = await markAccountsChanged(tx, { accountIds: previousAudience, kind: "artifact", entityId: input.artifactId });
+        await publishWorkflowActionIndexChangedInTx(tx, { workflowId: input.artifactId, recipients,
+            admittedAccountIds: audience, previousAccountIds: previousAudience });
     }
     const listed = await listArtifactAccessGrantsInTx(tx, input);
     return { ok: true, value: listed.ok
@@ -1046,9 +1058,40 @@ export async function commitArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Art
 export async function applyArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Readonly<{
     artifactId: string;
     recipientKeyEnvelopes: readonly ArtifactRecipientKeyEnvelopeInputV1[];
-}>): Promise<ArtifactRecipientKeyEnvelopeCommitResponseV1> {
-    return applyResourceRecipientKeyEnvelopesInTx(tx, artifactRecipientEnvelopeStorageAdapter,
+}>, admittedFacts?: ReturnType<typeof artifactGrantFacts>): Promise<ArtifactRecipientKeyEnvelopeCommitResponseV1> {
+    const newlyReadable = new Set<string>();
+    const adapter: typeof artifactRecipientEnvelopeStorageAdapter = { ...artifactRecipientEnvelopeStorageAdapter,
+        ...(admittedFacts ? { readAccessFactsInTx: async () => admittedFacts } : {}),
+        async writeRecipientEnvelopeInTx(tx, artifactId, envelope) {
+            if (await writeArtifactRecipientEnvelopeInTx(tx, artifactId, envelope)) newlyReadable.add(envelope.recipientAccountId);
+        },
+        async publishRecipientsChangedInTx(tx, artifactId, accountIds) {
+            const recipients = await markAccountsChanged(tx, { accountIds: [...accountIds], kind: 'artifact', entityId: artifactId });
+            await publishWorkflowActionIndexChangedInTx(tx, { workflowId: artifactId,
+                recipients: recipients.filter(recipient => newlyReadable.has(recipient.accountId)),
+                admittedAccountIds: accountIds });
+        },
+    };
+    return applyResourceRecipientKeyEnvelopesInTx(tx, adapter,
         { resourceId: input.artifactId, recipientKeyEnvelopes: input.recipientKeyEnvelopes });
+}
+
+async function writeArtifactRecipientEnvelopeInTx(tx: Tx, artifactId: string,
+    envelope: ArtifactRecipientKeyEnvelopeInputV1): Promise<boolean> {
+    const bytes = privacyKit.decodeBase64(envelope.encryptedDataKey);
+    const previous = await tx.artifactKeyEnvelope.findUnique({ where: { artifactId_recipientAccountId: {
+        artifactId, recipientAccountId: envelope.recipientAccountId } },
+        select: { recipientContentPublicKeyFingerprint: true, encryptedDataKey: true } });
+    const data = { encryptedDataKey: bytes, recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
+        ...(envelope.encryptedProvenanceDataKey === undefined
+            ? previous && previous.recipientContentPublicKeyFingerprint !== envelope.recipientContentPublicKeyFingerprint
+                ? { encryptedProvenanceDataKey: null } : {}
+            : { encryptedProvenanceDataKey: privacyKit.decodeBase64(envelope.encryptedProvenanceDataKey) }) };
+    await tx.artifactKeyEnvelope.upsert({ where: { artifactId_recipientAccountId: {
+        artifactId, recipientAccountId: envelope.recipientAccountId } },
+        create: { artifactId, recipientAccountId: envelope.recipientAccountId, ...data }, update: data });
+    return !previous || previous.recipientContentPublicKeyFingerprint !== envelope.recipientContentPublicKeyFingerprint
+    || parseEncryptedDataKeyEnvelopeV1(previous.encryptedDataKey) === null;
 }
 
 /** Only Artifact persistence/provenance semantics remain in this adapter. */
@@ -1057,18 +1100,7 @@ const artifactRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStorageA
     readAccessFactsBatchInTx: (tx, resourceIds, actorAccountId) => artifactGrantStorageAdapter.readAccessFactsBatchInTx(tx, resourceIds, actorAccountId),
     readAccessFactsInTx: (tx, resourceId, actorAccountId) => artifactGrantStorageAdapter.readAccessFactsInTx(tx, resourceId, actorAccountId),
     async writeRecipientEnvelopeInTx(tx, artifactId, envelope) {
-        const bytes = privacyKit.decodeBase64(envelope.encryptedDataKey);
-        const previous = await tx.artifactKeyEnvelope.findUnique({ where: { artifactId_recipientAccountId: {
-            artifactId, recipientAccountId: envelope.recipientAccountId } },
-            select: { recipientContentPublicKeyFingerprint: true } });
-        const data = { encryptedDataKey: bytes, recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
-            ...(envelope.encryptedProvenanceDataKey === undefined
-                ? previous && previous.recipientContentPublicKeyFingerprint !== envelope.recipientContentPublicKeyFingerprint
-                    ? { encryptedProvenanceDataKey: null } : {}
-                : { encryptedProvenanceDataKey: privacyKit.decodeBase64(envelope.encryptedProvenanceDataKey) }) };
-        await tx.artifactKeyEnvelope.upsert({ where: { artifactId_recipientAccountId: {
-            artifactId, recipientAccountId: envelope.recipientAccountId } },
-            create: { artifactId, recipientAccountId: envelope.recipientAccountId, ...data }, update: data });
+        await writeArtifactRecipientEnvelopeInTx(tx, artifactId, envelope);
     },
     async publishRecipientsChangedInTx(tx, artifactId, accountIds) {
         await markAccountsChanged(tx, { accountIds: [...accountIds], kind: 'artifact', entityId: artifactId });

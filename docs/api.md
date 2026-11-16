@@ -1506,6 +1506,27 @@ Account cursor. `410 cursor-gone` requires a snapshot rebuild. The separate
 ## Endpoint catalog
 ### Automation definitions (0.3 development)
 
+The unreleased Action-trigger structural index uses authenticated
+`GET /v1/automations/actions/index` for its initial Account seed. The response is
+`{v:1,rows}` with public trigger identity, Action matching facts and Workflow
+revision. Shared rows require current Workflow Artifact admission and the
+subject writer's stored reach decision; their subject digest is keyed to that
+Workflow. Names, private definitions and authored subject identifiers are absent.
+Consent rows contain only the referenced Automation/trigger and reviewed
+Workflow revision, without a second matcher. Saved Workflow revisions come from
+the Artifact body version, independently of Automation editor revisions.
+
+Reconnect recovery selects the union of changed scopes through
+`POST /v1/automations/actions/index` with
+`{automationIds:string[],workflowDefinitionIds:string[]}`. It returns the same
+admitted row shape; consumers replace those selected Automation/Workflow scopes,
+including removing rows when a scope returns none. Existing Account change
+cursors supply `automation` ids and `artifact` Workflow ids. Both methods return
+`Cache-Control: no-store`. Live `automation-upsert.actionIndex` carries a complete
+`{automationId,rows}` replacement, and `automation-delete` removes that Automation.
+These small updates reach authenticated Account machine hosts as well as clients;
+ordinary editor upserts retain their existing client audience.
+
 `GET /v3/automations` returns a bounded, cursor-paged public definition list;
 private recipes and trigger envelopes require `GET /v3/automations/:id` or
 explicit private-page demand through `POST /v3/automations/query` with

@@ -1,8 +1,14 @@
-import { AutomationTriggerDefinitionBindingV1Schema, validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1, openAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { automationTriggerHasPrivateDefinitionV1, AutomationTriggerDefinitionBindingV1Schema, validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1, openAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { AutomationStoredContentEnvelopeV1ReadSchema, type AutomationStoredContentEnvelopeV1 } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { normalizeAutomationTemplateEnvelopeStoredRead } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
 import { parseAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+
+/** Physical-row adapter for the canonical private-definition discriminator. */
+export function automationTriggerHasPrivateDefinition(row: Readonly<{ kind: string; consentForAutomationId?: string | null }>): boolean {
+    return automationTriggerHasPrivateDefinitionV1({ kind: row.kind,
+        ...(row.consentForAutomationId == null ? {} : { consentFor: row.consentForAutomationId }) });
+}
 
 export class AutomationStoredContentReadError extends Error {
     constructor(kind: "contentInvalid" | "modeMismatch") {
@@ -62,7 +68,7 @@ export function readAutomationTriggerDefinitionBinding(params: Readonly<{
                 }
                 : null
         )
-        : params.triggerKind === "prComment" || params.triggerKind === "ciFailed"
+        : params.triggerKind === "prComment" || params.triggerKind === "ciFailed" || params.triggerKind === "action"
             ? { v: 1, automationId: params.automationId, triggerId: params.triggerId,
                 triggerRevision: params.triggerRevision, triggerKind: params.triggerKind }
             : null;

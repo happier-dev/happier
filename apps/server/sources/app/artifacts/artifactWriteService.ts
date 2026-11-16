@@ -55,6 +55,7 @@ import {
     type ArtifactMutationTransactionGuard,
 } from "./artifactAccessService";
 import { admitArtifactMemoryDecisionInTx, type ArtifactMemoryDecisionWriteContext, type MemoryDecisionAdmissionError } from './artifactMemoryDecisionAdmission';
+import { publishWorkflowActionIndexChangedInTx } from '@/app/automations/automationActionIndex';
 import { artifactContextStorageAdapter, newArtifactContextStorageAdapter } from './artifactContextInjection';
 import { deriveApprovalArtifactQueryHintsV1, ApprovalArtifactQueryHintsV1Schema, type ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -1495,6 +1496,8 @@ export async function updateArtifactTx(
         createdAt: current.updatedAt,
     });
 
+    const previousActionAudience = publication.publicationGrants.length > 0
+        ? await resolveArtifactAudienceInTx(tx, params.artifactId) : undefined;
     await applyArtifactPublicationGrantsInTx(tx, { artifactId: params.artifactId,
         actorAccountId: params.actorUserId, publicationGrants: publication.publicationGrants });
     // Labelling an unclassified row changes no header, body or recency, and every kind-selected
@@ -1510,6 +1513,11 @@ export async function updateArtifactTx(
         // A type-changing header leaves its old inventory as well as entering the new one.
         ...(nextKind !== undefined && nextKind.kind !== current.kind
             ? { hint: { artifactKinds: readArtifactKindsV1([current.kind, nextKind.kind]) } } : {}),
+    });
+    if (bodyUpdate || previousActionAudience) await publishWorkflowActionIndexChangedInTx(tx, {
+        workflowId: params.artifactId, recipients: recipientCursors, admittedAccountIds: recipients,
+        workflowRevision: bodyUpdate?.version ?? current.bodyVersion,
+        ...(bodyUpdate ? {} : { previousAccountIds: previousActionAudience }),
     });
     await markApprovalSessionsChangedInTx(tx, ownerAccountId, [current.approvalSessionId,
         nextKind === undefined ? current.approvalSessionId : nextKind.approvalSessionId]);
@@ -1618,7 +1626,8 @@ export async function deleteArtifact(params: {
             let cursor: Cursor | undefined;
             // Write changes while the FK target still exists; deletion nulls the
             // projection link, retaining the entity id for a removal refresh.
-            for (const recipientCursor of await markAccountsChanged(tx, { accountIds: audience, kind: "artifact", entityId: artifactId })) {
+            const recipientCursors = await markAccountsChanged(tx, { accountIds: audience, kind: "artifact", entityId: artifactId });
+            for (const recipientCursor of recipientCursors) {
                 const { accountId } = recipientCursor;
                 if (accountId === actorUserId) cursor = recipientCursor;
             }
@@ -1630,6 +1639,8 @@ export async function deleteArtifact(params: {
                     headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
                 }, data: { deletedAt } });
                 if (retired.count !== 1) throw new ArtifactDeleteVersionConflictError();
+                await publishWorkflowActionIndexChangedInTx(tx, { workflowId: artifactId,
+                    recipients: recipientCursors, admittedAccountIds: [], workflowRevision: artifact.bodyVersion, removed: true });
                 await markApprovalSessionsChangedInTx(tx, actorUserId, [artifact.approvalSessionId]);
             }
             return { ok: true as const, cursor, deletedAt, artifact };

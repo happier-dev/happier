@@ -13,6 +13,7 @@ import { classifyAutomationReplyHandoffDispatchability } from "./automationReply
 import { decodeAutomationRunCause, retainedV2OriginKindForRun } from "./automationRunCauseCodec";
 import {
     assertAutomationExecutionInputEnvelopeOuterForMode,
+    automationTriggerHasPrivateDefinition,
     assertAutomationStoredContentEnvelopeOuterForMode,
     assertAutomationTriggerDefinitionEnvelopeOuterForMode,
     AutomationStoredContentReadError,
@@ -29,6 +30,7 @@ import type {
 import { projectAutomationRunState } from "./automationTypes";
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
+import { decodeAutomationActionTriggerConfiguration } from "./automationActionTriggerConfiguration";
 import { assertWorkflowStoredEnvelopeOuterForMode, WorkflowStoredContentError } from "@/app/workflows/runs/storedContent";
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
@@ -66,6 +68,12 @@ function triggerProjection(
         id: trigger.id, revision: trigger.revision, enabled: trigger.enabled,
         createdAt: trigger.createdAt.getTime(), updatedAt: trigger.updatedAt.getTime(),
     };
+    if (trigger.kind === "action") {
+        const definition = decodeAutomationActionTriggerConfiguration(trigger);
+        return { ...common, ...definition,
+            ...(includeDefinition ? { triggerDefinitionEnvelope: 'consentFor' in definition ? null
+                : required(trigger.definitionEnvelope, "definitionEnvelope") } : {}) };
+    }
     if (trigger.kind === "prComment" || trigger.kind === "ciFailed") {
         return { ...common, kind: trigger.kind, sourceSessionId: required(trigger.sourceSessionId, "sourceSessionId"),
             ...(includeDefinition ? { triggerDefinitionEnvelope: required(trigger.definitionEnvelope, "definitionEnvelope") } : {}) };
@@ -134,6 +142,15 @@ function triggerProjection(
     };
 }
 
+/** Selected summaries reuse the trigger owner without accepting any private-definition mode. */
+export function toAutomationTriggerSummaryProjection(
+    trigger: AutomationTriggerItem,
+    statuses: ReadonlyMap<string, AutomationEventStatusProjection>,
+    lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>,
+) {
+    return triggerProjection(trigger, statuses, lifecycleStatuses, false);
+}
+
 function readExistingSessionId(item: AutomationListItem): string | null {
     if (item.targetType !== "existing_session") return null;
     const parsed = parseAutomationStoredDefinitionExecutionRecipeV1(item.templateCiphertext);
@@ -192,7 +209,7 @@ function assertPrivateTriggerDefinitionEnvelopes(
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ): void {
     for (const trigger of item.triggers) {
-        if (trigger.kind !== "pluginEvent" && trigger.kind !== "prComment" && trigger.kind !== "ciFailed") continue;
+        if (!automationTriggerHasPrivateDefinition(trigger)) continue;
         const binding = readAutomationTriggerDefinitionBinding({
             automationId: item.id, triggerId: trigger.id, triggerRevision: trigger.revision,
             triggerKind: trigger.kind,

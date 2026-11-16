@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import type { JsonValue } from '../json/strictJsonValue.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import {
@@ -36,6 +37,12 @@ import {
 export const AUTOMATION_TRIGGER_DEFINITION_ACCOUNT_SCOPED_BLOB_KIND_V1 =
   'automation_trigger_definition' as const;
 
+/** The private-content owner distinguishes matching Actions from reference-only consent. */
+export function automationTriggerHasPrivateDefinitionV1(trigger: Readonly<{ kind: string; consentFor?: unknown }>): boolean {
+  return trigger.kind === 'pluginEvent' || trigger.kind === 'prComment' || trigger.kind === 'ciFailed'
+    || trigger.kind === 'action' && trigger.consentFor === undefined;
+}
+
 /**
  * Durable private definition binding. Event routing identity remains public on its
  * AutomationTrigger row; PR selectors need only the common identity tuple. This
@@ -48,6 +55,7 @@ const AutomationTriggerDefinitionBindingBaseV1Schema = lazyZodSchema(() => z.str
   triggerRevision: AutomationTriggerRevisionSchema,
 }));
 export const AutomationTriggerDefinitionBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('triggerKind', [
+  z.strictObject({ ...AutomationTriggerDefinitionBindingBaseV1Schema.shape, triggerKind: z.literal('action') }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerDefinitionBindingBaseV1Schema, {
     triggerKind: z.literal('pluginEvent'),
     eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
@@ -205,7 +213,7 @@ export function validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1(
 
 export function sealAutomationTriggerDefinitionStoredEnvelopeV1(params: Readonly<{
   binding: AutomationTriggerDefinitionBindingV1;
-  definition: PluginJsonValueV2;
+  definition: JsonValue;
 }> & AutomationTriggerDefinitionStoredEnvelopeSealModeV1): AutomationStoredContentEnvelopeV1 {
   const payload = AutomationTriggerDefinitionStoredPayloadV1Schema.parse({
     v: 1,

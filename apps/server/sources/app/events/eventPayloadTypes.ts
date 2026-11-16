@@ -7,6 +7,7 @@ import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machin
 import type { MachineKind } from '@happier-dev/protocol/machines/machineKind';
 import type { ManagedMachineRefV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { AutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import type { ActionAutomationIndexChangeV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import type { ExternalSessionTranscriptInvalidationV1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
@@ -162,6 +163,7 @@ export type UpdateEvent = {
     pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null;
 } | {
     type: 'automation-upsert';
+    actionIndex?: ActionAutomationIndexChangeV1;
     automationId: string;
     version: number;
     enabled: boolean;

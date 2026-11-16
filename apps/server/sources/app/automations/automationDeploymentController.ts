@@ -3,7 +3,7 @@ import { parseAutomationObservationOnlyDefinitionV1 } from '@happier-dev/protoco
 import { acquireWorkflowPublicationLocksInTx } from '@/app/workflows/acquireWorkflowPublicationLocksInTx';
 import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { replaceAutomationAssignmentsTx } from './automationAssignmentService';
-import { emitAutomationMutationAfterTx, loadAutomationTx, markAutomationChangedTx } from './automationCrudService';
+import { emitAutomationAssignmentMutationAfterTx, loadAutomationTx, markAutomationChangedTx } from './automationCrudService';
 import { ensureAutomationEventCatalogStateTx } from './automationEnabledTransition';
 import { emitAutomationAssignmentUpdated } from './automationChangePublisher';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -61,8 +61,9 @@ export async function reassignDeploymentEnvironmentAutomationsInTx(tx: Tx, actor
         if (changed.count !== 1) throw new Error('Locked Environment Automation changed during assignment CAS');
         const automation = await loadAutomationTx(tx, { accountId: row.accountId, automationId: row.id });
         if (!automation) throw new Error('Environment Automation disappeared after assignment CAS');
-        const cursor = await markAutomationChangedTx(tx, { accountId: row.accountId, automationId: row.id });
-        emitAutomationMutationAfterTx({ tx, accountId: row.accountId, automation, cursor,
+        const cursor = await markAutomationChangedTx(tx, { accountId: row.accountId, automationId: row.id,
+            publication: { previous: existing, current: automation } });
+        emitAutomationAssignmentMutationAfterTx({ tx, accountId: row.accountId, automation, cursor,
             previousAssignments: existing.assignments });
         afterTx(tx, () => {
             for (const machineId of watcherMachines) emitAutomationAssignmentUpdated({ accountId: row.accountId,

@@ -2899,6 +2899,7 @@ enum AutomationTriggerKind {
     runLifecycle
     prComment
     ciFailed
+    action
 }
 
 enum AutomationSessionLifecycleEvent {
@@ -3037,6 +3038,19 @@ model AutomationTrigger {
     sourceRunId                  String?
     sourceRunMachineId           String?
     runLifecycleConfigurationJson String? @db.LongText
+    /// Derived routing facts; authored subjects remain in definitionEnvelope.
+    subjectKind                  String?
+    subjectKey                   String?
+    reachesOthers                Boolean @default(false)
+    /// Singleton lookup leaf; actionIdsJson retains the complete multi-Action selector.
+    actionId                     String? @db.LongText
+    actionIdsJson                String? @db.LongText
+    phase                        String?
+    mode                         String?
+    onFailure                    String?
+    consentForAutomationId       String?
+    consentForTriggerId          String?
+    consentedWorkflowRevision    Int?
     createdAt                    DateTime @default(now())
     updatedAt                    DateTime @updatedAt
     eventSourceStatus            AutomationEventSourceStatus?
@@ -3047,6 +3061,8 @@ model AutomationTrigger {
     @@index([kind, enabled, deletedAt, nextRunAt, id], map: "AutomationTrigger_schedule_due_idx")
     @@index([sourceSessionId, sourceTurnId], map: "AutomationTrigger_session_lifecycle_lookup_idx")
     @@index([sourceRunId, kind, deletedAt], map: "AutomationTrigger_run_lifecycle_lookup_idx")
+    @@index([subjectKind, subjectKey, deletedAt, id], map: "AutomationTrigger_subject_lookup_idx")
+    @@index([consentForAutomationId, consentForTriggerId, deletedAt, id], map: "AutomationTrigger_consent_lookup_idx")
 }
 
 model AutomationAssignment {
@@ -3106,6 +3122,9 @@ model AutomationRun {
     causeSourceSessionId String?
     causeSourceTurnId String?
     causeRunLifecycleEvidenceJson String? @db.LongText
+    causeActionEvidenceJson String? @db.LongText
+    /// Closed public server-owned occurrence facts; private plugin payloads remain sealed.
+    causePluginEventEvidenceJson String? @db.LongText
     /// Immutable authenticated archive publisher; not Session creation origin or private Account content.
     causeOriginRunId String?
     causeSessionLifecycleRequestId String?

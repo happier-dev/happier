@@ -8,6 +8,7 @@ import { ManagedMachineRefV1Schema, ManagedMachineInputRuntimeV1Schema } from '.
 import { RunnerMachineContentKeyBindingV1Schema } from '../ephemeralRunner/machineContentKeyBinding.js';
 import { SessionViewerProjectionV1Schema } from '../sessions/personal/viewer.js';
 import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.js';
+import { ActionAutomationIndexChangeV1Schema } from '../automations/automationActionTriggerV1.js';
 import { AutomationRunStateChangedHostEventV1Schema } from '../plugins/events/hostReferencesV1.js';
 import { ExternalSessionTranscriptInvalidationV1Schema } from '../sessions/external/secureRefreshV1.js';
 import { ExternalSessionStorageStateV1Schema } from '../sessions/external/operationV1.js';
@@ -137,6 +138,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   }),
   z.looseObject({
     t: z.literal('automation-upsert'),
+    actionIndex: z.optional(ActionAutomationIndexChangeV1Schema),
     automationId: z.string(),
     version: z.number().check(z.int(), z.minimum(0)),
     enabled: z.boolean(),

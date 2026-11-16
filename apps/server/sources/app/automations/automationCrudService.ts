@@ -1,6 +1,7 @@
 import { decodeStoredText, encodeStoredText } from '@/storage/storedContent';
 import { randomUUID } from "node:crypto";
-import { markSharedWorkflowTriggerSummaryChangedInTx } from './automationSharedWorkflowSummaries';
+import { markSharedWorkflowTriggerSummaryChangedInTx, publishAutomationMutationInTx,
+    type AutomationMutationPublication } from './automationSharedWorkflowSummaries';
 import type { Prisma } from "@prisma/client";
 
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
@@ -38,7 +39,10 @@ import { automationRunExecutionTargetTypeV1, parseAutomationStoredDefinitionExec
 import { AutomationTemplatePayloadV1Schema } from '@happier-dev/protocol/automations/automationTemplatePayloadV1';
 import { AutomationObservationOnlyDefinitionV1Schema, parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2, serializeAutomationStoredWorkflowDefinitionRecipeV2, type AutomationManagedTargetV1, type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1, openAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { AUTOMATION_ACTION_TRIGGER_FIELDS_CLEARED, automationConsentReferenceSelect, decodeAutomationActionTriggerConfiguration } from './automationActionTriggerConfiguration';
+import { resolveAutomationActionReachInTx } from './automationActionReachAdmission';
+import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1, openAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { parseAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -50,7 +54,6 @@ import {
     emitAutomationAssignmentUpdated,
     emitAutomationDelete,
     emitAutomationRunUpdated,
-    emitAutomationUpsert,
 } from "./automationChangePublisher";
 import { assertAutomationAssignmentLiveness, automationAssignmentsMatch, replaceAutomationAssignmentsTx } from "./automationAssignmentService";
 import { admitAutomationDeploymentEnvironmentInTx, admitAutomationDeploymentMutationInTx, lockAutomationDeploymentEnvironmentInTx } from './automationDeploymentEnvironment';
@@ -93,6 +96,7 @@ import {
 } from "./automationValidation";
 import {
     assertAutomationExecutionInputEnvelopeOuterForMode,
+    automationTriggerHasPrivateDefinition,
     AutomationStoredContentReadError,
     readAutomationTriggerDefinitionBinding,
     validateAutomationStoredContentEnvelopeOuterForMode,
@@ -972,6 +976,17 @@ function automationTriggerInputMatches(params: Readonly<{
         return createCanonicalJsonSigningInput(decodeAutomationRunLifecycleConfiguration(existing))
             === createCanonicalJsonSigningInput({ kind: "runLifecycle", source: requested.trigger.source, condition: requested.trigger.condition });
     }
+    if (requested.trigger.kind === "action") {
+        try {
+            const { enabled: _enabled, ...definition } = requested.trigger;
+            if ('consentFor' in definition) return pluginJsonValuesEqual(decodeAutomationActionTriggerConfiguration(existing), definition);
+            return 'triggerDefinitionEnvelope' in definition
+                ? pluginJsonValuesEqual(JSON.parse(existing.definitionEnvelope ?? 'null'), definition.triggerDefinitionEnvelope)
+                    && pluginJsonValuesEqual(decodeAutomationActionTriggerConfiguration(existing),
+                        (({ triggerDefinitionEnvelope: _envelope, ...structural }) => structural)(definition))
+                : pluginJsonValuesEqual(readPlainAutomationPrivateTriggerDefinition(params.automation, existing), definition);
+        } catch { return false; }
+    }
     if (requested.trigger.kind === "prComment" || requested.trigger.kind === "ciFailed") {
         if (existing.sourceSessionId !== params.automation.scopeSessionId || !existing.definitionEnvelope) return false;
         try {
@@ -1314,6 +1329,7 @@ const automationMigrationDefinitionSelect = {
     triggers: {
         where: { deletedAt: null },
         select: {
+            ...automationConsentReferenceSelect,
             id: true,
             kind: true,
             enabled: true,
@@ -1397,7 +1413,7 @@ function transitionInventoryDefinition(
         source: {
             templateCiphertext: row.templateCiphertext,
             triggerDefinitionEnvelopes: row.triggers
-                .filter((trigger) => trigger.kind === "pluginEvent" || trigger.kind === "prComment" || trigger.kind === "ciFailed")
+                .filter(automationTriggerHasPrivateDefinition)
                 .map((trigger) => {
                     if (trigger.definitionEnvelope === null) {
                         throw new AutomationValidationError(
@@ -1645,7 +1661,7 @@ function assertAutomationDefinitionStoredContentForAccountMode(params: Readonly<
     mode: "plain" | "e2ee";
 }>): void {
     for (const trigger of params.row.triggers) {
-        if (trigger.kind !== "pluginEvent" && trigger.kind !== "prComment" && trigger.kind !== "ciFailed") {
+        if (!automationTriggerHasPrivateDefinition(trigger)) {
             if (trigger.definitionEnvelope !== null) {
                 throw new AutomationValidationError(
                     "Non-Event Automation triggers must not retain trigger-definition content",
@@ -1908,7 +1924,7 @@ type AutomationAccountEncryptionTransitionValidatedDefinition = Readonly<{
     item: Extract<AutomationAccountEncryptionTransitionStageItem, { kind: "definition" }>;
     targetTriggerDefinitionEnvelopes: readonly Readonly<{
         triggerId: string;
-        triggerKind: "pluginEvent" | "prComment" | "ciFailed";
+        triggerKind: AutomationTriggerDefinitionBindingV1['triggerKind'];
         triggerRevision: number;
         sourceEnvelope: string;
         targetEnvelope: string;
@@ -2014,7 +2030,7 @@ function validateAutomationTriggerDefinitionTransitionTargets(params: Readonly<{
     targetMode: "plain" | "e2ee";
 }>): AutomationAccountEncryptionTransitionValidatedDefinition["targetTriggerDefinitionEnvelopes"] {
     const pluginEventTriggers = params.row.triggers.filter(
-        (trigger) => trigger.kind === "pluginEvent" || trigger.kind === "prComment" || trigger.kind === "ciFailed",
+        automationTriggerHasPrivateDefinition,
     );
     if (params.item.target.triggerDefinitionEnvelopes.length !== pluginEventTriggers.length) {
         throw new AutomationValidationError(
@@ -2386,16 +2402,10 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
             includeDeleted: true,
         });
         if (!automation) throw new AutomationAccountEncryptionMigrationConflictError();
-        const cursor = await markAutomationChangedTx(params.tx, {
+        await markAutomationChangedTx(params.tx, {
             accountId: params.accountId,
             automationId: candidate.row.id,
-        });
-        afterTx(params.tx, () => {
-            emitAutomationUpsert({
-                accountId: params.accountId,
-                automation,
-                cursor: cursor.resolveCursor(),
-            });
+            publication: { previous: automation, current: automation },
         });
     }
     for (const candidate of validated.batch.runs) {
@@ -2620,7 +2630,7 @@ function hasCompleteTriggerDefinitionMigrationTarget(
     row: AutomationAccountEncryptionMigrationRow,
     item: AutomationAccountEncryptionMigrationTemplateItem,
 ): boolean {
-    const eventTriggers = row.triggers.filter((trigger) => trigger.kind === "pluginEvent" || trigger.kind === "prComment" || trigger.kind === "ciFailed");
+    const eventTriggers = row.triggers.filter(automationTriggerHasPrivateDefinition);
     const targets = item.triggerDefinitionEnvelopes;
     if (
         targets.length !== eventTriggers.length
@@ -3471,6 +3481,7 @@ async function clearLoadedAutomationsForAccountInTx(params: Readonly<{
         const cursor = await markAutomationChangedTx(params.tx, {
             accountId: params.accountId,
             automationId: automation.id,
+            publication: { previous: automation, current: null },
         });
         afterTx(params.tx, () => {
             emitAutomationDelete({
@@ -3593,7 +3604,7 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
         return { status: "migration_incomplete" };
     }
     const requiresSourceMode = rows.some((row) =>
-        row.triggers.some((trigger) => trigger.kind === "pluginEvent" || trigger.kind === "prComment" || trigger.kind === "ciFailed"))
+        row.triggers.some(automationTriggerHasPrivateDefinition))
         || runRows.length > 0;
     const targetTriggerDefinitionsById = new Map<string, ReturnType<
         typeof validateAutomationTriggerDefinitionMigrationCandidate
@@ -3767,16 +3778,10 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
         if (!automation) {
             throw new AutomationAccountEncryptionMigrationConflictError();
         }
-        const cursor = await markAutomationChangedTx(params.tx, {
+        await markAutomationChangedTx(params.tx, {
             accountId: params.accountId,
             automationId: row.id,
-        });
-        afterTx(params.tx, () => {
-            emitAutomationUpsert({
-                accountId: params.accountId,
-                automation,
-                cursor: cursor.resolveCursor(),
-            });
+            publication: { previous: automation, current: automation },
         });
     }
 
@@ -4068,13 +4073,17 @@ export async function matchAutomationAccountEncryptionMigrationPostStateInTx(
     return { status: "matched" };
 }
 
-export async function markAutomationChangedTx(tx: Tx, params: { accountId: string; automationId: string }): Promise<AccountChangePublication> {
+export async function markAutomationChangedTx(tx: Tx, params: {
+    accountId: string; automationId: string; publication?: AutomationMutationPublication;
+}): Promise<AccountChangePublication> {
     await markSharedWorkflowTriggerSummaryChangedInTx(tx, params.automationId);
-    return await markAccountChanged(tx, {
+    const cursor = await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "automation",
         entityId: params.automationId,
     });
+    if (params.publication) await publishAutomationMutationInTx(tx, { ...params.publication, ownerCursor: cursor });
+    return cursor;
 }
 
 /**
@@ -4167,15 +4176,11 @@ export async function clearAutomationRunHistory(params: {
             } })).count;
         }
         if (clearedRuns > 0) {
-            const cursor = await markAutomationChangedTx(tx, {
+            await markAutomationChangedTx(tx, {
                 accountId: params.accountId,
                 automationId: automation.id,
+                publication: { previous: automation, current: automation },
             });
-            afterTx(tx, () => emitAutomationUpsert({
-                accountId: params.accountId,
-                automation,
-                cursor: cursor.resolveCursor(),
-            }));
         }
         return { status: "cleared", clearedRuns };
     }, { transactionClass: "automation-history-clear" });
@@ -4237,6 +4242,7 @@ type NormalizedAutomationTriggerWrite = Readonly<{
 }>;
 
 const AUTOMATION_TRIGGER_PRIVATE_FIELDS_CLEARED = {
+    ...AUTOMATION_ACTION_TRIGGER_FIELDS_CLEARED,
     scheduleKind: null,
     scheduleExpr: null,
     everyMs: null,
@@ -4311,6 +4317,7 @@ function assertAutomationTriggerKindsForDefinition(
 async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     tx: Tx;
     accountId: string;
+    authentication?: DeploymentAuthentication;
     automation: Pick<AutomationListItem,
         "id" | "targetType" | "templateCiphertext" | "templateVersion" | "scopeSessionId">;
     triggerId: string;
@@ -4327,6 +4334,52 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
         deletedAt: null,
         ...AUTOMATION_TRIGGER_KIND_FIELDS_CLEARED,
     } as const;
+
+    if (params.input.kind === "action") {
+        if ('consentFor' in params.input) {
+            return { isEvent: false, data: { ...common, kind: 'action',
+                consentForAutomationId: params.input.consentFor.automationId,
+                consentForTriggerId: params.input.consentFor.triggerId,
+                consentedWorkflowRevision: params.input.consentedWorkflowRevision } };
+        }
+        const currentness = await fetchAutomationAccountCurrentnessWitnessTx(params.tx, params.accountId);
+        if (!currentness) throw new AutomationStoredContentReadError('contentInvalid');
+        const binding = { v: 1 as const, automationId: params.automation.id,
+            triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
+            triggerRevision: params.triggerRevision, triggerKind: 'action' as const };
+        const { enabled: _enabled, ...submitted } = params.input;
+        const structural = 'triggerDefinitionEnvelope' in submitted
+            ? (({ triggerDefinitionEnvelope: _envelope, ...facts }) => facts)(submitted)
+            : projectAutomationActionTriggerStructuralV1(submitted);
+        const envelope = 'triggerDefinitionEnvelope' in submitted ? submitted.triggerDefinitionEnvelope
+            : currentness.mode === 'plain' ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'plain', binding, definition: AutomationActionTriggerSchema.parse(submitted),
+            }) : null;
+        if (!envelope || validateAutomationTriggerDefinitionEnvelopeOuterForMode({
+            raw: JSON.stringify(envelope), mode: currentness.mode, binding,
+        }).kind !== 'available') throw new AutomationStoredContentReadError('modeMismatch');
+        let reachesOthers: boolean;
+        if (envelope.t === 'plain') {
+            const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, envelope });
+            if (opened.kind !== 'available') throw new AutomationStoredContentReadError('contentInvalid');
+            const definition = AutomationActionTriggerSchema.parse(opened.definition);
+            const projection = projectAutomationActionTriggerStructuralV1(definition);
+            const { reachesOthers: _reach, ...matching } = structural;
+            if (!pluginJsonValuesEqual(projection, matching)) throw new AutomationStoredContentReadError('contentInvalid');
+            reachesOthers = await resolveAutomationActionReachInTx(params.tx, { accountId: params.accountId,
+                authentication: params.authentication, definition: { mode: 'plain', subject: definition.subject } });
+        } else {
+            reachesOthers = await resolveAutomationActionReachInTx(params.tx, { accountId: params.accountId,
+                authentication: params.authentication,
+                definition: { mode: 'e2ee', claimedReachesOthers: structural.reachesOthers } });
+        }
+        return { isEvent: false, data: { ...common, kind: 'action',
+            actionId: structural.actionIds.length === 1 ? structural.actionIds[0] : null,
+            actionIdsJson: JSON.stringify(structural.actionIds), phase: structural.phase,
+            mode: structural.mode ?? null, onFailure: structural.onFailure ?? null,
+            subjectKind: structural.subjectKind ?? null, subjectKey: structural.subjectKey ?? null,
+            reachesOthers, definitionEnvelope: JSON.stringify(envelope) } };
+    }
 
     if (params.input.kind === "prComment" || params.input.kind === "ciFailed") {
         if (!params.automation.scopeSessionId) {
@@ -4553,31 +4606,24 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     };
 }
 
-/** The one post-commit publication seam for a committed Automation mutation. */
-export function emitAutomationMutationAfterTx(params: Readonly<{
+/** Assignment deltas reuse the cursor allocated by the canonical mutation publisher. */
+export function emitAutomationAssignmentMutationAfterTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     automation: AutomationListItem;
     cursor: AccountChangePublication;
-    previousAssignments?: AutomationListItem["assignments"];
+    previousAssignments: AutomationListItem["assignments"];
 }>): void {
     afterTx(params.tx, () => {
-        emitAutomationUpsert({
+        emitAssignmentUpdates({
             accountId: params.accountId,
-            automation: params.automation,
+            automationId: params.automation.id,
             cursor: params.cursor.resolveCursor(),
+            assignments: buildAssignmentUpdateRows({
+                previousAssignments: params.previousAssignments,
+                nextAssignments: params.automation.assignments,
+            }),
         });
-        if (params.previousAssignments) {
-            emitAssignmentUpdates({
-                accountId: params.accountId,
-                automationId: params.automation.id,
-                cursor: params.cursor.resolveCursor(),
-                assignments: buildAssignmentUpdateRows({
-                    previousAssignments: params.previousAssignments,
-                    nextAssignments: params.automation.assignments,
-                }),
-            });
-        }
     });
 }
 
@@ -4673,6 +4719,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
         where: {
             accountId: params.accountId,
             deletedAt: null,
+            triggers: { none: { consentForAutomationId: { not: null } } },
             ...(params.workflowDefinitionId !== undefined ? { workflowDefinitionId: params.workflowDefinitionId } : {}),
             ...(params.workflowDefinitionIds !== undefined ? { workflowDefinitionId: { in: [...new Set(params.workflowDefinitionIds)] } } : {}),
             ...(params.scopeSessionId !== undefined ? { scopeSessionId: params.scopeSessionId } : {}),
@@ -4911,6 +4958,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         const normalized = await normalizeAutomationTriggerWriteTx({
             tx,
             accountId: params.accountId,
+            authentication: params.authentication,
             automation: {
                 id: created.id,
                 targetType: definition.targetType,
@@ -4972,10 +5020,10 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
     const cursor = await markAutomationChangedTx(tx, {
         accountId: params.accountId,
         automationId: created.id,
+        publication: { previous: null, current: automation },
     });
 
     afterTx(tx, () => {
-        emitAutomationUpsert({ accountId: params.accountId, automation, cursor: cursor.resolveCursor() });
         emitAssignmentUpdates({
             accountId: params.accountId,
             automationId: automation.id,
@@ -5453,9 +5501,10 @@ export async function updateAutomation(params: {
         const cursor = await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: existing.id,
+            publication: { previous: existing, current: updated },
         });
 
-        emitAutomationMutationAfterTx({
+        emitAutomationAssignmentMutationAfterTx({
             tx,
             accountId: params.accountId,
             automation: updated,
@@ -5703,6 +5752,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 const normalized = await normalizeAutomationTriggerWriteTx({
                     tx,
                     accountId: params.accountId,
+                    authentication: params.authentication,
                     automation: effectiveAutomation,
                     triggerId: item.triggerId,
                     triggerRevision: 0,
@@ -5731,6 +5781,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 const normalized = await normalizeAutomationTriggerWriteTx({
                     tx,
                     accountId: params.accountId,
+                    authentication: params.authentication,
                     automation: effectiveAutomation,
                     triggerId: trigger.id,
                     triggerRevision: nextRevision,
@@ -5763,9 +5814,17 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 if (trigger.kind === "runLifecycle" && !trigger.enabled && nextEnabled) {
                     await validateAutomationRunLifecycleSourceTx(tx, params.accountId, decodeAutomationRunLifecycleConfiguration(trigger));
                 }
-                if (trigger.kind === "pluginEvent" || trigger.kind === "prComment" || trigger.kind === "ciFailed") {
+                if (automationTriggerHasPrivateDefinition(trigger)) {
                     const currentness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);
                     if (!currentness) throw new AutomationStoredContentReadError("contentInvalid");
+                    const actionDefinition = trigger.kind === 'action' && currentness.mode === 'plain'
+                        ? AutomationActionTriggerSchema.parse(readPlainAutomationPrivateTriggerDefinition(existing, trigger)) : null;
+                    if (trigger.kind === 'action') {
+                        data.reachesOthers = await resolveAutomationActionReachInTx(tx, { accountId: params.accountId,
+                            authentication: params.authentication, definition: actionDefinition
+                                ? { mode: 'plain', subject: actionDefinition.subject }
+                                : { mode: 'e2ee', claimedReachesOthers: trigger.reachesOthers } });
+                    }
                     const binding = readAutomationTriggerDefinitionBinding({
                         automationId: existing.id,
                         triggerId: trigger.id,
@@ -5794,7 +5853,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                             sealAutomationTriggerDefinitionStoredEnvelopeV1({
                                 mode: "plain",
                                 binding,
-                                definition: readPlainAutomationPrivateTriggerDefinition(existing, trigger),
+                                definition: actionDefinition ?? readPlainAutomationPrivateTriggerDefinition(existing, trigger),
                             }),
                         );
                     }
@@ -5846,8 +5905,9 @@ export async function reconcileAutomationDefinition(params: Readonly<{
         const cursor = await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: existing.id,
+            publication: { previous: existing, current: result },
         });
-        emitAutomationMutationAfterTx({
+        emitAutomationAssignmentMutationAfterTx({
             tx,
             accountId: params.accountId,
             automation: result,
@@ -5897,6 +5957,7 @@ export async function createAutomationTrigger(params: Readonly<{
         const normalized = await normalizeAutomationTriggerWriteTx({
             tx,
             accountId: params.accountId,
+            authentication: params.authentication,
             automation,
             triggerId: params.triggerId,
             triggerRevision: 0,
@@ -5932,16 +5993,12 @@ export async function createAutomationTrigger(params: Readonly<{
             automationId: automation.id,
         });
         if (!updated) throw new Error("Failed to load Automation after trigger creation");
-        const cursor = await markAutomationChangedTx(tx, {
+        await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: automation.id,
+            publication: { previous: automation, current: updated },
         });
-        emitAutomationMutationAfterTx({
-            tx,
-            accountId: params.accountId,
-            automation: updated,
-            cursor,
-        });
+
         return updated;
     }, {
         // Publication locks serialize the parent revision and source Run catch-up.
@@ -6040,6 +6097,7 @@ export async function updateAutomationTrigger(params: Readonly<{
             const normalized = await normalizeAutomationTriggerWriteTx({
                 tx,
                 accountId: params.accountId,
+                authentication: params.authentication,
                 automation,
                 triggerId: existing.id,
                 triggerRevision: nextRevision,
@@ -6073,13 +6131,21 @@ export async function updateAutomationTrigger(params: Readonly<{
                 updatedAt: now,
                 ...(!resolvedNextEnabled ? { nextRunAt: null } : {}),
             };
-            if (existing.kind === "pluginEvent" || existing.kind === "prComment" || existing.kind === "ciFailed") {
+            if (automationTriggerHasPrivateDefinition(existing)) {
                 const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(
                     tx,
                     params.accountId,
                 );
                 if (!accountCurrentness) {
                     throw new AutomationStoredContentReadError("contentInvalid");
+                }
+                const actionDefinition = existing.kind === 'action' && accountCurrentness.mode === 'plain'
+                    ? AutomationActionTriggerSchema.parse(readPlainAutomationPrivateTriggerDefinition(automation, existing)) : null;
+                if (existing.kind === 'action') {
+                    data.reachesOthers = await resolveAutomationActionReachInTx(tx, { accountId: params.accountId,
+                        authentication: params.authentication, definition: actionDefinition
+                            ? { mode: 'plain', subject: actionDefinition.subject }
+                            : { mode: 'e2ee', claimedReachesOthers: existing.reachesOthers } });
                 }
                 if (accountCurrentness.mode === "e2ee") {
                     if (!params.triggerDefinitionEnvelope) {
@@ -6110,7 +6176,7 @@ export async function updateAutomationTrigger(params: Readonly<{
                             "Plain Automation Event enablement must not supply an encrypted definition envelope",
                         );
                     }
-                    const definition = readPlainAutomationPrivateTriggerDefinition(
+                    const definition = actionDefinition ?? readPlainAutomationPrivateTriggerDefinition(
                         automation,
                         existing,
                     );
@@ -6180,16 +6246,12 @@ export async function updateAutomationTrigger(params: Readonly<{
             automationId: automation.id,
         });
         if (!updated) throw new Error("Failed to load Automation after trigger update");
-        const cursor = await markAutomationChangedTx(tx, {
+        await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: automation.id,
+            publication: { previous: automation, current: updated },
         });
-        emitAutomationMutationAfterTx({
-            tx,
-            accountId: params.accountId,
-            automation: updated,
-            cursor,
-        });
+
         return updated;
     }, {
         // Publication locks and trigger/parent revision CAS protect this mutation.
@@ -6260,16 +6322,12 @@ export async function deleteAutomationTrigger(params: Readonly<{
             automationId: automation.id,
         });
         if (!updated) throw new Error("Failed to load Automation after trigger deletion");
-        const cursor = await markAutomationChangedTx(tx, {
+        await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: automation.id,
+            publication: { previous: automation, current: updated },
         });
-        emitAutomationMutationAfterTx({
-            tx,
-            accountId: params.accountId,
-            automation: updated,
-            cursor,
-        });
+
         return updated;
     }, {
         // Publication locks and trigger/parent revision CAS protect this mutation.
@@ -6360,6 +6418,7 @@ export async function deleteAutomationTx(tx: Tx, params: {
         const cursor = await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: existing.id,
+            publication: { previous: existing, current: null },
         });
 
         afterTx(tx, () => {
@@ -6462,8 +6521,7 @@ export async function disableAutomationInTx(
     });
     const disabled = await loadAutomationTx(tx, params);
     if (!disabled) return null;
-    const cursor = await markAutomationChangedTx(tx, params);
-    emitAutomationMutationAfterTx({ tx, accountId: params.accountId, automation: disabled, cursor });
+    await markAutomationChangedTx(tx, { ...params, publication: { previous: existing, current: disabled } });
     return disabled;
 }
 

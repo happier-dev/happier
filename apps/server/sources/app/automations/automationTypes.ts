@@ -8,6 +8,7 @@ import { type AutomationPluginEventDefinitionTriggerInput, type AutomationTrigge
 import { type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { automationRunCauseSelect } from './automationPersistenceSelect';
+import type { AutomationActionTriggerColumns } from './automationActionTriggerConfiguration';
 import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowRunStateV1';
 
 export type AutomationScheduleKind = import('@happier-dev/protocol/automations/automationTriggerDefinition').AutomationScheduleTrigger['schedule']['kind'];
@@ -246,7 +247,10 @@ export type AutomationListItem = Readonly<{
     triggers: ReadonlyArray<AutomationTriggerItem>;
 }>;
 
-export type AutomationTriggerItem = Readonly<{
+/** Batched status projection needs identity and public trigger facts, never recipe content. */
+export type AutomationTriggerSummarySource = Pick<AutomationListItem, 'id' | 'accountId' | 'enabled' | 'triggers'>;
+
+export type AutomationTriggerItem = Readonly<AutomationActionTriggerColumns & {
     id: string;
     automationId: string;
     kind: AutomationTriggerKind;
@@ -317,6 +321,7 @@ export type AutomationRunItem = Readonly<{
     causeSourceSessionId: string | null;
     causeSourceTurnId: string | null;
     causeRunLifecycleEvidenceJson: string | null;
+    causeActionEvidenceJson: string | null;
     causeOriginRunId: string | null;
     causeSessionLifecycleRequestId: string | null;
     causeSessionLifecycleRequestKind: 'permission' | 'user_action' | null;

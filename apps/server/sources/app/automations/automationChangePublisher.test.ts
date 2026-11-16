@@ -7,7 +7,7 @@ import {
     type UpdatePayload,
 } from "@/app/events/eventRouter";
 
-import { emitAutomationRunTransition, emitAutomationRunUpdatedToMachineOnly } from "./automationChangePublisher";
+import { emitAutomationDelete, emitAutomationUpsert, emitAutomationRunTransition, emitAutomationRunUpdatedToMachineOnly } from "./automationChangePublisher";
 import type { AutomationRunItem } from "./automationTypes";
 
 function createMachineObserver(updates: UpdatePayload[]): ClientConnection {
@@ -96,6 +96,32 @@ describe("Automation Run transition publisher", () => {
     afterEach(() => {
         vi.restoreAllMocks();
         eventRouter.clearIo();
+    });
+
+    it('delivers complete index replacements and removals to machine hosts without broadening ordinary editor upserts', () => {
+        const updates: UpdatePayload[] = [];
+        const unrelated: UpdatePayload[] = [];
+        const observer = createMachineObserver(updates);
+        const foreignObserver = { ...createMachineObserver(unrelated), userId: 'other-account' };
+        eventRouter.addConnection('account-1', observer);
+        eventRouter.addConnection('other-account', foreignObserver);
+        const automation = { id: 'automation-1', templateVersion: 4, enabled: false, updatedAt: new Date() };
+        try {
+            emitAutomationUpsert({ accountId: 'account-1', automation, cursor: 1 });
+            expect(updates).toEqual([]);
+            emitAutomationUpsert({ accountId: 'account-1', automation, cursor: 2,
+                actionIndex: { automationId: automation.id, rows: [] } });
+            emitAutomationDelete({ accountId: 'account-1', automationId: automation.id,
+                cursor: 3, deletedAt: new Date() });
+            expect(updates.map(update => update.body)).toMatchObject([
+                { t: 'automation-upsert', actionIndex: { automationId: automation.id, rows: [] } },
+                { t: 'automation-delete', automationId: automation.id },
+            ]);
+            expect(unrelated).toEqual([]);
+        } finally {
+            eventRouter.removeConnection('account-1', observer);
+            eventRouter.removeConnection('other-account', foreignObserver);
+        }
     });
 
     it("never projects a null previous state except for an initial queued Run", () => {

@@ -116,6 +116,7 @@ describe("active Account migration of current Workflow content (real SQLite)", (
     it.each([
         ["prComment", "migration"], ["ciFailed", "migration"],
         ["prComment", "staged"], ["ciFailed", "staged"],
+        ["action", "migration"], ["action", "staged"],
     ] as const)("transitions a bound scoped %s definition through the %s writer", async (triggerKind, writer) => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const session = await db.session.create({ data: {
@@ -124,7 +125,9 @@ describe("active Account migration of current Workflow content (real SQLite)", (
         const automationId = randomUUID();
         const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
         const binding = { v: 1 as const, automationId, triggerId, triggerRevision: 0, triggerKind };
-        const definition = { kind: triggerKind, pullRequest: { repository: "happier-dev/happier", number: 42 } };
+        const definition = triggerKind === "action"
+            ? { kind: triggerKind, phase: "after", actionIds: ["session.stop"] }
+            : { kind: triggerKind, pullRequest: { repository: "happier-dev/happier", number: 42 } };
         const sourceDefinition = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
             mode: "plain", binding, definition,
         }));
@@ -149,7 +152,14 @@ describe("active Account migration of current Workflow content (real SQLite)", (
         await db.automation.create({ data: {
             id: automationId, accountId: account.id, name: "Scoped PR transition", enabled: false,
             targetType: null, scopeSessionId: session.id, templateVersion: 1, templateCiphertext: sourceRecipe.serialized,
-            triggers: { create: { id: triggerId, kind: triggerKind, sourceSessionId: session.id, definitionEnvelope: sourceDefinition } },
+            triggers: { create: { id: triggerId, kind: triggerKind, definitionEnvelope: sourceDefinition,
+                ...(triggerKind === "action" ? { actionIdsJson: '["session.stop"]', phase: "after" }
+                    : { sourceSessionId: session.id }) } },
+        } });
+        const consentId = randomUUID();
+        if (triggerKind === "action") await db.automationTrigger.create({ data: {
+            id: consentId, automationId, kind: "action", consentForAutomationId: "shared-definition",
+            consentForTriggerId: "shared-trigger", consentedWorkflowRevision: 7,
         } });
         const sourceDefinitions = [{ triggerId, triggerRevision: 0, envelope: sourceDefinition }];
         const targetDefinitions = [{ triggerId, triggerRevision: 0, envelope: targetDefinition }];
@@ -202,9 +212,13 @@ describe("active Account migration of current Workflow content (real SQLite)", (
             : applyAutomationAccountEncryptionTransitionStageInTx({ tx, accountId: account.id, fromMode: "plain", toMode: "e2ee", items: [stageItem] }));
         expect(result).toEqual({ status: "applied" });
         expect(await db.automation.findUniqueOrThrow({ where: { id: automationId }, select: {
-            templateVersion: true, templateCiphertext: true, triggers: { select: { kind: true, definitionEnvelope: true } },
+            templateVersion: true, templateCiphertext: true,
+            triggers: { where: { id: triggerId }, select: { kind: true, definitionEnvelope: true } },
         } })).toEqual({ templateVersion: 2, templateCiphertext: targetRecipe.serialized,
             triggers: [{ kind: triggerKind, definitionEnvelope: targetDefinition }] });
+        if (triggerKind === "action") expect(await db.automationTrigger.findUniqueOrThrow({
+            where: { id: consentId }, select: { definitionEnvelope: true, consentedWorkflowRevision: true },
+        })).toEqual({ definitionEnvelope: null, consentedWorkflowRevision: 7 });
         if (writer === "migration") {
             await db.account.update({ where: { id: account.id }, data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
             expect(await inTx(tx => matchAutomationAccountEncryptionMigrationPostStateInTx({

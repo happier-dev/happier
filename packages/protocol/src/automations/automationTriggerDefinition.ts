@@ -227,7 +227,7 @@ export function projectFollowEventConditionPickerV1(input: Readonly<{
     .filter(event => event === 'sessionStarted' || event === 'sessionArchived')
     .flatMap((event): FollowEventConditionChoiceV1[] => input.supportedTriggerKinds && !input.supportedTriggerKinds.includes('sessionLifecycle')
       ? [] : [{ condition: { kind: event }, followEligible: false, lifecycleEvents: [event] }]);
-  const otherKinds = ['schedule', 'pluginEvent', 'prComment', 'ciFailed', 'runLifecycle'] as const satisfies readonly AutomationTriggerDefinition['kind'][];
+  const otherKinds = ['schedule', 'pluginEvent', 'prComment', 'ciFailed', 'runLifecycle', 'action'] as const satisfies readonly AutomationTriggerDefinition['kind'][];
   return [...follows, ...lifecycleOnly, ...otherKinds.filter(kind => !input.supportedTriggerKinds || input.supportedTriggerKinds.includes(kind))
     .map(kind => ({ condition: { kind }, followEligible: false }))];
 }

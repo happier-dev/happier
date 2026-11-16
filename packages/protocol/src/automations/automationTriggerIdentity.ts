@@ -29,6 +29,7 @@ export const AutomationTriggerRevisionSchema = asProtocolZod(
 export type AutomationTriggerRevision = z.infer<typeof AutomationTriggerRevisionSchema>;
 
 export const AutomationTriggerKindSchema = lazyZodSchema(() => z.enum([
+    'action',
   'schedule',
   'pluginEvent',
   'sessionLifecycle',

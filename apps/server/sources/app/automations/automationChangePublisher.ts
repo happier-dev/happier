@@ -3,6 +3,7 @@ import { eventRouter, type UpdatePayload } from "@/app/events/eventRouter";
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { WorkflowRequesterScopeV1 } from '@happier-dev/protocol/updates';
+import type { ActionAutomationIndexChangeV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 import type {
     AutomationListItem,
@@ -18,6 +19,7 @@ export function emitAutomationUpsert(params: {
     accountId: string;
     automation: Pick<AutomationListItem, "id" | "templateVersion" | "enabled" | "updatedAt">;
     cursor: number;
+    actionIndex?: ActionAutomationIndexChangeV1;
 }): void {
     eventRouter.emitUpdate({
         userId: params.accountId,
@@ -30,10 +32,11 @@ export function emitAutomationUpsert(params: {
                 version: params.automation.templateVersion,
                 enabled: params.automation.enabled,
                 updatedAt: params.automation.updatedAt.getTime(),
+                ...(params.actionIndex ? { actionIndex: params.actionIndex } : {}),
             },
             createdAt: Date.now(),
         },
-        recipientFilter: { type: "user-scoped-only" },
+        recipientFilter: { type: params.actionIndex ? "all-user-authenticated-connections" : "user-scoped-only" },
     });
 }
 
@@ -55,7 +58,7 @@ export function emitAutomationDelete(params: {
             },
             createdAt: Date.now(),
         },
-        recipientFilter: { type: "user-scoped-only" },
+        recipientFilter: { type: "all-user-authenticated-connections" },
     });
 }
 
