@@ -86,8 +86,9 @@ type PeerTrafficObservation = Readonly<{
     sentSocketFrames: string[];
 }>;
 
-function requireRouteProfile(env: NodeJS.ProcessEnv): RouteProfile {
+function readRouteProfile(env: NodeJS.ProcessEnv): RouteProfile | null {
     const value = env.HAPPIER_E2E_PLUGIN_UI_ARTIFACT_ROUTE_PROFILE?.trim();
+    if (!value) return null;
     if (value === 'direct' || value === 'relay') return value;
     throw new Error('HAPPIER_E2E_PLUGIN_UI_ARTIFACT_ROUTE_PROFILE must be direct or relay');
 }
@@ -425,7 +426,9 @@ function attestExternalInspectorRuntime(projectionResponse: unknown): RuntimeAtt
 test.describe('plugin UI: current generated RNW artifact delivery', () => {
     test.describe.configure({ mode: 'serial' });
 
-    const routeProfile = requireRouteProfile(process.env);
+    const selectedRouteProfile = readRouteProfile(process.env);
+    test.skip(selectedRouteProfile === null, 'Owner: plugin platform. Set HAPPIER_E2E_PLUGIN_UI_ARTIFACT_ROUTE_PROFILE=direct or relay to run this route-specific QA spec.');
+    const routeProfile = selectedRouteProfile ?? 'direct';
     const suiteDir = run.testDir(`plugin-rnw-artifact-${routeProfile}`);
     const cliHomeDir = join(suiteDir, 'cli-home');
     const storageScope = `e2e-plugin-rnw-${routeProfile}-${run.runId}`;

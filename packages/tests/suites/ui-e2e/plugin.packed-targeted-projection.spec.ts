@@ -94,10 +94,10 @@ const hasCompleteUcxWebRowLocalArtifacts =
 if (candidateManifestPath !== null && hasUcxWebRowLocalArtifact) {
   throw new Error('packed_candidate_browser_qa_artifact_basis_conflict');
 }
-if (candidateManifestPath === null && !hasUcxWebRowLocalArtifact) {
-  throw new Error('packed_candidate_browser_qa_artifact_basis_required');
-}
-if (candidateManifestPath === null && !hasCompleteUcxWebRowLocalArtifacts) {
+// The packed basis comes from scripts/plugin-platform/run-packed-candidate-browser-qa.mjs,
+// which refuses to start without one. The plain UI E2E suite has no basis and skips this spec.
+const packedBasisMissing = candidateManifestPath === null && !hasUcxWebRowLocalArtifact;
+if (candidateManifestPath === null && hasUcxWebRowLocalArtifact && !hasCompleteUcxWebRowLocalArtifacts) {
   throw new Error('packed_candidate_browser_qa_row_local_artifacts_required');
 }
 const triageGithubVoiceHandoffManifestRaw =
@@ -774,6 +774,7 @@ async function forgetPluginTrust(params: Readonly<{
 
 test.describe('packed candidate: targeted projection app-page client Action', () => {
   test.describe.configure({ mode: 'serial' });
+  test.skip(packedBasisMissing, 'Owner: plugin platform. Needs a packed candidate; run test:plugin-platform:candidate-browser.');
 
   const suiteDir = run.testDir('packed-targeted-projection-suite');
   const storageScope = `e2e-packed-targeted-projection-${run.runId}`;
