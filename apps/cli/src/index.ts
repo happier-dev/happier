@@ -76,7 +76,11 @@ if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) 
   // One maximal-delay timeout references the loop without waking a long-lived command (daemon,
   // session host) every minute; it is cleared when dispatch settles.
   const cliLifetimeKeepAlive = isCliDistIntegrityProbe ? null : setTimeout(() => undefined, 2_147_483_647);
-  const runBootstrap = () => import('./cli/bootstrap').then(async ({ runCliBootstrap }) => {
+  // Enabled before the command graph compiles; `--version`/help stay on their tiny graph.
+  const runBootstrap = () => import('./cli/compileCache').then(({ enableShortLivedCliCompileCache }) => {
+    if (!isCliDistIntegrityProbe) enableShortLivedCliCompileCache(readCliProcessArgs());
+    return import('./cli/bootstrap');
+  }).then(async ({ runCliBootstrap }) => {
     if (!isCliDistIntegrityProbe) await runCliBootstrap(import.meta.url);
   });
   const dispatch = !isCliDistIntegrityProbe && isTopLevelHelpRequest(readCliProcessArgs())
