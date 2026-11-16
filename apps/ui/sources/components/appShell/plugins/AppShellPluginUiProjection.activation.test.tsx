@@ -66,6 +66,7 @@ import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceS
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { VoiceServiceListScreen } from '@/voice/settings/screens/VoiceServiceListScreen';
 
 const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null, peerProjection: null as PluginProjectionV2 | null,
@@ -161,6 +162,8 @@ afterEach(async () => {
 });
 
 async function mountClientExecutableFixture(options: { waitForAdmission?: boolean; admitPeer?: boolean; searchProvider?: boolean; coldDaemon?: boolean; mountedOnly?: boolean;
+    /** Host the mounted demand in a retained, hidden-when-inactive surface (a Session tab). */
+    retainedDemand?: boolean;
     managedRepair?: boolean;
     artifactLabel?: string;
     scopedGrants?: PluginActionPresentUserAuthorizationFacts['scopedGrants'] } = {}) {
@@ -436,14 +439,18 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         return null;
     }
     let mountDemand = options.mountedOnly === true;
+    let demandPresented = true;
     const render = () => <AppShellPluginUiProjectionProvider>
         {options.managedRepair ? <ManagedRepairDemand /> : <CatalogDemand machineId={machine.id} serverId={serverId} />}
         <CatalogDemand machineId={peerMachine.id} serverId={serverId} />
-        {mountDemand ? <MountedDemand /> : null}
+        {mountDemand ? options.retainedDemand
+            ? <RetainedPanelSurface isActive={demandPresented} suspendWhenHidden><MountedDemand /></RetainedPanelSurface>
+            : <MountedDemand /> : null}
         <Probe />
     </AppShellPluginUiProjectionProvider>;
     const screen = await renderScreen(render());
     const unmountDemand = async () => { mountDemand = false; await screen.update(render()); };
+    const presentDemand = async (presented: boolean) => { demandPresented = presented; await screen.update(render()); };
     const composition = getInstalledPluginUiClientExecutableComposition();
     const address = { family: 'actions' as const, pluginId, localId: actionId, target: { artifactId, exportName: 'activate', platform }, executionOrigin,
         occurrenceId: occurrenceId };
@@ -451,7 +458,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         resolveContributedAction: identity => createPluginUiProjectedActionResolver(readObserved()?.pluginUiProjection?.actionsById)(identity) });
     const fixture = { lifetime, machine, peerMachine, materialization, snapshot, address, composition, screen, dispatch,
         repairAction: { action: { pluginId, localId: actionId }, input: {} },
-        readObserved, readMounted, readMountedController, readMountedLifetime, unmountDemand, readObservedAt: () => observedAt,
+        readObserved, readMounted, readMountedController, readMountedLifetime, unmountDemand, presentDemand, readObservedAt: () => observedAt,
         readManagedPresentation: () => managedPresentation };
     if (options.waitForAdmission === false) return { ...fixture, registration: null };
     await vi.waitFor(async () => {
@@ -763,6 +770,41 @@ it('activates an exact mounted-only client Action through AppShell and releases 
     expect(fixture.lifetime.isCurrent()).toBe(true);
     expect(pluginBoundary.peerActivations).toBe(0);
     expect(daemon.peerMountedReads).toBe(0);
+});
+
+it('keeps a retained mount\'s client executable registered while its surface is hidden and shown again', async () => {
+    const fixture = await mountClientExecutableFixture({ mountedOnly: true, retainedDemand: true, waitForAdmission: false,
+        artifactLabel: 'retained-mounted-client-action' });
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.composition.read(fixture.address)).not.toBeNull();
+    });
+    const registration = fixture.composition.read(fixture.address);
+    const evaluations = pluginBoundary.evaluations;
+    let publishes = 0;
+    const unsubscribe = fixture.composition.subscribe(() => { publishes += 1; });
+    try {
+        // A Session tab switch: the retained surface hides (Freeze), then shows again.
+        for (const presented of [false, true, false, true]) {
+            await fixture.presentDemand(presented);
+            for (let flush = 0; flush < 5; flush += 1) await flushHookEffects();
+        }
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(fixture.composition.read(fixture.address)).not.toBeNull();
+        });
+        expect({ publishes, cleanups: pluginBoundary.cleanups, evaluations: pluginBoundary.evaluations - evaluations,
+            sameRegistration: fixture.composition.read(fixture.address) === registration })
+            .toEqual({ publishes: 0, cleanups: 0, evaluations: 0, sameRegistration: true });
+    } finally {
+        unsubscribe();
+    }
+    // Unmounting the retained surface still releases its mounted demand.
+    await fixture.unmountDemand();
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.composition.read(fixture.address)).toBeNull();
+    });
 });
 
 it('prevents a gated mounted-only client Action from attaching after its mounted demand unmounts', async () => {

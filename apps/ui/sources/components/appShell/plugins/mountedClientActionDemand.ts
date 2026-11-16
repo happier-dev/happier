@@ -30,9 +30,13 @@ export function useMountedClientActionDemand(accountLifetime: ActiveServerAccoun
         artifactSource.current?.dispose();
         artifactSource.current = null;
     }, []);
-    React.useLayoutEffect(() => () => publishMountedActions?.(demandOwner, accountLifetime, null),
+    // Demand follows the mount, not its visibility. A retained surface hidden
+    // with Freeze (a Session tab) disconnects layout effects; passive effects
+    // stay connected, so hiding and showing it neither withdraws nor reloads
+    // its executables. Unmount and Account change still withdraw.
+    React.useEffect(() => () => publishMountedActions?.(demandOwner, accountLifetime, null),
         [accountLifetime, demandOwner, publishMountedActions]);
-    React.useLayoutEffect(() => {
+    React.useEffect(() => {
         publishMountedActions?.(demandOwner, accountLifetime, source);
     }, [accountLifetime, demandOwner, source, publishMountedActions]);
 }
