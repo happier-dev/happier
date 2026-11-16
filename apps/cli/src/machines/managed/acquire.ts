@@ -316,13 +316,14 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         try { return schema.parse(response.data); }
         catch { throw requestFailure(path, 'schema', response.status, undefined, managedId); }
     }
-    async function post<T>(path: string, body: unknown, schema: { parse(data: unknown): T }, signal: AbortSignal | null | undefined = options.signal): Promise<T> {
+    async function post<T>(path: string, body: unknown, schema: { parse(data: unknown): T }, signal: AbortSignal | null | undefined = options.signal,
+        effectOverride?: typeof SESSION_SPAWN_NEW_ACTION_ID_V1): Promise<T> {
         const prepared = path === '/v1/machines/managed/controller/report'
             ? await hydrator.prepareControllerReport('report', body, signal ?? undefined)
             : path === '/v1/machines/managed/controller/report-intent'
                 ? await hydrator.prepareControllerReport('report-intent', body, signal ?? undefined)
                 : body;
-        const run = () => postOnce(path, prepared, schema, signal);
+        const run = () => postOnce(path, prepared, schema, signal, effectOverride);
         // Only the repeatable authority observation is replayed. Every retry
         // obtains fresh request authorization; submit/report/native effects do not replay.
         return path === '/v1/machines/managed/controller/current' && homeRetry
@@ -560,8 +561,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
     const nativeLifetimeRenewal = (machine: ManagedMachineFullV1) => input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
         candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
         && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition.actions.renew;
-    async function openPolicyMachine(machine: ManagedMachineV1, options: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal'>,
-        action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator): Promise<ManagedMachineFullV1> {
+    async function openPolicyMachine(machine: ManagedMachineV1, options: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal' | 'context'>,
+        action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator, sessionId?: string): Promise<ManagedMachineFullV1> {
         if (!isManagedOpaquePresetMachineV1(machine)) {
             return machine;
         }
@@ -571,8 +572,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         client.assertConnection(machine);
         const context = await client.post('/v1/machines/managed/controller/context', {
             homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
-            controller: input.controller,
-        }, ManagedControllerContextOutputV1Schema);
+            controller: input.controller, ...(sessionId ? { sessionId } : {}),
+        }, ManagedControllerContextOutputV1Schema, options.signal, sessionId ? SESSION_SPAWN_NEW_ACTION_ID_V1 : undefined);
         const retained = await normalizeManagedPresetCarrier(context, hydrator, options.signal);
         if (retained.machine.id !== machine.id || retained.machine.homeId !== machine.homeId
             || retained.machine.intentRevision !== machine.intentRevision) {
@@ -614,7 +615,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     revoked.abort();
                     throw new ManagedMachineControllerError('managed_target_access_unavailable');
                 }
-                return await openPolicyMachine(row, { ...options, signal }, 'machines.managed.inspect', hydrator);
+                return await openPolicyMachine(row, { ...options, signal }, 'machines.managed.inspect', hydrator, request.committedSessionId);
             };
             let current = await admit(initial, finiteSignal);
             if (current.acquisitionMode === 'resource-bound' && request.operation && !request.committedSessionId) {

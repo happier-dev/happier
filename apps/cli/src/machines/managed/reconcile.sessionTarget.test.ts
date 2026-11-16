@@ -262,7 +262,7 @@ describe('Session placement on a managed target (driver)', () => {
         expect(h.calls).toEqual(['bootstrap']);
     });
 
-    it.each(['absent', 'empty', 'succeeded', 'skipped'] as const)('skips full Happier CLI installation and reports when Setup is %s', async state => {
+    it.each(['absent', 'empty', 'succeeded', 'skipped'] as const)('starts through the relay on a loopback-only Home without CLI installation when Setup is %s', async state => {
         const h = harness({ guest: true });
         const row = ManagedMachineV1Schema.parse({ ...machine, acquisitionMode: 'resource-bound',
             preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
@@ -273,7 +273,12 @@ describe('Session placement on a managed target (driver)', () => {
         vi.stubGlobal('fetch', fetch);
         const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('No installation report without installation'));
         onTestFinished(() => { vi.unstubAllGlobals(); post.mockRestore(); });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row,
+            homeTarget: resolveHomeTargetFromDescriptor({ authority: 'current_connection', descriptor: {
+                v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'http://controller.localhost:3033', revision: 1,
+                endpoints: [{ kind: 'https', url: 'http://controller.localhost:3033' }],
+            } }),
+        });
         await expect(driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce', committedSessionId: 'committed-session',
             requesterAccountId: 'owner', lifetime: new AbortController().signal, holder,
             operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
@@ -597,8 +602,16 @@ exit 91
                 retentionCapabilities: provisioner.retention, retention: row.retention, wakeOnAcceptedMessage: false },
             nativeResult: { kind: 'bound', resource: machine.resource } }) };
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(22));
+        const admittedTarget = { kind: 'machine' as const, machineId: machine.controller!.machineId };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'session-context-admission', binding: {
+            accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+            serverIdentityId: homeId, actionId: 'session.spawn_new', requestId: 'creation', machineId: admittedTarget.machineId,
+            installationId: machine.controller!.installationId, target: admittedTarget, requestEnvelopeDigest: 'a'.repeat(43),
+        } });
         let contexts = 0;
-        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, wire) => {
+        let contextRequest: { body: unknown; signature: string } | undefined;
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, wire, config) => {
             if (String(url).endsWith('/machines/setup/report')) {
                 const report = (decodeExternalActionHttpBodyV1(wire)?.body ?? wire) as {
                     state: 'running' | 'succeeded' | 'failed'; presetContent: { content: typeof content };
@@ -608,16 +621,27 @@ exit 91
                 return { status: 200, data: { machine: row } };
             }
             expect(String(url)).toBe('https://home.example/v1/machines/managed/controller/context');
+            const body = decodeExternalActionHttpBodyV1(wire)?.body ?? wire;
+            contextRequest = { body, signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) };
             contexts++;
             return { status: 200, data: { machine: row, presetContent: { content, recipients: [] }, requestId: 'creation' } };
         });
         try {
             const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null },
+                externalActionMachineRequestPrivateKey: keys.secretKey,
                 readPolicyCurrent: async () => row });
             const opening = driver.openSessionTarget({ managedId: row.id, sessionId: 's1', committedSessionId: 'committed-session', requesterAccountId: 'owner',
                 lifetime: new AbortController().signal, holder,
                 operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
-                    operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } });
+                    externalActionExecutionAuthorization: authorization, externalActionTarget: admittedTarget,
+                    operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } }).then(target => {
+                expect(contextRequest?.body).toMatchObject({ managedId: row.id, sessionId: 'committed-session' });
+                expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, target: admittedTarget,
+                    installationId: machine.controller!.installationId, requestId: 'creation', effectActionId: 'session.spawn_new',
+                    method: 'POST', path: '/v1/machines/managed/controller/context', body: contextRequest?.body,
+                    signature: contextRequest?.signature ?? '', publicKey: keys.publicKey })).toBe(true);
+                return target;
+            });
             if (requiredSetup === true || requiredSetup === 'deferred') {
                 await expect(opening).resolves.toMatchObject({ id: `managed:${row.id}` });
                 expect(row).toHaveProperty('machineSetup.state', 'succeeded');
