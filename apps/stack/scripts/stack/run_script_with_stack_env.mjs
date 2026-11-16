@@ -1,6 +1,7 @@
 import { readRunningStackIdentityDaemons, restartStackIdentityDaemons } from './identity_daemon_reload.mjs';
 import { spawn } from 'node:child_process';
 import { open } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
@@ -891,11 +892,16 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         // - Stop only stack-owned processes (runner, daemon, Expo, etc.)
         // - Never kill arbitrary port listeners
         // - Preserve previous runtime ports in memory so a true restart can reuse them
-        // A plain start of a stopped Stack that names `--rev`/`--overlay` selects that
-        // source exactly like a restart: the controller resolves it and ships its
-        // description to execution hosts, whose mirrors carry no Git objects.
+        // A plain start of a stopped Stack that names `--rev`/`--overlay`, or that has
+        // never selected source (its first start), selects source exactly like a
+        // restart: the controller resolves the committed revision plus the declared
+        // overlay and ships its description to execution hosts, whose mirrors carry no
+        // Git objects. No start path captures other lanes' uncommitted checkout bytes.
         const requestedSource = resolveSourceRuntimeReloadArguments({ args });
-        const selectsSource = wantsRestart || (!wasRunning && Boolean(requestedSource.rev || requestedSource.overlay?.length));
+        const recordedSourceSelection = ['server', 'daemon'].some(component =>
+          existsSync(join(baseDir, 'source-runtime', `selected-${component}.json`)));
+        const selectsSource = wantsRestart || (!wasRunning
+          && (Boolean(requestedSource.rev || requestedSource.overlay?.length) || !recordedSourceSelection));
         if (selectsSource && !wantsJson) {
           // Recovery explicitly selects the already-recorded source. Only an
           // owner-requested fresh selection may capture and select current source.

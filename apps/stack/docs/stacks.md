@@ -209,10 +209,11 @@ hstack stack start exp1 --runtime=source --restart --verify --rev=HEAD      # ex
 hstack stack start exp1 --runtime=source --restart --verify --overlay=apps/cli/src/foo.ts,packages/protocol/src/bar
 ```
 
-A plain `stack start` of a stopped Stack that names `--rev` or `--overlay`
-selects that source the same way, including the controller's revision
-description for execution hosts. A bare plain start keeps recovery semantics and
-reuses the recorded source.
+A plain `stack start` of a stopped Stack that names `--rev` or `--overlay`, or
+that has never selected source (its first start), selects that source the same
+way, including the controller's revision description for execution hosts; no
+start path captures the shared checkout. A bare plain start of a Stack with a
+recorded selection keeps recovery semantics and reuses the recorded source.
 
 `--rev` takes any commit. `--overlay` (or `hstack stack env set
 HAPPIER_STACK_SOURCE_OVERLAY=<paths>`) takes repository-relative files or
@@ -224,9 +225,11 @@ becomes the latest built revision. The reload log names the selected revision,
 and PREPARED prints `rev <component>=<sha>[+overlay:<digest>]` next to the
 capture time and input identity.
 
-Source-tree reloads (rollout, owner 2026-11-14): with
-`hstack stack env <stack> set HAPPIER_STACK_SOURCE_TREES=1`, a reload builds no
-bundle. Each host keeps one read-only base tree per revision, built once from the
+Source-tree reloads (owner 2026-11-14; default for QA Stacks since 2026-11-16):
+a reload of any Stack other than the repository producer's own builds no bundle.
+`hstack stack env <stack> set HAPPIER_STACK_SOURCE_TREES=0` rolls one Stack back to
+the bundle path (rollback window), `=1` forces trees, and `--source-after` (a
+checkout capture) always takes the bundle path. Each host keeps one read-only base tree per revision, built once from the
 revision's Git objects (`git archive` on the controller; a mirror host without Git
 objects asks the controller for that archive), never from a working tree. A reload at
 a later commit reuses the newest compatible base and applies that commit's
@@ -237,6 +240,20 @@ overlay touches plugin inputs, only the bundled-plugin derivation reruns for tha
 Stack. Each reload prepares a new tree beside the running one; `stack stop`
 (including a restart's stop) releases every tree except the selected one, and a
 base no Stack tree references is deleted (the newest base per host is kept).
+
+Native runtime support (packaged Provider runtime binaries, process-custody
+helpers, the Iroh addon and Session holders) comes from the daemon support owner,
+built from the tree's own sources once per support identity per host and
+hardlinked into the tree's `apps/cli/tools/unpacked` and
+`packages/iroh-native/native`. A base mounts a hardlink snapshot of the
+checkout's installation (one per dependency identity per host), so a running
+tree keeps its packages and keeps admitting Agent launches when HEAD moves or
+the checkout reinstalls; it changes only when the Stack reloads. A base never
+takes another lane's untracked authored file, even under a package's shipped
+`files` directory. A locally
+started server waits for readiness within the server readiness budget
+(`HAPPIER_STACK_SERVER_READY_TIMEOUT_MS`, default 10 min), the owner `dev` and
+remote placement also read: a cold tree server compiles its source on start.
 
 An unbuilt revision is built once by the repository producer under its existing
 lock; the consumer never compiles. If a completed capture's consumed bytes equal

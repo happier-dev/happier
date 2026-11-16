@@ -8,7 +8,7 @@ import { format } from 'node:util';
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
 import { canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
-import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
+import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision, selectsSourceTreeReload, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
 import { beginPendingSourceStart, emitSourcePreparationPhase } from '../shared/pending_source_start.mjs';
@@ -107,12 +107,12 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     await log('[reload] preparing replacement while incumbent runtime remains loaded');
     // Owner 2026-11-14 (P03-INFRA-REDESIGN): QA Stacks run a shared revision base
     // tree plus their commit diff and declared overlay from source, with no bundle.
-    // Rollout control (Systemic 21:31Z): opt-in per Stack until a real QA Stack
-    // boots on it; the producer's own Stack and checkout captures keep bundles.
+    // Default for QA Stacks since 2026-11-16; the producer's own Stack and checkout
+    // captures (--source-after) keep bundles; HAPPIER_STACK_SOURCE_TREES=0 rolls back.
     const hostTreeDescriptor = request.revisionDescriptorPath
       ? (await readSourceRevisionDescriptor(request.revisionDescriptorPath)).fullTree === true : false;
     const sourceTree = hostTreeDescriptor || (!request.revisionDescriptorPath && sourceCapturedAfter == null
-      && String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim() === '1' && canResolveSourceRevisions({ repoDir, env }));
+      && canResolveSourceRevisions({ repoDir, env }) && selectsSourceTreeReload({ stackBaseDir, repoDir, env }));
     let treeRevision = null;
     if (sourceTree && !request.revisionDescriptorPath) {
       treeRevision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir),

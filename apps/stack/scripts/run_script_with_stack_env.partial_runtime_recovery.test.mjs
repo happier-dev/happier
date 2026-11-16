@@ -1477,10 +1477,12 @@ test('inspectExistingStartLikeRuntime does not short-circuit run when only Expo-
   assert.equal(status.canShortCircuit, false);
 });
 
-// A plain start of a stopped Stack that names a revision selects it like a restart
-// (the controller resolves and ships it); a bare plain start keeps recovery semantics.
-for (const [selection, prepared] of [[['--restart'], '1'], [['--rev=HEAD'], '1'], [[], null]]) {
-test(`local source start ${JSON.stringify(selection)} ${prepared ? 'attests an admitted replacement' : 'keeps recovery'} to the inner run owner`, async (t) => {
+// A plain start of a stopped Stack that names a revision, or that has never selected
+// source (its first start), selects it like a restart: the controller resolves the
+// committed revision plus declared overlay, never a capture of the shared checkout
+// (P03-QA-BED 2026-11-16). A bare plain start with a recorded selection keeps recovery.
+for (const [selection, prepared, recorded] of [[['--restart'], '1', true], [['--rev=HEAD'], '1', true], [[], '1', false], [[], null, true]]) {
+test(`local source start ${JSON.stringify(selection)}${recorded ? '' : ' (first start)'} ${prepared ? 'attests an admitted replacement' : 'keeps recovery'} to the inner run owner`, async (t) => {
   const temp = await withTempDir();
   const storageDir = join(temp.dir, 'storage');
   const rootDir = join(temp.dir, 'repo');
@@ -1495,8 +1497,14 @@ test(`local source start ${JSON.stringify(selection)} ${prepared ? 'attests an a
       mkdir(join(rootDir, 'apps', 'server'), { recursive: true }),
       mkdir(join(rootDir, 'apps', 'cli'), { recursive: true }),
       mkdir(join(rootDir, 'apps', 'ui'), { recursive: true }),
-      mkdir(baseDir, { recursive: true }),
+      mkdir(join(baseDir, 'source-runtime'), { recursive: true }),
     ]);
+    if (recorded) {
+      const entrypoint = join(baseDir, 'source-runtime', 'recorded', 'main.mjs');
+      await mkdir(dirname(entrypoint), { recursive: true });
+      await writeFile(entrypoint, '', 'utf8');
+      await writeFile(join(baseDir, 'source-runtime', 'selected-server.json'), JSON.stringify({ entrypoint }), 'utf8');
+    }
     await Promise.all([
       writeFile(join(rootDir, 'package.json'), '{"private":true}\n', 'utf8'),
       writeFile(join(rootDir, 'apps', 'server', 'package.json'), '{"name":"@happier-dev/server","private":true}\n', 'utf8'),

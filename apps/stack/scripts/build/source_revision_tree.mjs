@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, link, lstat, mkdir, readdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { BuildInputDriftError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { BuildInputDriftError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
@@ -183,15 +183,73 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
   // Windows). Every workspace of the revision resolves inside the tree, so no
   // import reaches the moving checkout's packages.
   const workspaces = await readWorkspacePackages(baseDir);
-  await mountCapturedWorkspaceDependencies({ sourceDir: repoDir, captureDir: baseDir,
-    workspaceDirs: [...workspaces.values()].map(workspace => relative(baseDir, workspace.root)).filter(Boolean) });
+  const workspaceDirs = [...workspaces.values()].map(workspace => relative(baseDir, workspace.root)).filter(Boolean);
+  // The base mounts a pinned snapshot of the installation, so a later dependency
+  // refresh of the shared checkout never changes (or refuses) a running tree.
+  const install = await prepareInstallSnapshot({ repoDir, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
+  await mountCapturedWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs });
   await deriveDaemonPluginPublication({ treeDir: baseDir, env, signal });
   // Clones share inodes with the base; a write-in-place would leak into every Stack.
   await setBundleReadOnly(baseDir, true);
   // The marker publishes the base; until it exists the next builder starts over.
   await chmod(baseDir, 0o755);
-  await writeFile(join(baseDir, BASE_MARKER), JSON.stringify({ revision: descriptor.revision, builtAt: new Date().toISOString() }));
+  await writeFile(join(baseDir, BASE_MARKER), JSON.stringify({ revision: descriptor.revision, installIdentity: install.identity,
+    builtAt: new Date().toISOString() }));
   await chmod(baseDir, 0o555);
+}
+
+const INSTALLS = 'installs';
+
+/**
+ * One hardlink snapshot of the checkout's installation per dependency
+ * identity per host (the root and every workspace `node_modules`, without the
+ * workspace links a base mounts itself). The dependency owner's consumption guard
+ * waits for an active writer and refuses a copy taken while it moved. A refresh
+ * replaces installed files, never rewrites them, so the snapshot keeps the bytes.
+ * @returns {Promise<{ dir: string, identity: string }>}
+ */
+async function prepareInstallSnapshot({ repoDir, treesRoot, workspaceDirs, env, signal }) {
+  return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (_env, publication) => {
+    const identity = publication.state.identity;
+    if (typeof identity !== 'string' || !/^[A-Za-z0-9._-]+$/.test(identity)) {
+      throw new Error('[source-tree] the checkout installation has no published dependency identity; refresh dependencies first');
+    }
+    const dir = join(resolve(treesRoot), INSTALLS, identity);
+    await mkdir(dirname(dir), { recursive: true });
+    return await withBaseLock(dir, signal, async () => {
+      if (existsSync(join(dir, BASE_MARKER))) return { dir, identity };
+      const staging = `${dir}.tmp-${randomUUID()}`;
+      try {
+        for (const workspaceDir of ['', ...workspaceDirs]) {
+          const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed, skip: ['@happier-dev'] });
+        }
+        await publication.assertCurrent();
+        await writeFile(join(staging, BASE_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
+        await rm(dir, { recursive: true, force: true });
+        await rename(staging, dir);
+      } catch (error) {
+        await rm(staging, { recursive: true, force: true });
+        throw error;
+      }
+      // Never chmod it: its files share inodes with the checkout's installation.
+      return { dir, identity };
+    });
+  });
+}
+
+/** Installation snapshots no remaining base names go with the base sweep (the newest is kept). */
+async function sweepUnreferencedInstalls({ treesRoot, keep }) {
+  const root = join(treesRoot, INSTALLS);
+  const entries = (await readdir(root, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error)))
+    .filter(entry => entry.isDirectory() && !entry.name.includes('.tmp-') && existsSync(join(root, entry.name, BASE_MARKER)));
+  if (entries.length < 2) return;
+  const dated = await Promise.all(entries.map(async entry => ({ name: entry.name, at: (await lstat(join(root, entry.name))).mtimeMs })));
+  keep.add(dated.sort((a, b) => b.at - a.at)[0].name);
+  for (const { name } of dated) {
+    if (keep.has(name)) continue;
+    await withBaseLock(join(root, name), undefined, () => rm(join(root, name), { recursive: true, force: true }));
+  }
 }
 
 const PROJECTIONS = '.source-daemon-projections';
@@ -211,7 +269,7 @@ function supportStoreDir(treesRoot) {
  * are hardlinks, never symlinks. An unchanged identity only links.
  * @returns {Promise<string>} the support identity this tree consumed
  */
-async function stageTreeNativeSupport({ repoDir, treeDir, treesRoot, env, signal }) {
+async function stageTreeNativeSupport({ treeDir, treesRoot, dependencyRootDir, env, signal }) {
   const storeDir = supportStoreDir(treesRoot);
   // The tree's own owner, loaded through the tree's source runtime.
   const code = `const { pathToFileURL } = await import('node:url');
@@ -223,7 +281,7 @@ const support = await owner.ensureDaemonSupportArtifact({ stackBaseDir: storeDir
 process.stdout.write('HSTACK_DAEMON_SUPPORT ' + JSON.stringify(support) + '\\n');`;
   const output = await runCapture(process.execPath, ['--conditions=happier-source',
     '--import', pathToFileURL(join(treeDir, 'packages/cli-common/registerSourceRuntime.mjs')).href,
-    '--input-type=module', '-e', code, JSON.stringify([treeDir, storeDir, resolveDependencyInstallRoot(repoDir)])], {
+    '--input-type=module', '-e', code, JSON.stringify([treeDir, storeDir, dependencyRootDir])], {
     cwd: treeDir, signal,
     // Rust intermediates are shared per host, never inside a published base.
     env: { ...env, CARGO_TARGET_DIR: join(storeDir, 'cargo-target') } });
@@ -320,7 +378,10 @@ export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor
   const baseDir = join(resolve(treesRoot), descriptor.revision);
   await mkdir(treesRoot, { recursive: true });
   return await withBaseLock(baseDir, signal, async () => {
-    const built = !existsSync(join(baseDir, BASE_MARKER));
+    const marker = await readJson(join(baseDir, BASE_MARKER));
+    // A base from before pinned installation snapshots mounts the live checkout: rebuild it.
+    const built = !marker?.installIdentity;
+    if (marker && built) await setSourceRevisionTreeWritable(baseDir);
     if (built) await buildRevisionBase({ repoDir: resolve(repoDir), baseDir, descriptor, env, signal, requestBaseArchive });
     if (treeDir) {
       await mkdir(`${baseDir}.refs`, { recursive: true });
@@ -370,6 +431,13 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
       deleted.push(baseDir);
     });
   }
+  const installs = new Set();
+  for (const { baseDir } of bases) {
+    if (deleted.includes(baseDir)) continue;
+    const marker = await readJson(join(baseDir, BASE_MARKER));
+    if (marker?.installIdentity) installs.add(marker.installIdentity);
+  }
+  await sweepUnreferencedInstalls({ treesRoot, keep: installs });
   await sweepUnreferencedSupport({ treesRoot });
   return deleted;
 }
@@ -387,6 +455,7 @@ export async function releaseStackSourceRevisionTree({ treesRoot, treeDir, signa
 async function cloneTree(from, to, roots = { base: from, clone: to }) {
   await mkdir(to, { recursive: true });
   for (const entry of await readdir(from, { withFileTypes: true })) {
+    if (roots.skip?.includes(entry.name) && from === roots.base) continue;
     const source = join(from, entry.name);
     const target = join(to, entry.name);
     if (entry.isSymbolicLink()) {
@@ -453,13 +522,15 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   if (touchesPluginInputs([...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)])) {
     await deriveDaemonPluginPublication({ treeDir, env, signal });
   }
-  const supportFingerprint = await stageTreeNativeSupport({ repoDir, treeDir, treesRoot, env, signal });
+  const installIdentity = (await readJson(join(base.baseDir, BASE_MARKER))).installIdentity;
+  const supportFingerprint = await stageTreeNativeSupport({ treeDir, treesRoot,
+    dependencyRootDir: join(treesRoot, INSTALLS, installIdentity), env, signal });
   await writeOwnFile(join(treeDir, TREE_MARKER), JSON.stringify({ baseDir: base.baseDir,
     revision: descriptor.commit?.revision ?? descriptor.revision, supportFingerprint }));
   // A new base, or a Stack that moved to another base, can leave an unreferenced one.
   await sweepSourceRevisionBases({ treesRoot, signal });
   const revision = descriptor.commit?.revision ?? descriptor.revision;
-  return { baseDir: base.baseDir, treeDir, baseBuilt: base.built, overlaid, revision, base: descriptor.revision,
+  return { baseDir: base.baseDir, treeDir, baseBuilt: base.built, overlaid, revision, base: descriptor.revision, installIdentity,
     overlayDigest: descriptor.overlayDigest ?? null,
     key: sourceRevisionKey({ revision, overlayDigest: descriptor.overlayDigest ?? null }) };
 }
@@ -564,7 +635,12 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
         env: { HAPPIER_DB_PROVIDER: provider, ...(provider === 'sqlite' ? { HAPPIER_SQLITE_MIGRATIONS_DIR: join(serverDir, 'prisma/sqlite/migrations') } : {}) },
         migration: { mode: 'external', command: migrate, args: [], cwd: serverDir } };
     }
-    Object.assign(record, { sourceCapture, dependencyPublication, inputIdentity: sourceCapture.inputIdentity, sourceTree: { base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
+    // The tree runs its base's pinned installation snapshot: launches never consult
+    // the moving checkout's dependency publication (the captured-closure contract).
+    const runtimeDependencyClosure = tree.installIdentity ? { captured: true, identity: tree.installIdentity, imports: [] } : null;
+    Object.assign(record, { sourceCapture, dependencyPublication, inputIdentity: sourceCapture.inputIdentity,
+      ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
+      sourceTree: { base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
     await writeOwnFile(join(t, 'source-bundle.json'), JSON.stringify(record, null, 2));
     logger.error(`[source-tree] prepared component=${component} rev=${tree.revision} base=${tree.base} baseBuilt=${tree.baseBuilt} overlaid=${tree.overlaid} elapsedMs=${Math.round(performance.now() - started)}`);
     prepared[component] = record;

@@ -16,10 +16,14 @@ const COMMITTED_MAIN = 'export { marker } from "@happier-dev/shared";';
 const COMMITTED_SHARED = 'export const marker = "committed";';
 
 const FIXTURE_SUPPORT_OWNER = `import { createHash } from 'node:crypto';
+import { resolveInstalledRuntimePackage } from ${JSON.stringify(new URL('../../../../packages/cli-common/workspaceRuntimeDependencies.mjs', import.meta.url).href)};
 import { existsSync } from 'node:fs';
 import { appendFile, chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir }) {
+export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir, dependencyRootDir }) {
+  if (existsSync(join(repoDir, 'node_modules/fixture-dep/package.json'))) {
+    resolveInstalledRuntimePackage({ packageName: 'fixture-dep', resolveFromPackageJsonPath: join(repoDir, 'apps/cli/package.json'), dereferenceRootDir: dependencyRootDir });
+  }
   const fingerprint = createHash('sha256').update(await readFile(join(repoDir, 'apps/cli/native/version.txt'))).digest('hex');
   const payloadDir = join(stackBaseDir, 'artifacts/daemon-support', fingerprint, 'payload');
   if (!existsSync(payloadDir)) {
@@ -45,6 +49,9 @@ async function createRevisionFixture(t) {
   await gitIn('config', 'user.name', 'test');
   await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
   await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
+  // The dependency owner's published install identity (the refresh marker).
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/.happier-stack-dependencies-ready'), JSON.stringify({ version: 7, identity: 'install-1' }));
   for (const [directory, name] of [['apps/server', '@happier-dev/server'], ['apps/cli', '@happier-dev/cli'], ['packages/shared', '@happier-dev/shared']]) {
     await mkdir(join(repoDir, directory, 'src'), { recursive: true });
     await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module',
@@ -424,4 +431,35 @@ test('daemon source trees expose declared private CLI runtime entries from their
   const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e',
     `const { pathToFileURL } = await import("node:url"); const voice = await import(pathToFileURL(process.argv[1])); const census = await import(pathToFileURL(process.argv[2])); console.log(JSON.stringify([voice.voiceInferenceRuntimeEngine.revision, census.census]));`, entry, sibling]);
   assert.deepEqual(JSON.parse(stdout), ['committed', 'committed sibling']);
+});
+
+// P03-RECONNECT-RECOVERY / Coordination 11-15 18:49Z: a running QA stack keeps
+// serving its loaded revision. HEAD moves ~36 times an hour and the shared checkout
+// reinstalls dependencies; neither may change a running tree's packages or refuse
+// its Agent launches (SOURCE_RUNTIME_RELOAD_REQUIRED) until someone reloads it.
+test('HEAD moves and the checkout reinstalls: a running tree keeps its packages and still admits launches', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await mkdir(join(repoDir, 'node_modules/fixture-dep'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/fixture-dep/package.json'), JSON.stringify({ name: 'fixture-dep', main: 'index.js' }));
+  await writeFile(join(repoDir, 'node_modules/fixture-dep/index.js'), 'module.exports = "install-1";');
+  await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
+  await gitIn('add', 'apps/cli');
+  await gitIn('commit', '--quiet', '-m', 'cli');
+  const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/qa'),
+    descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
+  const treeDir = dirname(dirname(daemon.cliDir));
+  // HEAD moves, then the dependency owner republishes the installation (files replaced, new identity).
+  await writeFile(join(repoDir, 'docs/notes.md'), 'moved on');
+  await gitIn('commit', '--quiet', '-am', 'HEAD moves');
+  await rm(join(repoDir, 'node_modules/fixture-dep/index.js'));
+  await writeFile(join(repoDir, 'node_modules/fixture-dep/index.js'), 'module.exports = "install-2";');
+  await writeFile(join(repoDir, 'node_modules/.happier-stack-dependencies-ready'), JSON.stringify({ version: 7, identity: 'install-2' }));
+  assert.equal(await readFile(join(treeDir, 'node_modules/fixture-dep/index.js'), 'utf8'), 'module.exports = "install-1";');
+  const { assertSourceRuntimeDependenciesCurrent } = await import('../../../../packages/cli-common/sourceRuntimeDependencies.mjs');
+  assert.equal(await assertSourceRuntimeDependenciesCurrent({ entrypoint: daemon.entrypoint, env: {} }), null,
+    'a launch on the running tree is admitted after HEAD moved and the checkout reinstalled');
 });
