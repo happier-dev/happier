@@ -355,7 +355,9 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       tracked.agentRuntimeDaemonServiceCapabilityHash = capabilityDigest;
       const refused = await openCurrentRunnerTeamCredentialProviderBinding({ authority, operation })
         .then(() => null, (error: unknown) => error);
-      expect(wireResponse).toEqual({ ok: false, error: { code, message: code } });
+      expect(wireResponse).toEqual({ ok: false, error: { code, message: code,
+        failureCause: { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: code, httpStatus: null },
+      } });
       expect(refused).toBeInstanceOf(Error);
       expect(refused).toMatchObject({ code, message: code });
       expect(readSessionPreparationFailureDiagnostic(refused)).toEqual({
