@@ -3,6 +3,8 @@ import { teamGroupsQueryKeyV1 } from '@happier-dev/protocol/teams';
 import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { createDeferred, standardCleanup, teamGroupFixture, teamGroupMemberFixture, teamInvitationRowFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { teamMutationFailureLabel } from '@/components/settings/teams/teamMutationPresentation';
+import { t } from '@/text';
 
 const confirmNative = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('@/modal', async () => {
@@ -174,8 +176,10 @@ describe('natively confirmed Team mutation results', () => {
         await homes.requireUiApproval(serverId, 'teams.create');
         const pending = await pendingConfirmation(() => createTeam({ scope, name: 'Design', description: null, requestKey: 'key-1' }));
         pending.decision.resolve(false);
-        await expect(pending.result).resolves.toMatchObject({ kind: 'failed',
+        const outcome = await pending.result;
+        expect(outcome).toMatchObject({ kind: 'failed',
             failure: { kind: 'forbidden', code: 'approval_canceled', retryable: false } });
+        if (outcome.kind === 'failed') expect(teamMutationFailureLabel(outcome.failure)).toBe(t('voiceSurface.actionCanceled'));
         expect(snapshots.getTeamSnapshot(scope, { serverId, teamId: team.id })).toBeNull();
         expect(homes.requestsFor('/v1/teams/create')).toHaveLength(0);
     });
