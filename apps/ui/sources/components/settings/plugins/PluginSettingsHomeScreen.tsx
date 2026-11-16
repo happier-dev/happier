@@ -176,7 +176,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             status, fields: { status: [status] } };
     }), [state.installedPlugins]);
     const installedFilterFields = React.useMemo(() => ({ status: {
-        label: t('settingsPlugins.surfaces.statusFilterLabel'), valueLabel: installedStatusFilterTitle,
+        label: t('settingsPlugins.surfaces.statusFilterLabel'), icon: 'circle-half' as const, valueLabel: installedStatusFilterTitle,
     } }), []);
     const installedFilter = useSettingsColumnFilter({
         column: 'plugins', presented: isFocused && activeView === 'installed',

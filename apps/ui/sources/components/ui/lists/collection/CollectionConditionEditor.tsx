@@ -157,10 +157,13 @@ function useConditionColors() {
 
 const ConditionFieldIconsContext = React.createContext<Readonly<Record<string, IconName>> | null>(null);
 
+/** A field its list names no mark for (a plugin's field) still keeps the field rows' one anatomy. */
+const DEFAULT_CONDITION_FIELD_ICON: IconName = 'funnel-simple';
+
 function ConditionFieldIcon(props: Readonly<{ fieldId: string }>) {
   const { theme } = useUnistyles();
-  const name = React.useContext(ConditionFieldIconsContext)?.[props.fieldId];
-  return name ? <Icon name={name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null;
+  const name = React.useContext(ConditionFieldIconsContext)?.[props.fieldId] ?? DEFAULT_CONDITION_FIELD_ICON;
+  return <Icon name={name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
 }
 
 const APP_CONDITION_HOST: HappierCollectionConditionEditorHost = Object.freeze({

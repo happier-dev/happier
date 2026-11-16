@@ -24,6 +24,7 @@ import { useSessionListSpaceKeyboardCommands } from '@/keyboard/sessionListSpace
 import { useCollectionFilterSettingsCommand } from '@/components/settings/session/useCollectionFilterSettingsCommand';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
 
 import {
@@ -71,6 +72,8 @@ export function useCollectionSpaceHeader<
     /** What people filter this list by most, one press each in the title menu (`useCollectionConditionHeader`). */
     facets?: readonly Readonly<{ fieldId: string; value: JsonValue; label: string }>[];
     bindings: CollectionConditionBindings;
+    /** Each registry field's mark in the filter editor (`useCollectionConditionHeader`). */
+    fieldIcons?: Readonly<Record<string, IconName>>;
     result?: EntityListFilterResultV1;
     readHeldFacts?: () => Iterable<Facts>;
     defaultIcon: CollectionSpaceIconV1;
@@ -95,7 +98,7 @@ export function useCollectionSpaceHeader<
     baseFilter: savedFilter,
     ...(input.result ? { result: input.result } : {}),
     ...(input.readHeldFacts ? { readHeldFacts: input.readHeldFacts } : {}),
-    anchorRef,
+    ...(input.fieldIcons ? { fieldIcons: input.fieldIcons } : {}),
     onSaveAsSpace: () => openSaveAsRef.current(),
     ...(input.facets ? { facets: input.facets } : {}),
   });

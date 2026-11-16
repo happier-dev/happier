@@ -20,14 +20,14 @@ export function useStoreFilterFields(curation: RegistryCuration['curation'], pre
             for (const job of page.discovery.jobs) jobs.set(storeEditorialGroupKey(page.sourceId, job.id), job.title);
         }
         return {
-            kind: { label: t('capabilities.store.search.kind'), valueLabel: value => {
+            kind: { label: t('capabilities.store.search.kind'), icon: 'squares-four' as const, valueLabel: value => {
                 if (Object.hasOwn(storeKinds, value)) return t(`capabilities.store.kinds.${value as StoreKind}.title`);
                 const contribution = contributedKinds?.[value];
                 return contribution ? localize(contribution.pluginId, contribution.definition.title) : value;
             } },
-            source: { label: t('capabilities.store.catalogLabel'), valueLabel: value => sources.find(source => source.id === value)?.title ?? value },
-            category: { label: t('capabilities.store.search.category'), valueLabel: value => categories.get(value) ?? value },
-            job: { label: t('capabilities.store.discover.jobsTitle'), valueLabel: value => jobs.get(value) ?? value },
+            source: { label: t('capabilities.store.catalogLabel'), icon: 'cloud' as const, valueLabel: value => sources.find(source => source.id === value)?.title ?? value },
+            category: { label: t('capabilities.store.search.category'), icon: 'stack' as const, valueLabel: value => categories.get(value) ?? value },
+            job: { label: t('capabilities.store.discover.jobsTitle'), icon: 'list-checks' as const, valueLabel: value => jobs.get(value) ?? value },
         };
     }, [curation, sources, contributedKinds, localize]);
 }

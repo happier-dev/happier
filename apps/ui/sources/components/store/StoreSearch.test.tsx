@@ -39,8 +39,8 @@ it('binds native Software job and category membership by exact choice rather tha
 });
 
 const fields = Object.fromEntries(['kind', 'source', 'category', 'job'].map(id =>
-    [id, { label: id, valueLabel: (value: string) => value }])) as Record<
-        'kind' | 'source' | 'category' | 'job', { label: string; valueLabel: (value: string) => string }>;
+    [id, { label: id, icon: 'circle-half' as const, valueLabel: (value: string) => value }])) as Record<
+        'kind' | 'source' | 'category' | 'job', { label: string; icon: 'circle-half'; valueLabel: (value: string) => string }>;
 
 it('filters Apps by declared database category without matching database words in unrelated apps', async () => {
     const serverUrl = 'https://store-database-category.test';

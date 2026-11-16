@@ -8,6 +8,7 @@ import { getUnsupportedEntityFilterFieldsV1, type EntityFilterRegistryV1 } from 
 import type { SettingsColumnFilterColumn } from '@happier-dev/protocol/actions/scopeActionFamily';
 
 import { useCollectionConditionHeader } from '@/components/ui/lists/collection/useCollectionConditionHeader';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -21,6 +22,8 @@ import type {
 /** How a column names one of its adapter's fields and that field's held values. */
 export type SettingsColumnFilterField = Readonly<{
   label: string;
+  /** The field's mark in the filter editor's field list, from the app's one icon family. */
+  icon: IconName;
   /** The value's words from its display owner (status words, service and machine names), never the id. */
   valueLabel: (value: string) => string;
 }>;
@@ -105,6 +108,11 @@ export function useSettingsColumnFilter<Field extends string>(
     }
     return { fields: result } satisfies CollectionConditionBindings;
   }, [adapter.fields, facts, fieldWords]);
+  const fieldIcons = React.useMemo(() => {
+    const icons: Record<string, IconName> = {};
+    for (const field of adapter.fields) icons[field] = fieldWords[field].icon;
+    return icons;
+  }, [adapter.fields, fieldWords]);
 
   const active =
     filters !== EMPTY_FILTER &&
@@ -152,6 +160,7 @@ export function useSettingsColumnFilter<Field extends string>(
     testIDPrefix: input.testIDPrefix,
     registry: adapter.registry,
     bindings,
+    fieldIcons,
     filters,
     setFilters,
     baseFilter: EMPTY_FILTER,

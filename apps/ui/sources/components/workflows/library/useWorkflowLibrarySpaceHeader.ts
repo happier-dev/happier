@@ -33,6 +33,8 @@ function buildWorkflowConditionBindings(): CollectionConditionBindings {
   };
 }
 const WORKFLOW_SPACE_ICON = { kind: 'icon', name: 'list' } as const;
+/** The Workflows registry's field marks in the filter editor (Status: triggered or running). */
+const WORKFLOW_FILTER_FIELD_ICONS = Object.freeze({ view: 'circle-half' } as const);
 
 /**
  * The saved-space header of a Workflow library list (R9, R8-7): the title chevron, spaces strip, condition
@@ -82,6 +84,7 @@ export function useWorkflowLibrarySpaceHeader(
     },
     registry: workflowListFilterFieldsV1,
     bindings,
+    fieldIcons: WORKFLOW_FILTER_FIELD_ICONS,
     facets,
     ...(libraryView.spacesReady ? { readHeldFacts } : {}),
     result: libraryView.filterResult,

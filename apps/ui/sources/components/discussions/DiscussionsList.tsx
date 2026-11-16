@@ -116,6 +116,8 @@ function buildDiscussionConditionBindings(): CollectionConditionBindings {
     } };
 }
 const DISCUSSION_SPACE_ICON = { kind: 'icon', name: 'conversations' } as const;
+/** The Discussions registry's field marks in the filter editor. */
+const DISCUSSION_FILTER_FIELD_ICONS = Object.freeze({ state: 'circle-half', attention: 'hand', unreadOnly: 'envelope' } as const);
 
 /** Summary facts stay held by the repository; attention exists only where the current scoped join knows it. */
 function discussionListFilterFacts(row: DiscussionOpenedSummaryV1, attention?: DiscussionListRow): DiscussionListFilterFactsV1 {
@@ -385,6 +387,7 @@ function DiscussionsListReady(props: Readonly<{
             spacesReady: view.spacesReady, spaceSettingsScope: view.spaceSettingsScope, filters, setFilters },
         registry: discussionListFilterFieldsV1,
         bindings: conditionBindings,
+        fieldIcons: DISCUSSION_FILTER_FIELD_ICONS,
         facets: discussionFacets,
         ...(column && view.bound && view.spacesReady ? { readHeldFacts } : {}),
         result: projection.filterResult,

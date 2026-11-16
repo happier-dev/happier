@@ -26,6 +26,7 @@ import {
   Popover,
 } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import type { SelectionListFilter } from '@/components/ui/selectionList';
 import { t } from '@/text';
@@ -63,6 +64,11 @@ const EDGE_PADDING = { horizontal: 8, vertical: 8 } as const;
 const FIELD_WIDTH_PORTAL = {
   ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
   matchAnchorWidth: true,
+  anchorAlign: 'end',
+} as const;
+/** Without a search field the editor hangs from the filter button's end, wherever the button stands in its header. */
+const BUTTON_END_PORTAL = {
+  ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
   anchorAlign: 'end',
 } as const;
 
@@ -115,11 +121,8 @@ export function useCollectionConditionHeader<Filter, Facts>(
     result?: EntityListFilterResultV1;
     /** Distinct, already-held ordinary subjects before local search/conditions; read only by an open value list. */
     readHeldFacts?: () => Iterable<Facts>;
-    /**
-     * The editor's anchor. Without one the popover opens under the list's search field when the list draws
-     * one (give it `searchAnchorRef`), else under the filter button.
-     */
-    anchorRef?: React.RefObject<View | null>;
+    /** Each registry field's mark in the editor's field list (one icon family; a field without one takes the default). */
+    fieldIcons?: Readonly<Record<string, IconName>>;
     /** Saved-space lists offer Save as space in the tokens and editor. */
     onSaveAsSpace?: () => void;
     /** Fields a control on the page already states (a kind segment): one indicator, so no token or count for them. */
@@ -139,14 +142,13 @@ export function useCollectionConditionHeader<Filter, Facts>(
   // The editor opens under the search field, from its end where the filter button sits (lab `sfcols:mcpFilter`);
   // a list without a search field hangs it from the filter button in its header.
   const anchorRef = React.useMemo<React.RefObject<View | null>>(
-    () =>
-      input.anchorRef ?? {
-        get current() {
-          return searchAnchorRef.current ?? buttonAnchorRef.current;
-        },
-        set current(_node: View | null) {},
+    () => ({
+      get current() {
+        return searchAnchorRef.current ?? buttonAnchorRef.current;
       },
-    [input.anchorRef],
+      set current(_node: View | null) {},
+    }),
+    [],
   );
   const [editorOpen, setEditorOpen] = React.useState(false);
   // The editor is also shown as the title menu's Filter submenu; either one being shown loads value counts.
@@ -275,9 +277,7 @@ export function useCollectionConditionHeader<Filter, Facts>(
       onPress={() => setEditorOpen((open) => !open)}
     />
   );
-  const filterButton = input.anchorRef ? (
-    button
-  ) : (
+  const filterButton = (
     <View ref={buttonAnchorRef} collapsable={false}>
       {button}
     </View>
@@ -287,12 +287,14 @@ export function useCollectionConditionHeader<Filter, Facts>(
     [],
   );
   const result = input.result;
-  // Read when the editor is open, after the list has laid out its field. A caller's explicit anchor (a
-  // space header) and a header button keep the editor's own width.
-  const underSearchField = !input.anchorRef && searchAnchorRef.current !== null;
+  // Read when the editor is open, after the list has laid out its field. Under a header button the editor keeps
+  // its own width.
+  const underSearchField = searchAnchorRef.current !== null;
+  const fieldIcons = input.fieldIcons;
   const renderEditor = React.useCallback((maxHeight: number, done: (() => void) | undefined, saveAsSpace: (() => void) | undefined) => (
     <CollectionConditionEditor
       testID={`${testIDPrefix}-editor`}
+      {...(fieldIcons ? { fieldIcons } : {})}
       model={model}
       onChange={applyEdit}
       onValuePickerChange={setValueRequest}
@@ -310,7 +312,7 @@ export function useCollectionConditionHeader<Filter, Facts>(
         : {})}
       maxHeight={maxHeight}
     />
-  ), [applyEdit, hiddenFieldIds, labels, model, result, testIDPrefix]);
+  ), [applyEdit, fieldIcons, hiddenFieldIds, labels, model, result, testIDPrefix]);
   const editorOverlay = (
     <Popover
       open={editorOpen}
@@ -322,7 +324,7 @@ export function useCollectionConditionHeader<Filter, Facts>(
       maxWidthCap={EDITOR_WIDTH_PX}
       maxHeightCap={EDITOR_MAX_HEIGHT_PX}
       autoFocusOnOpen
-      portal={underSearchField ? FIELD_WIDTH_PORTAL : MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
+      portal={underSearchField ? FIELD_WIDTH_PORTAL : BUTTON_END_PORTAL}
       onRequestClose={closeEditor}
       backdrop={false}
       phonePresentation="panel"

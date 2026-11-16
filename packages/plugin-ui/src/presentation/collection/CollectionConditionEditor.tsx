@@ -295,7 +295,8 @@ const styles = Object.freeze({
     alignItems: 'center',
     gap: 8,
   } satisfies ViewStyle,
-  // The fields a filter can add follow its conditions, parted from them by the popover's hairline.
+  // The fields a filter can add follow its conditions, parted from them by the popover's hairline. With no
+  // conditions above them they follow the header directly: no hairline and no gap of their own.
   fields: { marginTop: 6, paddingTop: 6, borderTopWidth: 1 } satisfies ViewStyle,
   search: { marginVertical: 4 } satisfies ViewStyle,
   groupTitle: {
@@ -750,7 +751,7 @@ export const HappierCollectionConditionEditor = memo(
           {conditionsPart.map(fieldBlock)}
           {addPart.length > 0 || searchable ? (
             <View testID="collection-filter-fields"
-              style={[styles.fields, { borderTopColor: conditionsPart.length > 0 ? colors.divider : 'transparent' }]}>
+              style={conditionsPart.length > 0 ? [styles.fields, { borderTopColor: colors.divider }] : null}>
               {searchable ? (
                 <SearchField
                   value={fieldQuery}

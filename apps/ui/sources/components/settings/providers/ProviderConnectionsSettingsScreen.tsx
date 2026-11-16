@@ -154,12 +154,12 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
             sourceNames.set(source.contributionKey, source.providerName);
         }
         return {
-            status: { label: t('sessionsList.filtersStatus'),
+            status: { label: t('sessionsList.filtersStatus'), icon: 'circle-half' as const,
                 valueLabel: (value: string) => {
                     const key = PROVIDER_CONNECTION_STATUS_KEY[value as ProviderConnectionPresentationStatus];
                     return key ? t(key) : value;
                 } },
-            source: { label: t('sessionsList.filtersSource'), valueLabel: (value: string) => sourceNames.get(value) ?? value },
+            source: { label: t('sessionsList.filtersSource'), icon: 'cloud' as const, valueLabel: (value: string) => sourceNames.get(value) ?? value },
         };
     }, [heldCollection.found, data]);
     const filter = useSettingsColumnFilter({ column: 'providers', presented: active && !home,

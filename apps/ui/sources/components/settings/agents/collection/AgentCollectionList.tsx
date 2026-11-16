@@ -315,8 +315,8 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
         }));
         if (invalidDefinitions.length > 0) statusLabels.set('failed', t('agentInstallJob.failed'));
         return {
-            status: { label: t('sessionsList.filtersStatus'), valueLabel: (value: string) => statusLabels.get(value) ?? t('common.unavailable') },
-            machine: { label: t('sessionsList.filtersMachine'), valueLabel: (value: string) => value === projectionMachineId && machineLabel ? machineLabel : t('common.unavailable') },
+            status: { label: t('sessionsList.filtersStatus'), icon: 'circle-half' as const, valueLabel: (value: string) => statusLabels.get(value) ?? t('common.unavailable') },
+            machine: { label: t('sessionsList.filtersMachine'), icon: 'desktop' as const, valueLabel: (value: string) => value === projectionMachineId && machineLabel ? machineLabel : t('common.unavailable') },
         };
     }, [allCollection, invalidDefinitions, machineLabel, projectionMachineId]);
     const columnFilter = useSettingsColumnFilter({

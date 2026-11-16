@@ -21,7 +21,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 const queryAdapter = defineSettingsCollectionAdapter(['status']);
-const queryFields = { status: { label: 'Status', valueLabel: (value: string) => value } };
+const queryFields = { status: { label: 'Status', icon: 'circle-half' as const, valueLabel: (value: string) => value } };
 const queryFacts = [{ key: 'one', title: 'One', context: null, status: 'enabled', fields: { status: ['enabled'] } }];
 // S40 adds its mounted Store case here; all owners share these assertions.
 const queryOwnerCases = ['mcp', 'skills', 'agents', 'providers', 'plugins', 'connected-services', 'store'] as const;

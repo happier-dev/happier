@@ -23,7 +23,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { inventoryMachineKey } = await import('./inventoryRows');
 const fields = Object.fromEntries(['kind', 'status', 'machine', 'project'].map(id =>
-    [id, { label: id, valueLabel: (value: string) => value }])) as Record<ManagedInventoryField, SettingsColumnFilterField>;
+    [id, { label: id, icon: 'circle-half' as const, valueLabel: (value: string) => value }])) as Record<ManagedInventoryField, SettingsColumnFilterField>;
 
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 

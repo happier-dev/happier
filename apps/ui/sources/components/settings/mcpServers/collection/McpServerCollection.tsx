@@ -122,8 +122,8 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             if (status && status.kind !== 'ready') labels.set(status.kind, capabilityStatusLabels.status(status.kind, status.machineName));
         }
         return {
-            status: { label: t('sessionsList.filtersStatus'), valueLabel: (kind: string) => labels.get(kind) ?? kind },
-            runsOn: { label: t('sessionsList.filtersRunsOn'), valueLabel: names.machineName },
+            status: { label: t('sessionsList.filtersStatus'), icon: 'circle-half' as const, valueLabel: (kind: string) => labels.get(kind) ?? kind },
+            runsOn: { label: t('sessionsList.filtersRunsOn'), icon: 'desktop' as const, valueLabel: names.machineName },
         };
     }, [names, rows, statusOf]);
     const filter = useSettingsColumnFilter({

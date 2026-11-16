@@ -130,20 +130,23 @@ export function InstalledPage(props: Readonly<{ projectKey?: string | null }>): 
     return {
       kind: {
         label: t('storeInstalled.groupKind'),
+        icon: 'squares-four' as const,
         valueLabel: (value) => {
           if (KINDS.has(value)) return inventoryKindWord(value as ManagedInventoryRow['kind']);
           const contribution = contributedKinds.find(kind => kind.key === value);
           return contribution ? localize(contribution.pluginId, contribution.definition.title) : value;
         },
       },
-      status: { label: t('storeInstalled.status'), valueLabel: statusWords },
+      status: { label: t('storeInstalled.status'), icon: 'circle-half' as const, valueLabel: statusWords },
       machine: {
         label: t('storeInstalled.groupMachine'),
+        icon: 'desktop' as const,
         valueLabel: (value) =>
           names.get(value) ?? t('storeInstalled.machineFallback'),
       },
       project: {
         label: t('storeInstalled.groupProject'),
+        icon: 'folder' as const,
         valueLabel: (value) => value,
       },
     };

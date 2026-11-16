@@ -164,9 +164,9 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
     ), [labelsByKey, model.sheets, present]);
     const serviceLabels = React.useMemo(() => new Map(model.sheets.map((sheet) => [sheet.serviceKey, sheet.label])), [model.sheets]);
     const filterFields = React.useMemo(() => ({
-        service: { label: t('sessionsList.filtersService'), valueLabel: (serviceKey: string) => serviceLabels.get(serviceKey) ?? serviceKey },
+        service: { label: t('sessionsList.filtersService'), icon: 'plug' as const, valueLabel: (serviceKey: string) => serviceLabels.get(serviceKey) ?? serviceKey },
         // A filter value is a short noun (a chip in a narrow column): the row's sentence keeps its "will retry".
-        status: { label: t('sessionsList.filtersStatus'),
+        status: { label: t('sessionsList.filtersStatus'), icon: 'circle-half' as const,
             valueLabel: (status: string) => status === 'refresh_failed_retryable' ? t('connectedServices.pools.behavior.switchOn.refreshFailure')
                 : resolveConnectedAccountCredentialStatusLabel(status as ConnectedServiceCredentialHealthStatusV1) },
     }), [serviceLabels]);

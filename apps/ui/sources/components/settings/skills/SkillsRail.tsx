@@ -193,9 +193,9 @@ export const SkillsListView = React.memo(function SkillsListView(
     return { facts, sourceWords, makerWords };
   }, [installedPlugins, library.items, machines, makerFor, names, sourceNameFor]);
   const filterFields = React.useMemo(() => ({
-    source: { label: t('sessionsList.filtersSource'), valueLabel: (id: string) => columnFacts.sourceWords.get(id) ?? t('common.unavailable') },
-    machine: { label: t('sessionsList.filtersMachine'), valueLabel: names.machineName },
-    maker: { label: t('capabilities.skills.maker.title'), valueLabel: (id: string) => columnFacts.makerWords.get(id) ?? skillMakerFilterLabel(id) },
+    source: { label: t('sessionsList.filtersSource'), icon: 'cloud' as const, valueLabel: (id: string) => columnFacts.sourceWords.get(id) ?? t('common.unavailable') },
+    machine: { label: t('sessionsList.filtersMachine'), icon: 'desktop' as const, valueLabel: names.machineName },
+    maker: { label: t('capabilities.skills.maker.title'), icon: 'user-circle' as const, valueLabel: (id: string) => columnFacts.makerWords.get(id) ?? skillMakerFilterLabel(id) },
   }), [columnFacts.sourceWords, columnFacts.makerWords, names]);
   const columnFilter = useSettingsColumnFilter({
     column: 'skills',
