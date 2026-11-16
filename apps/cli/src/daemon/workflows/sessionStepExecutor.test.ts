@@ -834,6 +834,7 @@ describe('workflow Session step executor', () => {
     { name: 'unreviewable change', approvalProfileId: 'builtin:full-trust', review: 'unavailable' },
     { name: 'reviewed detach', approvalProfileId: null, review: 'approve' },
     { name: 'reviewed change', approvalProfileId: 'builtin:full-trust', review: 'approve' },
+    { name: 'reviewed parent covers Agent install before Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'approve', readiness: 'install' },
     { name: 'same selection', approvalProfileId: 'builtin:full-trust', review: 'none' },
     { name: 'omitted selection', approvalProfileId: undefined, review: 'none' },
     { name: 'direct human selection', approvalProfileId: 'builtin:full-trust', review: 'none', human: true },
