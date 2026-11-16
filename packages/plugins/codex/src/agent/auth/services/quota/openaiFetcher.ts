@@ -176,6 +176,9 @@ function buildQuotaUnknownMeter(meterId: string, label: string): AgentAccountUsa
   };
 }
 
+const CODEX_SESSION_WINDOW_MS = 5 * 60 * 60_000;
+const CODEX_WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
 function mapOpenAiCodexConnectedAccountUsageMeters(value: unknown): readonly AgentAccountUsageMeter[] {
   const meters = mapCodexRateLimitSnapshotToUsageMeters(value, {
     legacyPrimary: { meterId: 'session', label: 'Session', scope: 'session' },
@@ -183,11 +186,15 @@ function mapOpenAiCodexConnectedAccountUsageMeters(value: unknown): readonly Age
     source: 'provider_api',
   });
   const byId = new Map(meters.map((meter) => [meter.meterId, meter]));
+  const session = byId.get('session');
+  const weekly = byId.get('weekly');
+  // A missing window reads as not reported, unless the other window already is that window (a plan whose only
+  // window is weekly sends it as primary): a second, unknown meter of the same name would contradict the real one.
   return [
-    byId.get('session') ?? buildQuotaUnknownMeter('session', 'Session'),
-    byId.get('weekly') ?? buildQuotaUnknownMeter('weekly', 'Weekly'),
+    session ?? (weekly?.windowDurationMs === CODEX_SESSION_WINDOW_MS ? null : buildQuotaUnknownMeter('session', 'Session')),
+    weekly ?? (session?.windowDurationMs === CODEX_WEEKLY_WINDOW_MS ? null : buildQuotaUnknownMeter('weekly', 'Weekly')),
     ...meters.filter((meter) => meter.meterId !== 'session' && meter.meterId !== 'weekly'),
-  ];
+  ].filter((meter): meter is AgentAccountUsageMeter => meter !== null);
 }
 
 function buildCodexProviderHttpQuotaSnapshot(input: Readonly<{

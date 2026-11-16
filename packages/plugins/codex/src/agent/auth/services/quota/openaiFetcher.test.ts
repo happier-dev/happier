@@ -113,6 +113,20 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     }
   });
 
+  it('does not invent an unknown window beside the exact one that already covers it', () => {
+    // A plan whose only window is weekly reports it as the primary window: one weekly meter, not a second unknown one.
+    expect(parseOpenAiCodexConnectedAccountQuotaLimits({ rate_limit: {
+      primary_window: { used_percent: 100, limit_window_seconds: 604_800 },
+    } })).toEqual([
+      expect.objectContaining({ id: 'session', label: 'Weekly', windowDurationMs: 604_800_000, confidence: 'exact' }),
+    ]);
+    expect(parseOpenAiCodexConnectedAccountQuotaLimits({ rate_limit: {
+      secondary_window: { used_percent: 40, limit_window_seconds: 18_000 },
+    } })).toEqual([
+      expect.objectContaining({ id: 'weekly', label: '5-hour', windowDurationMs: 18_000_000, confidence: 'exact' }),
+    ]);
+  });
+
   it('returns a provider-neutral public usage observation from the private quota fetcher', async () => {
     const now = 1_000_000;
     const record = buildConnectedServiceCredentialRecord({
