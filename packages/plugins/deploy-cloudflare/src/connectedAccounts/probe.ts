@@ -36,6 +36,19 @@ function missingPermissions(message = 'Cloudflare refused access to the selected
   return { status: 'rejected', diagnostic: diagnostic('cloudflare_missing_permissions', message) };
 }
 
+/** Cloudflare v4 error envelope entries; an unparseable body has none. */
+function cloudflareErrors(body: Uint8Array): Record<string, unknown>[] {
+  try {
+    const value: unknown = JSON.parse(new TextDecoder().decode(body));
+    return isObject(value) && Array.isArray(value.errors) ? value.errors.filter(isObject) : [];
+  } catch { return []; }
+}
+
+/** A Cloudflare v4 403 is a token refusal only with code 10000; any other 403 is unclassified. */
+export function cloudflareRefused(response: Readonly<{ status: number; body: Uint8Array }>): boolean {
+  return response.status === 403 && cloudflareErrors(response.body).some(error => error.code === 10000);
+}
+
 class ProbeFailure extends Error {
   constructor(readonly result: Failure) { super(result.diagnostic.code); }
 }
@@ -49,16 +62,16 @@ async function read(context: Context, token: string, path: string, signal: Abort
     ...diagnostic('cloudflare_http_redirect', 'Cloudflare refused the verification request with a redirect.'),
     details: { failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'cloudflare.verification') },
   } });
-  // Cloudflare reports a malformed Bearer token as 400 / 6003 → 6111.
-  const verificationError: unknown = purpose === 'verification' && response.status === 400
-    ? JSON.parse(new TextDecoder().decode(response.body)) : null;
-  const invalidAuthorization = isObject(verificationError) && Array.isArray(verificationError.errors)
-    && verificationError.errors.some(error => isObject(error) && error.code === 6003
-      && Array.isArray(error.error_chain) && error.error_chain.some(cause => isObject(cause) && cause.code === 6111));
-  if (response.status === 401 || (purpose === 'verification' && (response.status === 403 || invalidAuthorization))) {
+  // Cloudflare reports a malformed Bearer token as 400 / 6003 → 6111, and a token
+  // authentication or scope refusal as 403 / 10000. Any other 403 is unclassified.
+  const errors = purpose === 'verification' && response.status === 400 ? cloudflareErrors(response.body) : [];
+  const invalidAuthorization = errors.some(error => error.code === 6003
+    && Array.isArray(error.error_chain) && error.error_chain.some(cause => isObject(cause) && cause.code === 6111));
+  const refused = cloudflareRefused(response);
+  if (response.status === 401 || invalidAuthorization || (purpose === 'verification' && refused)) {
     throw new ProbeFailure({ status: 'rejected', diagnostic: diagnostic('cloudflare_token_rejected', 'The Cloudflare token is invalid, expired or revoked.') });
   }
-  if (response.status === 403 || response.status === 404) throw new ProbeFailure(missingPermissions());
+  if (refused || response.status === 404) throw new ProbeFailure(missingPermissions());
   if (response.status !== 200) throw new ProbeFailure({ status: 'unavailable', diagnostic: {
     ...diagnostic('cloudflare_http_error', 'Cloudflare refused verification. Check the provider status and this device’s network access, then retry.'),
     details: { failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'cloudflare.verification') },

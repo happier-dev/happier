@@ -331,9 +331,16 @@ describe('Cloudflare OAuth through real plugin activation', () => {
     expect(h.request).toHaveBeenCalledTimes(1); expect(h.staged.values.size).toBe(0);
     const send = h.request.getMockImplementation()!;
     h.request.mockImplementation(async input => input.url.includes(`/accounts/${accountId}`)
-      ? { status: 403, finalUrl: input.url, headers: {}, body: new TextEncoder().encode('access-private') } : send(input));
+      ? { status: 403, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
+        errors: [{ code: 10000, message: 'Authentication error access-private' }], result: null })) } : send(input));
     expect(await h.mode.complete(completion, h.context)).toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_missing_permissions' } });
     expect(h.staged.values.size).toBe(0);
+    // An opaque 403 (no Cloudflare refusal code) is not evidence of missing access.
+    h.request.mockImplementation(async input => input.url.includes(`/accounts/${accountId}`)
+      ? { status: 403, finalUrl: input.url, headers: {}, body: new TextEncoder().encode('access-private') } : send(input));
+    const opaque = await h.mode.complete(completion, h.context);
+    expect(opaque).toMatchObject({ status: 'unavailable', diagnostic: { code: 'cloudflare_oauth_unavailable' } });
+    expect(JSON.stringify(opaque)).not.toContain('access-private'); expect(h.staged.values.size).toBe(0);
   });
 
   it('revokes the refresh grant once and keeps an ambiguous response unknown', async () => {

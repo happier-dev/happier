@@ -5,6 +5,10 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterializa
 const origin = 'https://console.neon.tech';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
 const diagnostic = (code: string) => ({ code, severity: 'error' as const });
+function neonErrorEnvelope(body: Uint8Array): boolean {
+  try { const value: unknown = JSON.parse(new TextDecoder().decode(body)); return value !== null && typeof value === 'object' && 'message' in value && typeof value.message === 'string'; }
+  catch { return false; }
+}
 function validToken(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0 && !/[\r\n]/u.test(value); }
 async function probe(token: string, context: Context, signal: AbortSignal) {
   const { organizationId, projectId } = context.configuration.values;
@@ -16,7 +20,10 @@ async function probe(token: string, context: Context, signal: AbortSignal) {
   try {
     const response = await context.services.http.request({ url, method: 'GET', redirect: 'error', headers: { authorization: `Bearer ${token}` } }, { signal });
     signal.throwIfAborted();
-    if (response.status === 401 || response.status === 403 || response.status === 404) return { status: 'rejected' as const,
+    // Neon's documented error envelope carries a string `message`; only a 403 in
+    // that envelope is Neon's refusal. An opaque 403 settles as unavailable below.
+    // https://neon.com/docs/reference/api/organizations/get-organization
+    if (response.status === 401 || response.status === 404 || (response.status === 403 && neonErrorEnvelope(response.body))) return { status: 'rejected' as const,
       diagnostic: diagnostic(response.status === 401 ? 'neon_invalid_token' : 'neon_scope_unavailable') };
     if (response.status !== 200 || response.finalUrl !== url) return { status: 'unavailable' as const, diagnostic: {
       ...diagnostic('neon_unavailable'), details: {

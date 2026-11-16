@@ -5,6 +5,13 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterializa
 const origin = 'https://api.supabase.com';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
 const diagnostic = (code: string) => ({ code, severity: 'error' as const });
+function supabaseRefusal(body: Uint8Array): boolean {
+  try {
+    const value: unknown = JSON.parse(new TextDecoder().decode(body));
+    return value !== null && typeof value === 'object'
+      && ('missing_permissions' in value && Array.isArray(value.missing_permissions) || 'message' in value && typeof value.message === 'string');
+  } catch { return false; }
+}
 const tokenValid = (token: unknown): token is string => typeof token === 'string' && token.length > 0 && !/\s/u.test(token);
 async function probe(token: string, context: Context, signal: AbortSignal) {
   const slug = context.configuration.values.organizationSlug;
@@ -19,7 +26,10 @@ async function probe(token: string, context: Context, signal: AbortSignal) {
     const response = await context.services.http.request({ url, method: 'GET', redirect: 'error',
       headers: { authorization: `Bearer ${token}` } }, { signal });
     signal.throwIfAborted();
-    if (response.status === 401 || response.status === 403 || response.status === 404) return { status: 'rejected' as const, diagnostic: diagnostic(response.status === 401 ? 'supabase_invalid_token' : 'supabase_organization_unavailable') };
+    // Supabase refuses scope with a 403 in its JSON error envelope (`message`, or
+    // `missing_permissions` for a scoped PAT). An opaque 403 settles as unavailable below.
+    // https://supabase.com/blog/scope-your-personal-access-tokens
+    if (response.status === 401 || response.status === 404 || (response.status === 403 && supabaseRefusal(response.body))) return { status: 'rejected' as const, diagnostic: diagnostic(response.status === 401 ? 'supabase_invalid_token' : 'supabase_organization_unavailable') };
     if (response.status !== 200 || response.finalUrl !== url) return { status: 'unavailable' as const, diagnostic: {
       ...diagnostic('supabase_unavailable'), details: {
         failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'supabase.verification'),

@@ -2,7 +2,7 @@ import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic
 import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountCredentialStore, ConnectedAccountHealthResult, ConnectedAccountMutationContext, ConnectedAccountReadContext, ConnectedAccountRuntime, PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { cloudflareEnabledFeatures, cloudflarePermissionNames, cloudflarePermissionScope } from './permissions.js';
-import { CLOUDFLARE_API_ORIGIN, diagnostic, isCloudflareId, isObject, validToken } from './probe.js';
+import { CLOUDFLARE_API_ORIGIN, cloudflareRefused, diagnostic, isCloudflareId, isObject, validToken } from './probe.js';
 
 export const CLOUDFLARE_OAUTH_ORIGIN = 'https://dash.cloudflare.com';
 export const CLOUDFLARE_IDENTITY_SCOPES = ['openid', 'offline_access'] as const;
@@ -86,7 +86,7 @@ async function request(context: Context, path: string, signal: AbortSignal, opti
 async function read(context: Context, url: string, token: string, signal: AbortSignal, envelope: boolean) {
   const response = await request(context, url, signal, { token });
   if (response.status === 401) throw new OAuthFailure(rejected('cloudflare_oauth_reconnect_required', 'Cloudflare access has expired or been revoked. Reconnect this account.'));
-  if (response.status === 403 || response.status === 404) throw new OAuthFailure(missingPermissions());
+  if (cloudflareRefused(response) || response.status === 404) throw new OAuthFailure(missingPermissions());
   if (response.status !== 200) throw new OAuthFailure(unavailable());
   const body = bodyOf(response);
   if (!isObject(body) || (envelope && body.success !== true)) throw new OAuthFailure(unavailable());

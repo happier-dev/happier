@@ -50,7 +50,8 @@ async function harness(product: 'workers' | 'pages' | 'tunnel' = 'workers') {
     else if (input.url.endsWith(`/zones/${zoneId}`)) result = { id: zoneId, name: 'example.test', account: { id: accountId, name: 'Test account' } };
     else if (input.url.startsWith(`https://api.cloudflare.com/client/v4/accounts/${accountId}/`)
       && /\/(workers\/scripts|pages\/projects|cfd_tunnel)$/u.test(input.url)) result = [];
-    else return { status: 403, headers: {}, body: new TextEncoder().encode('private-token-echo') };
+    else return { status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
+      errors: [{ code: 10000, message: 'Authentication error private-token-echo' }], result: null })) };
     return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true, errors: [], messages: [], result })) };
   });
   // Only the HTTP and credential-store boundaries are supplied; the runtime is
@@ -134,7 +135,8 @@ describe('Cloudflare Connected Account through plugin activation', () => {
   it('returns a typed refusal for a denied selected resource without staging or reflecting content', async () => {
     const h = await harness(); const send = h.request.getMockImplementation()!;
     h.request.mockImplementation(async input => input.url.endsWith('/workers/scripts')
-      ? { status: 403, headers: {}, body: new TextEncoder().encode('private-token-echo') } : send(input));
+      ? { status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
+        errors: [{ code: 10000, message: 'Authentication error private-token-echo' }], result: null })) } : send(input));
     const result = await h.mode.complete({ fields: { token: 'private-token-echo' } }, h.context);
     expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_missing_permissions' } });
     expect(JSON.stringify(result)).not.toContain('private-token-echo'); expect(h.staged.values.size).toBe(0);
@@ -203,7 +205,7 @@ describe('Cloudflare Connected Account through plugin activation', () => {
     expect(JSON.stringify(result)).not.toContain('not-a-real-cloudflare-token');
   });
 
-  it.each([400, 429, 503])('keeps an unclassified verification failure (%s) unavailable without staging', async status => {
+  it.each([400, 403, 429, 503])('keeps an unclassified verification failure (%s) unavailable without staging', async status => {
     const h = await harness();
     h.request.mockImplementationOnce(async () => ({ status, headers: {}, body: new TextEncoder().encode(JSON.stringify({
       success: false, errors: [{ code: 1000, message: 'Provider request unavailable' }], result: null,
@@ -213,9 +215,21 @@ describe('Cloudflare Connected Account through plugin activation', () => {
     expect(h.staged.values.size).toBe(0);
   });
 
+  it('keeps an unclassified selected-resource 403 unavailable without staging', async () => {
+    const h = await harness(); const send = h.request.getMockImplementation()!;
+    h.request.mockImplementation(async input => input.url.endsWith('/workers/scripts')
+      ? { status: 403, headers: {}, body: new TextEncoder().encode('private-token-echo') } : send(input));
+    const result = await h.mode.complete({ fields: { token: 'private-token-echo' } }, h.context);
+    expect(result).toMatchObject({ status: 'unavailable', diagnostic: { code: 'cloudflare_http_error',
+      details: { failureCause: { httpStatus: 403 } } } });
+    expect(h.staged.values.size).toBe(0);
+    expect(JSON.stringify(result)).not.toContain('private-token-echo');
+  });
+
   it('does not stage credentials or reflect provider echoes on denied verification or network failures', async () => {
     const h = await harness();
-    h.request.mockImplementationOnce(async () => ({ status: 403, headers: {}, body: new TextEncoder().encode('echoed-secret-test-token') }));
+    h.request.mockImplementationOnce(async () => ({ status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
+      errors: [{ code: 10000, message: 'Authentication error echoed-secret-test-token' }], result: null })) }));
     const result = await h.mode.complete({ fields: { token: 'echoed-secret-test-token' } }, h.context);
     expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_token_rejected' } });
     expect(JSON.stringify(result)).not.toContain('echoed-secret-test-token');
