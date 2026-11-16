@@ -4,7 +4,7 @@ import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     computeDeploymentTransitionRequestDigestV1, readDeploymentAccountChangeV1, type DeploymentTransitionInputV1,
-    type DeploymentDeployAdmissionInputV1, type DeploymentTeardownAdmissionInputV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
+    type DeploymentDeployAdmissionInputV1, type DeploymentRollbackAdmissionInputV1, type DeploymentTeardownAdmissionInputV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -52,7 +52,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         }
     });
 
-    it.each(['teardown', 'deploy'] as const)('admits %s once despite unrelated Account publication and retains Environment exclusion', async operation => {
+    it.each(['teardown', 'deploy', 'rollback'] as const)('admits %s once despite unrelated Account publication and retains Environment exclusion', async operation => {
         if (provider !== 'postgres') return;
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: randomUUID(),
@@ -75,9 +75,16 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             createdByAccountId: owner.id, ...content,
             machines: { create: [{ machineId: machine.id, installationId: machine.installationId!, position: 0, state: 'active' }] } } });
         await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: link.id } });
+        const rollbackSource = operation === 'rollback' ? await db.deployment.create({ data: {
+            environmentId: environment.id, targetLinkId: link.id, operation: 'deploy', state: 'succeeded',
+            requestKey: randomUUID(), actionOperationId: randomUUID(), requestedByAccountId: owner.id, ...content,
+        } }) : undefined;
+        const retainedReceipts = rollbackSource ? 1 : 0;
         const input = { serverId, environmentId: environment.id, targetLinkId: link.id, expectedRevision: 1,
             expectedTargetLinkRevision: 1, requestKey: randomUUID(), actionOperationId: randomUUID(),
-            ...(operation === 'teardown' ? { reason: 'manual' as const } : {}), ...content } satisfies DeploymentDeployAdmissionInputV1 | DeploymentTeardownAdmissionInputV1;
+            ...(operation === 'teardown' ? { reason: 'manual' as const } : {}),
+            ...(rollbackSource ? { deploymentId: rollbackSource.id } : {}),
+            ...content } satisfies DeploymentDeployAdmissionInputV1 | DeploymentRollbackAdmissionInputV1 | DeploymentTeardownAdmissionInputV1;
         await withAuthenticatedTestApp(registerDeploymentRoutes, async (app: Fastify) => {
             const request = (payload = input) => app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${environment.id}/${operation}`,
@@ -93,14 +100,14 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             const competing = await request({ ...input, requestKey: randomUUID(), actionOperationId: randomUUID() });
             expect(competing.statusCode, competing.body).toBe(409);
             expect(competing.json()).toMatchObject({ ok: false, error: 'deployment_in_progress' });
-            expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(1);
+            expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(retainedReceipts + 1);
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision).toBe(2);
             await db.deployment.update({ where: { id: response.json().deploymentId }, data: { state: 'failed' } });
             const next = () => request({ ...input, expectedRevision: 2, requestKey: randomUUID(), actionOperationId: randomUUID() });
             const concurrent = await Promise.all([next(), next()]);
             expect(concurrent.map(answer => answer.statusCode).sort()).toEqual([200, 409]);
             expect(concurrent.find(answer => answer.statusCode === 409)!.json()).toMatchObject({ error: 'deployment_in_progress' });
-            expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(2);
+            expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(retainedReceipts + 2);
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision).toBe(3);
         });
     });

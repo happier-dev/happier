@@ -312,7 +312,11 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.body.environmentId !== request.params.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => createDeploymentInTx(tx, request.userId, request.body, 'rollback',
-            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), {
+                // The Environment row lock and revision CAS own receipt exclusion, as for deploy.
+                // A Serializable snapshot conflicts with unrelated Account cursor publication.
+                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+            });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/promote', { preHandler: [app.authenticate, deploymentNewWorkFeatureGate], config: { allowApiToken: true }, attachValidation: true,
