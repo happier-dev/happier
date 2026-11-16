@@ -1,7 +1,12 @@
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { describe, expect, it } from 'vitest';
 import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1,
+  type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { deriveBoxPublicKeyFromSeed, deriveBoxSecretKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { hydrateManagedOpaquePresetMachineV1, prepareManagedOpaquePresetAcquireV1,
   prepareManagedOpaquePresetReportV1, readManagedOpaquePresetNativeControlResultV1, type ManagedOpaquePresetContentOpenerV1 } from './presetAcquire.js';
 
@@ -10,6 +15,80 @@ describe('prepare managed opaque preset acquire', () => {
     provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1,
     name: 'Private saved name', choices: {} } } };
   const open: ManagedOpaquePresetContentOpenerV1 = async content => content.t === 'plain' ? content.v : null;
+
+  it.each(['plain', 'e2ee'] as const)('retains selected warm execution through real %s reports and reload without changing the authored body', async mode => {
+    const seed = new Uint8Array(32).fill(71);
+    const accountKey = deriveBoxSecretKeyFromSeed(seed);
+    const publicKey = deriveBoxPublicKeyFromSeed(seed);
+    let nonce = 10;
+    const randomBytes = (length: number) => new Uint8Array(length).fill(nonce++);
+    const setup = { scripts: [{ body: 'already-baked' }, { body: 'remaining-private-setup' }] };
+    const source = { ...base.v, setup };
+    const sealed = mode === 'plain' ? sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content: source })
+      : sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content: source, randomBytes,
+        recipientCensus: [{ account: { kind: 'account', accountId: 'account', name: 'Owner', firstName: 'Owner',
+          lastName: null, username: 'owner', avatarUrl: null }, readiness: { status: 'available',
+          contentPublicKey: encodeBase64(publicKey, 'base64'),
+          contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing' }] });
+    const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'warm-machine', homeId: 'home', custodianAccountId: 'account',
+      preset: { id: 'preset', revision: 1, contentEncryptionMode: mode }, allocation: 'unsubmitted',
+      creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { state: 'pending' } });
+    const preparationExecution = { launch: { ...source.launch, choices: { image: 'selected-owned-artifact' } },
+      binaryPath: '/opt/happier/cli/current/happier', deferredSetup: { scripts: [setup.scripts[1]!] } };
+    const reviewedFacts = { launch: preparationExecution.launch, optionStatus: 'current' as const,
+      billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const },
+      retentionCapabilities: { supportedIntents: ['start', 'delete'] }, prerequisites: [],
+      retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } satisfies ManagedConfigurationFactsV1;
+    const report = { machine, content: sealed.content, recipients: sealed.recipients, opened: source,
+      accountId: 'account', accountKey, randomBytes, reviewedFacts, preparationExecution };
+    const first = prepareManagedOpaquePresetReportV1(report);
+    expect(first).not.toBeNull();
+    const openReport = (content: unknown) => mode === 'plain'
+      ? openManagedMachinePresetContentV1({ presetId: 'preset', mode, content })
+      : openManagedMachinePresetContentV1({ presetId: 'preset', mode, content,
+        recipients: sealed.recipients, accountId: 'account', accountKey });
+    const reloaded = openReport(first?.content);
+    expect(reloaded).toMatchObject({ launch: source.launch, setup, reviewedFacts, preparationExecution });
+    expect(first?.opened).toEqual(reloaded);
+    if (mode === 'e2ee') expect(JSON.stringify(first?.content)).not.toContain('selected-owned-artifact');
+    if (!reloaded?.launch) throw new Error('admitted snapshot must reopen');
+    const { preparationExecution: _initialSelection, reviewedFacts: _initialReview, ...laterReport } = report;
+    const later = prepareManagedOpaquePresetReportV1({ ...laterReport, content: first!.content,
+      opened: { ...reloaded, launch: reloaded.launch }, setupSourceFacts: { privateSource: { pendingScripts: [0] } } });
+    expect(later?.opened).toMatchObject({ preparationExecution });
+    expect(openReport(later?.content)).toMatchObject({ launch: source.launch, setup, preparationExecution });
+    expect(later && hydrateManagedOpaquePresetMachineV1({ machine, opened: later.opened }))
+      .toMatchObject({ launch: preparationExecution.launch, machineSetup: { setup: preparationExecution.deferredSetup } });
+    expect(later && hydrateManagedOpaquePresetMachineV1({ machine, opened: later.opened })).not.toHaveProperty('binaryPath');
+    expect(prepareManagedOpaquePresetReportV1({ ...report, content: first!.content,
+      opened: { ...reloaded, launch: reloaded.launch }, preparationExecution: { ...preparationExecution, binaryPath: '/forged-path' } }))
+      .toBeNull();
+  });
+
+  it('restores no remaining Setup for an entirely baked selection and keeps a reviewed cold admission cold', () => {
+    const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'warm-machine', homeId: 'home', custodianAccountId: 'account',
+      preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, allocation: 'unsubmitted',
+      creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { state: 'pending' } });
+    const source = { ...base.v, setup: { scripts: [{ body: 'already-baked' }] } };
+    const reviewedFacts = { launch: source.launch, optionStatus: 'current' as const,
+      billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const },
+      retentionCapabilities: { supportedIntents: ['start', 'delete'] }, prerequisites: [],
+      retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } satisfies ManagedConfigurationFactsV1;
+    const preparationExecution = { launch: source.launch, binaryPath: '/opt/happier/cli/current/happier' };
+    const params = { machine, content: { t: 'plain' as const, v: source }, opened: source, reviewedFacts,
+      recipients: [], accountId: 'account', randomBytes: (length: number) => new Uint8Array(length).fill(10) };
+    const warm = prepareManagedOpaquePresetReportV1({ ...params, preparationExecution });
+    expect(warm && hydrateManagedOpaquePresetMachineV1({ machine, opened: warm.opened }))
+      .toMatchObject({ machineSetup: { setup: {} } });
+    const cold = prepareManagedOpaquePresetReportV1(params);
+    expect(cold?.opened).not.toHaveProperty('preparationExecution');
+    expect(cold && hydrateManagedOpaquePresetMachineV1({ machine, opened: cold.opened }))
+      .toMatchObject({ machineSetup: { setup: source.setup } });
+    expect(cold && prepareManagedOpaquePresetReportV1({ ...params, content: cold.content,
+      opened: { ...cold.opened, launch: source.launch }, preparationExecution })).toBeNull();
+  });
 
   it('opens a legacy Plain acquire without an override from its exact saved identity', async () => {
     const identity = { kind: 'guestProcess' as const, role: 'sandbox' as const };

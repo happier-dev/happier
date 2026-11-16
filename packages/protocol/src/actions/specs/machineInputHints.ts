@@ -1,4 +1,4 @@
-import type { MachinePresetActionIdV1 } from '../../machines/managed/machinePresetActionIdsV1.js';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionIdV1 } from '../../machines/managed/machinePresetActionIdsV1.js';
 import type { ManagedMachineActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import type { MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import type { ActionInputFieldHint, ActionInputOption } from '../actionInputHintsRuntime.js';
@@ -70,6 +70,8 @@ export const MACHINE_PRESET_INPUT_FIELDS = {
     ...presetControlFields.map(field => ({ ...field, path: `patch.${field.path}` }))],
   'machines.presets.archive': [home, preset, revision],
   'machines.presets.restore': [home, preset, revision],
+  [MACHINE_PRESET_PREPARE_ACTION_ID_V1]: [home, preset, revision,
+    { path: 'machineId', title: 'Build machine', widget: 'text', required: true }],
 } satisfies Record<MachinePresetActionIdV1, ActionInputFieldHint[]>;
 
 export const MACHINE_POOL_INPUT_FIELDS = {

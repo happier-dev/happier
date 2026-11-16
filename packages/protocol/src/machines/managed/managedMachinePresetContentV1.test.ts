@@ -10,11 +10,13 @@ import * as managedPresetContent from './managedMachinePresetContentV1.js';
 import { createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetEnrollmentIdentityOverrideV1,
   createManagedMachinePresetLaunchNameOverrideV1,
   createManagedMachinePresetResizeOverrideV1, createManagedMachinePresetSetupOverrideV1,
+  createManagedMachinePresetSavedSecretSourceReferenceRewriteV1,
   createManagedMachinePresetSavedSecretReferenceRewriteV1,
   ManagedMachinePresetRecipientProjectionV1Schema,
   openManagedMachinePresetContentV1,
   openManagedMachinePresetRecipientProjectionV1, projectManagedMachinePresetForRecipientV1,
   readManagedMachinePresetContentOverrideForModeV1, readManagedMachinePresetLaunchNameOverrideForModeV1,
+  replaceManagedMachinePresetPreparationV1,
   replaceManagedMachinePresetLaunchNameV1, replaceManagedMachinePresetResizeV1,
   replaceManagedMachinePresetSetupV1, resolveManagedMachinePresetAcquireOverrideV1,
   resolveManagedMachinePresetEnrollmentIdentityOverrideV1,
@@ -235,17 +237,53 @@ describe('managed machine preset content envelope', () => {
     })).toBeNull();
 
     const ownerSecret = new Uint8Array(32).fill(82);
-    const freshSourceWrite = sealManagedMachinePresetContentV1({
+    const formerSecret = new Uint8Array(32).fill(83);
+    const newSecret = new Uint8Array(32).fill(84);
+    const preparation = { enabled: true as const };
+    const prepared = {
+      operationId: 'promotion-prepare',
+      binding: {
+        presetRevision: 4,
+        configuration: { launch: { provider: source.launch!.provider, schemaVersion: source.launch!.schemaVersion,
+          choices: source.launch!.choices }, setup: source.setup },
+        cliIdentity: 'home-payload:0.3:promotion',
+      },
+      status: 'building' as const,
+    };
+    const initialSourceWrite = sealManagedMachinePresetContentV1({
       presetId: 'preset-promoted-source',
       mode: 'e2ee',
-      content: rewrittenSource,
-      recipientCensus: [recipientCensus('owner', ownerSecret)],
+      content: { ...source, preparation },
+      recipientCensus: [recipientCensus('owner', ownerSecret), recipientCensus('former', formerSecret)],
       randomBytes: randomBytesFactory(540),
     });
+    const retainedSourceWrite = replaceManagedMachinePresetPreparationV1({
+      presetId: 'preset-promoted-source', mode: 'e2ee', content: initialSourceWrite.content,
+      recipients: initialSourceWrite.recipients, accountId: 'owner', accountKey: ownerSecret,
+      expectedOperationId: null, prepared, randomBytes: randomBytesFactory(541),
+    });
+    if (!retainedSourceWrite) throw new Error('Expected retained source fixture');
+    const sourceRewrite = createManagedMachinePresetSavedSecretSourceReferenceRewriteV1({
+      presetId: 'preset-promoted-source', mode: 'e2ee',
+      projection: projectManagedMachinePresetForRecipientV1({ content: retainedSourceWrite.content,
+        recipients: initialSourceWrite.recipients, recipientAccountId: 'owner' }),
+      accountId: 'owner', accountKey: ownerSecret, rewrites,
+      recipientCensus: [recipientCensus('owner', ownerSecret, 'prepared'), recipientCensus('new', newSecret)],
+      randomBytes: randomBytesFactory(542),
+    });
+    expect(sourceRewrite).not.toBeNull();
     expect(openManagedMachinePresetContentV1({
-      presetId: 'preset-promoted-source', mode: 'e2ee', content: freshSourceWrite.content,
-      recipients: freshSourceWrite.recipients, accountId: 'owner', accountKey: ownerSecret,
-    })).toEqual(expectedSource);
+      presetId: 'preset-promoted-source', mode: 'e2ee', content: sourceRewrite?.content,
+      recipients: sourceRewrite?.recipients ?? [], accountId: 'owner', accountKey: ownerSecret,
+    })).toEqual({ ...expectedSource, preparation, prepared });
+    expect(openManagedMachinePresetContentV1({
+      presetId: 'preset-promoted-source', mode: 'e2ee', content: sourceRewrite?.content,
+      recipients: sourceRewrite?.recipients ?? [], accountId: 'new', accountKey: newSecret,
+    })).toEqual({ ...expectedSource, preparation, prepared });
+    expect(openManagedMachinePresetContentV1({
+      presetId: 'preset-promoted-source', mode: 'e2ee', content: sourceRewrite?.content,
+      recipients: initialSourceWrite.recipients, accountId: 'former', accountKey: formerSecret,
+    })).toBeNull();
 
     const retained = ManagedMachinePresetContentV1Schema.parse({
       ...source,

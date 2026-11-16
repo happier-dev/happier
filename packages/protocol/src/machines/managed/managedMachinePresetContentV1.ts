@@ -3,7 +3,7 @@ import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { CanonicalCiphertextSchema, ManagedMachinePresetStoredContentCarrierV1Schema,
   ManagedMachinePresetLaunchNameOverrideV1Schema, type ManagedMachinePresetStoredContentCarrierV1,
@@ -32,7 +32,8 @@ import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollment
 import { MachineSetupV1Schema, type MachineSetupV1 } from './machineSetupV1.js';
 import { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1 } from '../setup/machineSetupSourceFactsV1.js';
 import { ManagedMachinePresetPreparationV1Schema, ManagedMachinePresetPreparedV1Schema,
-  type ManagedMachinePresetPreparedV1 } from './managedMachinePresetPreparationV1.js';
+  createManagedMachinePresetPreparationExecutionV1Schema, ManagedMachinePresetPreparationExecutionV1Schema,
+  type ManagedMachinePresetPreparedV1, type ManagedMachinePresetPreparationExecutionV1 } from './managedMachinePresetPreparationV1.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerRebuildResultV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
@@ -46,6 +47,11 @@ type ManagedPresetLaunchIdentityV1 = Readonly<{
   provider: Readonly<{ pluginId: string; localId: string }>;
   schemaVersion: number;
 }>;
+
+function readPresetLaunchSelection(launch: Readonly<{ name: string; choices?: unknown }>) {
+  const { choices: _choices, name: _name, ...selection } = launch;
+  return selection;
+}
 
 function nativeResultMatchesLaunch(
   result: AcquireResultV1,
@@ -123,6 +129,8 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     preparation: z.optional(ManagedMachinePresetPreparationV1Schema),
     /** Provider-owned build/artifact identity; never an author or per-acquire override. */
     prepared: z.optional(ManagedMachinePresetPreparedV1Schema),
+    /** Selected physical launch and remaining Setup, private to this admitted Machine. */
+    preparationExecution: z.optional(createManagedMachinePresetPreparationExecutionV1Schema(choices)),
     /** Private admission identity; an acquire override, not a reusable author declaration. */
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     /** Daemon-captured immutable admission review; author writes are rejected by the fresh-seal owner. */
@@ -137,8 +145,14 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     resize: z.optional(MachineProvisionerSizeV1Schema),
   }).check(z.refine(content => content.launch !== undefined || content.setup !== undefined,
     { message: 'A Preset requires launch or setup content.' }))
+    .check(z.refine(content => {
+      if (content.preparationExecution === undefined) return true;
+      if (content.launch === undefined || content.reviewedFacts === undefined) return false;
+      return sameStrictJsonValue(readPresetLaunchSelection(content.launch),
+        readPresetLaunchSelection(content.preparationExecution.launch));
+    }, { message: 'Prepared execution requires a review and the authored provider and credential selection.' }))
     .check(z.refine(content => content.reviewedFacts === undefined
-      || content.launch !== undefined && sameStrictJsonValue(content.launch, content.reviewedFacts.launch),
+      || content.launch !== undefined && sameStrictJsonValue(content.preparationExecution?.launch ?? content.launch, content.reviewedFacts.launch),
     { message: 'Reviewed facts must describe the sealed launch snapshot.' }))
     .check(z.refine(content => content.resize === undefined || content.launch !== undefined,
       { message: 'A private resize request requires the sealed launch snapshot.' }))
@@ -360,11 +374,17 @@ function preparePresetRecipientEnvelopes(
   dataKey: Uint8Array,
   recipientCensus: readonly SavedSecretResourceEnvelopeCensusRecipientV1[],
   randomBytes: (length: number) => Uint8Array,
+  allowPrepared = false,
 ): ManagedMachinePresetRecipientsV1 {
-  const recipients = parseCompletePresetRecipientCensus(recipientCensus, false);
+  const recipients = parseCompletePresetRecipientCensus(recipientCensus, allowPrepared);
+  // This result replaces the complete persisted audience. A fresh-DEK author rewrite
+  // therefore re-envelopes even recipients whose incumbent envelope was current.
+  const recipientsToPrepare = allowPrepared
+    ? recipients.map(recipient => ({ ...recipient, envelopeStatus: 'missing' as const }))
+    : recipients;
 
   const prepared = prepareSavedSecretResourceRecipientEnvelopesV1({
-    recipients,
+    recipients: recipientsToPrepare,
     resourceDataKey: dataKey,
     randomBytes,
   });
@@ -396,6 +416,21 @@ function sealEncryptedPresetContent(
   combined.set(nonce);
   combined.set(boxed, nonce.length);
   return ManagedMachinePresetStoredContentV1Schema.parse({ t: 'encrypted', c: encodeBase64(combined) });
+}
+
+function sealEncryptedPresetContentWithFreshDataKey(
+  presetId: string,
+  content: ManagedMachinePresetContentV1,
+  recipientCensus: readonly SavedSecretResourceEnvelopeCensusRecipientV1[],
+  randomBytes: (length: number) => Uint8Array,
+  allowPreparedRecipients = false,
+): ManagedMachinePresetContentSealV1 {
+  const dataKey = new Uint8Array(randomBytes(tweetnacl.secretbox.keyLength));
+  if (dataKey.length !== tweetnacl.secretbox.keyLength) throw new Error('managed_preset_data_key_unavailable');
+  return {
+    content: sealEncryptedPresetContent(presetId, content, dataKey, randomBytes),
+    recipients: preparePresetRecipientEnvelopes(dataKey, recipientCensus, randomBytes, allowPreparedRecipients),
+  };
 }
 
 /** Authenticate an encrypted private payload with a DEK already admitted to this owner. */
@@ -459,6 +494,20 @@ function openEncryptedPresetContent(
   return content === null ? null : { dataKey, content };
 }
 
+/** Author replacements may edit authored fields, but cannot introduce daemon-owned private state. */
+function parseManagedMachinePresetAuthorContentV1(content: unknown): ManagedMachinePresetContentV1 {
+  const parsed = ManagedMachinePresetContentV1Schema.parse(content);
+  if (parsed.nativeResult !== undefined) throw new Error('managed_preset_author_native_result_forbidden');
+  if (parsed.observation !== undefined) throw new Error('managed_preset_author_observation_forbidden');
+  if (parsed.nativeControlResult !== undefined) throw new Error('managed_preset_author_native_control_result_forbidden');
+  if (parsed.resize !== undefined) throw new Error('managed_preset_author_resize_forbidden');
+  if (parsed.enrollmentIdentity !== undefined) throw new Error('managed_preset_author_enrollment_identity_forbidden');
+  if (parsed.reviewedFacts !== undefined) throw new Error('managed_preset_author_reviewed_facts_forbidden');
+  if (parsed.setupSourceFacts !== undefined) throw new Error('managed_preset_author_setup_source_facts_forbidden');
+  if (parsed.prepared !== undefined) throw new Error('managed_preset_author_prepared_forbidden');
+  return parsed;
+}
+
 function replacePresetLaunchName(
   content: ManagedMachinePresetContentV1,
   launchName: string,
@@ -467,10 +516,13 @@ function replacePresetLaunchName(
   observation: ProviderObservationV1 | undefined,
   nativeControlResult: ManagedMachinePresetNativeControlResultV1 | undefined,
   setupSourceFacts?: MachineSetupSourceFactsMapV1,
+  preparationExecution?: ManagedMachinePresetPreparationExecutionV1,
 ): ManagedMachinePresetContentV1 | null {
   if (!content.launch) return null;
   if (content.reviewedFacts !== undefined && reviewedFacts !== undefined
     && !sameStrictJsonValue(content.reviewedFacts, reviewedFacts)) return null;
+  if (content.reviewedFacts !== undefined && preparationExecution !== undefined
+    && !sameStrictJsonValue(content.preparationExecution, preparationExecution)) return null;
   // A reviewed snapshot is immutable. A daemon may retry it unchanged, but cannot
   // rewrite its selected launch without submitting the matching canonical review.
   if (content.reviewedFacts !== undefined && reviewedFacts === undefined && content.launch.name !== launchName) return null;
@@ -479,7 +531,8 @@ function replacePresetLaunchName(
   const nextNativeResult = nativeResult ?? content.nativeResult;
   const nextObservation = observation ?? content.observation;
   const nextNativeControlResult = nativeControlResult ?? content.nativeControlResult;
-  if (nextReviewedFacts !== undefined && !sameStrictJsonValue(nextReviewedFacts.launch, launch)) return null;
+  const nextPreparationExecution = preparationExecution ?? content.preparationExecution;
+  if (nextReviewedFacts !== undefined && !sameStrictJsonValue(nextReviewedFacts.launch, nextPreparationExecution?.launch ?? launch)) return null;
   return ManagedMachinePresetContentV1Schema.parse({
     ...content,
     launch,
@@ -488,6 +541,7 @@ function replacePresetLaunchName(
     ...(nextObservation === undefined ? {} : { observation: nextObservation }),
     ...(nextNativeControlResult === undefined ? {} : { nativeControlResult: nextNativeControlResult }),
     ...(setupSourceFacts === undefined ? {} : { setupSourceFacts }),
+    ...(nextPreparationExecution === undefined ? {} : { preparationExecution: nextPreparationExecution }),
   });
 }
 
@@ -567,27 +621,167 @@ function replaceManagedMachinePresetExistingContentV1(
     : sealEncryptedPresetContent(presetId, content, opened.dataKey, params.randomBytes);
 }
 
+export type ManagedMachinePresetAuthorContentReplacementParamsV1 =
+  | Readonly<{
+      presetId: string;
+      mode: 'plain';
+      projection: unknown;
+      content: ManagedMachinePresetContentV1;
+    }>
+  | Readonly<{
+      presetId: string;
+      mode: 'e2ee';
+      projection: unknown;
+      content: ManagedMachinePresetContentV1;
+      accountId: string;
+      accountKey: Uint8Array;
+      /** Server-owned current owner/member/custodian census. */
+      recipientCensus: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
+      randomBytes: (length: number) => Uint8Array;
+    }>;
+
+/**
+ * Replace authored content while retaining the incumbent preparation receipt.
+ * The caller cannot submit operational state; E2EE authenticates the incumbent and rotates to a fresh DEK.
+ */
+export function replaceManagedMachinePresetAuthorContentV1(
+  params: ManagedMachinePresetAuthorContentReplacementParamsV1,
+): ManagedMachinePresetContentSealV1 | null {
+  try {
+    const projection = ManagedMachinePresetRecipientProjectionV1Schema.safeParse(params.projection);
+    if (!projection.success || !hasStoredContentTagForMode(projection.data.content, params.mode)) return null;
+    const authorContent = parseManagedMachinePresetAuthorContentV1(params.content);
+    const replace = (incumbent: ManagedMachinePresetContentV1) => {
+      const next = ManagedMachinePresetContentV1Schema.safeParse({
+        ...authorContent,
+        ...(Object.hasOwn(authorContent, 'preparation') || incumbent.preparation === undefined
+          ? {} : { preparation: incumbent.preparation }),
+        ...(incumbent.prepared === undefined ? {} : { prepared: incumbent.prepared }),
+      });
+      return next.success ? next.data : null;
+    };
+    if (params.mode === 'plain') {
+      const content = replaceManagedMachinePresetExistingContentV1({
+        presetId: params.presetId,
+        mode: 'plain',
+        content: projection.data.content,
+        replace,
+      });
+      return content === null ? null : { content, recipients: [] };
+    }
+    if (projection.data.content.t !== 'encrypted' || projection.data.recipientEnvelope === null) return null;
+    const recipients = [{ accountId: params.accountId, envelope: projection.data.recipientEnvelope }];
+    const opened = openEncryptedPresetContent({
+      presetId: params.presetId,
+      content: projection.data.content,
+      recipients,
+      accountId: params.accountId,
+      accountKey: params.accountKey,
+    }, false);
+    if (!opened) return null;
+    const content = replace(opened.content);
+    return content === null ? null : sealEncryptedPresetContentWithFreshDataKey(
+      params.presetId,
+      content,
+      params.recipientCensus,
+      params.randomBytes,
+      true,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Native role results are immutable JSON; the private writer normalizes them once. */
+export type ManagedMachinePresetPreparedWriteV1 = Readonly<
+  Omit<ManagedMachinePresetPreparedV1, 'artifact' | 'nativeOperationRef'> & {
+    [Key in 'artifact' | 'nativeOperationRef']?: Readonly<
+      Omit<NonNullable<ManagedMachinePresetPreparedV1[Key]>, 'value'> & { value: JsonValue }>;
+  }>;
+
 export type ManagedMachinePresetPreparationReplacementParamsV1 = (
   | Omit<Extract<ManagedMachinePresetExistingContentReplacementV1, { mode: 'plain' }>, 'replace'>
   | Omit<Extract<ManagedMachinePresetExistingContentReplacementV1, { mode: 'e2ee' }>, 'replace'>
 ) & Readonly<{
   /** The existing operation owner supplies its incumbent identity; row CAS remains at persistence. */
   expectedOperationId: string | null;
-  prepared: ManagedMachinePresetPreparedV1;
+  prepared: ManagedMachinePresetPreparedWriteV1;
 }>;
 
 /** Private same-key operational write. An earlier build cannot replace a newer admitted operation. */
 export function replaceManagedMachinePresetPreparationV1(
   params: ManagedMachinePresetPreparationReplacementParamsV1,
-): ManagedMachinePresetStoredContentV1 | null {
+): Readonly<{ content: ManagedMachinePresetStoredContentV1; prepared: ManagedMachinePresetPreparedV1 }> | null {
   try {
     const prepared = ManagedMachinePresetPreparedV1Schema.safeParse(params.prepared);
     if (!prepared.success) return null;
-    return replaceManagedMachinePresetExistingContentV1({ ...params, replace: content => {
+    const content = replaceManagedMachinePresetExistingContentV1({ ...params, replace: content => {
       if ((content.prepared?.operationId ?? null) !== params.expectedOperationId) return null;
       const next = ManagedMachinePresetContentV1Schema.safeParse({ ...content, prepared: prepared.data });
       return next.success ? next.data : null;
     } });
+    return content === null ? null : { content, prepared: prepared.data };
+  } catch {
+    return null;
+  }
+}
+
+export type ManagedMachinePresetSavedSecretSourceReferenceRewriteCreateParamsV1 =
+  | Readonly<{
+      presetId: string;
+      mode: 'plain';
+      projection: unknown;
+      rewrites: readonly ManagedMachinePresetSavedSecretReferenceRewriteV1[];
+    }>
+  | Readonly<{
+      presetId: string;
+      mode: 'e2ee';
+      projection: unknown;
+      accountId: string;
+      accountKey: Uint8Array;
+      rewrites: readonly ManagedMachinePresetSavedSecretReferenceRewriteV1[];
+      /** Server-owned current owner/member/custodian census. */
+      recipientCensus: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
+      randomBytes: (length: number) => Uint8Array;
+    }>;
+
+/** Authenticate a source Preset, rewrite promoted references, and fresh-seal its full retained private body. */
+export function createManagedMachinePresetSavedSecretSourceReferenceRewriteV1(
+  params: ManagedMachinePresetSavedSecretSourceReferenceRewriteCreateParamsV1,
+): ManagedMachinePresetContentSealV1 | null {
+  try {
+    const projection = ManagedMachinePresetRecipientProjectionV1Schema.safeParse(params.projection);
+    if (!projection.success || !hasStoredContentTagForMode(projection.data.content, params.mode)) return null;
+    const replace = (content: ManagedMachinePresetContentV1) => rewriteManagedMachinePresetSavedSecretReferencesV1({
+      content,
+      rewrites: params.rewrites,
+    });
+    if (params.mode === 'plain') {
+      const content = replaceManagedMachinePresetExistingContentV1({
+        presetId: params.presetId,
+        mode: 'plain',
+        content: projection.data.content,
+        replace,
+      });
+      return content === null ? null : { content, recipients: [] };
+    }
+    if (projection.data.content.t !== 'encrypted' || projection.data.recipientEnvelope === null) return null;
+    const opened = openEncryptedPresetContent({
+      presetId: params.presetId,
+      content: projection.data.content,
+      recipients: [{ accountId: params.accountId, envelope: projection.data.recipientEnvelope }],
+      accountId: params.accountId,
+      accountKey: params.accountKey,
+    }, false);
+    if (!opened) return null;
+    const content = replace(opened.content);
+    return content === null ? null : sealEncryptedPresetContentWithFreshDataKey(
+      params.presetId,
+      content,
+      params.recipientCensus,
+      params.randomBytes,
+      true,
+    );
   } catch {
     return null;
   }
@@ -735,26 +929,17 @@ export function sealManagedMachinePresetContentV1(
   params: ManagedMachinePresetContentSealParamsV1,
 ): ManagedMachinePresetContentSealV1 {
   const presetId = parsePresetId(params.presetId);
-  const content = ManagedMachinePresetContentV1Schema.parse(params.content);
-  if (content.nativeResult !== undefined) throw new Error('managed_preset_author_native_result_forbidden');
-  if (content.observation !== undefined) throw new Error('managed_preset_author_observation_forbidden');
-  if (content.nativeControlResult !== undefined) throw new Error('managed_preset_author_native_control_result_forbidden');
-  if (content.resize !== undefined) throw new Error('managed_preset_author_resize_forbidden');
-  if (content.enrollmentIdentity !== undefined) throw new Error('managed_preset_author_enrollment_identity_forbidden');
-  if (content.reviewedFacts !== undefined) throw new Error('managed_preset_author_reviewed_facts_forbidden');
-  if (content.setupSourceFacts !== undefined) throw new Error('managed_preset_author_setup_source_facts_forbidden');
-  if (content.prepared !== undefined) throw new Error('managed_preset_author_prepared_forbidden');
+  const content = parseManagedMachinePresetAuthorContentV1(params.content);
   if (params.mode === 'plain') {
     return { content: { t: 'plain', v: content }, recipients: [] };
   }
 
-  const dataKey = new Uint8Array(params.randomBytes(tweetnacl.secretbox.keyLength));
-  if (dataKey.length !== tweetnacl.secretbox.keyLength) throw new Error('managed_preset_data_key_unavailable');
-
-  return {
-    content: sealEncryptedPresetContent(presetId, content, dataKey, params.randomBytes),
-    recipients: preparePresetRecipientEnvelopes(dataKey, params.recipientCensus, params.randomBytes),
-  };
+  return sealEncryptedPresetContentWithFreshDataKey(
+    presetId,
+    content,
+    params.recipientCensus,
+    params.randomBytes,
+  );
 }
 
 /**
@@ -850,6 +1035,7 @@ export type ManagedMachinePresetLaunchNameReplacementParamsV1 =
       /** Private provider control outcome captured with the admitted snapshot, never accepted by a fresh author seal. */
       nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
       setupSourceFacts?: MachineSetupSourceFactsMapV1;
+      preparationExecution?: ManagedMachinePresetPreparationExecutionV1;
     }>
   | Readonly<{
       presetId: string;
@@ -868,6 +1054,7 @@ export type ManagedMachinePresetLaunchNameReplacementParamsV1 =
       /** Private provider control outcome captured with the admitted snapshot, never accepted by a fresh author seal. */
       nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
       setupSourceFacts?: MachineSetupSourceFactsMapV1;
+      preparationExecution?: ManagedMachinePresetPreparationExecutionV1;
       randomBytes: (length: number) => Uint8Array;
     }>;
 
@@ -895,6 +1082,9 @@ export function replaceManagedMachinePresetLaunchNameV1(
     const setupSourceFacts = params.setupSourceFacts === undefined ? undefined
       : MachineSetupSourceFactsMapV1Schema.safeParse(params.setupSourceFacts);
     if (setupSourceFacts !== undefined && !setupSourceFacts.success) return null;
+    const preparationExecution = params.preparationExecution === undefined ? undefined
+      : ManagedMachinePresetPreparationExecutionV1Schema.safeParse(params.preparationExecution);
+    if (preparationExecution !== undefined && !preparationExecution.success) return null;
     if (params.mode === 'plain') {
       return replaceManagedMachinePresetExistingContentV1({
         presetId: params.presetId,
@@ -905,7 +1095,8 @@ export function replaceManagedMachinePresetLaunchNameV1(
           nativeResult === undefined ? undefined : nativeResult.data,
           observation === undefined ? undefined : observation.data,
           nativeControlResult === undefined ? undefined : nativeControlResult.data,
-          setupSourceFacts === undefined ? undefined : setupSourceFacts.data),
+          setupSourceFacts === undefined ? undefined : setupSourceFacts.data,
+          preparationExecution === undefined ? undefined : preparationExecution.data),
       });
     }
     return replaceManagedMachinePresetExistingContentV1({
@@ -921,7 +1112,8 @@ export function replaceManagedMachinePresetLaunchNameV1(
         nativeResult === undefined ? undefined : nativeResult.data,
         observation === undefined ? undefined : observation.data,
         nativeControlResult === undefined ? undefined : nativeControlResult.data,
-        setupSourceFacts === undefined ? undefined : setupSourceFacts.data),
+        setupSourceFacts === undefined ? undefined : setupSourceFacts.data,
+        preparationExecution === undefined ? undefined : preparationExecution.data),
     });
   } catch {
     return null;

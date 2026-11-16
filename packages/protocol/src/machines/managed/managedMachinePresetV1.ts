@@ -1,4 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
+import { ManagedMachinePresetRevisionInputV1Schema } from './managedMachinePresetRevisionV1.js';
+export { ManagedMachinePresetRevisionInputV1Schema } from './managedMachinePresetRevisionV1.js';
 import * as mini from '../../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -277,12 +279,9 @@ export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.str
     simultaneousLimit: z.optional(z.nullable(ManagedMachinePresetLimitV1Schema)),
   }),
 }));
-export const ManagedMachinePresetRevisionInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), id: id(), expectedRevision: revision(),
-}));
-export const ManagedMachinePresetRefusalCodeV1Schema = ManagedRefusalCodeV1Schema;
+export { ManagedRefusalCodeV1Schema as ManagedMachinePresetRefusalCodeV1Schema } from './providerFactsV1.js';
 export const ManagedMachinePresetRefusedV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('refused'), code: ManagedMachinePresetRefusalCodeV1Schema,
+  kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema,
 }));
 export const PresetMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('saved'), preset: ManagedMachinePresetV1Schema }),

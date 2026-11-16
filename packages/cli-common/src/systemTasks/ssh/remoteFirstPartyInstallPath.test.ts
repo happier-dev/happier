@@ -66,23 +66,27 @@ describe('remote first-party install layout', () => {
       expect((await readdir(layout.versionsDir)).sort()).toEqual(['1.0.0', '2.0.0', '5.0.0', '6.0.0']);
     } finally { await rm(home, { recursive: true, force: true }); }
   });
-  it('delegates CLI promotion to the staged CLI with the separate installation home', async () => {
-    if (process.platform === 'win32') return;
+  it.skipIf(process.platform === 'win32').each([true, false, undefined])('suppresses runtime migration only for managed image CLI promotion: %s', async (managedGuest) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-remote-cli-promotion-'));
     try {
       const payload = join(root, 'payload');
       await mkdir(payload);
-      await writeFile(join(payload, 'happier'), '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_FIRST_PARTY_INSTALL_HOME" "$@"\n', { mode: 0o755 });
+      // The staged CLI process is the OS boundary. Its observable migration
+      // side effect mirrors self __install-payload's existing environment opt-out.
+      await writeFile(join(payload, 'happier'), '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_FIRST_PARTY_INSTALL_HOME" "$@"\nif [ "$HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION" != 1 ]; then mkdir "$migration_marker"; fi\n', { mode: 0o755 });
       const command = buildRemoteFirstPartyPromotionCommand({
         layout: resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '1.2.3', remoteHomeDir: root }),
         payloadRootExpression: '"$payload_root"',
-        cliInstall: { componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3' },
+        cliInstall: { componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3',
+          ...(managedGuest === undefined ? {} : { managedGuest }) },
       });
-      const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, payload_root: payload } });
+      const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, payload_root: payload,
+        HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION: '', migration_marker: join(root, 'runtime-migration') } });
       expect(result.stdout.trim().split('\n')).toEqual([
         root, 'self', '__install-payload', '--component', 'happier-cli', '--payload-root', payload,
-        '--version', '1.2.3', '--channel', 'stable',
+        '--version', '1.2.3', '--channel', 'stable', ...(managedGuest ? ['--managed-guest'] : []),
       ]);
+      expect((await readdir(root)).includes('runtime-migration')).toBe(managedGuest !== true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -2,7 +2,7 @@ import { actionInputValidationFailure } from '@happier-dev/protocol/actions/exec
 import { core } from 'zod/mini';
 import {
     MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1,
-    type MachinePresetActionIdV1, type MachinePresetActionInputV1, type MachinePresetActionOutputV1,
+    type MachinePresetHttpActionIdV1, type MachinePresetActionInputV1, type MachinePresetActionOutputV1,
 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import {
     ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema,
@@ -13,6 +13,7 @@ import {
     createManagedMachinePresetResizeOverrideV1,
     createManagedMachinePresetSetupOverrideV1,
     projectManagedMachinePresetForRecipientV1,
+    replaceManagedMachinePresetAuthorContentV1,
     rewrapManagedMachinePresetRecipientsV1,
     sealManagedMachinePresetContentV1,
     ManagedMachinePresetContentV1Schema,
@@ -127,7 +128,7 @@ export function hasOpenedManagedMachinePresetCreationV1<T extends Readonly<{
     return preset?.launch != null;
 }
 
-type OpenedPresetActionOutput<T extends MachinePresetActionIdV1> =
+type OpenedPresetActionOutput<T extends MachinePresetHttpActionIdV1> =
     T extends 'machines.presets.get' ? Omit<Extract<MachinePresetActionOutputV1<T>, { kind: 'found' }>, 'preset'> & Readonly<{ preset: OpenedMachinePreset }>
         | Exclude<MachinePresetActionOutputV1<T>, { kind: 'found' }>
     : T extends 'machines.presets.list' ? Omit<Extract<MachinePresetActionOutputV1<T>, { kind: 'listed' }>, 'presets'> & Readonly<{ presets: readonly ManagedMachinePresetListEntryV1[] }>
@@ -136,9 +137,9 @@ type OpenedPresetActionOutput<T extends MachinePresetActionIdV1> =
         ? Omit<Extract<MachinePresetActionOutputV1<T>, { kind: 'saved' }>, 'preset'> & Readonly<{ preset: OpenedMachinePreset }>
             | Exclude<MachinePresetActionOutputV1<T>, { kind: 'saved' }>
         : never;
-export type OpenedMachinePresetActionOutputV1<T extends MachinePresetActionIdV1> = OpenedPresetActionOutput<T>;
+export type OpenedMachinePresetActionOutputV1<T extends MachinePresetHttpActionIdV1> = OpenedPresetActionOutput<T>;
 
-type MachinePresetClientInput<T extends MachinePresetActionIdV1> =
+type MachinePresetClientInput<T extends MachinePresetHttpActionIdV1> =
     T extends 'machines.presets.create' ? MachinePresetCreateDraftInput
         : T extends 'machines.presets.update' ? MachinePresetUpdateDraftInput
             : MachinePresetActionInputV1<T>;
@@ -366,7 +367,7 @@ export async function prepareManagedMachineResizeInputForSnapshot(scope: ServerA
     } } : prepared;
 }
 
-function readPresetDomainFailureResult<T extends MachinePresetActionIdV1>(actionId: T, code: string,
+function readPresetDomainFailureResult<T extends MachinePresetHttpActionIdV1>(actionId: T, code: string,
     details: unknown): MachinePresetActionOutputV1<T> | null {
     const output = MachinePresetActionOutputSchemasV1[actionId].safeParse(details);
     if (!output.success) return null;
@@ -528,6 +529,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         writerMode: WriterMode;
         privateContent: ManagedMachinePresetContentV1;
         censusInput: ManagedMachinePresetRecipientCensusInputV1;
+        current?: Readonly<Pick<OpenedMachinePreset, 'contentEncryptionMode' | 'recipientProjection'>>;
         teamAcquireDelegated?: boolean;
         signal?: AbortSignal;
     }>): Promise<SealResult> {
@@ -547,6 +549,29 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }
         const content = { ...privateContent, ...(controllerDisplayName == null ? {} : { controllerDisplayName }) };
         try {
+            if (input.current?.contentEncryptionMode === writerMode) {
+                if (writerMode === 'plain') {
+                    const envelope = replaceManagedMachinePresetAuthorContentV1({
+                        presetId: input.presetId, mode: 'plain', projection: input.current.recipientProjection, content,
+                    });
+                    return envelope ? { kind: 'sealed', contentEncryptionMode: writerMode,
+                        content: envelope.content, recipients: [...envelope.recipients] }
+                        : { kind: 'failed', code: 'content_unavailable' };
+                }
+                const reader = await resolveReaderKey(scope, input.signal);
+                if (!reader) return { kind: 'failed', code: 'content_unavailable' };
+                try {
+                    const envelope = reader.withAccountKey(({ accountId, accountKey }) =>
+                        replaceManagedMachinePresetAuthorContentV1({
+                            presetId: input.presetId, mode: 'e2ee', projection: input.current!.recipientProjection,
+                            content, accountId, accountKey, recipientCensus: [...census.recipients],
+                            randomBytes: getRandomBytes,
+                        }));
+                    return envelope ? { kind: 'sealed', contentEncryptionMode: writerMode,
+                        content: envelope.content, recipients: [...envelope.recipients] }
+                        : { kind: 'failed', code: 'content_unavailable' };
+                } finally { reader.dispose(); }
+            }
             const envelope = writerMode === 'plain'
                 ? sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'plain', content })
                 : sealManagedMachinePresetContentV1({ presetId: input.presetId, mode: 'e2ee', content,
@@ -728,7 +753,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }, size, signal);
     }
 
-    async function openActionOutput<T extends MachinePresetActionIdV1>(actionId: T, value: MachinePresetActionOutputV1<T>,
+    async function openActionOutput<T extends MachinePresetHttpActionIdV1>(actionId: T, value: MachinePresetActionOutputV1<T>,
         signal?: AbortSignal): Promise<OpenedPresetActionOutput<T> | null> {
         const readerState: { key: Promise<ManagedMachinePresetReadCustodyV1 | null> | null } = { key: null };
         const reader = () => readerState.key ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
@@ -758,7 +783,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }
     }
 
-    async function normalizedInput<T extends MachinePresetActionIdV1>(actionId: T, input: MachinePresetClientInput<T>,
+    async function normalizedInput<T extends MachinePresetHttpActionIdV1>(actionId: T, input: MachinePresetClientInput<T>,
         options?: MachinePresetCollectionOptions<OpenedPresetActionOutput<T>>): Promise<MachinePresetActionInputV1<T> | SealResult> {
         if (actionId === 'machines.presets.create') {
             const draft = input as MachinePresetCreateDraftInput;
@@ -800,6 +825,9 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             const censusInput = { homeId: draft.homeId, owner: current.owner,
                 ...(controller ? { controller } : {}), ...(controllerPoolId ? { controllerPoolId } : {}) };
             const sealed = await sealPrivateContent({ presetId: draft.id, writerMode, privateContent, censusInput,
+                ...(current.contentEncryptionMode && current.recipientProjection ? { current: {
+                    contentEncryptionMode: current.contentEncryptionMode, recipientProjection: current.recipientProjection,
+                } } : {}),
                 teamAcquireDelegated: structuralPatch.teamAcquireDelegated ?? current.teamAcquireDelegated, signal: options?.signal });
             if (sealed.kind === 'failed') return sealed;
             return { ...draft, patch: { ...structuralPatch, contentEncryptionMode: sealed.contentEncryptionMode,
@@ -808,7 +836,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         return input as MachinePresetActionInputV1<T>;
     }
 
-    async function execute<T extends MachinePresetActionIdV1>(actionId: T, input: MachinePresetClientInput<T>,
+    async function execute<T extends MachinePresetHttpActionIdV1>(actionId: T, input: MachinePresetClientInput<T>,
         options?: MachinePresetCollectionOptions<OpenedPresetActionOutput<T>>): Promise<MachinePresetCollectionResult<OpenedPresetActionOutput<T>>> {
         const normalized = await normalizedInput(actionId, input, options);
         if ('kind' in normalized && normalized.kind === 'failed') return normalized;

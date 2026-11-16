@@ -1,4 +1,4 @@
-import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1, type MachinePresetActionIdV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1, type MachinePresetHttpActionIdV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetAcquireRoutingInputV1Schema, ManagedMachinePresetAcquireRoutingResultV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { z } from "zod/mini";
 
@@ -10,11 +10,13 @@ import {
 } from "@/app/machines/managed/machinePresetService";
 
 import { resolveMachinePresetAcquireRouting } from '@/app/machines/managed/machinePresetAcquireRouting';
+import type { ManagedMachinePresetPrepareInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 
-function register<Id extends MachinePresetActionIdV1>(
+function register<Id extends MachinePresetHttpActionIdV1>(
     app: Fastify, id: Id,
     execute: (params: Readonly<{
         accountId: string; authentication: TeamOperationAuthenticationContext;
+        presetPreparationAdmission?: ManagedMachinePresetPrepareInputV1;
         input: z.infer<(typeof MachinePresetActionInputSchemasV1)[Id]>;
     }>) => Promise<z.infer<(typeof MachinePresetActionOutputSchemasV1)[Id]>>,
 ): void {
@@ -30,7 +32,8 @@ function register<Id extends MachinePresetActionIdV1>(
         if (request.validationError) return await reply.code(400).send({ kind: "refused", code: "invalid_request" });
         // Fastify validated this body with the id-specific schema above; its generic Body inference widens indexed schemas to unknown.
         const input = request.body as z.infer<(typeof MachinePresetActionInputSchemasV1)[Id]>;
-        const result = await execute({ accountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), input });
+        const result = await execute({ accountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), input,
+            presetPreparationAdmission: request.externalActionExecutionAuthorizationBinding?.presetPreparationAdmission });
         const status = result.kind === "conflict" ? 409
             : result.kind !== "refused" ? 200
             : result.code === "preset_not_found" ? 404

@@ -9,10 +9,10 @@ import {
   type ManagedMachineReadV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import {
+  createManagedMachinePresetSavedSecretSourceReferenceRewriteV1,
   createManagedMachinePresetSavedSecretReferenceRewriteV1,
   projectManagedMachinePresetForRecipientV1,
   rewriteManagedMachinePresetSavedSecretReferencesV1,
-  sealManagedMachinePresetContentV1,
   type ManagedMachinePresetContentV1,
   type ManagedMachinePresetRecipientProjectionV1,
   type ManagedMachinePresetSavedSecretReferenceRewriteV1,
@@ -236,16 +236,19 @@ export async function prepareManagedMachinePresetSavedSecretPromotionRewritesV1(
     const census = await params.reader.readRecipientCensus(recipientCensusInput(preset));
     throwIfAborted(params.signal);
     if (census?.kind !== 'ready' || census.contentEncryptionMode !== preset.contentEncryptionMode) return unavailable();
-    try {
-      const replacement = preset.contentEncryptionMode === 'plain'
-        ? sealManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: rewritten })
-        : sealManagedMachinePresetContentV1({ presetId: preset.id, mode: 'e2ee', content: rewritten,
-          recipientCensus: census.recipients, randomBytes: params.randomBytes });
-      sourceRewrites.push({ presetId: preset.id, expectedRevision: preset.revision,
-        replacement: { content: replacement.content, recipients: [...replacement.recipients] } });
-    } catch {
-      return unavailable();
-    }
+    const replacement = preset.contentEncryptionMode === 'plain'
+      ? createManagedMachinePresetSavedSecretSourceReferenceRewriteV1({
+        presetId: preset.id, mode: 'plain', projection, rewrites: params.rewrites,
+      })
+      : await params.reader.withE2eeAccountKey(key => createManagedMachinePresetSavedSecretSourceReferenceRewriteV1({
+        presetId: preset.id, mode: 'e2ee', projection, rewrites: params.rewrites,
+        accountId: key.accountId, accountKey: key.accountKey,
+        recipientCensus: census.recipients, randomBytes: params.randomBytes,
+      }));
+    throwIfAborted(params.signal);
+    if (replacement === null) return unavailable();
+    sourceRewrites.push({ presetId: preset.id, expectedRevision: preset.revision,
+      replacement: { content: replacement.content, recipients: [...replacement.recipients] } });
   }
 
   const snapshotRewrites: SavedSecretOpaquePresetRewritesV1['snapshots'] = [];

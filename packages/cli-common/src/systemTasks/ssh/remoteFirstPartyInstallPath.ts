@@ -116,7 +116,7 @@ export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
       'set -eu',
       `test -f ${binary}`,
       `chmod +x ${binary}`,
-      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}${params.cliInstall.managedGuest ? ' --managed-guest' : ''}`,
+      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${params.cliInstall.managedGuest ? 'HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1 ' : ''}${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}${params.cliInstall.managedGuest ? ' --managed-guest' : ''}`,
     ].join('; ');
   }
   const versionsDir = quoteRemotePathWithHomeExpansion(layout.versionsDir);

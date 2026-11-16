@@ -1,12 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { MACHINE_PRESET_ACTION_IDS_V1 } from '../machines/managed/machinePresetActionsV1.js';
+import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionsV1.js';
 import { ACTION_IDS } from './actionIds.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
+import { createActionExecutor } from './actionExecutor.js';
 import type { ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { getActionSpec, listActionCliCommandDeclarations, listVoiceToolActionSpecs, PLUGIN_INVOCABLE_ACTION_IDS, PUBLIC_ACTION_IDS } from './actionSpecs.js';
 
 describe('personal and Team Machine preset Actions', () => {
+  it('executes Prepare through the installed Machine operation owner', async () => {
+    const input = { homeId: 'home', id: 'preset', expectedRevision: 0, machineId: 'builder' };
+    const accepted = { status: 'accepted', operationId: 'prepare-operation', machineId: 'builder' };
+    const executor = createActionExecutor({ machinePresetPrepare: async request => {
+      expect(request.input).toEqual(input);
+      return accepted;
+    } });
+    const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
+    expect(await executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId } })).toEqual({ ok: true, result: accepted });
+  });
+  it('admits Prepare as a Machine operation and refuses an uninstalled executor without a preset HTTP mutation', async () => {
+    let httpMutations = 0;
+    const executor = createActionExecutor({ machinePresetAction: async () => {
+      httpMutations += 1;
+      throw new Error('Prepare must not use the preset HTTP transport');
+    } });
+    const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
+    const input = { homeId: 'home', id: 'preset', expectedRevision: 0, machineId: 'builder' };
+    expect(await executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId } })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(httpMutations).toBe(0);
+    const spec = getActionSpec(actionId);
+    expect(spec).toMatchObject({ executionPlacement: 'machine', sideEffectClass: 'danger',
+      operation: { version: 1, visibility: 'activity', progress: 'reported' } });
+    expect(spec.serverTransport).toBeUndefined();
+    expect(spec.inputSchema.parse(input)).toEqual(input);
+    expect(spec.outputSchema.parse({ status: 'accepted', operationId: 'host-operation', machineId: 'builder' }))
+      .toEqual({ status: 'accepted', operationId: 'host-operation', machineId: 'builder' });
+  });
   it.each(['machines.presets.create', 'machines.presets.update'] as const)('replays %s with the name in its strict content carrier', actionId => {
     const content = { t: 'plain', v: { v: 1, name: 'Reviewed preset',
       setup: { scripts: [{ body: 'echo ready', affects: 'none' }] } } };
@@ -43,7 +74,7 @@ describe('personal and Team Machine preset Actions', () => {
   it('carries every exact-Home intent through the canonical headless catalog and asks before mutation', () => {
     const commands = new Map(listActionCliCommandDeclarations().map(({ spec, binding }) => [spec.id, binding.path]));
     const voice = new Set(listVoiceToolActionSpecs().map(spec => spec.id));
-    for (const id of MACHINE_PRESET_ACTION_IDS_V1) {
+    for (const id of MACHINE_PRESET_HTTP_ACTION_IDS_V1) {
       expect(ACTION_IDS).toContain(id);
       expect(PUBLIC_ACTION_IDS).toContain(id);
       expect(PLUGIN_INVOCABLE_ACTION_IDS).toContain(id);

@@ -24,7 +24,7 @@ describe('credential-free preset preparation build composition', () => {
   it('builds a fresh CLI image from the canonical supplier without introducing Account or enrollment input', async () => {
     const cli = await prepareCli();
     for (const setup of [undefined, {}]) {
-      const composed = managed.composeManagedMachinePresetPreparationBuildInputV1({ launch, cli, setup });
+      const composed = managed.composeManagedMachinePresetPreparationBuildInputV1({ operationId: 'image-build', launch, cli, setup });
       expect(composed).toEqual({ input: { launch: buildLaunch, cli } });
       expect(composed.input.cli.identity).toBe(`home-payload:${'a'.repeat(64)}`);
       expect(composed.input.cli.files).toEqual([{ path: 'happier-cli-payload.tar.gz', contentsBase64: 'cGF5bG9hZA==' }]);
@@ -43,22 +43,17 @@ describe('credential-free preset preparation build composition', () => {
         { body: 'initialize-dependent-workspace', affects: 'none' }],
       secretRefs: { v: 1, bindings: { SERVICE_CREDENTIAL: { ref: formatSharedSavedSecretRefV1('private-service'), revision: 7 } } },
     };
-    const composed = managed.composeManagedMachinePresetPreparationBuildInputV1({ launch, cli, setup });
+    const composed = managed.composeManagedMachinePresetPreparationBuildInputV1({ operationId: 'image-build', launch, cli,
+      setup: { deferredSetup: setup } });
     expect(composed).toEqual({ input: { launch: buildLaunch, cli }, deferredSetup: setup });
     expect(JSON.stringify(composed.input)).not.toMatch(/SERVICE_CREDENTIAL|private-service|initialize-dependent-workspace|mise/u);
     expect(composed).not.toHaveProperty('bakedSetup');
   });
 
-  it('defers whole setup when recipe target facts or ordering have not been classified by the canonical setup owner', async () => {
+  it('rejects a setup operand belonging to a different admitted build operation', async () => {
     const cli = await prepareCli();
-    const setups: MachineSetupV1[] = [
-      { items: [{ kind: 'softwareRecipe', selection: { ref: { pluginId: 'test.recipes', recipeId: 'docker', revision: '1' }, inputs: {} } }] },
-      { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' } },
-      { scripts: [{ body: 'install-ordinary-tool', affects: 'none' }, { body: 'use-ordinary-tool', affects: 'none' }] },
-    ];
-    for (const setup of setups) {
-      expect(managed.composeManagedMachinePresetPreparationBuildInputV1({ launch, cli, setup }))
-        .toEqual({ input: { launch: buildLaunch, cli }, deferredSetup: setup });
-    }
+    expect(() => managed.composeManagedMachinePresetPreparationBuildInputV1({ operationId: 'current-build', launch, cli,
+      setup: { preparation: { basis: { kind: 'preparation', operationId: 'older-build' }, recipes: [] } } }))
+      .toThrow();
   });
 });

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vit
 
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 
@@ -288,6 +289,98 @@ describe('machine preset content envelopes', () => {
         });
         expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).not.toHaveProperty('name');
         expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).not.toHaveProperty('setup');
+    });
+
+    it.each(['plain', 'e2ee'] as const)('preserves incumbent private preparation state when the editor saves in %s', async mode => {
+        const credentials = mode === 'e2ee' ? {
+            token: createAccountTokenForTests('owner', { currentAccount: true }),
+            secret: encodeBase64(new Uint8Array(32).fill(43), 'base64url'),
+        } : undefined;
+        const encryption = credentials ? await createEncryptionFromAuthCredentials(credentials) : null;
+        const homeId = `srv_editor_prepared_${mode}`;
+        const serverId = await harness.addHome({
+            name: `Prepared editor ${mode}`, serverUrl: `https://prepared-editor-${mode}.example`,
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
+            accountEncryptionMode: mode, ...(credentials ? { credentials } : {}),
+        });
+        const protocol = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const setup = { scripts: [{ body: 'echo original setup', affects: 'none' as const }] };
+        const preparation = { enabled: true } as const;
+        const prepared = {
+            operationId: 'prepare-operation',
+            binding: {
+                presetRevision: 7,
+                configuration: {
+                    launch: { provider: launch.provider, schemaVersion: launch.schemaVersion, choices: launch.choices },
+                    setup,
+                },
+                cliIdentity: 'home-payload:0.3:prepared',
+            },
+            status: 'ready' as const,
+            artifact: { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: { imageId: 'private-image' } },
+            bakedSetup: setup,
+        };
+        const census = encryption ? [recipient('owner', encryption.contentDataKey)] : [];
+        let nonce = 1;
+        const randomBytes = (length: number) => new Uint8Array(length).fill(nonce++);
+        const initial = mode === 'plain'
+            ? protocol.sealManagedMachinePresetContentV1({ presetId: 'prepared-preset', mode, content: {
+                v: 1, name: 'Original name', launch, setup, preparation,
+            } })
+            : protocol.sealManagedMachinePresetContentV1({ presetId: 'prepared-preset', mode, content: {
+                v: 1, name: 'Original name', launch, setup, preparation,
+            }, recipientCensus: census, randomBytes });
+        const preparedWrite = mode === 'plain'
+            ? protocol.replaceManagedMachinePresetPreparationV1({
+                presetId: 'prepared-preset', mode, content: initial.content, expectedOperationId: null, prepared,
+            })
+            : protocol.replaceManagedMachinePresetPreparationV1({
+                presetId: 'prepared-preset', mode, content: initial.content, recipients: initial.recipients,
+                accountId: 'owner', accountKey: encryption!.getContentPrivateKey(), randomBytes,
+                expectedOperationId: null, prepared,
+            });
+        if (!preparedWrite) throw new Error('Expected prepared fixture content');
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
+            id: 'prepared-preset', homeId, revision: 7, owner: { kind: 'account', accountId: 'owner' }, controller,
+            contentEncryptionMode: mode, content: preparedWrite.content, recipients: initial.recipients,
+        }] } });
+        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: mode === 'plain'
+            ? readyPlainCensus()
+            : { kind: 'ready', contentEncryptionMode: 'e2ee',
+                recipients: [recipient('owner', encryption!.contentDataKey, 'prepared')] } });
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'refused', code: 'permission_denied' } });
+        const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, homeId);
+        const listed = await client.list();
+        if (listed.kind !== 'succeeded' || !listed.value[0] || !isOpenedManagedMachinePresetV1(listed.value[0])) {
+            throw new Error('Expected prepared preset content to open');
+        }
+
+        await client.saveDraft({ preset: listed.value[0], draft: {
+            name: 'Edited name', creation: { launch }, setup,
+        } });
+
+        const request = harness.requestsFor('/v1/machines/presets/update')[0]?.input as {
+            patch: { contentEncryptionMode: 'plain' | 'e2ee'; content: unknown; recipients: readonly {
+                accountId: string; envelope: { encryptedDataKey: string };
+            }[] };
+        };
+        const opened = mode === 'plain'
+            ? protocol.openManagedMachinePresetContentV1({ presetId: 'prepared-preset', mode,
+                content: request.patch.content })
+            : protocol.openManagedMachinePresetContentV1({ presetId: 'prepared-preset', mode,
+                content: request.patch.content, recipients: request.patch.recipients,
+                accountId: 'owner', accountKey: encryption!.getContentPrivateKey() });
+        if (mode === 'e2ee') {
+            const openDataKey = (encryptedDataKey: string) => openEncryptedDataKeyEnvelopeV1({
+                envelope: decodeBase64(encryptedDataKey),
+                recipientSecretKeyOrSeed: encryption!.getContentPrivateKey(),
+            });
+            expect(openDataKey(request.patch.recipients[0]!.envelope.encryptedDataKey)).not.toEqual(
+                openDataKey(initial.recipients[0]!.envelope.encryptedDataKey),
+            );
+        }
+        expect(opened).toEqual({ v: 1, name: 'Edited name', launch, setup, preparation, prepared });
+        expect(opened?.prepared?.binding.presetRevision).toBe(7);
     });
 
     it('opens list rows before applying the local name filter and never sends search to the Home', async () => {

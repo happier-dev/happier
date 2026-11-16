@@ -2,7 +2,7 @@ import {
     MachinePresetActionInputSchemasV1,
     MachinePresetActionOutputSchemasV1,
     machinePresetActionEndpointPathV1,
-    type MachinePresetActionIdV1,
+    type MachinePresetHttpActionIdV1,
     type MachinePresetActionInputV1,
     type MachinePresetActionOutputV1,
 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
@@ -17,7 +17,7 @@ export class MachinePresetActionError extends Error {
 }
 
 export type MachinePresetActionClient = Readonly<{
-    execute<TActionId extends MachinePresetActionIdV1>(
+    execute<TActionId extends MachinePresetHttpActionIdV1>(
         actionId: TActionId,
         input: MachinePresetActionInputV1<TActionId>,
         options?: Readonly<{ signal?: AbortSignal }>,
@@ -27,7 +27,7 @@ export type MachinePresetActionClient = Readonly<{
 /** The Action caller supplies its captured exact-Home request, including Account custody. */
 export function createMachinePresetActionClient(params: Readonly<{ request: ServerFetch }>): MachinePresetActionClient {
     return Object.freeze({
-        execute: async <TActionId extends MachinePresetActionIdV1>(
+        execute: async <TActionId extends MachinePresetHttpActionIdV1>(
             actionId: TActionId,
             input: MachinePresetActionInputV1<TActionId>,
             options?: Readonly<{ signal?: AbortSignal }>,

@@ -6,7 +6,7 @@ import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { MachineRecipeSelectionV1Schema, MachineRecipeImpactV1Schema, MachineSetupScriptCheckV1Schema,
   type MachineRecipeReferenceV1, type MachineRecipeSelectionV1 } from '../setup/machineRecipeV1.js';
-import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
+import { StoredAppPresetInputV1Schema, type DeploymentTemplateRefV1, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
 
 export type MachinePresetItemV1 =
   | Readonly<{ kind: 'setupRecipe'; selection: MachineRecipeSelectionV1 }>
@@ -24,11 +24,16 @@ export function readMachineSetupRecipeIdentityV1(ref: Pick<MachineRecipeReferenc
   return JSON.stringify([ref.pluginId, ref.recipeId]);
 }
 
+/** A catalog App's identity is its catalog item; a listing row can name it before its pin is read. */
+export function readMachineSetupCatalogAppIdentityV1(ref: Pick<DeploymentTemplateRefV1, 'sourceId' | 'itemId'>): string {
+  return createCanonicalJsonSigningInput(['catalog', ref.sourceId, ref.itemId]);
+}
+
 /** A catalog pin changes a deployment version, not which authored app it is. */
 export function readMachineSetupAppIdentityV1(item: Extract<MachinePresetItemV1, { kind: 'app' }>): string | undefined {
   const definition = item.definition.definition;
   return definition.from === 'catalogApp'
-    ? createCanonicalJsonSigningInput(['catalog', definition.templateRef.sourceId, definition.templateRef.itemId])
+    ? readMachineSetupCatalogAppIdentityV1(definition.templateRef)
     : item.authoredKey ? createCanonicalJsonSigningInput(['authored', item.authoredKey]) : undefined;
 }
 

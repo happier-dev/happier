@@ -38,6 +38,22 @@ prechange evidence while preserving management access, then runs
 `machines.reachability.inspect` with the intended posture again. Configure
 requires the resulting fresh reviewed plan; it is not a repair for missing facts.
 
+## Clean image setup (0.3 development)
+
+The existing `machine effect-internal` entry accepts a closed preparation Apply
+operand before Account or daemon initialization. This path requires UID0,
+the invocation's exact operation id, no installation id, and end-of-input before
+observing or changing the image. It compiles the supplied recipe declarations
+through the existing native backend and interpreter against the image's actual
+filesystem and OS facts. Online Check and Apply requests reject preparation
+bases; this operand grants no Machine, Account, enrollment or credential access.
+
+`prepareMachineSetupPreparationV1` selects only a whole, credential-independent
+recipe prefix from the supplied catalog. The exact completed prefix can be
+recorded as baked setup; the remaining recipes, toolchain and scripts stay on
+the ordinary acquire path. Its current source integration still requires a real
+catalog caller and a successful provider build before that baked claim is valid.
+
 ## Managed bootstrap settlement (0.3 development)
 
 Dedicated daemon account preparation reports `dedicated_identity_unsupported`

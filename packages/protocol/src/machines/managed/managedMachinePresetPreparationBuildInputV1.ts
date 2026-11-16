@@ -16,12 +16,19 @@ export type ManagedGuestCliBuildInputV1 = Readonly<Omit<ParsedManagedGuestCliBui
   files: readonly Readonly<ParsedManagedGuestCliBuildInputV1['files'][number]>[];
 }>;
 
-/** Portable native-build boundary: no preset name, credential selector or setup body. */
-export const ManagedMachinePresetPreparationBuildInputV1Schema = lazyZodSchema(() => z.strictObject({
-  launch: z.pick(createValidatedLaunchSnapshotV1Schema(PluginJsonValueV2Schema),
-    { provider: true, schemaVersion: true, choices: true }),
-  cli: ManagedGuestCliBuildInputV1Schema,
-}));
+/** Provider roles specialize their owned choices while sharing the closed build envelope. */
+export function createManagedMachinePresetPreparationBuildInputV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
+  return z.strictObject({
+    launch: z.pick(createValidatedLaunchSnapshotV1Schema(choices),
+      { provider: true, schemaVersion: true, choices: true }),
+    cli: ManagedGuestCliBuildInputV1Schema,
+    setupScript: z.optional(z.string()),
+  });
+}
+
+/** Portable native-build boundary: no preset name, credential selector or cold setup body. */
+export const ManagedMachinePresetPreparationBuildInputV1Schema = lazyZodSchema(() =>
+  createManagedMachinePresetPreparationBuildInputV1Schema(PluginJsonValueV2Schema));
 export type ManagedMachinePresetPreparationBuildInputV1 = Readonly<
   Omit<z.infer<typeof ManagedMachinePresetPreparationBuildInputV1Schema>, 'cli'> & {
     cli: ManagedGuestCliBuildInputV1;

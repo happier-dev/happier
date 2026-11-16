@@ -6,7 +6,7 @@ import { ActionOperationCompletionOutputV1Schema, type ActionCompletionDeclarati
 import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
-import { MACHINE_PRESET_ACTION_IDS_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
+import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, EphemeralRunnerActionInputSchemasV1, EphemeralRunnerActionOutputSchemasV1, type EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionsV1.js';
 import {
   MANAGED_MACHINE_ACTION_IDS_V1,
@@ -205,7 +205,24 @@ export const MANAGED_MACHINE_ACTION_SPECS: ReturnType<typeof createManagedMachin
 export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
   PreNormalizedActionSpec[],
 ]> = lazyActionSpecArray(() => Object.freeze([
-  ...(MACHINE_PRESET_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
+  {
+    id: MACHINE_PRESET_PREPARE_ACTION_ID_V1, executionPlacement: 'machine',
+    originalExecution: { terminalRoot: 'allowed', daemonIngressSurfaces: ['ui', 'cli'] },
+    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' },
+    title: 'Prepare Machine preset',
+    description: 'Build a prepared image for this preset on the selected machine. Provider build and artifact storage charges may apply.',
+    approvalPresentation: { summary: () => 'Build a prepared image for this preset. Provider build and artifact storage charges may apply.' },
+    safety: 'danger', sideEffectClass: 'danger', placements: [],
+    bindings: { mcpToolName: 'machines_presets_prepare', voiceClientToolName: 'machines_presets_prepare',
+      rpcMethod: MACHINE_PRESET_PREPARE_ACTION_ID_V1 },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    cli: { acceptsServerId: true, commands: [{ path: ['machines', 'presets', 'prepare'], visibility: 'canonical' }] },
+    inputHints: { title: 'Prepare Machine preset', fields: MACHINE_PRESET_INPUT_FIELDS[MACHINE_PRESET_PREPARE_ACTION_ID_V1] },
+    inputSchema: MachinePresetActionInputSchemasV1[MACHINE_PRESET_PREPARE_ACTION_ID_V1],
+    outputSchema: MachinePresetActionOutputSchemasV1[MACHINE_PRESET_PREPARE_ACTION_ID_V1],
+    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+  },
+  ...(MACHINE_PRESET_HTTP_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
     const verb = id.slice('machines.presets.'.length);
     const read = id === 'machines.presets.list' || id === 'machines.presets.get';
     const title = `${verb[0]!.toUpperCase()}${verb.slice(1)} Machine preset`;

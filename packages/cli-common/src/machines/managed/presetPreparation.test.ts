@@ -1,20 +1,34 @@
 import { describe, expect, it } from 'vitest';
+import { ManagedCredentialSelectionV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedMachinePresetPreparationBindingV1, readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
 
+const purpose = { consumer: { pluginId: 'test.compute', localId: 'guest' }, purpose: 'compute' };
+const account = { service: { pluginId: 'test.service', localId: 'compute' }, accountId: 'provider-one' };
 const content = { v: 1 as const, name: 'Preset', preparation: { enabled: true },
   launch: { provider: { pluginId: 'test.compute', localId: 'guest' }, schemaVersion: 1,
-    name: 'Guest', choices: { image: 'ubuntu' } },
-  setup: { scripts: [{ body: 'echo baked', affects: 'none' as const }] } };
-const current = { presetRevision: 3, cliIdentity: 'home:0.3:payload-a', credentialIdentity: 'account:one' };
+    name: 'Guest', choices: { image: 'ubuntu' }, credentials: [{ purpose, account }] },
+  setup: { items: [{ kind: 'setupRecipe' as const,
+    selection: { ref: { pluginId: 'test.recipes', recipeId: 'runtime', revision: '1' }, inputs: {} } }],
+    scripts: [{ body: 'configure-session-credentials', affects: 'none' as const }] } };
+const bakedSetup = { items: content.setup.items };
+const current = { presetRevision: 3, cliIdentity: 'home:0.3:payload-a' };
+const binaryPath = '/opt/happier/cli/current/happier';
 const artifact = { contributionRef: content.launch.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 
 describe('preset preparation freshness', () => {
-  it('matches the exact preset revision, baked configuration and actual supplier/credential identity', () => {
+  it('keeps legacy ready artifacts without an actual installed CLI path cold', () => {
     const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
-    const prepared = { operationId: 'build-1', status: 'ready' as const, binding, artifact, bakedSetup: content.setup };
+    expect(readManagedMachinePresetPreparationV1({ content: { ...content,
+      prepared: { operationId: 'legacy-build', status: 'ready', binding, artifact } }, ...current }))
+      .toEqual({ kind: 'cold', reason: 'unprepared' });
+  });
+  it('matches the preset revision, baked configuration, supplier identity and canonical Account or Team selection', () => {
+    const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
+    const prepared = { operationId: 'build-1', status: 'ready' as const, binding, artifact, cliBinaryPath: binaryPath, bakedSetup };
     const saved = { ...content, prepared };
     expect(readManagedMachinePresetPreparationV1({ content: saved, ...current }))
-      .toEqual({ kind: 'warm', artifact, bakedSetup: content.setup });
+      .toEqual({ kind: 'warm', artifact, binaryPath, bakedSetup,
+        deferredSetup: { scripts: content.setup.scripts } });
     expect(readManagedMachinePresetPreparationV1({ content: { ...saved, name: 'Renamed preset',
       launch: { ...saved.launch, name: 'Per-acquire name' } }, ...current }).kind).toBe('warm');
     for (const changed of [
@@ -22,21 +36,40 @@ describe('preset preparation freshness', () => {
       { content: { ...saved, launch: { ...saved.launch, choices: { image: 'new-image' } } }, ...current },
       { content: { ...saved, launch: { ...saved.launch, provider: { pluginId: 'other.compute', localId: 'guest' } } }, ...current },
       { content: saved, ...current, cliIdentity: 'public:0.3:newer-release' },
-      { content: saved, ...current, credentialIdentity: 'account:two' },
+      { content: { ...saved, launch: { ...saved.launch,
+        credentials: [{ purpose, account: { ...account, accountId: 'provider-two' } }] } }, ...current },
       { content: saved, ...current, presetRevision: 4 },
     ]) expect(readManagedMachinePresetPreparationV1(changed)).toEqual({ kind: 'cold', reason: 'stale' });
+    const team = ManagedCredentialSelectionV1Schema.parse({ purpose, teamId: 'team',
+      selection: { source: 'team_resource', resourceId: 'provider-pool-one', deliveryMode: 'direct', disclosedMember: account } });
+    const teamContent = { ...content, launch: { ...content.launch, credentials: [team] } };
+    const teamSaved = { ...teamContent, prepared: { ...prepared,
+      binding: createManagedMachinePresetPreparationBindingV1({ content: teamContent, ...current }) } };
+    expect(readManagedMachinePresetPreparationV1({ content: teamSaved, ...current }).kind).toBe('warm');
+    const changedTeam = ManagedCredentialSelectionV1Schema.parse({ purpose, teamId: 'team',
+      selection: { source: 'team_resource', resourceId: 'provider-pool-two', deliveryMode: 'direct', disclosedMember: account } });
+    expect(readManagedMachinePresetPreparationV1({ content: { ...teamSaved,
+      launch: { ...teamSaved.launch, credentials: [changedTeam] } }, ...current }))
+      .toEqual({ kind: 'cold', reason: 'stale' });
   });
 
   it('reports only the build owner\'s actual baked setup instead of claiming all authored setup ran in the image', () => {
-    const authored = { ...content, setup: { scripts: [...content.setup.scripts,
-      { body: 'configure-session-credentials', affects: 'none' as const }] } };
+    const deferredItem = { kind: 'setupRecipe' as const,
+      selection: { ref: { pluginId: 'test.recipes', recipeId: 'private-service', revision: '1' }, inputs: {} } };
+    const authored = { ...content, setup: { ...content.setup, items: [...content.setup.items, deferredItem],
+      toolchain: { adapterId: 'mise', config: '[tools]' }, secretRefs: { v: 1 as const, bindings: {} } } };
+    const deferredSetup = { ...authored.setup, items: [deferredItem] };
     const binding = createManagedMachinePresetPreparationBindingV1({ content: authored, ...current });
-    const prepared = { operationId: 'build-1', status: 'ready' as const, binding, artifact, bakedSetup: content.setup };
+    const prepared = { operationId: 'build-1', status: 'ready' as const, binding, artifact, cliBinaryPath: binaryPath, bakedSetup };
     expect(readManagedMachinePresetPreparationV1({ content: { ...authored, prepared }, ...current }))
-      .toEqual({ kind: 'warm', artifact, bakedSetup: content.setup });
+      .toEqual({ kind: 'warm', artifact, binaryPath, bakedSetup, deferredSetup });
     expect(readManagedMachinePresetPreparationV1({ content: { ...authored,
-      prepared: { operationId: 'cli-only-build', status: 'ready', binding, artifact } }, ...current }))
-      .toEqual({ kind: 'warm', artifact });
+      prepared: { operationId: 'cli-only-build', status: 'ready', binding, artifact, cliBinaryPath: binaryPath } }, ...current }))
+      .toEqual({ kind: 'warm', artifact, binaryPath, deferredSetup: authored.setup });
+    const itemsOnly = { ...content, setup: bakedSetup };
+    expect(readManagedMachinePresetPreparationV1({ content: { ...itemsOnly, prepared: { ...prepared,
+      binding: createManagedMachinePresetPreparationBindingV1({ content: itemsOnly, ...current }) } }, ...current }))
+      .toEqual({ kind: 'warm', artifact, binaryPath, bakedSetup });
   });
 
   it('keeps disabled, absent and all nonready build outcomes cold while retaining native identities', () => {

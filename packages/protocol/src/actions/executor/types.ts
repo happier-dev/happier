@@ -69,7 +69,7 @@ import type { SessionUpdatePostInputV1 } from '../../sessions/relations/workerUp
 import type { WorkflowAuthoringActionId } from '../workflowAuthoringActionIds.js';
 import type { ManagedMachineActionIdV1, ManagedMachineActionInputV1 } from '../../machines/managed/actionsV1.js';
 import type { MachineReferenceCensusV1 } from '../../machines/machineReferenceCensusV1.js';
-import type { MachinePresetActionIdV1, MachinePresetActionInputV1 } from '../../machines/managed/machinePresetActionsV1.js';
+import type { MachinePresetHttpActionIdV1, MachinePresetActionInputV1 } from '../../machines/managed/machinePresetActionsV1.js';
 import type { AgentStartContextV1, AgentStartSessionCallerV1 } from '../../account/settings/admitAgentStartV1.js';
 import type { HomeHubLayoutActionId } from '../specs/homeHub.js';
 import type { HomeHubArtifactPortV1 } from '../../home/homeHubArtifactV1.js';
@@ -3421,8 +3421,15 @@ export type ActionExecutorDeps = Readonly<{
 
   /** Parsed recipe intents use one captured exact-Home server transport. Saving never acquires. */
   machinePresetAction?: (args: Readonly<{
-    actionId: MachinePresetActionIdV1;
-    input: MachinePresetActionInputV1;
+    actionId: MachinePresetHttpActionIdV1;
+    input: MachinePresetActionInputV1<MachinePresetHttpActionIdV1>;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  /** The installed Machine owns finite preset preparation and its reviewed provider children. */
+  machinePresetPrepare?: (args: Readonly<{
+    input: import('../../machines/managed/machinePresetActionsV1.js').ManagedMachinePresetPrepareInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;

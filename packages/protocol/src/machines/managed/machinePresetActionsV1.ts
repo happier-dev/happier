@@ -1,6 +1,10 @@
 import { z } from '../../zodRuntimePolicy.js';
+import { ManagedMachinePresetPrepareInputV1Schema } from './managedMachinePresetRevisionV1.js';
+export { ManagedMachinePresetPrepareInputV1Schema, type ManagedMachinePresetPrepareInputV1 } from './managedMachinePresetRevisionV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { MACHINE_PRESET_ACTION_IDS_V1, type MachinePresetActionIdV1 } from './machinePresetActionIdsV1.js';
+import { MACHINE_PRESET_ACTION_IDS_V1, MACHINE_PRESET_HTTP_ACTION_IDS_V1,
+  MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionIdV1, type MachinePresetHttpActionIdV1 } from './machinePresetActionIdsV1.js';
+import { ActionOperationAcceptedResultSchema } from '../../actions/actionExecutionResult.js';
 import {
   ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetGetInputV1Schema,
   ManagedMachinePresetGetResultV1Schema, ManagedMachinePresetListInputV1Schema,
@@ -8,8 +12,10 @@ import {
   ManagedMachinePresetUpdateInputV1Schema, PresetMutationResultV1Schema,
 } from './managedMachinePresetV1.js';
 
-export { MACHINE_PRESET_ACTION_IDS_V1, type MachinePresetActionIdV1 } from './machinePresetActionIdsV1.js';
+export { MACHINE_PRESET_ACTION_IDS_V1, MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1,
+  type MachinePresetActionIdV1, type MachinePresetHttpActionIdV1 } from './machinePresetActionIdsV1.js';
 export const MachinePresetActionIdV1Schema = lazyZodSchema(() => z.enum(MACHINE_PRESET_ACTION_IDS_V1));
+export const MachinePresetHttpActionIdV1Schema = lazyZodSchema(() => z.enum(MACHINE_PRESET_HTTP_ACTION_IDS_V1));
 export const MachinePresetActionInputSchemasV1 = {
   'machines.presets.list': ManagedMachinePresetListInputV1Schema,
   'machines.presets.get': ManagedMachinePresetGetInputV1Schema,
@@ -17,6 +23,7 @@ export const MachinePresetActionInputSchemasV1 = {
   'machines.presets.update': ManagedMachinePresetUpdateInputV1Schema,
   'machines.presets.archive': ManagedMachinePresetRevisionInputV1Schema,
   'machines.presets.restore': ManagedMachinePresetRevisionInputV1Schema,
+  [MACHINE_PRESET_PREPARE_ACTION_ID_V1]: ManagedMachinePresetPrepareInputV1Schema,
 } as const satisfies Record<MachinePresetActionIdV1, z.ZodMiniType>;
 export const MachinePresetActionOutputSchemasV1 = {
   'machines.presets.list': ManagedMachinePresetListResultV1Schema,
@@ -25,11 +32,12 @@ export const MachinePresetActionOutputSchemasV1 = {
   'machines.presets.update': PresetMutationResultV1Schema,
   'machines.presets.archive': PresetMutationResultV1Schema,
   'machines.presets.restore': PresetMutationResultV1Schema,
+  [MACHINE_PRESET_PREPARE_ACTION_ID_V1]: ActionOperationAcceptedResultSchema,
 } as const satisfies Record<MachinePresetActionIdV1, z.ZodMiniType>;
 export type MachinePresetActionInputV1<T extends MachinePresetActionIdV1 = MachinePresetActionIdV1> =
   z.infer<typeof MachinePresetActionInputSchemasV1[T]>;
 export type MachinePresetActionOutputV1<T extends MachinePresetActionIdV1 = MachinePresetActionIdV1> =
   z.infer<typeof MachinePresetActionOutputSchemasV1[T]>;
-export function machinePresetActionEndpointPathV1(actionId: MachinePresetActionIdV1): string {
+export function machinePresetActionEndpointPathV1(actionId: MachinePresetHttpActionIdV1): string {
   return `/v1/machines/presets/${actionId.slice('machines.presets.'.length)}`;
 }

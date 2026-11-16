@@ -1588,15 +1588,27 @@ excludes former members; removing access cannot recall prior content.
 
 The development preparation schema keeps the author's opt-in in
 `content.preparation.enabled` and operational build state in `content.prepared`.
-The latter binds the exact preset revision, authored configuration, actual CLI
-payload/release identity and selected credential identity to qualified native
+The latter binds the exact preset revision, authored configuration (including
+selected Account/Team references) and actual CLI payload/release identity to qualified native
 artifact/build references. It stays inside the same Plain/E2EE content envelope;
 fresh author sealing and per-acquire name overrides cannot forge it. Operational
 replacement retains the existing data key and compares the incumbent build's
 operation id; persistence still requires the preset owner's revision CAS.
+An authored edit authenticates the incumbent before retaining its preparation
+state, then seals the new revision with a fresh data key and current recipients.
+Saved Secret promotion uses that same fresh-key rule for source presets while
+retained per-Machine snapshots keep their existing data key.
 `bakedSetup` records only setup actually completed by the clean build, so a
 CLI-only image does not imply that credential-dependent setup has run. These
 schema fields alone do not establish an executable Prepare or cleanup path.
+
+The same private per-Machine carrier can retain `preparationExecution`: the
+selected physical launch, CLI binary path and remaining setup. It requires the
+admission review and preserves the authored provider, schema version and
+credential selections. Artifact-derived choices may differ from the source
+preset. An omitted remaining setup means no setup remains. Author edits cannot
+supply this execution selection; later reports cannot replace a reviewed one.
+Operational resealing retains the admitted data key and recipients.
 
 The Home retains structural ownership, Team and controller/pool routing, one
 grant admission and revision/CAS. The server-readable operational policy fields
