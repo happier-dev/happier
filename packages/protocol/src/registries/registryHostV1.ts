@@ -1,3 +1,6 @@
+import type { RegistryThemeAcquisitionV1 } from './registryThemeV1.js';
+import { checkRegistryUpstreamV1 } from './registryUpdatesV1.js';
+import type { RegistryProvenanceV1 } from './registryItemsV1.js';
 import { decodeBase64,encodeBase64 } from '../crypto/base64.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1,REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,type RegistryActionIdV1 } from './registryActionsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
@@ -34,6 +37,7 @@ export type RegistryHostDepsV1=Readonly<{
   readSources:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
   /** Bind transport credentials once to the selected source for this finite fetch. */
   admitSource?:(source:RegistrySourceDescriptorV1)=>Promise<RegistryFetchContextV1>;
+  readThemeUpdateItems?: () => Promise<readonly Readonly<{ key: string; provenance: RegistryProvenanceV1 }>[]>;
   updates?:(filter?:import('zod/mini').infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check']>)=>Promise<RegistryUpdateCheckResultV1>;
   mutateSources?:(mutation:RegistrySourcesMutationV1)=>Promise<RegistrySourcesMutationResultV1>;
   daemonFetch?:(request:RegistryFetchRequestV1)=>Promise<RegistryFetchResponseV1>;
@@ -165,7 +169,8 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       const descriptor: RegistrySourceDescriptorV1 = { ...target.source, origin: { kind: 'built_in' }, removable: false };
       const appTemplateHints = readBuiltInRegistryAppTemplateHintsV1(descriptor, target.itemId);
       const targetAdapter = adapterFor(descriptor);
-      const placements = resolveRegistryFetchPlanV1({ host: deps.host, adapter: targetAdapter, source: descriptor, op: 'read' });
+      const placements = resolveRegistryFetchPlanV1({ host: deps.host, adapter: targetAdapter, source: descriptor, op: 'read',
+        ...(target.themeContent ? { themeContent: target.themeContent } : {}) });
       for (const [index, placement] of placements.entries()) {
         try {
           if (placement === 'direct') return applyRegistryAppTemplateHintsV1(
@@ -173,6 +178,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
           // Only the selected catalog pointer reaches its target's transport.
           const response = RegistryFetchResponseV1Schema.parse(await viaDaemon({ op: 'read', sourceId: source.id,
             kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }),
+            ...(request.themeContent ? { themeContent: request.themeContent } : {}),
             ...('appMappingCorrection' in request && request.appMappingCorrection ? { appMappingCorrection: request.appMappingCorrection } : {}) }));
           if (response.op !== 'read') throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
             ? response.status : { state: 'invalid_source' });
@@ -240,6 +246,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       const fetchSelected = async (operationCtx: RegistryFetchContextV1): Promise<RegistryFetchResponseV1> => {
         const placements = resolveRegistryFetchPlanV1({
           host: deps.host, adapter: adapterFor(source), source, op: request.op,
+          ...(request.op === 'read' && request.themeContent ? { themeContent: request.themeContent } : {}),
         });
         for (const [index, placement] of placements.entries()) {
           try {
@@ -274,6 +281,18 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     }
     if (response.item.payload.kind !== 'skill') throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     return { ...response.item, payload: response.item.payload };
+  };
+  const readRegistryTheme = async (pointer: RegistryItemPointerV1): Promise<RegistryThemeAcquisitionV1> => {
+    const source = await sourceById(pointer.sourceId);
+    const response = await fetchRequest({ op: 'read', kind: 'theme', ...pointer, themeContent: true }, source);
+    if (response.op !== 'read' || response.item.payload.kind !== 'theme' || response.item.payload.state !== 'ready' || 'packageContent' in source) {
+      throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok' ? response.status : { state: 'invalid_source' });
+    }
+    if (response.item.payload.ref.kind === 'packageContent') throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+    return { item: { ...response.item, payload: response.item.payload }, provenance: {
+      sourceId: source.id, sourceUrl: source.url, format: source.format, itemId: response.item.summary.itemId,
+      ref: response.item.payload.ref, importedAt: response.item.fetchedAt,
+    } };
   };
   const filesForPointer = async (pointer: RegistryItemPointerV1): Promise<readonly RegistrySkillFileBytesV1[]> => {
     const response = await fetchRequest({ op: 'files', kind: 'skill', ...pointer });
@@ -573,6 +592,14 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
         break;
       }
       case 'registries.updates.check': {
+        const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
+        if (args.kind === 'theme' && deps.readThemeUpdateItems) {
+          const items = (await deps.readThemeUpdateItems()).filter(item => !args.keys || args.keys.includes(item.key));
+          const sources = await deps.readSources();
+          const observations = await checkRegistryUpstreamV1(ctx, { sources, items, admitSource: deps.admitSource });
+          output = { checkedAt: Date.now(), results: items.map(item => ({ kind: 'theme', key: item.key, upstream: observations.get(item.key)! })) };
+          break;
+        }
         if (!deps.updates) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
         output = await deps.updates(REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value));
         break;
@@ -582,7 +609,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
   };
   const host = {
     // The public fetch boundary always resolves Account authority; callers cannot supply a descriptor.
-    execute, fetchRequest: (request: RegistryFetchRequestV1) => fetchRequest(request), readRegistryItem, readRegistrySource: sourceById,
+    execute, fetchRequest: (request: RegistryFetchRequestV1) => fetchRequest(request), readRegistryItem, readRegistryTheme, readRegistrySource: sourceById,
     /** Discovery is metadata-only; template bodies are acquired only after a contribution is selected. */
     readBotTemplateContributions: async (pointer: RegistryItemPointerV1): Promise<readonly PluginBotTemplateContributionV1[]> => {
       const response = await fetchRequest({ op: 'read', kind: 'plugin', ...pointer });

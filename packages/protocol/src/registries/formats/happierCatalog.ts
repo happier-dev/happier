@@ -1,3 +1,4 @@
+import { registryThemeCatalogSummaryV1, readHappierThemeCatalogItemV1 } from './happierThemeCatalog.js';
 import { parseMarketplaceIndexSourceSnapshotV1, type HappierPickV1, type MarketplaceIndexEntryV1, type MarketplaceCatalogDiscoveryV1 } from '../../marketplace/marketplaceIndexV1.js';
 import { readMarketplaceSourceListingsV1 } from '../../marketplace/marketplaceSourceListingsV1.js';
 import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../../marketplace/marketplaceSourceRegistryV1.js';
@@ -46,8 +47,9 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     });
     return { format: 'happier-catalog', kinds: [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
         ...(catalog.entries.some(entry => registryPluginSupportsKindV1(entry, 'agent')) ? ['agent' as const] : []),
-        ...(catalog.browserExtensions?.length ? ['browserExtension' as const] : [])])],
-      title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length + (catalog.browserExtensions?.length ?? 0) };
+        ...(catalog.browserExtensions?.length ? ['browserExtension' as const] : []),
+        ...(catalog.themes?.length ? ['theme' as const] : [])])],
+      title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length + (catalog.browserExtensions?.length ?? 0) + (catalog.themes?.length ?? 0) };
   },
   async list(ctx, req) {
     try {
@@ -88,8 +90,10 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
         const plugins = catalog.entries.filter(entry => registryPluginSupportsKindV1(entry, req.kind)
           && (!query || `${entry.display.title} ${entry.display.description ?? ''} ${entry.pluginId}`.toLocaleLowerCase().includes(query)))
           .map(entry => registryPluginSummaryV1(req.source, entry));
-        return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, total: items.length + plugins.length,
-          items: [...items, ...plugins], nextCursor: null, discovery };
+        const themes = req.kind === 'theme' ? (catalog.themes ?? []).map(entry => registryThemeCatalogSummaryV1(req.source.id, entry))
+          .filter(item => !query || `${item.title} ${item.description ?? ''} ${item.itemId}`.toLocaleLowerCase().includes(query)) : [];
+        return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, total: items.length + plugins.length + themes.length,
+          items: [...items, ...plugins, ...themes], nextCursor: null, discovery };
       }
       const entries = catalog.entries.filter(entry => (!req.contributionFamily || entry.summary.contributions.includes(req.contributionFamily))
         && (!query || `${entry.display.title} ${entry.display.description ?? ''} ${entry.pluginId}`.toLocaleLowerCase().includes(query)));
@@ -116,6 +120,8 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     }
     const { catalog, fetchedAt } = await readCatalog(ctx, req.source,
       (req.kind === 'plugin' || req.kind === 'agent') && req.version ? { pluginId: req.itemId, version: req.version } : undefined, acquired);
+    if (req.kind === 'theme' && catalog.themes?.some(entry => entry.itemId === req.itemId)) return readHappierThemeCatalogItemV1(ctx, { source: req.source, entries: catalog.themes,
+      itemId: req.itemId, version: req.version, fetchedAt, themeContent: req.themeContent });
     if (req.kind === 'browserExtension') return readHappierBrowserExtensionCatalogItemV1({ sourceId: req.source.id,
       entries: catalog.browserExtensions ?? [], itemId: req.itemId, version: req.version, fetchedAt });
     if (req.kind !== 'plugin') {
@@ -129,6 +135,7 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
       }
       if (!pick || !adapter) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
       const target = { source: pickSource(pick), kind: pick.kind, itemId: pick.itemId, ...(req.version === undefined ? {} : { version: req.version }),
+        ...(req.themeContent ? { themeContent: req.themeContent } : {}),
         ...(req.appMappingCorrection ? { appMappingCorrection: req.appMappingCorrection } : {}) };
       const read = ctx.readTargetItem ? await ctx.readTargetItem(target) : await adapter.read(ctx, target);
       const item = RegistryItemV1Schema.parse(read);
@@ -153,6 +160,8 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     const groups = new Map<string, { source: RegistrySourceV1; adapter: RegistryFormatAdapterV1;
       items: { catalogId: string; provenance: RegistryRemoteProvenanceV1 }[] }>();
     for (const item of items) {
+      const theme = catalog.themes?.find(entry => entry.itemId === item.itemId);
+      if (theme) { result.set(item.itemId, { kind: 'version', version: theme.version }); continue; }
       const matches = catalog.picks.filter(pick => pickItemId(pick) === item.itemId);
       if (matches.length === 0) { result.set(item.itemId, 'removed'); continue; }
       const pick = matches.length === 1 ? matches[0] : undefined;

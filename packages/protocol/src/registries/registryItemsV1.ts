@@ -1,3 +1,4 @@
+import { RegistryThemeListingV1Schema, RegistryThemePayloadV1Schema } from './registryThemeV1.js';
 import { RegistryAppMappingV1Schema } from './registryAppMappingV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -79,6 +80,7 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   agentDistribution: z.optional(RegistryAgentDistributionV1Schema),
   starterDeploy: z.optional(DeployShapeV1Schema),
   pluginListing: z.optional(RegistryPluginListingSummaryV1Schema),
+  themeMetadata: z.optional(RegistryThemeListingV1Schema),
 }));
 export type RegistryItemSummaryV1 = z.infer<typeof RegistryItemSummaryV1Schema>;
 export const RegistrySkillSourceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -131,6 +133,7 @@ export const AcpRegistryAgentV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type AcpRegistryAgentV1 = z.infer<typeof AcpRegistryAgentV1Schema>;
 export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  RegistryThemePayloadV1Schema,
   z.discriminatedUnion('state', [
     z.strictObject({ kind: z.literal('app'), state: z.literal('ready'), app: DeploymentTemplateV1Schema, ref: RegistryContentRefV1Schema }),
     z.strictObject({ kind: z.literal('app'), state: z.literal('needs_review'), ref: RegistryContentRefV1Schema,
@@ -161,6 +164,7 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
     : item.payload.kind === 'starter' ? item.payload.ref.kind === 'gitTree' ? item.payload.ref.commit
       : item.payload.ref.kind === 'version' ? item.payload.ref.version
       : item.payload.ref.kind === 'packageContent' ? item.payload.ref.pluginVersion : item.payload.ref.digest
+    : item.payload.kind === 'theme' ? item.payload.version
     : item.payload.kind === 'agent' ? item.payload.agent.version
       : item.payload.kind === 'mcpServer' ? item.payload.server.version : item.payload.listing.distribution.version;
   if (item.summary.kind !== item.payload.kind || item.summary.version !== version

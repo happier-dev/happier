@@ -18,3 +18,5 @@ export * from './formats/index.js';
 export * from './formats/registryMarketplaceCatalogBindingV1.js';
 export * from './registryBrowserExtensionV1.js';
 export { chromeWebStoreRegistryAdapterV1 } from './formats/chromeWebStore.js';
+
+export * from './registryThemeV1.js';

@@ -1,3 +1,4 @@
+import { openZipEntriesV1 } from '../../../archives/zipEntriesV1.js';
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 import type { SkillFileInputV1 } from './skillActionSchemasV1.js';
 
@@ -8,19 +9,14 @@ export function skillFileFromBytesV1(path: string, bytes: Uint8Array, unixMode?:
 }
 
 export async function readSkillZipFilesV1(bytes: Uint8Array): Promise<SkillFileInputV1[]> {
-  const { Uint8ArrayReader, Uint8ArrayWriter, ZipReader } = await import('@zip.js/zip.js');
-  const reader = new ZipReader(new Uint8ArrayReader(bytes), { useWebWorkers: false });
+  const archive = await openZipEntriesV1(bytes);
   try {
     const files: SkillFileInputV1[] = [];
-    for (const entry of await reader.getEntries()) {
-      if (entry.directory) continue;
-      const mode = entry.msDosCompatible ? undefined : entry.externalFileAttributes >>> 16;
-      if (mode !== undefined && (mode & 0o170000) === 0o120000) throw Object.assign(new Error('unsupported_entry'), { code: 'unsupported_entry' });
-      if (!entry.getData) throw new Error('zip_entry_unreadable');
-      files.push(skillFileFromBytesV1(entry.filename, await entry.getData(new Uint8ArrayWriter()), mode === undefined ? undefined : mode & 0o7777));
+    for (const entry of archive.entries) {
+      if (!entry.directory) files.push(skillFileFromBytesV1(entry.path, await entry.read(), entry.unixMode));
     }
     return files;
-  } finally { await reader.close(); }
+  } finally { await archive.close(); }
 }
 
 /** One portable archive producer for both UI downloads and CLI exports. */

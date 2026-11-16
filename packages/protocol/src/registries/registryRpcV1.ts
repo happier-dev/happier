@@ -29,7 +29,8 @@ export const RegistryFetchRequestV1Schema=lazyZodSchema(()=>z.discriminatedUnion
   z.strictObject({op:z.literal('link'),url:sourceUrl(),ref:z.optional(RegistrySkillContentRefV1Schema)}),
   z.strictObject({op:z.literal('linkFiles'),url:sourceUrl(),itemId:z.string(),version:identity(),ref:RegistrySkillContentRefV1Schema}),
   z.strictObject({op:z.literal('list'),sourceId:identity(),kind:RegistryKindV1Schema,contributionFamily:z.optional(RegistryContributionFamilyV1Schema),query:z.optional(z.string()),cursor:z.optional(z.nullable(z.string()))}),
-  z.strictObject({op:z.literal('read'),sourceId:identity(),kind:RegistryKindV1Schema,itemId:z.string(),version:z.optional(identity()),appMappingCorrection:z.optional(RegistryAppMappingV1Schema)}),
+  z.strictObject({op:z.literal('read'),sourceId:identity(),kind:RegistryKindV1Schema,itemId:z.string(),version:z.optional(identity()),themeContent:z.optional(z.literal(true)),appMappingCorrection:z.optional(RegistryAppMappingV1Schema)})
+    .check(z.refine(request => request.themeContent === undefined || request.kind === 'theme', 'Theme content requires a theme read')),
   z.strictObject({op:z.literal('files'),sourceId:identity(),kind:z.literal('skill'),itemId:z.string(),version:identity()}),
 ]));
 export type RegistryFetchRequestV1=z.infer<typeof RegistryFetchRequestV1Schema>;

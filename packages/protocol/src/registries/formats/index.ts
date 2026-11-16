@@ -1,3 +1,4 @@
+import { openVsxThemesRegistryAdapterV1 } from './openVsxThemes.js';
 import { githubRegistryAdapterV1 } from './github.js';
 import { skillsShRegistryAdapterV1 } from './skillsSh.js';
 import { claudeMarketplaceRegistryAdapterV1 } from './claudeMarketplace.js';
@@ -17,6 +18,7 @@ export const REGISTRY_FORMAT_ADAPTERS_V1 = {
   'coolify-templates': composeCatalogRegistryAdapterV1,
   'dokploy-templates': composeTomlCatalogRegistryAdapterV1,
   'chrome-web-store': chromeWebStoreRegistryAdapterV1,
+  'open-vsx': openVsxThemesRegistryAdapterV1,
 } satisfies Record<string,RegistryFormatAdapterV1>;
 export * from './registryFormatAdapterV1.js';
 export { readGitHubRepositoryV1 } from './github.js';

@@ -9,17 +9,17 @@ import type { DeploymentTemplateV1 } from '../plugins/contributions/deploymentTe
 import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, PUBLIC_NPM_REGISTRY_ORIGIN_V1, DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, deriveMarketplaceSourceId } from '../marketplace/marketplaceSourceRegistryV1.js';
 
 export const RegistryFormatV1Schema = lazyZodSchema(() => z.enum([
-  'skills-sh', 'git', 'claude-marketplace', 'mcp-registry', 'acp-registry', 'happier-catalog', 'happier-npm', 'coolify-templates', 'dokploy-templates', 'chrome-web-store',
+  'skills-sh', 'git', 'claude-marketplace', 'mcp-registry', 'acp-registry', 'happier-catalog', 'happier-npm', 'coolify-templates', 'dokploy-templates', 'chrome-web-store', 'open-vsx',
 ]));
 export type RegistryFormatV1 = z.infer<typeof RegistryFormatV1Schema>;
 
-export const REGISTRY_KINDS_V1 = ['skill', 'mcpServer', 'agent', 'plugin', 'app', 'starter', 'browserExtension'] as const;
+export const REGISTRY_KINDS_V1 = ['skill', 'mcpServer', 'agent', 'plugin', 'app', 'starter', 'browserExtension', 'theme'] as const;
 export const RegistryKindV1Schema = lazyZodSchema(() => z.enum(REGISTRY_KINDS_V1));
 export type RegistryKindV1 = z.infer<typeof RegistryKindV1Schema>;
 export const REGISTRY_FORMAT_KINDS_V1: Readonly<Record<RegistryFormatV1, readonly RegistryKindV1[]>> = {
   'skills-sh': ['skill'], git: ['skill'], 'claude-marketplace': ['skill'], 'mcp-registry': ['mcpServer'],
   'acp-registry': ['agent'], 'happier-catalog': REGISTRY_KINDS_V1, 'happier-npm': ['plugin', 'agent'],
-  'coolify-templates': ['app'], 'dokploy-templates': ['app'], 'chrome-web-store': ['browserExtension'],
+  'coolify-templates': ['app'], 'dokploy-templates': ['app'], 'chrome-web-store': ['browserExtension'], 'open-vsx': ['theme'],
 };
 export const RegistrySourceTokenV1Schema = lazyZodSchema(() => z.strictObject({ secretRef: z.string().check(z.minLength(1)),
   header: z.optional(z.strictObject({ name: z.string().check(z.minLength(1)), scheme: z.optional(z.enum(['Bearer', 'token'])) })),
@@ -175,6 +175,8 @@ export function readRegistrySourcesRecordV1(raw: unknown): RegistrySourcesRecord
 export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[] = [{
   id: HAPPIER_PICKS_SOURCE_ID, title: DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, format: 'happier-catalog', kinds: REGISTRY_FORMAT_KINDS_V1['happier-catalog'].filter(kind => kind !== 'starter'),
   url: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
+}, {
+  id: 'builtin:open-vsx', title: 'Open VSX', format: 'open-vsx', kinds: ['theme'], url: 'https://open-vsx.org/api', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }, {
   id: 'builtin:chrome-web-store', title: 'Chrome Web Store', format: 'chrome-web-store', kinds: ['browserExtension'], url: 'https://chromewebstore.google.com', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }, {

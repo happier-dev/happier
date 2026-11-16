@@ -1,3 +1,4 @@
+import { RegistryThemeIssueV1Schema } from './registryThemeV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineNpmProfileAdmissionRefusalV1Schema } from '../machines/machineAccessV1.js';
@@ -13,7 +14,8 @@ export const RegistrySourceStatusV1Schema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ state: z.literal('ok'), fetchedAt: z.number().check(z.int(), z.nonnegative()) }),
   z.strictObject({ state: z.literal('rate_limited'), retryAt: z.optional(z.number().check(z.int(), z.nonnegative())) }),
   z.strictObject({ state: z.literal('auth_failed'), machineNpmProfileAdmission: z.optional(MachineNpmProfileAdmissionRefusalV1Schema) }),
-  ...(['unreachable', 'needs_machine', 'invalid_source'] as const).map(state => z.strictObject({ state: z.literal(state) })),
+  z.strictObject({ state: z.literal('invalid_source'), themeIssue: z.optional(RegistryThemeIssueV1Schema) }),
+  ...(['unreachable', 'needs_machine'] as const).map(state => z.strictObject({ state: z.literal(state) })),
   z.strictObject({ state: z.literal('newer_format'), found: z.string() }),
 ]));
 export type RegistrySourceStatusV1 = z.infer<typeof RegistrySourceStatusV1Schema>;

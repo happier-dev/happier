@@ -21,7 +21,7 @@ export type RegistryFetchContextV1 = Readonly<{ http: RegistryHttpV1; signal?: A
   /** Host-owned filesystem transport, admitted against the current installed plugin occurrence. */
   packageContent?: Readonly<{ read(source: RegistryPackagedSourceDescriptorV1): Promise<Readonly<{ text: string; fetchedAt: number }>> }>;
   /** Selected reads apply target placement while retaining the original catalog pointer on daemon requests. */
-  readTargetItem?: (request: Readonly<{ source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string; appMappingCorrection?: RegistryAppMappingV1 }>) => Promise<RegistryItemV1>;
+  readTargetItem?: (request: Readonly<{ source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string; appMappingCorrection?: RegistryAppMappingV1; themeContent?: true }>) => Promise<RegistryItemV1>;
   /** Non-HTTP git transports are supplied by the Node SCM owner. */
   git?: Readonly<Pick<RegistrySkillFormatAdapterV1, 'list' | 'read' | 'latest'> & {
     /** One request shares temporary acquisitions; the transport retires them when consumption settles. */
@@ -41,6 +41,6 @@ export type RegistryFormatAdapterV1 = Readonly<{
   supportsContributionFamily?: boolean;
   detect?: (ctx: RegistryFetchContextV1, url: string) => Promise<RegistryDetectedSourceV1 | null>;
   list: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; contributionFamily?: RegistryContributionFamilyV1; query?: string; cursor?: string | null }) => Promise<RegistryListPageV1>;
-  read: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string; appMappingCorrection?: RegistryAppMappingV1 }) => Promise<RegistryItemV1>;
+  read: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string; appMappingCorrection?: RegistryAppMappingV1; themeContent?: true }) => Promise<RegistryItemV1>;
   latest: (ctx: RegistryFetchContextV1, items: readonly RegistryRemoteProvenanceV1[], options?: Readonly<{ source: RegistrySourceV1 }>) => Promise<ReadonlyMap<string, RegistryContentRefV1 | 'removed'>>;
 }>;

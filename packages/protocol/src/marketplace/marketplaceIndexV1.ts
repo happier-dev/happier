@@ -1,3 +1,4 @@
+import { RegistryThemeCatalogEntryV1Schema } from '../registries/registryThemeV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { valid as semverValid } from 'semver';
@@ -240,7 +241,7 @@ export function deriveMarketplaceNpmCompatibilityPlatformsV1(
 }
 
 export const HappierPickV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.enum(['skill', 'mcpServer', 'agent', 'app']), format: RegistryFormatV1Schema,
+  kind: z.enum(['skill', 'mcpServer', 'agent', 'app', 'theme']), format: RegistryFormatV1Schema,
   sourceUrl: HttpsUrl, itemId: z.string(), path: z.optional(z.string()),
   display: z.optional(z.strictObject({ title: NonEmptyText, description: z.optional(z.string()) })),
 }).check(z.superRefine((pick, context) => {
@@ -310,6 +311,7 @@ export const MarketplaceIndexSourceSnapshotV1Schema = lazyZodSchema(() => z.stri
   entries: z.array(MarketplaceIndexEntryV1Schema),
   picks: z._default(z.array(HappierPickV1Schema), []),
   browserExtensions: z.optional(z.array(RegistryBrowserExtensionCatalogEntryV1Schema)),
+  themes: z.optional(z.array(RegistryThemeCatalogEntryV1Schema)),
   discovery: z.optional(MarketplaceCatalogDiscoveryV1Schema),
   diagnostics: z.array(MarketplaceDiagnosticV1Schema),
 }).check(z.superRefine((value, context) => {
