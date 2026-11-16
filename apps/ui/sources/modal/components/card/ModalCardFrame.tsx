@@ -180,9 +180,15 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     const sheetDismiss = useSheetDismiss();
     const dismiss = sheet ? sheetDismiss : null;
     const drag = useSheetDrag(dismiss);
-    // A bounded card keeps the tallest height it has shown while it is presented, so a pushed child (a
-    // folder browser) or a narrowed list never shrinks the container under the person; it still grows.
+    // A bounded card keeps the tallest height the person has acted on while it is presented, so a pushed child (a
+    // folder browser) or a narrowed list never shrinks the container under them; it still grows. Layouts before
+    // they act (tiles measuring their width, reads settling) are not kept: a screen first fits its settled content.
     const [shownHeight, setShownHeight] = React.useState(0);
+    const latestHeight = React.useRef(0);
+    const keepActedHeight = React.useCallback(() => {
+        const height = latestHeight.current;
+        setShownHeight(previous => (height > previous ? height : previous));
+    }, []);
     const [shownScreen, setShownScreen] = React.useState(props.screenKey);
     if (shownScreen !== props.screenKey) {
         setShownScreen(props.screenKey);
@@ -193,7 +199,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     const onFrameLayout = React.useCallback((event: LayoutChangeEvent) => {
         const height = event.nativeEvent.layout.height;
         if (bounded) {
-            setShownHeight(previous => (height > previous ? height : previous));
+            latestHeight.current = height;
             const rounded = Math.round(height);
             setFrameHeight(previous => (previous === rounded ? previous : rounded));
         }
@@ -231,6 +237,9 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
                 : null)}
             {...(dismiss || bounded ? { onLayout: onFrameLayout } : {})}
+            {...(bounded ? Platform.OS === 'web'
+                ? ({ onPointerDownCapture: keepActedHeight, onKeyDownCapture: keepActedHeight } as unknown as Record<string, unknown>)
+                : { onTouchStart: keepActedHeight } : {})}
             style={[
                 dismiss ? { transform: [{ translateY: drag.offset }] } : null,
                 // Native Animated flattens this array; one registered frame keeps its complete Unistyles link.

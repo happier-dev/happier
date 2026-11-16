@@ -125,6 +125,8 @@ describe('ModalCardFrame', () => {
             const screen = await renderScreen(frame('RecipeFields'));
             expect(flattenStyle(screen.findHostByTestId('bounded-sheet')?.props.style).minHeight || 0).toBe(0);
             act(() => screen.findHostByTestId('bounded-sheet')?.props.onLayout?.(layout(690)));
+            // The person presses inside it (the folder row that pushes the browser).
+            act(() => personActs(screen.findHostByTestId('bounded-sheet')));
             await screen.update(frame('FolderBrowser'));
             act(() => screen.findHostByTestId('bounded-sheet')?.props.onLayout?.(layout(350)));
             expect(flattenStyle(screen.findHostByTestId('bounded-sheet')?.props.style).minHeight).toBe(690);
@@ -144,12 +146,31 @@ describe('ModalCardFrame', () => {
         const minHeight = () => flattenStyle(screen.findHostByTestId('bounded-card')?.props.style).minHeight || 0;
         const screen = await renderScreen(frame('auto:working'));
         act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(470)));
+        act(() => personActs(screen.findHostByTestId('bounded-card')));
         act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(400)));
         expect(minHeight(), 'the same screen never shrinks under the person').toBe(470);
         await screen.update(frame('auto:noAgent'));
         expect(minHeight(), 'a new screen starts from its own content').toBe(0);
         act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(340)));
+        act(() => personActs(screen.findHostByTestId('bounded-card')));
         expect(minHeight()).toBe(340);
+    });
+
+    // PFC-BUILD-1113-B1 live: Deploy an app's Where step laid out at 426 px while its tiles measured their width, then
+    // settled at 310 px; the card kept 116 px of empty space. Only a height the person acted on is kept.
+    it('lets a new screen settle before it keeps a height: layouts before the person acts are not a floor', async () => {
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+        const frame = (screenKey: string) => <ModalCardFrame testID="bounded-card" scrollHost="bounded" screenKey={screenKey}
+            title="Deploy an app" dimensions={{ size: 'lg', maxHeightRatio: 0.88 }}>{React.createElement('Body')}</ModalCardFrame>;
+        const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height } } });
+        const minHeight = () => flattenStyle(screen.findHostByTestId('bounded-card')?.props.style).minHeight || 0;
+        const screen = await renderScreen(frame('deploy:where'));
+        act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(542)));
+        act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(434)));
+        expect(minHeight(), 'the settling layout is not kept').toBe(0);
+        act(() => personActs(screen.findHostByTestId('bounded-card')));
+        act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(380)));
+        expect(minHeight(), 'what the person acted on is kept').toBe(434);
     });
 
     it('fills the viewport for full-page chrome and keeps content mounted across presentation changes', async () => {
@@ -663,3 +684,10 @@ describe('ModalCardFrame', () => {
         }
     });
 });
+
+/** A press or key inside the card: the moment its current height becomes the floor. */
+function personActs(host: { props: Record<string, unknown> } | null | undefined) {
+    const handler = (host?.props.onPointerDownCapture ?? host?.props.onTouchStart) as (() => void) | undefined;
+    if (!handler) throw new Error('the card does not observe the person acting');
+    handler();
+}
