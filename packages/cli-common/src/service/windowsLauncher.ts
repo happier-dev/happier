@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, join, win32 } from 'node:path';
+import { dirname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveSelfContainedCliRuntimeRootPath } from '../firstPartyRuntime/resolveSelfContainedCliRuntimeRoot.js';
@@ -131,11 +131,18 @@ export function resolveInstalledWindowsServiceLauncherPaths(params: Readonly<{
   if (!definitionPath) throw new Error('definitionPath is required for Windows service launcher paths');
   const label = sanitizeWindowsServiceLauncherSegment(params.label, 'label');
   const version = sanitizeWindowsServiceLauncherSegment(params.version, 'version');
-  const definition = win32.parse(definitionPath);
+  const pathApi = definitionPathApi(definitionPath);
+  const definition = pathApi.parse(definitionPath);
   return {
-    launcherPath: win32.join(resolveInstalledWindowsServiceLauncherRootPath({ definitionPath, label }), `launcher-${version}`, WINDOWS_SERVICE_LAUNCHER_FILE_NAME),
-    diagnosticLogPath: win32.join(definition.dir, `${definition.name}.launcher.log`),
+    launcherPath: pathApi.join(resolveInstalledWindowsServiceLauncherRootPath({ definitionPath, label }), `launcher-${version}`, WINDOWS_SERVICE_LAUNCHER_FILE_NAME),
+    diagnosticLogPath: pathApi.join(definition.dir, `${definition.name}.launcher.log`),
   };
+}
+
+// Installed definitions are Windows paths. A POSIX-rooted one (Windows-shaped
+// tests on POSIX hosts) keeps its own separators instead of becoming `\tmp\...`.
+function definitionPathApi(definitionPath: string): typeof win32 {
+  return definitionPath.startsWith('/') ? posix : win32;
 }
 
 /** All immutable launcher versions belonging to this service, never a neighboring service. */
@@ -145,7 +152,8 @@ export function resolveInstalledWindowsServiceLauncherRootPath(params: Readonly<
 }>): string {
   const definitionPath = String(params.definitionPath ?? '').trim();
   if (!definitionPath) throw new Error('definitionPath is required for Windows service launcher paths');
-  return win32.join(win32.dirname(definitionPath), sanitizeWindowsServiceLauncherSegment(params.label, 'label'));
+  const pathApi = definitionPathApi(definitionPath);
+  return pathApi.join(pathApi.dirname(definitionPath), sanitizeWindowsServiceLauncherSegment(params.label, 'label'));
 }
 
 export async function readValidatedWindowsServiceLauncher(path: string): Promise<Buffer> {

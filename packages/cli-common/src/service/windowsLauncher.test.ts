@@ -56,6 +56,19 @@ describe('Windows service launcher asset', () => {
     });
   });
 
+  it('keeps a POSIX-rooted definition inside its own directory', () => {
+    // Windows-shaped discovery tests run on POSIX hosts with OS-temp homes. A
+    // win32 join turned `/tmp/...` into a relative `\tmp\...` name in the cwd.
+    expect(resolveInstalledWindowsServiceLauncherPaths({
+      definitionPath: '/tmp/happier-home/.happier/services/happier-daemon.default.ps1',
+      label: 'happier-daemon.default',
+      version: '17',
+    })).toEqual({
+      launcherPath: '/tmp/happier-home/.happier/services/happier-daemon.default/launcher-17/happier-service-launcher.exe',
+      diagnosticLogPath: '/tmp/happier-home/.happier/services/happier-daemon.default.launcher.log',
+    });
+  });
+
   it('stages different launcher builds in different version directories', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-launcher-version-'));
     try {
