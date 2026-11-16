@@ -109,7 +109,10 @@ it('inspects and links explicit Workers upload without native Git access or a bu
 it('builds exact source in the pinned container and uploads executable multipart modules without provider credentials in Exec', async () => {
   const h = await fixture();
   try {
-    expect(await h.invoke()).toMatchObject({ state: 'running', providerDeploymentId: providerReference });
+    expect(await h.invoke()).toMatchObject({ state: 'running', providerDeploymentId: providerReference,
+      uploadProvenance: { sourceManifestFingerprint: 'approved-source',
+        build: { location: 'controller', image: CLOUDFLARE_BUILD_IMAGE, toolchain: { name: 'wrangler', version: '4.156.0' },
+          outputManifestFingerprint: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) } } });
     expect(h.materialize).toHaveBeenCalledExactlyOnceWith({ environmentId: 'environment', deploymentId: 'receipt' }, { signal: expect.any(AbortSignal) });
     expect(h.requests).toHaveLength(1);
     const request = h.requests[0];
@@ -214,15 +217,6 @@ it('does not declare upload success from another serving version', async () => {
     expect(await h.invoke({ providerDeploymentId: providerReference })).toMatchObject({ state: 'outcome_unknown', providerDeploymentId: providerReference });
     expect(h.materialize).not.toHaveBeenCalled();
     expect(h.requests.map(request => request.method)).toEqual(['GET']);
-  } finally { await h.dispose(); }
-});
-
-it('retains reviewed source and compiled output provenance in the upload observation', async () => {
-  const h = await fixture();
-  try {
-    expect(await h.invoke()).toMatchObject({ uploadProvenance: { sourceManifestFingerprint: 'approved-source',
-      build: { location: 'controller', image: CLOUDFLARE_BUILD_IMAGE, toolchain: { name: 'wrangler', version: '4.156.0' },
-        outputManifestFingerprint: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) } } });
   } finally { await h.dispose(); }
 });
 
