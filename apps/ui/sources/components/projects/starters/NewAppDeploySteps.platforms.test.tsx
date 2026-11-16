@@ -20,6 +20,8 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -148,8 +150,16 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
       const hasMachineField = (testID: string) => (screen.findHostByTestId(testID)
         ?.findAll(child => child.props?.testID === 'project-deployments.draft.machine').length ?? 0) > 0;
       await waitForHomeGovernance(() => expect(screen.findHostByTestId(`${alpha}:footer`), 'the platform card shows its plans').not.toBeNull());
+      expect(textOf(`${alpha}:description`), 'the card carries the declared description').toContain('Hosting for web apps');
       expect(textOf(`${alpha}:footer`)).toContain('$0 a month');
       expect(textOf(`${alpha}:footer`), 'the facts say where they come from').toContain('alpha.example');
+      // What's included (journey-deploy wherePeek): the plans side by side, a fact a plan doesn't declare left empty.
+      expect(screen.findHostByTestId(`${alpha}:compare`)).toBeNull();
+      await screen.pressByTestIdAsync(`${alpha}:included`);
+      await waitForHomeGovernance(() => expect(screen.findHostByTestId(`${alpha}:compare`)).not.toBeNull());
+      const comparison = textOf(`${alpha}:compare`)!;
+      for (const expected of ['Free', 'Pro', 'Credit', '$20 a month', '—', 'Automatic HTTPS', 'Preview deployments', 'alpha.example'])
+        expect(comparison, expected).toContain(expected);
       await screen.pressByTestIdAsync(alpha);
       await waitForHomeGovernance(() => expect(hasMachineField('project-deployments.draft.target:own-server:footer'),
         'the Machine stays in the Machine card').toBe(true));

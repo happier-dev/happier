@@ -630,6 +630,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         : autoKind === 'noAgent' ? t('newApp.auto.descriptionKept')
         : null :
     deployStep === 'where' || deployStep === 'configure' ? t('newApp.deploy.nothingCreated') :
+    deployStep === 'review' && deployFrame?.refused ? t('newApp.deploy.plan.nothingWasCreated') :
     step === 'start' && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
       : step === 'describe'

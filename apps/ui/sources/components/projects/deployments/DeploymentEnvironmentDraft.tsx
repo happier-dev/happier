@@ -105,6 +105,8 @@ export type DeploymentDraftFrame = Readonly<{
   /** The Project's repository and branch, once its Source is read. */
   source: Readonly<{ title: string; note: string | null }> | null;
   appName: string | null;
+  /** Review after Create refused: nothing was created (journey-deploy revFail). */
+  refused: boolean;
   primary: Readonly<{ title: string; disabled: boolean; loading: boolean; testID: string }>;
   press: () => void;
   back: () => void;
@@ -502,9 +504,10 @@ export const DeploymentEnvironmentDraft = React.memo(
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
       source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
       appName,
+      refused: draftStep === 'review' && !partial && refusal?.kind === 'refused',
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, sourceNote, branch, appName, primary.title, primary.disabled, primary.loading,
+    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, sourceNote, branch, appName, partial, refusal, primary.title, primary.disabled, primary.loading,
       primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
     stepsHost.current = props.steps;
@@ -589,6 +592,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         machine: machineName(chosen.id), resource: platformProvider?.kind === 'existing' ? 'existing' : 'create' }
         : { kind: 'machine', machine: machineName(chosen.id) },
       answered: refusal !== null,
+      refused: refusal?.kind === 'refused',
     } : null;
     const reviewFacts = stepReview ? (
             <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
@@ -599,6 +603,12 @@ export const DeploymentEnvironmentDraft = React.memo(
             <DeploymentCreationReviewFacts review={prepared.review} serverId={props.lifetime?.scope.serverId ?? null}
               testID="project-deployments.draft" plan={reviewPlan ?? undefined} />
           ) : null;
+    // What making this platform resource means, in the platform's own words (deploy auto-mode U8, e.g. a Pages source
+    // is final at creation): one field from its inspect, shown before Create.
+    const platformNotice = prepared && onPlatform && platformProvider?.reviewNotice ? (
+      <AttentionBanner testID="project-deployments.draft.reviewNotice" tone="neutral" title={platformProvider.reviewNotice} />
+    ) : null;
+    const reviewBody = platformNotice ? <>{platformNotice}{reviewFacts}</> : reviewFacts;
     const projectChoiceGroups = props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
             description={t('capabilities.store.appPage.projectDescription')}
@@ -716,7 +726,8 @@ export const DeploymentEnvironmentDraft = React.memo(
                 const plans = option.id === OWN_SERVER_TARGET ? undefined
                   : offeredPlatformTargets.find(target => target.key === option.id)?.plans;
                 const body = option.id === OWN_SERVER_TARGET ? machineCard
-                  : plans ? <DeploymentTargetPlans plans={plans} columns={!props.phone && option.id === leadId} /> : null;
+                  : plans ? <DeploymentTargetPlans plans={plans} platform={option.title} columns={!props.phone && option.id === leadId}
+                    phone={props.phone} testID={`project-deployments.draft.target:${option.id}`} /> : null;
                 return body ? <View testID={`project-deployments.draft.target:${option.id}:footer`}>{body}</View> : null;
               }}
             />
@@ -977,7 +988,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             </View>
           )}
           {draftStep === 'review' ? (partialProgress ?? <>{machineCausedRefusal ? machineAwayNotice : refusalBanner}
-            {reviewFacts}</>) : null}
+            {reviewBody}</>) : null}
         </View>
       );
     }
@@ -988,7 +999,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           {header}
           {partialProgress ?? <>
           {refusalBanner}
-          {reviewFacts}
+          {reviewBody}
           {projectChoiceGroups}
           {whereGroup}
           {configureGroups}

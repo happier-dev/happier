@@ -333,6 +333,13 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(frame().step).toBe('review');
       expect(screen.findByTestId('project-deployments.draft.creates.environment')).not.toBeNull();
       expect(nextSteps(screen)).toBeUndefined();
+      // revFail: nothing was created, and the row Create refused says so where it stands.
+      const { t } = await import('@/text');
+      const rowText = (testID: string) => screen.findByTestId(testID)?.findAll(() => true)
+        .flatMap(node => node.children.filter(value => typeof value === 'string')).join(' ') ?? '';
+      expect(rowText('project-deployments.draft.creates.project')).toContain(t('newApp.deploy.plan.notCreated'));
+      expect(screen.findByTestId('project-deployments.draft.creates.environment.refused')).not.toBeNull();
+      expect(frame().refused, 'the dialog says nothing was created').toBe(true);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });

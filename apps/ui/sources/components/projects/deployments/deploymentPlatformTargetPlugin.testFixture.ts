@@ -117,7 +117,9 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
         // Dated display facts, as a platform plugin declares them (Protocol DeploymentTargetPlanV1).
         ...(options.plans ? { description: 'Hosting for web apps', plans: [{ id: 'free', title: 'Free',
           facts: [{ label: 'Price', value: '$0 a month' }, { label: 'Requests', value: '100,000 a day' }],
-          source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } }] } : {}),
+          included: ['Automatic HTTPS'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } },
+        { id: 'pro', title: 'Pro', facts: [{ label: 'Price', value: '$20 a month' }, { label: 'Credit', value: '$20 a month' }],
+          included: ['Preview deployments'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } }] } : {}),
         actions: { inspect: 'inspect-alpha', link: 'link', deploy: 'deploy', observe: 'observe' } },
       beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
         actions: { inspect: 'inspect-beta', link: 'link', deploy: 'deploy', observe: 'observe',

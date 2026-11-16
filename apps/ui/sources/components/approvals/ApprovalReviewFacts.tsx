@@ -14,6 +14,7 @@ import { deployersLabel } from '@/components/projects/deployments/DeploymentDepl
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
+import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -147,6 +148,8 @@ export type DeploymentCreationReviewPlan = Readonly<{
     | { kind: 'platform'; platform: string; pluginId: string; machine: string; resource: 'create' | 'existing' }>;
   /** Create has answered (a refusal or an approval request): what was asked stays, what would follow goes. */
   answered: boolean;
+  /** Create refused: nothing was created, and the Environment row says it couldn't be (journey-deploy revFail). */
+  refused: boolean;
 }>;
 
 /** The order things happen after Create, from what the prepared review creates (journey-deploy rev "What happens next"). */
@@ -181,16 +184,21 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   return <>
     {plan ? <ItemGroup testID={`${testID}.creates`} title={t('newApp.deploy.plan.createsTitle')}>
       {plan.newProjectName ? <Item testID={`${testID}.creates.project`} mode="info" icon={<Icon name="folder" />}
-        title={t('newApp.deploy.plan.project', { name: plan.newProjectName })} subtitle={t('newApp.deploy.plan.projectNote')} /> : null}
+        title={t('newApp.deploy.plan.project', { name: plan.newProjectName })}
+        subtitle={plan.answered ? t('newApp.deploy.plan.notCreated') : t('newApp.deploy.plan.projectNote')} /> : null}
       <Item testID={`${testID}.creates.environment`} mode="info" icon={<Icon name="rocket" />}
         title={t('newApp.deploy.plan.environment', { name: plan.environment.name })}
-        subtitle={[plan.environment.production ? t('newApp.deploy.plan.production') : null,
-          t('newApp.deploy.plan.deployers', { who: deployersLabel(plan.environment.deployers) })].filter(Boolean).join(' · ')} />
+        subtitle={plan.refused ? <RowStatusLine testID={`${testID}.creates.environment.refused`} tone="bad"
+          text={t('newApp.deploy.plan.refusedRow')} />
+          : plan.answered ? t('newApp.deploy.plan.notCreated')
+          : [plan.environment.production ? t('newApp.deploy.plan.production') : null,
+            t('newApp.deploy.plan.deployers', { who: deployersLabel(plan.environment.deployers) })].filter(Boolean).join(' · ')} />
       {runsOn?.kind === 'platform' ? <Item testID={`${testID}.creates.platform`} mode="info"
         icon={<PluginMark title={runsOn.platform} pluginId={runsOn.pluginId} />}
         title={runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreate', { platform: runsOn.platform })
           : t('newApp.deploy.plan.platformLink', { platform: runsOn.platform })}
-        subtitle={runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreateNote', { platform: runsOn.platform })
+        subtitle={plan.answered ? t('newApp.deploy.plan.notCreated')
+          : runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreateNote', { platform: runsOn.platform })
           : t('newApp.deploy.plan.platformLinkNote')} /> : null}
     </ItemGroup> : null}
     {plan?.answered ? null : <>
