@@ -3,7 +3,7 @@ import { StyleSheet } from 'react-native';
 import { getMonoFont, getHappierFontFamily, themeFontFamilyVariableName } from '@/constants/Typography';
 import { createPlanetCanvasSceneCache, snapCanvasBox } from './planetCanvasScene';
 import { paintPlanetScene } from './planetCanvasPaint.web';
-import { orderedFade } from '@happier-dev/brand/atmosphere';
+import { orderedFadeMask } from './orderedFadeMask';
 import type { PlanetCanvasProps } from './planetCanvas.types';
 import { usePlanetDigits } from './usePlanetDigits';
 import { releaseCanvasBackingStore, useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
@@ -40,18 +40,39 @@ function PlanetDigits(input: PlanetCanvasProps) {
     const fadeFrom = props.fade?.from, fadeTo = props.fade?.to;
     const scale = props.mark ? props.width / (props.mark.size ?? 24) : 1;
     const ink = props.mark?.ink ?? props.ink;
+    // The brand's ordered foot fade as an alpha mask one lattice period wide (the native planet's
+    // shape), composited onto the rows a paint changed. Reading the canvas back to fade it on every
+    // paint and digit tick kept growing WebKit's graphics memory per Home visit (P03-DESKTOP-FLOWS-2).
+    const fadeMask = React.useMemo(() => fadeFrom === undefined || fadeTo === undefined ? null
+        : orderedFadeMask(box.pixelHeight / dpr, fadeFrom, fadeTo, dpr, box.pixelHeight), [box.pixelHeight, dpr, fadeFrom, fadeTo]);
+    const maskRef = React.useRef<{ mask: NonNullable<typeof fadeMask>; canvas: HTMLCanvasElement } | null>(null);
+    React.useLayoutEffect(() => () => releaseCanvasBackingStore(maskRef.current?.canvas ?? null), []);
     const fadeRows = React.useCallback((context: CanvasRenderingContext2D, from: number, to: number) => {
-        if (fadeFrom === undefined || fadeTo === undefined) return;
+        if (!fadeMask || fadeFrom === undefined) return;
         const top = Math.max(from, 0, Math.floor(fadeFrom * dpr));
         if (top >= to) return;
+        let held = maskRef.current;
+        if (held?.mask !== fadeMask) {
+            const canvas = held?.canvas ?? document.createElement('canvas');
+            canvas.width = fadeMask.width; canvas.height = fadeMask.height;
+            const maskContext = canvas.getContext('2d');
+            if (!maskContext) return;
+            const image = maskContext.createImageData(fadeMask.width, fadeMask.height);
+            image.data.set(fadeMask.rgba);
+            maskContext.putImageData(image, 0, 0);
+            held = maskRef.current = { mask: fadeMask, canvas };
+        }
+        const pattern = context.createPattern(held.canvas, 'repeat-x');
+        if (!pattern) return;
+        context.save();
         context.setTransform(1, 0, 0, 1, 0, 0);
-        const image = context.getImageData(0, top, box.pixelWidth, to - top);
-        const store = new Uint8ClampedArray(box.pixelWidth * box.pixelHeight * 4);
-        store.set(image.data, top * box.pixelWidth * 4);
-        orderedFade(store, box.pixelWidth, box.pixelHeight, fadeFrom, fadeTo, dpr);
-        image.data.set(store.subarray(top * box.pixelWidth * 4, to * box.pixelWidth * 4));
-        context.putImageData(image, 0, top);
-    }, [box.pixelHeight, box.pixelWidth, dpr, fadeFrom, fadeTo]);
+        // destination-in clears outside its shape, so clip it to the changed rows.
+        context.beginPath(); context.rect(0, top, box.pixelWidth, to - top); context.clip();
+        context.globalCompositeOperation = 'destination-in';
+        context.fillStyle = pattern;
+        context.fillRect(0, top, box.pixelWidth, to - top);
+        context.restore();
+    }, [box.pixelWidth, dpr, fadeFrom, fadeMask]);
     React.useLayoutEffect(() => {
         let cancelled = false;
         underlay.current = (async () => {

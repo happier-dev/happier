@@ -10,10 +10,11 @@ export function orderedFadeMask(
   from: number,
   to: number,
   dpr: number,
+  /** A canvas's exact backing-store rows, when the caller already snapped them. */
+  pixelHeight = Math.max(1, Math.ceil(height * dpr)),
 ) {
   const cell = Math.max(1, Math.round(2 * dpr));
   const width = 8 * cell;
-  const pixelHeight = Math.max(1, Math.ceil(height * dpr));
   const rgba = new Uint8ClampedArray(width * pixelHeight * 4).fill(255);
   orderedFade(rgba, width, pixelHeight, from, to, dpr);
   return {

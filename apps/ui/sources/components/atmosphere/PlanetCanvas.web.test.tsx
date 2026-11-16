@@ -110,3 +110,47 @@ it('keeps one drawing layer per planet and frees its pixel buffers while hidden 
     await screen.unmount();
     expect(pixels()).toBe(0);
 });
+
+it('applies the foot fade by compositing a mask, so neither the paint nor a digit tick reads the canvas back', async () => {
+    // A full-height getImageData/putImageData per paint and per two-second tick kept growing the
+    // desktop app's graphics memory on every Home visit (P03-DESKTOP-FLOWS-2): the fade is a mask.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.stubGlobal('document', { documentElement: {}, fonts: { check: () => true } });
+    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
+    // The physical Canvas2D surfaces are the system boundary: count pixel reads/writes and mask fills.
+    const pixels = { reads: 0, writes: 0 };
+    const fadeFills: number[] = [];
+    const surface = (width = 0, height = 0) => {
+        const context = {
+            globalCompositeOperation: 'source-over',
+            setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, drawImage() {}, fillText() {},
+            save() {}, restore() { context.globalCompositeOperation = 'source-over'; }, rect() {}, clip() {}, createPattern: () => ({}),
+            createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+            measureText: () => ({ actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 12 }),
+            fillRect(_x: number, _y: number, _w: number, h: number) { if (context.globalCompositeOperation === 'destination-in') fadeFills.push(h); },
+            getImageData(_x: number, _y: number, w: number, h: number) { pixels.reads += 1; return { data: new Uint8ClampedArray(w * h * 4) }; },
+            putImageData() { pixels.writes += 1; },
+        };
+        return { width, height, getContext: () => context };
+    };
+    Object.assign(document, { createElement: () => surface() });
+    const pane = { width: 280, height: 240 };
+    const options = homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane,
+        { theme: 'dark', style: 'balanced', digits: true });
+    const ready = vi.fn();
+    const screen = await renderScreen(<PlanetCanvas {...pane} options={options} fade={{ from: 0, to: pane.height }} retype={{ paused: false }} onReady={ready} />,
+        { createNodeMock: element => {
+            const { width, height } = element.props;
+            return element.type === 'canvas' && typeof width === 'number' && typeof height === 'number' ? surface(width, height) : null;
+        } });
+    const writesAfterMount = pixels.writes;
+    const fillsAfterMount = fadeFills.length;
+    for (let tick = 0; tick < 5; tick++) await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(ready).toHaveBeenCalledTimes(6);
+    expect(pixels.reads).toBe(0);
+    expect(pixels.writes).toBe(writesAfterMount);
+    expect(fillsAfterMount).toBeGreaterThan(0);
+    // The fade still covers every retyped band.
+    expect(fadeFills.length).toBe(fillsAfterMount + 5);
+    await screen.unmount();
+});

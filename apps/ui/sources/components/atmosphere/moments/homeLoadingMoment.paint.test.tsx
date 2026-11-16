@@ -33,7 +33,8 @@ it.each([
   let releaseFonts: () => void = () => {};
   let rejectFonts: (error: Error) => void = () => {};
   const fonts = new Promise<void>((resolve, reject) => { releaseFonts = resolve; rejectFonts = reject; });
-  const layerContext = { setTransform() {}, beginPath() {}, fill() {}, fillText() {},
+  const layerContext = { setTransform() {}, beginPath() {}, fill() {}, fillText() {}, putImageData() {},
+    createImageData: (width: number, height: number) => ({ data: new Uint8ClampedArray(width * height * 4) }),
     arcs: [] as number[][],
     arc(x: number, y: number, r: number) { this.arcs.push([x, y, r]); },
   };
@@ -79,8 +80,8 @@ it.each([
         paints.set(id, layer.getContext().arcs.slice());
       },
       measureText: () => ({ actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 12 }),
-      getImageData: (_x: number, _y: number, width: number, height: number) => ({ data: new Uint8ClampedArray(width * height * 4) }),
-      putImageData() {},
+      // The foot fade composites a mask pattern over the changed rows.
+      save() {}, restore() {}, rect() {}, clip() {}, fillRect() {}, createPattern: () => ({}),
     };
     return { getContext: () => context };
   } });
