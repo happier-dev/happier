@@ -86,11 +86,14 @@ describe('Upstash preparation through public Actions', () => {
     } finally { await kit.dispose(); v.cleanup(); }
   });
 
-  it('refuses account environment injection before creating a builder and never mutates global settings', async () => {
+  it('builds with configured native account environment without reading or mutating account settings', async () => {
     const v = vendor(); v.env(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      expect(await kit.invokeAction('prepare-build', input, { surface: 'plugin' })).toEqual({ kind: 'refused', code: 'upstash_box_account_environment_present' });
-      expect(v.calls).toEqual([{ method: 'GET', path: '/v2/box/settings/env', body: {} }]);
+      expect(await kit.invokeAction('prepare-build', input, { surface: 'plugin' }))
+        .toMatchObject({ kind: 'pending', nativeOperationRef: { value: { sourceBoxId: 'builder-id', snapshotId: 'snapshot-id' } } });
+      expect(v.calls.filter(call => call.path.startsWith('/v2/box/settings'))).toEqual([]);
+      expect(JSON.stringify(v.calls)).not.toContain('fixture-key');
+      expect(v.calls.filter(call => call.method === 'POST' && call.path.endsWith('/snapshots'))).toHaveLength(1);
     } finally { await kit.dispose(); v.cleanup(); }
   });
 

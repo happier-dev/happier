@@ -13,7 +13,6 @@ describe('Upstash native preparation recovery', () => {
       init?.signal?.throwIfAborted();
       const path = new URL(String(url)).pathname, method = init?.method ?? 'GET';
       calls.push(method + ' ' + path);
-      if (path.endsWith('/settings/env')) return Response.json({ env_vars: {} });
       if (path.endsWith('/snapshots')) return Response.json({ snapshots: [] });
       if (method === 'DELETE') { present = false; return Response.json({}); }
       if (method === 'POST') present = true;

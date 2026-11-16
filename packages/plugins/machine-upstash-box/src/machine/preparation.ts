@@ -24,10 +24,7 @@ type InspectResult = ReturnType<typeof PREPARATION_SCHEMAS.inspectResult.parse>;
 type DestroyResult = ReturnType<typeof PREPARATION_SCHEMAS.destroyResult.parse>;
 const snapshotSchema = defineProtocolObject({ id: text, name: text, box_id: text, status: text }, open);
 const snapshotsSchema = defineProtocolObject({ snapshots: defineProtocolArray(snapshotSchema) }, open);
-// SDK 0.8.0 listEnv accepts both {env_vars: {...}} and the bare record.
-const envSchema = defineProtocolObject({}, { policy: 'additive-open/preserve', additionalProperties: defineProtocolString() });
-
-// Native contract: @upstash/box 0.8.0 client.ts, snapshots and account env.
+// Native contract: @upstash/box 0.8.0 client.ts and snapshots.
 // The paused source remains owned until destruction: operation-id recovery
 // needs its name→id lookup because native snapshot listing is box-scoped.
 export function createUpstashBoxPreparationClient(request: typeof fetch, signal?: AbortSignal) {
@@ -82,13 +79,6 @@ export function createUpstashBoxPreparationClient(request: typeof fetch, signal?
     let operation: Operation = { managedId: 'prepared-' + text.parse(input.operationId), launch: definition.launch.choices };
     let allocated = false;
     try {
-      const value = await http(UPSTASH_BOX_API + '/settings/env');
-      const envelope = defineProtocolObject({ env_vars: envSchema }, open).safeParse(value);
-      const env = envelope.success ? envelope.data.env_vars : envSchema.parse(value);
-      // Per-box env_vars:{} is merged with account values, not an exclusion.
-      // This native boundary refuses before allocation; no global write or
-      // account credential ever enters the source image.
-      if (Object.keys(env).length) return { kind: 'refused', code: 'upstash_box_account_environment_present' };
       const { snapshotId: _snapshotId, ...base } = definition.launch.choices;
       allocated = true;
       const acquired = await native.acquire(base, operation.managedId);

@@ -802,9 +802,10 @@ Agent37 publishes a private template revision: its native build cannot be
 canceled, and deleting the template removes its namespace while image copies
 used by existing instances can remain. Maritime's native sandbox snapshots use
 a separate sandbox contribution from its server offerings and request
-`forEndUser` to exclude account-secret injection. Upstash refuses preparation
-while account-level environment keys are present; it retains the paused source
-box for scoped snapshot recovery until Delete removes both snapshot and source.
+`forEndUser` to exclude account-secret injection. Upstash keeps the account
+environment its boxes ordinarily receive; preparation adds no Happier credentials.
+It retains the paused source box for scoped snapshot recovery until Delete
+removes both snapshot and source.
 That retained source still incurs storage charges. These provider limits do not
 authorize automatic rebuilding, replaying an uncertain allocation, or deleting
 unrelated resources.
