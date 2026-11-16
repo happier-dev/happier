@@ -2,6 +2,7 @@ import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/pro
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileLibrary';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { createThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 export function themeActionDocument(id: string) {
     const parsed = parseThemeProfileDocument({ schemaVersion: 2, id, name: id,
@@ -40,7 +41,9 @@ export function createThemeActionHarness() {
         writeSelection: (mode: 'light' | 'dark', reference: ThemeReference | null) => { selection[mode] = reference; },
         createId: () => crypto.randomUUID(), now: () => Date.parse('2026-11-16T12:00Z') };
     const library = createThemeProfileLibrary(context);
-    const owner = createThemeTryOnOwner({ keep: input => library.keep(input), select: input => library.select(input),
+    const accountScope: AccountSettingsScope = Object.freeze({ serverId: 'theme-test-home', accountId: 'theme-test-account' });
+    const owner = createThemeTryOnOwner({ captureScope: () => accountScope,
+        keep: input => library.keep(input), select: input => library.select(input),
         // Store acquisition/install is exercised by the Store lifecycle composition suite.
         installStore: async () => { throw new Error('Store origin is outside these agent/editor cases'); } });
     return { owner, library, context, rows, selection, writes: () => writes, holdSave: (barrier: () => Promise<void>) => { beforeSave = barrier; } };
