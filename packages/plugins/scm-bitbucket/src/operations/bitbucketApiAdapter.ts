@@ -26,10 +26,12 @@ import { bitbucketHostingProviderAdapter } from '../adapter.js';
 import {
   bitbucketRepositoryApiUrl,
   parseBitbucketPullRequestNumberFromUrl,
+  readBitbucketOriginCoordinates,
   readBitbucketRepositoryCoordinates,
 } from '../parsing/bitbucketCoordinates.js';
 import { readBitbucketApiUrl } from '../triage/apiUrl.js';
 import { BITBUCKET_MAX_PULL_REQUEST_PAGE_LENGTH } from '../triage/pagination.js';
+import { listBitbucketWorkspaces } from '../triage/pullRequests.js';
 import {
   type BitbucketBasicAuthMaterialization,
   type BitbucketRestFetcher,
@@ -164,13 +166,14 @@ function authSummary(auth: BitbucketBasicAuthMaterialization): ScmHostingReposit
 function publishTarget(input: Readonly<{
   provider: ScmHostingProviderRef;
   auth: BitbucketBasicAuthMaterialization;
+  owner: string;
+  label?: string;
 }>): ScmHostingRepositoryPublishTarget {
-  const coordinates = readBitbucketRepositoryCoordinates(input.provider);
   return {
     provider: input.provider,
-    owner: coordinates.workspace,
+    owner: input.owner,
     ownerKind: 'org',
-    label: coordinates.workspace,
+    label: input.label ?? input.owner,
     isDefault: true,
     supportedVisibilities: ['private', 'public'],
     supportedRemoteUrlKinds: ['https', 'ssh'],
@@ -360,13 +363,29 @@ export function createBitbucketApiAdapter(params?: Readonly<{
     },
     async describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
       const auth = await withAuth(input);
+      if (input.provider.nameWithOwner) {
+        const { workspace } = readBitbucketRepositoryCoordinates(input.provider);
+        return { auth: authSummary(auth), targets: [publishTarget({ provider: input.provider, auth, owner: workspace })] };
+      }
+      const outcome = await listBitbucketWorkspaces({
+        client: { requestJson: async (request) => ({
+          ok: true,
+          body: await requestBitbucketJson({ provider: input.provider, fetcher, auth, url: request.url, signal: request.signal }),
+        }) },
+        signal: input.signal,
+      });
+      if (!outcome.ok || !outcome.complete) {
+        throw createBitbucketCommandFailedError('Bitbucket workspace discovery was incomplete');
+      }
       return {
         auth: authSummary(auth),
-        targets: [publishTarget({ provider: input.provider, auth })],
+        targets: outcome.workspaces.flatMap((workspace) => workspace.slug ? [publishTarget({
+          provider: input.provider, auth, owner: workspace.slug, label: workspace.name ?? workspace.slug,
+        })] : []),
       };
     },
     async createRepository(input: ScmHostingProviderRepositoryCreateInput) {
-      const coordinates = readBitbucketRepositoryCoordinates(input.provider);
+      const coordinates = readBitbucketOriginCoordinates(input.provider);
       const auth = await withAuth(input);
       const owner = normalizeOwner(input.owner);
       const repositoryName = normalizeRepositoryName(input.repositoryName);
@@ -375,9 +394,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
         fetcher,
         auth,
         url: bitbucketRepositoryApiUrl({
-          coordinates,
-          workspace: owner,
-          repository: repositoryName,
+          coordinates: { ...coordinates, workspace: owner, repository: repositoryName },
         }),
         init: {
           method: 'POST',
@@ -400,7 +417,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
       return mapped;
     },
     async getRepository(input: ScmHostingProviderRepositoryGetInput) {
-      const coordinates = readBitbucketRepositoryCoordinates(input.provider);
+      const coordinates = readBitbucketOriginCoordinates(input.provider);
       const auth = await withAuth(input);
       const owner = normalizeOwner(input.owner);
       const repositoryName = normalizeRepositoryName(input.repositoryName);
@@ -409,9 +426,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
         fetcher,
         auth,
         url: bitbucketRepositoryApiUrl({
-          coordinates,
-          workspace: owner,
-          repository: repositoryName,
+          coordinates: { ...coordinates, workspace: owner, repository: repositoryName },
         }),
         init: { method: 'GET' },
         signal: input.signal,

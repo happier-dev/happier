@@ -26,6 +26,8 @@ export function createGithubForgeHttpFixture(input: Readonly<{
   const fetcher: NonNullable<Parameters<typeof createGithubRestAdapter>[0]>['fetcher'] = async (url, init) => {
     const parsed = new URL(url);
     httpRequests.push({ method: init?.method ?? 'GET', path: parsed.pathname });
+    if (parsed.pathname === '/user') return response({ login: input.nameWithOwner.split('/')[0] });
+    if (parsed.pathname === '/user/orgs') return response([]);
     if (parsed.pathname === '/graphql' && init?.method === 'POST') return response({ data: {
       repository: { pullRequest: { mergeCommit: pullRequest?.mergeCommitSha ? { oid: pullRequest.mergeCommitSha } : null } },
     } });

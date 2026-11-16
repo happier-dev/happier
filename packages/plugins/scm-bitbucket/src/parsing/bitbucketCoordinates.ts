@@ -5,9 +5,12 @@ import { createBitbucketInvalidRequestError } from '../operations/errors.js';
 import { BITBUCKET_CLOUD_API_BASE_URL } from '../triage/apiUrl.js';
 import { BITBUCKET_FORGE_HOST_ID } from '../triage/identity.js';
 
-export type BitbucketRepositoryCoordinates = Readonly<{
+export type BitbucketOriginCoordinates = Readonly<{
   host: string;
   apiBaseUrl: string;
+}>;
+
+export type BitbucketRepositoryCoordinates = BitbucketOriginCoordinates & Readonly<{
   workspace: string;
   repository: string;
   nameWithOwner: string;
@@ -44,9 +47,9 @@ function readApiBaseUrl(provider: ScmHostingProviderRef): string {
   return BITBUCKET_CLOUD_API_BASE_URL;
 }
 
-export function readBitbucketRepositoryCoordinates(
+export function readBitbucketOriginCoordinates(
   provider: ScmHostingProviderRef,
-): BitbucketRepositoryCoordinates {
+): BitbucketOriginCoordinates {
   if (provider.kind !== 'bitbucket') {
     throw createBitbucketInvalidRequestError('Provider is not Bitbucket');
   }
@@ -58,6 +61,13 @@ export function readBitbucketRepositoryCoordinates(
   if (host !== BITBUCKET_CLOUD_HOST || parsedBase.origin !== `https://${BITBUCKET_CLOUD_HOST}`) {
     throw createBitbucketInvalidRequestError('Bitbucket base URL must be the Bitbucket Cloud origin');
   }
+  return { host, apiBaseUrl: readApiBaseUrl(provider) };
+}
+
+export function readBitbucketRepositoryCoordinates(
+  provider: ScmHostingProviderRef,
+): BitbucketRepositoryCoordinates {
+  const origin = readBitbucketOriginCoordinates(provider);
   const nameWithOwner = readString(provider.nameWithOwner);
   if (!nameWithOwner) {
     throw createBitbucketInvalidRequestError('Bitbucket repository owner/name is unavailable');
@@ -68,8 +78,7 @@ export function readBitbucketRepositoryCoordinates(
   }
   const [workspace, repository] = segments as [string, string];
   return {
-    host,
-    apiBaseUrl: readApiBaseUrl(provider),
+    ...origin,
     workspace,
     repository,
     nameWithOwner: `${workspace}/${repository}`,
@@ -81,17 +90,13 @@ export function encodeBitbucketPathSegment(value: string): string {
 }
 
 export function bitbucketRepositoryApiUrl(input: Readonly<{
-  coordinates: BitbucketRepositoryCoordinates;
-  workspace?: string;
-  repository?: string;
+  coordinates: Pick<BitbucketRepositoryCoordinates, 'apiBaseUrl' | 'workspace' | 'repository'>;
 }>): string {
-  const workspace = input.workspace ?? input.coordinates.workspace;
-  const repository = input.repository ?? input.coordinates.repository;
   return [
     input.coordinates.apiBaseUrl,
     'repositories',
-    encodeBitbucketPathSegment(workspace),
-    encodeBitbucketPathSegment(repository),
+    encodeBitbucketPathSegment(input.coordinates.workspace),
+    encodeBitbucketPathSegment(input.coordinates.repository),
   ].join('/');
 }
 

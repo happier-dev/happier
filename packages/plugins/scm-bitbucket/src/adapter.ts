@@ -28,6 +28,7 @@ export type ScmHostingProviderCompareUrlInput = Readonly<{
 }>;
 
 export type BitbucketScmHostingProviderAdapter = Readonly<{
+  listDeployments(): readonly ScmHostingProviderRef[];
   detectRemote(input: ScmHostingProviderDetectionInput): ScmHostingProviderRef | null;
   buildCompareUrl(input: ScmHostingProviderCompareUrlInput): string | null;
 }>;
@@ -60,6 +61,14 @@ function readTrustedBaseUrl(provider: ScmHostingProviderRef): string | null {
 }
 
 export const bitbucketHostingProviderAdapter: BitbucketScmHostingProviderAdapter = Object.freeze({
+  listDeployments() {
+    return [{
+      id: BITBUCKET_SCM_HOSTING_PROVIDER_ID,
+      kind: 'bitbucket' as const,
+      displayName: 'Bitbucket',
+      baseUrl: 'https://bitbucket.org',
+    }];
+  },
   detectRemote(input) {
     const parsed = parseScmRemoteUrl(input.remoteUrl);
     if (!parsed || parsed.host !== 'bitbucket.org') return null;

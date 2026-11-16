@@ -11040,21 +11040,29 @@ The shared native power owner inspects vendor power before Start or Resume.
 Confirmed-running resources skip native power and retain the existing guest
 daemon startup path. A stored running observation cannot hide a vendor-side stop.
 
-## Project starter creation (0.3 development)
+## Project creation from a starter or scratch (0.3 development)
 
-`projects.starters.create` consumes the registry's whole-repository starter
-descriptor and composes the existing Project open, SCM publication and Source
-creation Actions. The review covers the selected starter, Machine and destination, repository
-owner/name and visibility (private by default). Agent invocation requires Ask;
+`projects.starters.create` accepts a whole-repository registry starter or
+`source.kind: 'scratch'` and composes the existing filesystem, SCM, Source and
+Project open Actions. The review covers the source, Machine and destination,
+repository forge, owner/name and visibility (private by default). Existing
+starter callers may still supply `starterId`; the repository forge defaults to
+GitHub when omitted. Publication reuses an existing repository only when its
+observed visibility matches the requested visibility; a mismatch returns the
+normal SCM refusal before changing a remote or pushing. Agent invocation requires Ask;
 a person's designed review directly confirms the operation. Children execute
 through the existing host-child executor under that admission.
 
-At use time, the canonical SCM clone owner resolves the latest stable release,
+For a starter, the canonical SCM clone owner resolves the latest stable release,
 falling back to the default branch when the repository has no stable release. It establishes
 local `main`, publishes that branch with its original history to the person's
-hosted repository and rebinds `origin`. The resolved SHA is returned as information;
+hosted repository on the selected forge and rebinds `origin`. The resolved SHA is returned as information;
 it is not a catalog pin or another confirmation gate. Subdirectory starters are
-not supported. The Source owner
+not supported. Scratch creation refuses an existing or unavailable destination,
+creates the directory and initializes an empty local `main`, then creates the
+hosted repository and attaches `origin` without pushing the unborn branch. Its
+result has no commit SHA or starter id; the new Session builds the application.
+The Source owner
 projects hosted discovery into its credential-free selector and saves the normal
 Source. Project open registers the published checkout and associates its Source,
 so the Project takes the new repository's identity rather than the upstream

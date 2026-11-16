@@ -33,6 +33,72 @@ const snapshot = ScmWorkingSnapshotSchema.parse({
 });
 
 describe('starter creation public Action', () => {
+  it.each([{ parent: '/projects', expected: '/projects/bakery' },
+    { parent: '/projects/my\\folder', expected: '/projects/my\\folder/bakery' },
+    { parent: '/projects/myfolder\\', expected: '/projects/myfolder\\/bakery' },
+    { parent: 'C:\\Users\\alice\\src\\', expected: 'C:\\Users\\alice\\src\\bakery' },
+    { parent: '\\\\server\\share\\src', expected: '\\\\server\\share\\src\\bakery' }])(
+    'preserves destination path shape and refuses unavailable filesystem access at $parent', async ({ parent, expected }) => {
+      const executor = createActionExecutor({
+        scmActionExecute: async () => ({ success: true, auth: { state: 'authenticated', profileKind: 'connected_account' },
+          defaultRepositoryName: 'bakery', targets: [] }),
+        filesystemActionExecute: async ({ actionId, input: request }) => {
+          expect(actionId).toBe('daemon.filesystem.browseDirectory');
+          expect(request).toMatchObject({ path: expected });
+          return { ok: false, errorCode: 'EACCES', error: 'Permission denied' };
+        },
+      });
+      const { starterId: _starterId, ...base } = input;
+      expect(await executor.execute('projects.starters.create', { ...base, source: { kind: 'scratch' }, destinationParentPath: parent },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+        .toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout', code: 'EACCES' } });
+    });
+  it.each(['starter', 'scratch'] as const)('creates a %s source on the selected forge and hands off the accepted checkout', async kind => {
+    const hostedRepository = { provider: { ...starterSelector.provider, id: 'happier.scm.forge.bitbucket/bitbucket', kind: 'bitbucket',
+      displayName: 'Bitbucket', baseUrl: 'https://bitbucket.org' }, nameWithOwner: 'alice/bakery', visibility: 'private',
+      webUrl: 'https://bitbucket.org/alice/bakery', cloneUrl: 'https://bitbucket.org/alice/bakery.git' };
+    const effects: string[] = [];
+    const executor = createActionExecutor({
+      registryActionExecute,
+      filesystemActionExecute: async ({ actionId }) => {
+        effects.push(actionId);
+        return actionId === 'daemon.filesystem.browseDirectory' ? { ok: false, error: 'Absent', errorCode: 'ENOENT' } : { success: true };
+      },
+      scmActionExecute: async ({ actionId, input: raw }) => {
+        effects.push(actionId);
+        const request = raw as { providerKind?: string; pushCurrentBranch?: boolean };
+        if (actionId === 'scm.hostingRepository.resolveAddress') return resolvedStarterAddress;
+        if (actionId === 'scm.hostingRepository.describePublishTargets') {
+          expect(request.providerKind).toBe('bitbucket');
+          return { success: true, auth: { state: 'authenticated', profileKind: 'connected_account' }, defaultRepositoryName: 'bakery', targets: [] };
+        }
+        if (actionId === 'scm.repository.init') return { success: true, alreadyInitialized: false,
+          snapshot: { ...snapshot, branch: { ...snapshot.branch, headOid: undefined } } };
+        if (actionId === 'scm.repository.clone') return { success: true, destinationPath: '/projects/bakery', cloneProtocol: 'https',
+          cloneUrl: starter.repository, repository: { ...hostedRepository, provider: starterSelector.provider }, snapshot };
+        expect(request.providerKind).toBe('bitbucket');
+        expect(request.pushCurrentBranch).toBe(kind === 'starter');
+        return { success: true, pushed: kind === 'starter', remote: { name: 'origin' }, repository: hostedRepository };
+      },
+      projectSourcesCreate: async value => ({ ok: true, canManage: true, source: { name: value.name,
+        repository: value.repository, defaultRef: value.defaultRef, audience: value.audience, id: 'source', revision: 1,
+        createdByAccountId: 'alice' } }),
+      projectsOpen: async () => ({ kind: 'opened', workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace',
+        rootPath: '/projects/bakery' }, directory: '/projects/bakery', setup: 'notRequired', facts: { projectKey: 'project' } }),
+    });
+    const { starterId: _starterId, ...base } = input;
+    const result = await executor.execute('projects.starters.create', { ...base,
+      source: kind === 'starter' ? { kind, starterId: input.starterId } : { kind },
+      repository: { ...input.repository, providerKind: 'bitbucket' } },
+    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', repositoryUrl: hostedRepository.webUrl,
+      sessionHandoff: { directory: '/projects/bakery', initialMessage: input.description } } });
+    if (kind === 'scratch') {
+      expect(effects).not.toContain('scm.repository.clone');
+      expect(result).not.toHaveProperty('result.commit');
+      expect(result).not.toHaveProperty('result.starterId');
+    } else expect(result).toMatchObject({ result: { starterId: input.starterId, commit: snapshot.branch.headOid } });
+  });
   it('selects the exact registry source when catalog starters share an item id', async () => {
     const reads: string[] = [];
     let listedSources: unknown;

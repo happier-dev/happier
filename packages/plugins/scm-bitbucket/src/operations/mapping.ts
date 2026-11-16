@@ -11,7 +11,6 @@ import { isRecord, parseTimestampMs, readTrimmedString as readString } from '@ha
 import { readBitbucketCloneUrl } from '../bitbucketCloneUrl.js';
 import {
   buildBitbucketRepositoryWebUrl,
-  readBitbucketRepositoryCoordinates,
 } from '../parsing/bitbucketCoordinates.js';
 
 export type BitbucketPullRequestListDecodeResult = Readonly<{
@@ -156,7 +155,6 @@ export function mapBitbucketRepositorySummary(input: Readonly<{
   visibility?: ScmHostingRepositoryVisibility;
 }>): ScmHostingRepositorySummary | null {
   if (!isRecord(input.raw)) return null;
-  const coordinates = readBitbucketRepositoryCoordinates(input.provider);
   const nameWithOwner = readString(input.raw.full_name)
     ?? `${input.owner}/${input.repositoryName}`;
   const repositoryName = nameWithOwner.split('/')[1] ?? input.repositoryName;
@@ -181,7 +179,7 @@ export function mapBitbucketRepositorySummary(input: Readonly<{
     visibility: visibilityFromRaw(input.raw, input.visibility ?? 'private'),
     defaultBranch: defaultBranch ?? null,
     repositoryName,
-    workspace: coordinates.workspace,
+    workspace: nameWithOwner.split('/')[0] ?? input.owner,
   };
 }
 

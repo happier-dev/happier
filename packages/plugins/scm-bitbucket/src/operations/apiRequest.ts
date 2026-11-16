@@ -10,7 +10,7 @@ import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk
 import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
-import { readBitbucketRepositoryCoordinates } from '../parsing/bitbucketCoordinates.js';
+import { readBitbucketOriginCoordinates } from '../parsing/bitbucketCoordinates.js';
 import { encodeBitbucketBasicAuthorization } from '../auth/basicCredentials.js';
 import { readBitbucketApiUrl } from '../triage/apiUrl.js';
 import {
@@ -60,7 +60,7 @@ export async function resolveBitbucketBasicAuth(input: Readonly<{
   provider: ScmHostingProviderRef;
   runtimeServices?: ScmHostingProviderRuntimeServices;
 }>): Promise<BitbucketBasicAuthMaterialization> {
-  const coordinates = readBitbucketRepositoryCoordinates(input.provider);
+  const coordinates = readBitbucketOriginCoordinates(input.provider);
   const materialize = input.runtimeServices?.resolveScmHostingBasicAuthMaterialization;
   if (!materialize) throw createBitbucketAuthRequiredError();
   const result = await materialize({

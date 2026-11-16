@@ -86,6 +86,20 @@ function createBitbucketPullRequest(overrides?: Readonly<Record<string, unknown>
 }
 
 describe('Bitbucket API adapter', () => {
+  it.each(['describePublishTargets', 'getRepository', 'createRepository'] as const)(
+    'supports %s before a repository exists locally', async operation => {
+      const { createBitbucketApiAdapter } = await import('./bitbucketApiAdapter.js');
+      const { nameWithOwner: _nameWithOwner, ...withoutRepository } = provider;
+      const adapter = createBitbucketApiAdapter({ fetcher: async url => jsonResponse(url.includes('/user/workspaces')
+        ? { values: [{ workspace: { uuid: '{2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901}', slug: 'alice', name: 'Alice' }, administrator: true }] }
+        : { full_name: 'alice/bakery', is_private: true, links: { html: { href: 'https://bitbucket.org/alice/bakery' },
+          clone: [{ name: 'https', href: 'https://bitbucket.org/alice/bakery.git' }] } }) });
+      const result = await adapter[operation]({ provider: withoutRepository, owner: 'alice', repositoryName: 'bakery',
+        defaultRepositoryName: 'bakery', visibility: 'private', runtimeServices: createRuntimeServices() });
+      expect(result).toMatchObject(operation === 'describePublishTargets'
+        ? { auth: { state: 'authenticated' }, targets: [{ owner: 'alice', ownerKind: 'org', label: 'Alice' }] }
+        : { nameWithOwner: 'alice/bakery', cloneUrl: 'https://bitbucket.org/alice/bakery.git' });
+    });
   it('projects only the accepted merge commit rather than the source head', async () => {
     const { mapBitbucketPullRequest } = await import('./mapping.js');
     const merge_commit = { hash: 'a'.repeat(40) };

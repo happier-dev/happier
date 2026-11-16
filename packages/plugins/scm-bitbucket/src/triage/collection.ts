@@ -1,4 +1,3 @@
-import { type BitbucketTriageApiClient } from './apiClient.js';
 import {
   classifyBitbucketAbortSignal,
   createBitbucketFailure,
@@ -34,6 +33,14 @@ export type BitbucketCollectionOutcome<TItem> =
   }>
   | Readonly<{ ok: false; failure: BitbucketTriageFailure }>;
 
+/** Collections consume the JSON body and failure, independent of HTTP telemetry. */
+export type BitbucketCollectionClient = Readonly<{
+  requestJson(input: Readonly<{ url: string; signal?: AbortSignal }>): Promise<
+    | Readonly<{ ok: true; body: unknown }>
+    | Readonly<{ ok: false; failure: BitbucketTriageFailure }>
+  >;
+}>;
+
 /**
  * The single walker for every Bitbucket discovery collection.
  *
@@ -43,7 +50,7 @@ export type BitbucketCollectionOutcome<TItem> =
  */
 export async function walkBitbucketCollection<TItem>(
   input: Readonly<{
-    client: BitbucketTriageApiClient;
+    client: BitbucketCollectionClient;
     url: string;
     decode: (raw: unknown) => TItem | null;
     /**

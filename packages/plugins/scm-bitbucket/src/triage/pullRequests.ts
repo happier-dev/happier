@@ -29,7 +29,7 @@ import {
   BITBUCKET_WALK_HEALTH_REASONS,
   type BitbucketWalkHealthReason,
 } from './scanContinuation.js';
-import { walkBitbucketCollection } from './collection.js';
+import { walkBitbucketCollection, type BitbucketCollectionClient } from './collection.js';
 
 export const BITBUCKET_TRIAGE_LANE_IDS = [
   'authored',
@@ -574,7 +574,7 @@ export type BitbucketWorkspaceListOutcome =
  */
 export async function listBitbucketWorkspaces(
   input: Readonly<{
-    client: BitbucketTriageApiClient;
+    client: BitbucketCollectionClient;
     pageLength?: number;
     maxPages?: number;
     signal?: AbortSignal;
