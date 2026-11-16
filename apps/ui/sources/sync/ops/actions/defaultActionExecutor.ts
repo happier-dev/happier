@@ -306,6 +306,7 @@ import { createManagedMachineActionClient, ManagedMachineActionError } from '@/s
 import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction } from '@/sync/api/machines/managedMachineOrigination';
 import { executeUiManagedProvisionerList, prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
 import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
+import { executeUiMachinePresetArchive } from './machinePresetArchive';
 import { readManagedMachineReadForSnapshot } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
@@ -3751,6 +3752,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     machineSetupRemove: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.remove', ...args }),
     machineSetupUpdatesApply: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.updates.apply', ...args }),
     machineSetupUpdatesRollout: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.updates.rollout', ...args }),
+    machinePresetArchive: async (args) => {
+      if (!accountContext?.serverIdentityId) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      accountContext.assertCurrent();
+      return await executeUiMachinePresetArchive(args, accountContext);
+    },
     machinePresetAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();
@@ -3765,7 +3771,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         });
       } catch (error) {
         if (error instanceof MachinePresetActionError) {
-          return { ok: false, errorCode: [404, 405, 501].includes(error.status) ? 'unsupported_action' : 'machine_preset_request_failed', error: error.message };
+          return { ok: false, errorCode: error.errorCode, error: error.message };
         }
         throw error;
       }

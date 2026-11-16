@@ -16,6 +16,8 @@ import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePres
 import { readUiConnectedAccountActionFormOptions } from '@/sync/ops/connectedAccounts/connectedAccountFormOptions';
 import { captureManagedMachinePresetCustodyV1 } from '@/sync/ops/machines/managedMachinePresetCustody';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
+import { prepareUiMachinePresetArchive } from './machinePresetArchive';
 
 /** Exact effects demand one selected declaration; chooser discovery retains the family inventory. */
 export async function readUiManagedProvisioners(account: LazyActionAccountContext,
@@ -60,6 +62,14 @@ export async function prepareUiManagedProvisionerAdmission(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     account: LazyActionAccountContext | undefined,
 ): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
+    if (request.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1) {
+        if (!account) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+        try {
+            return await prepareUiMachinePresetArchive(request, account);
+        } catch (error) {
+            return { ok: false, ...normalizeActionExecutorThrownError(error, request.actionId) };
+        }
+    }
     if (request.actionId === 'machines.presets.create' || request.actionId === 'machines.presets.update') {
         if (!account) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
         const custody = await captureManagedMachinePresetCustodyV1({ account, signal: request.context.signal });

@@ -30,7 +30,7 @@ describe('managed preset Action transport', () => {
         await expect(client.execute('machines.presets.list', { homeId: 'srv_preset' })).rejects.toThrow();
         request.mockResolvedValueOnce(Response.json({ error: 'not_found' }, { status: 404 }));
         await expect(client.execute('machines.presets.list', { homeId: 'srv_preset' })).rejects.toMatchObject({
-            name: 'MachinePresetActionError', status: 404,
+            name: 'MachinePresetActionError', status: 404, errorCode: 'unsupported_action',
         } satisfies Partial<MachinePresetActionError>);
     });
 });

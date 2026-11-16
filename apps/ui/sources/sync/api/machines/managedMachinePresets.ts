@@ -9,6 +9,10 @@ import {
 import type { ServerFetch } from '@/sync/http/client';
 
 export class MachinePresetActionError extends Error {
+    get errorCode(): 'unsupported_action' | 'machine_preset_request_failed' {
+        return [404, 405, 501].includes(this.status) ? 'unsupported_action' : 'machine_preset_request_failed';
+    }
+
     constructor(public readonly status: number) {
         super(`machine_preset_request_failed_${status}`);
         this.name = 'MachinePresetActionError';
