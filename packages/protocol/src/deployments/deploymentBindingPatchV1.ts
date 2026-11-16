@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactContentReferenceV1.js';
@@ -96,7 +97,7 @@ export function matchesDeploymentBindingSavedSecretCapturesV1(
 /** Complete exact captures, shared by authored and prepared binding callers. */
 export function captureDeploymentBindingSavedSecretRevisionsV1(bindings: readonly EnvironmentSecretBindingV1[]) {
     const captures = new Map<string, { revision: number; bindings: Map<string, EnvironmentSecretBindingRoutingV1> }>();
-    const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     for (const binding of bindings) {
         if (binding.source.kind !== 'secret') continue;
         const ref = parseSavedSecretRefV1(binding.source.ref);

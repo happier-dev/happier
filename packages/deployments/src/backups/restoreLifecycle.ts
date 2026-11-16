@@ -7,7 +7,7 @@ import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type Deploy
 import { readResticNativeJsonV1 } from './manifestV1.js';
 import { readBackupNativeFailureEvidenceV1, verifyDeploymentBackupV1 } from './verificationV1.js';
 import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from './resticExecutor.js';
-import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentRestoreRecoveryPointV1 } from '@happier-dev/deployment-protocol';
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
@@ -94,7 +94,7 @@ export type DeploymentRestoreResultV1 = Readonly<{
         nextAction: 'none' | 'inspectStagingDatabase' | 'observeDatabaseNames' | 'restoreRecoveryDatabase' | 'checkServiceHealth'
             | 'inspectStagingVolume' | 'restorePreviousVolume' }>);
 
-function refuse(code: RestoreFailureCode): never { throw Object.assign(new Error(code), { code }); }
+function refuse(code: RestoreFailureCode): never { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); }
 function codeOf(error: unknown): RestoreFailureCode {
     if (error && typeof error === 'object' && 'code' in error) {
         const code = error.code;
@@ -161,8 +161,7 @@ function restoreSteps(input: Pick<RestoreCapture, 'onStep'>, previous: readonly 
 }
 function completed(result: DeploymentRestoreNativeResultV1) {
     if (result.kind !== 'completed') return refuse('outcome_unknown');
-    if (result.exitCode !== 0) throw Object.assign(new Error('restore_failed'), { code: 'restore_failed',
-        details: readBackupNativeFailureEvidenceV1(result) });
+    if (result.exitCode !== 0) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'restore_failed', error: 'restore_failed' }), { details: readBackupNativeFailureEvidenceV1(result) });
     return result;
 }
 function identifier(value: string) { return `"${value.replaceAll('"', '""')}"`; }

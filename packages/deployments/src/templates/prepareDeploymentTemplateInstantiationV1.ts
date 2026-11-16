@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, StoredAppPresetInputV1,
     DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/deployment-protocol';
 import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
@@ -33,6 +34,8 @@ export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
 export class DeploymentTemplatePreparationErrorV1 extends Error {
     constructor(readonly code: string, readonly details?: Readonly<{ key: string; dependency?: string }>) {
         super(details ? `${code}: ${JSON.stringify(details.key)}` : code);
+        Object.assign(this, createActionExecuteFailureError({ ok: false, errorCode: code, error: this.message,
+            ...(details ? { details } : {}) }));
     }
 }
 function refuse(code: string, details?: DeploymentTemplatePreparationErrorV1['details']): never {

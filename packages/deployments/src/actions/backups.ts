@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentBackupSnapshotV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
     type DeploymentBackupConfigurationV1, type DeploymentBackupSourceV1, type DeploymentEnvironmentContentV1,
     type DeploymentPreMigrationBackupV1, type DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
@@ -37,7 +38,7 @@ export type DeploymentBackupRunInputV1 = Readonly<{
 }>;
 type FailureCode = 'backup_failed' | 'backup_integrity_failed' | 'outcome_unknown' | 'cancelled' | 'unsupported_action';
 type SnapshotEvidence = Readonly<{ environmentId: string; sourceId: string; configRevision: number; repositoryId: string; snapshotId: string }>;
-function refuse(code: FailureCode, step?: string): never { throw Object.assign(new Error(code), { code, ...(step ? { step } : {}) }); }
+function refuse(code: FailureCode, step?: string): never { throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(step ? { step } : {}) }); }
 function failureCode(error: unknown): string {
     if (error && typeof error === 'object' && 'code' in error) {
         const code = error.code;
@@ -148,8 +149,7 @@ async function executeDeploymentBackup(input: DeploymentBackupRunInputV1): Promi
     } catch (error) {
         const code = failureCode(error);
         const step = error && typeof error === 'object' && 'step' in error ? error.step : 'source';
-        throw Object.assign(new Error(code), { code, step,
-            details: { snapshots, manifests, ...readDeploymentBackupMaintenanceFailureEvidenceV1(error) } });
+        throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { step, details: { snapshots, manifests, ...readDeploymentBackupMaintenanceFailureEvidenceV1(error) } });
     }
     const recording = input.preMigrationBackup;
     if (recording) {

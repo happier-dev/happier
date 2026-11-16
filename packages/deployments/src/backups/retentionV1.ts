@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentBackupRetentionV1 } from '@happier-dev/deployment-protocol';
 import { isResticSnapshotOwnedV1, readResticNativeJsonV1, readResticNativeRecordV1,
     readResticNativeSnapshotV1, resticEvidenceFailureV1 } from './manifestV1.js';
@@ -32,7 +33,7 @@ export function selectResticForgetCandidatesV1(input: Readonly<{ stdout: string;
         for (const value of group.remove) {
             const snapshot = readResticNativeSnapshotV1(value);
             if (!isResticSnapshotOwnedV1(snapshot, input.environmentId)) {
-                throw Object.assign(new Error('backup_integrity_failed'), { code: 'backup_integrity_failed' });
+                throw createActionExecuteFailureError({ ok: false, errorCode: 'backup_integrity_failed', error: 'backup_integrity_failed' });
             }
             if (seen.has(snapshot.snapshotId)) continue;
             seen.add(snapshot.snapshotId);

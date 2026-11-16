@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { isResticSnapshotBoundToManifestV1, readResticRepositoryConfigV1, readResticSnapshotsV1 } from './manifestV1.js';
 import { selectResticForgetCandidatesV1 } from './retentionV1.js';
@@ -56,7 +57,6 @@ export async function pruneDeploymentBackupsV1(input: DeploymentBackupPruneInput
     } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'outcome_unknown';
         const step = error && typeof error === 'object' && 'step' in error && typeof error.step === 'string' ? error.step : 'retention';
-        throw Object.assign(new Error(code), { code, step,
-            details: { ...readDeploymentBackupMaintenanceFailureEvidenceV1(error), removedSnapshotIds, uncertainSnapshotIds } });
+        throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { step, details: { ...readDeploymentBackupMaintenanceFailureEvidenceV1(error), removedSnapshotIds, uncertainSnapshotIds } });
     }
 }

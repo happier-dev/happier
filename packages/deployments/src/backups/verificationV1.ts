@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema, DeploymentBackupNativeFailureV1Schema,
     readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupNativeResultV1, DeploymentBackupRunInputV1 } from '../actions/backups.js';
@@ -14,7 +15,7 @@ export type DeploymentBackupVerifyInputV1 = DeploymentBackupReadInputV1 & Readon
 }>;
 
 export function backupOperationFailureV1(code: string, step: string, evidence?: DeploymentBackupMaintenanceFailureEvidenceV1): never {
-    throw Object.assign(new Error(code), { code, step, ...(evidence ? { details: evidence } : {}) });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { step, ...(evidence ? { details: evidence } : {}) });
 }
 
 /** The admitted process owner has already redacted stderr; retain only its closed failure facts. */

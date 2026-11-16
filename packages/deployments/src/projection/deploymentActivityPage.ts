@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentHeaderV1, DeploymentReceiptHistoryV1 } from '@happier-dev/deployment-protocol/v1';
 import type { ActionOperationListV2Request, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentActivityQueryV1, DeploymentActivityCursorV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
@@ -81,7 +82,7 @@ export async function readDeploymentActivityPageV1(input: Readonly<{
                         kind: 'receipt' as const, environment, receipt };
                     if (!after(row)) continue;
                     if (query.machineId) {
-                        if (!receipt.machineIds) throw Object.assign(new Error('deployment_content_unavailable'), { code: 'deployment_content_unavailable' });
+                        if (!receipt.machineIds) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' });
                         if (!receipt.machineIds.includes(query.machineId)) continue;
                     }
                     if (count === query.limit) { more = true; break; }

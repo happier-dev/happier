@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1,
   type DeploymentCreationDefaultsV1, type ProjectDeploymentDefaultsPayloadV1,
   type ProjectSourceOwnerV1, type DeploymentCreationDefaultSourceV1,
@@ -26,7 +27,7 @@ function resolveValue<T>(explicit: T | undefined, project: T | undefined, accoun
 /** Pure preparation only: inputs have passed their owners' schema/authority admission. */
 export function resolveDeploymentCreationDefaultsV1(input: DeploymentCreationDefaultsInputV1): ResolvedDeploymentCreationDefaultsV1 {
   if (input.projectDefaults && input.projectDefaults.projectSourceId !== input.projectSourceId) {
-    throw Object.assign(new Error('Project defaults belong to a different Source'), { code: 'project_defaults_scope_mismatch' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'project_defaults_scope_mismatch', error: 'Project defaults belong to a different Source' });
   }
   const project = input.projectDefaults?.deploymentDefaults;
   const account = input.account && input.projectOwner.kind === 'account' && input.account.accountId === input.projectOwner.accountId

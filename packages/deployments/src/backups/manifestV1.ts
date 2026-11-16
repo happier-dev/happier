@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema,
     type DeploymentBackupManifestV1, type DeploymentBackupSnapshotV1 } from '@happier-dev/deployment-protocol';
 
@@ -22,7 +23,7 @@ export function readResticSourceIdsV1(tags: readonly string[]): string[] {
 }
 
 export function resticEvidenceFailureV1(code: 'backup_failed' | 'outcome_unknown'): never {
-    throw Object.assign(new Error(code), { code });
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
 }
 export function readResticNativeRecordV1(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return resticEvidenceFailureV1('outcome_unknown');

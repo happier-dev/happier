@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupTestResultV1 } from '@happier-dev/deployment-protocol';
 import { readResticBackupSummaryV1, readResticRepositoryConfigV1, readResticRepositoryInitializationV1 } from './manifestV1.js';
 import { buildResticRequestV1, type ResticAccessV1, type ResticCommandV1 } from './resticExecutor.js';
@@ -98,7 +99,7 @@ async function probeDestination(input: DeploymentBackupReadInputV1 & Readonly<{ 
             && 'code' in failure && typeof failure.code === 'string' ? failure.code : 'outcome_unknown';
         const step = failure && typeof failure === 'object' && 'step' in failure && typeof failure.step === 'string'
             ? failure.step : 'probe.write';
-        throw Object.assign(new Error(code), { code, step, details: { step, code, ...readDeploymentBackupMaintenanceFailureEvidenceV1(failure),
+        throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { step, details: { step, code, ...readDeploymentBackupMaintenanceFailureEvidenceV1(failure),
             probe: { key: snapshotId ?? `happier-probe-${input.operationId}`, cleanup } } });
     }
     return { kind: 'reachable', repositoryId };

@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, parseSavedSecretRefV1,
     captureDeploymentBindingSavedSecretRevisionsV1,
     type EnvironmentSecretBindingV1, type EnvironmentVariableBindingV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
@@ -41,7 +42,7 @@ type Destinations = Readonly<{
 }>;
 
 function refuse(code: 'secret_missing' | 'client_required' | 'personal_secret_requires_promotion'): never {
-    throw Object.assign(new Error(code), { code });
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
 }
 function sharedResourceId(binding: EnvironmentSecretBindingV1): string {
     if (binding.source.kind !== 'secret') return refuse('secret_missing');
