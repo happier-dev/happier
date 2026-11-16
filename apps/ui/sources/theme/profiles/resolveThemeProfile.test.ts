@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { compositeThemeColor, parseThemeColorValue, themeContrastRatio } from '@happier-dev/protocol/account/settings/themeColor';
 
 import { darkTheme, lightTheme } from '@/theme';
 import type { ThemeProfileV1 } from './themeProfileTypes';
@@ -112,6 +113,28 @@ describe('resolveThemeProfile', () => {
 
         // Custom colors are user choices; the editor warns rather than silently correcting them.
         expect(effective.colors.text.secondary).toBe('#8A817C');
+    });
+
+    it.each(['light', 'dark'] as const)('generates readable %s seed text and tint on composited surfaces', mode => {
+        const effective = resolveThemeProfile({ mode, profile: {
+            ...profile({ light: {}, dark: {} }), assetAppearance: mode,
+            seeds: { canvas: '#777777', accent: 'rgba(255, 128, 0, 0.3)' },
+        } });
+        const base = mode === 'light' ? lightTheme : darkTheme;
+        const canvas = compositeThemeColor(parseThemeColorValue(effective.colors.background.canvas)!,
+            parseThemeColorValue(base.colors.background.canvas)!.rgb);
+        for (const role of ['primary', 'secondary', 'tertiary'] as const) {
+            const text = compositeThemeColor(parseThemeColorValue(effective.colors.text[role])!, canvas);
+            expect(themeContrastRatio(text, canvas), role).toBeGreaterThanOrEqual(4.5);
+        }
+        const inset = compositeThemeColor(parseThemeColorValue(effective.colors.surface.inset)!, canvas);
+        for (const role of ['primary', 'secondary'] as const) {
+            const text = compositeThemeColor(parseThemeColorValue(effective.colors.text[role])!, inset);
+            expect(themeContrastRatio(text, inset), `${role} on inset`).toBeGreaterThanOrEqual(4.5);
+        }
+        const button = compositeThemeColor(parseThemeColorValue(effective.colors.button.primary.background)!, canvas);
+        const tint = compositeThemeColor(parseThemeColorValue(effective.colors.button.primary.tint)!, button);
+        expect(themeContrastRatio(tint, button)).toBeGreaterThanOrEqual(4.5);
     });
 
     it('derives linked color recipes after overrides are applied', () => {
