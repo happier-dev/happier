@@ -1,12 +1,25 @@
-import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, symlinkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { copyDirDereferenceContainedSync } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { collectExternalRuntimeDependencies, copyDirDereferenceContainedSync } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS } from '../../../../packages/cli-common/cliRuntimeSidecars.mjs';
+import { packageNameOfSpecifier } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
 
 /** Capture the same external package graph the source dependency owner inventories.
  * Physical packages are copied once; edges retain peer/version resolution and cycles.
  * All links terminate inside this bundle, including plugin and runner imports. */
 export function captureRuntimeDependencies({ imports, outputDir, sourceRepoDir, signal }) {
+  const cliManifestPath = join(sourceRepoDir, 'apps/cli/package.json');
+  const dependencies = new Set(collectExternalRuntimeDependencies(
+    JSON.parse(readFileSync(cliManifestPath, 'utf8')),
+  ).map(entry => entry.name));
+  // Configured optional runtimes load by file URL, outside the emitted import
+  // graph. Retain their installed closure through the same dependency owner.
+  const optionalImports = Object.values(CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS)
+    .map(entry => entry.replace(/^node_modules\//, ''))
+    .filter(entry => dependencies.has(packageNameOfSpecifier(entry)))
+    .map(path => ({ path, resolveFrom: cliManifestPath }));
+  imports = [...imports, ...optionalImports];
   const packages = new Map();
   const edges = [];
   readSourceRuntimeDependencyIdentity({ imports, signal, onPackage({ name, packageDir, resolveFrom }) {

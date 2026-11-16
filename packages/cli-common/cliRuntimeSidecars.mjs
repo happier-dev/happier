@@ -15,3 +15,10 @@ export const CLI_RUNTIME_SIDECAR_ENTRIES = Object.freeze([
   Object.freeze(['runtime']),
   Object.freeze(['shims']),
 ]);
+
+// Runtime acquisition and source capture share these file-URL entrypoints;
+// esbuild's emitted import graph cannot discover them.
+export const CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS = Object.freeze({
+  'happier-memory-runtime': 'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
+  'happier-voice-runtime': 'node_modules/sherpa-onnx-node/sherpa-onnx.js',
+});

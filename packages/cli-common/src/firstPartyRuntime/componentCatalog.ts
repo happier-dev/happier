@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/release-runtime/releaseRings';
 
 import type { FirstPartyRuntimeKind } from './runtimeKinds.js';
+import { CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS } from '../../cliRuntimeSidecars.mjs';
 
 export const FIRST_PARTY_COMPONENT_IDS = [
   'happier-cli',
@@ -111,7 +112,7 @@ export const firstPartyComponentCatalog = {
     rollingReleasePrefix: 'cli',
     installRootName: 'memory-runtime',
     retainVersions: SHARED_VERSION_RETENTION,
-    nodeEntrypointRelativePath: 'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
+    nodeEntrypointRelativePath: CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS['happier-memory-runtime'],
     binaryRelativePath: '',
     installShims: [],
     prefersManagedNodeFallback: false,
@@ -124,7 +125,7 @@ export const firstPartyComponentCatalog = {
     rollingReleasePrefix: 'cli',
     installRootName: 'voice-runtime',
     retainVersions: SHARED_VERSION_RETENTION,
-    nodeEntrypointRelativePath: 'node_modules/sherpa-onnx-node/sherpa-onnx.js',
+    nodeEntrypointRelativePath: CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS['happier-voice-runtime'],
     binaryRelativePath: '',
     installShims: [],
     prefersManagedNodeFallback: false,
