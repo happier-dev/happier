@@ -1,6 +1,8 @@
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
+import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { t } from '@/text';
 import { HappyError } from './errors';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { ConnectedAccountCatalogOperationError } from '@/sync/api/account/connectedAccountCatalogOperationError';
 import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 
@@ -14,6 +16,12 @@ export function getErrorMessage(err: unknown): string {
     }
 
     if (typeof err === 'string') return err;
+
+    if (err instanceof HappyError || err instanceof WorkflowActionError) {
+        const refusal = readActionFailurePresentationV1(err.code,
+            err instanceof HappyError ? err.details : err.rawDetails);
+        if (refusal) return refusal.message ?? t('common.requestFailed');
+    }
 
     if (err instanceof HappyError) {
         if (err.code === 'action_disabled') return t('common.disabled');

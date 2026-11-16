@@ -1,5 +1,5 @@
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol';
-import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionExecuteFailure, projectActionFailureForAgentV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { SessionGoalControlFailureV1Schema, type SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
@@ -65,6 +65,7 @@ function resolveActionFailureMessage(
 
 export function normalizeActionExecuteResult(result: ActionExecuteResult): NormalizedCliActionExecuteResult {
   if (!result.ok) {
+    result = projectActionFailureForAgentV1(result);
     const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(result.goalControlFailure);
     const failureCause = ActionFailureCauseV1Schema.safeParse(result.failureCause);
     const errorMessage = resolveActionFailureMessage(result.error, failureCause.success ? failureCause.data : undefined, result.errorCode, result.details);
@@ -89,10 +90,13 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
       ?? normalizeErrorMessage(dataObj.message)
       ?? undefined;
     const candidates = Array.isArray(dataObj.candidates) ? (dataObj.candidates.map((v) => String(v)) as string[]) : undefined;
-    const details = dataObj.details;
+    const projected = projectActionFailureForAgentV1({ ok: false, errorCode,
+      error: message ?? errorCode, ...(dataObj.details === undefined ? {} : { details: dataObj.details }) });
+    const details = projected.details;
     const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(dataObj.goalControlFailure);
     const failureCause = ActionFailureCauseV1Schema.safeParse(dataObj.failureCause);
-    const errorMessage = resolveActionFailureMessage(message, failureCause.success ? failureCause.data : undefined, errorCode, details);
+    const errorMessage = resolveActionFailureMessage(message === undefined && projected.error === errorCode ? undefined : projected.error,
+      failureCause.success ? failureCause.data : undefined, errorCode, details);
     return {
       ok: false,
       errorCode,
@@ -111,14 +115,14 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
 /** One output projection for generic and compiled Action commands. */
 export function projectCliActionFailure(failure: CliActionFailure, requestId?: string): Omit<CliActionFailure, 'errorCode' | 'errorMessage'> & Readonly<{ code: string; message?: string }> {
   const errorMessage = resolveActionFailureMessage(failure.errorMessage, failure.failureCause, failure.errorCode, failure.details);
-  const projected = projectActionExecuteFailure({ ok: false, ...failure,
-    error: errorMessage ?? failure.errorCode }, requestId);
+  const projected = projectActionFailureForAgentV1(projectActionExecuteFailure({ ok: false, ...failure,
+    error: errorMessage ?? failure.errorCode }, requestId));
   return {
     code: failure.errorCode,
     ...(projected.requestId === undefined ? {} : { requestId: projected.requestId }),
-    ...(errorMessage ? { message: errorMessage } : {}),
+    ...(errorMessage || projected.error !== failure.errorCode ? { message: projected.error } : {}),
     ...(failure.candidates ? { candidates: failure.candidates } : {}),
-    ...(failure.details !== undefined ? { details: failure.details } : {}),
+    ...(projected.details !== undefined ? { details: projected.details } : {}),
     ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
     ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}),
     ...(failure.goalControlFailure ? { goalControlFailure: failure.goalControlFailure } : {}),

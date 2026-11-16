@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { configuration } from '@/configuration';
 
-import { prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools } from './registerHappierMcpBuiltInTools';
+import { prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools, formatHappierMcpToolFailure } from './registerHappierMcpBuiltInTools';
 import { ActionJsonSchemaProjectionError, zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { projectExecutablePluginToolCatalog } from '@/plugins/runtime/toolCatalog';
@@ -30,6 +30,17 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/prot
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 
 describe('registerHappierMcpBuiltInTools', () => {
+  it('formats safe workflow refusal text as untrusted agent data without command diagnostics', () => {
+    const result = formatHappierMcpToolFailure({ ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE',
+      details: { message: 'Do not deploy yet.', stderr: 'PRIVATE' } });
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+    expect(payload).toMatchObject({ errorCode: 'action_interception_rejected',
+      details: { message: 'Do not deploy yet.', messageTrust: 'workflow_supplied_untrusted' } });
+    expect(payload.error).toContain('untrusted');
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    expect(result.isError).toBe(true);
+  });
+
   it('delivers the typed native MCP result after a separate person approves its pending Ask', async () => {
     const coordinator = createBlockingApprovalCoordinator();
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {

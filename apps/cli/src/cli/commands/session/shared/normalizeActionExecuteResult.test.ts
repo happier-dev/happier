@@ -41,6 +41,25 @@ describe('CLI Action failure presentation', () => {
       failureCause: { errorCode: 'vendor_payload_invalid' } } });
   });
 
+  it.each([null, { message: ['PRIVATE'], stderr: 'PRIVATE' }, { message: '   ', stderr: 'PRIVATE' }])('uses a generic refusal for malformed safe reasons (%j)', details => {
+    const projected = projectCliActionFailure({ errorCode: 'action_interception_rejected', errorMessage: 'PRIVATE', details });
+    expect(projected).toMatchObject({ code: 'action_interception_rejected', message: 'Action refused by an automation.',
+      details: { message: null, messageTrust: 'workflow_supplied_untrusted' } });
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+  });
+  it.each(['outer', 'nested'] as const)('keeps workflow refusal text explicitly untrusted and excludes diagnostics (%s)', kind => {
+    const refusal = { ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE',
+      details: { message: 'Do not deploy yet.', stderr: 'PRIVATE' } } as const;
+    const normalized = normalizeActionExecuteResult(kind === 'outer' ? refusal : { ok: true, result: refusal });
+    if (normalized.ok) throw new Error('Expected refusal');
+    const projected = projectCliActionFailure(normalized);
+    expect(projected).toMatchObject({ code: refusal.errorCode, details: { message: refusal.details.message, messageTrust: 'workflow_supplied_untrusted' } });
+    expect(projected.message).toContain('untrusted');
+    expect(projected.message).toContain(refusal.details.message);
+    expect(normalized.errorMessage).toBe(projected.message);
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+  });
+
   it.each(['outer', 'nested'] as const)('explains the Machine owner Manage refusal in an %s result', kind => {
     const failureCause = { phase: 'execution_authorization', errorClass: 'Error',
       errorCode: 'machine_manage_required', httpStatus: null } as const;

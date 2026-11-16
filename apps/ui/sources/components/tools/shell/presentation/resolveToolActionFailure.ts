@@ -1,6 +1,7 @@
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ToolCall } from '@happier-dev/session-core/messages';
 import { readHappierActionToolFailure } from '@happier-dev/protocol/actions/happierActionToolResult';
+import type { ActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionCurrentSessionScopeFailureDetailsV1 } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 
 import { t } from '@/text';
@@ -9,6 +10,7 @@ import { formatApprovalDecisionFailureLabel } from '@/components/approvals/appro
 export type ToolActionOutcome = 'refused' | 'failed';
 
 export type ToolActionFailurePresentation = Readonly<{
+    messageTrust?: ActionFailurePresentationV1['messageTrust'];
     outcome: ToolActionOutcome;
     /** The typed failure code, kept for the open row; never shown as the cause line. */
     code: string;
@@ -64,12 +66,13 @@ export function toolActionOutcomeLabel(outcome: ToolActionOutcome, code?: string
 export function resolveToolActionFailure(tool: ToolCall): ToolActionFailurePresentation | null {
     const failure = readHappierActionToolFailure(tool.name, tool.input, tool.result);
     if (!failure) return null;
-    const refused = isActionApprovalDeclinedErrorCode(failure.code) || REFUSAL_CODES.has(failure.code) || (failure.cause !== null && REFUSAL_CAUSES.has(failure.cause));
+    const refused = failure.outcome === 'refused' || isActionApprovalDeclinedErrorCode(failure.code) || REFUSAL_CODES.has(failure.code) || (failure.cause !== null && REFUSAL_CAUSES.has(failure.cause));
     return {
         outcome: refused ? 'refused' : 'failed',
         code: failure.code,
         cause: failure.cause,
         message: failure.message,
+        ...(failure.messageTrust ? { messageTrust: failure.messageTrust } : {}),
         summary: formatApprovalDecisionFailureLabel(failure.code) ?? (failure.code === 'codex_tool_restriction_unsupported_auth'
             ? t('toolView.actionOutcome.cause.toolPolicyUnsupportedAuth') : resolveCauseSummary(failure.cause)),
     };

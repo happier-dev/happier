@@ -1,4 +1,5 @@
 import type { ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions';
 import { readLocalServiceDeclarationName } from '@happier-dev/protocol/actions/specs/localServices';
@@ -33,6 +34,12 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const add = (key: string, label: string, value: string | number | boolean | null | undefined) => {
         if (value !== undefined && value !== null) lines.push({ key, label, value: String(value) });
     };
+    if (readActionFailurePresentationV1(failure.errorCode, failure.details)) {
+        add('failure-code', t('common.error'), failure.errorCode);
+        add('failure-request-id', t('approvals.failureTechnicalLabels.requestId'), failure.requestId);
+        add('failure-effect-attempted', t('approvals.failureTechnicalLabels.effectAttempted'), failure.effectAttempted);
+        return lines;
+    }
     const presented = presentRecordedApprovalFailure(failure);
     if (presented.code !== null && failure.error !== failure.errorCode) {
         add('failure-message', t('detailPages.approval.failureTitle'), failure.error);
@@ -138,6 +145,11 @@ function readFailureHeadline(approval: ApprovalRequest, failure: ActionExecuteFa
 
 /** The same failure reason and diagnostic projection for direct Actions and settled approvals. */
 export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics, scope?: 'deployment', fallbackReason?: string) {
+    const refusal = readActionFailurePresentationV1(failure.errorCode, failure.details);
+    if (refusal) return {
+        reason: refusal.message ?? t('common.requestFailed'), message: null, code: failure.errorCode ?? null,
+        technicalDetails: presentActionFailureTechnicalDetails(failure, scope),
+    };
     const presented = presentApprovalFailure(failure, fallbackReason ?? failure.errorCode, '');
     const finiteCommand = FiniteCommandFailureDetailsV1Schema.safeParse(failure.details);
     const machineSetup = MachineSetupFailureDetailsV1Schema.safeParse(failure.details);

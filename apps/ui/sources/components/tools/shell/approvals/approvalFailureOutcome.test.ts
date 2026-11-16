@@ -14,6 +14,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 import { presentActionFailureOutcome, presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from './approvalFailureOutcome';
+import { presentRecordedApprovalFailure } from './useApprovalDecisionHandler';
 import { formatApprovalStatusLabel, resolveApprovalDisplayStatus } from '@/components/approvals/approvalStatusLabel';
 
 const response = DaemonLocalServiceLauncherStartResponseV1Schema.parse({
@@ -38,6 +39,24 @@ function approval(result: unknown = response) {
 }
 
 describe('approval failure outcome', () => {
+    it.each([ 'Review the check Run before retrying.', undefined ])('presents only the safe workflow refusal reason (%s)', (message) => {
+        const failure = { errorCode: 'action_interception_rejected', error: 'PRIVATE_CHECK_DIAGNOSTIC',
+            effectAttempted: false, details: { ...(message ? { message } : {}), stderr: 'PRIVATE_CHECK_DIAGNOSTIC' } };
+        const outcome = presentActionFailureOutcome(failure);
+        expect(outcome.reason).toBe(message ?? t('common.requestFailed'));
+        expect(outcome.message).toBeNull();
+        expect(outcome.code).toBe('action_interception_rejected');
+        expect(JSON.stringify(outcome)).not.toContain('PRIVATE_CHECK_DIAGNOSTIC');
+        expect(presentRecordedApprovalFailure(failure)).toEqual({
+            reason: message ?? t('common.requestFailed'), code: 'action_interception_rejected',
+        });
+        const technical = presentActionFailureTechnicalDetails(failure);
+        expect(technical).toEqual(expect.arrayContaining([
+            { key: 'failure-code', label: t('common.error'), value: 'action_interception_rejected' },
+        ]));
+        expect(JSON.stringify(technical)).not.toContain('PRIVATE_CHECK_DIAGNOSTIC');
+    });
+
     it.each([
         { wrapperCode: 'RPC_FORBIDDEN', error: 'Forbidden', errorCode: 'machine_unavailable', phase: 'rpc.admission.machine', httpStatus: 403,
             expected: 'errors.daemonUnavailableBody' as const },

@@ -3,7 +3,7 @@ import { getCurrentAuth } from '@/auth/context/currentAuth';
 
 import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
-import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
@@ -59,6 +59,9 @@ export function presentApprovalFailure(
     const code = typeof error === 'object' && error !== null
         ? 'errorCode' in error ? error.errorCode : 'code' in error ? error.code : null
         : error;
+    const refusal = readActionFailurePresentationV1(code,
+        typeof error === 'object' && error !== null && 'details' in error ? error.details : undefined);
+    if (refusal) return { reason: refusal.message ?? t('common.requestFailed'), code: typeof code === 'string' ? code : null };
     const diagnosticCode = typeof code === 'string' && /^[a-z][a-z0-9_]*$/.test(code) ? code : null;
     const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
     if (providerCode.success && providerCode.data.startsWith('provider_')) {

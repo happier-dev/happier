@@ -19,6 +19,16 @@ function actionCall(actionId: string, outcome: unknown): ToolCall {
 }
 
 describe('resolveToolActionFailure', () => {
+    it.each([{ message: ' Check requires review. ', stderr: 'PRIVATE' }, { message: false, stderr: 'PRIVATE' }, null])('presents intercepted Actions as refused using only their safe reason (%j)', details => {
+        const tool = actionCall('session.stop', { ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE', details });
+        const failure = resolveToolActionFailure(tool);
+        expect(failure).toMatchObject({ outcome: 'refused', code: 'action_interception_rejected',
+            message: typeof details?.message === 'string' ? details.message.trim() : null,
+            messageTrust: 'workflow_supplied_untrusted' });
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE');
+        expect(resolveToolErrorSummary(tool)).toBe('Refused');
+    });
+
     it('explains the Machine admission owner Manage refusal', () => {
         const tool = actionCall('action.invoke', { ok: false, errorCode: 'credential_scope_denied',
             error: 'credential_scope_denied', failureCause: { phase: 'execution_authorization',

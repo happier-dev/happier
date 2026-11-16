@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { HappyError } from './errors';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { installErrorUtilityCommonModuleMocks } from './errorUtilityTestHelpers';
 
 installErrorUtilityCommonModuleMocks();
@@ -9,6 +10,12 @@ installErrorUtilityCommonModuleMocks();
 const { getErrorMessage } = await import('./getErrorMessage');
 
 describe('getErrorMessage', () => {
+    it.each([{ message: ' Review the check Run. ', stderr: 'PRIVATE' }, { message: 123, stderr: 'PRIVATE' }, null])('presents safe intercepted Action reasons through both error carriers (%j)', details => {
+        const expected = typeof details?.message === 'string' ? details.message.trim() : 'common.requestFailed';
+        expect(getErrorMessage(new HappyError('PRIVATE', false, { code: 'action_interception_rejected', details }))).toBe(expected);
+        expect(getErrorMessage(new WorkflowActionError({ message: 'PRIVATE', rawCode: 'action_interception_rejected', rawDetails: details }))).toBe(expected);
+    });
+
     it('presents an unavailable Keep reason without its raw code', () => {
         expect(getErrorMessage('reviewed_marks_unavailable')).toBe('hunkReview.keepUnavailable');
         expect(getErrorMessage(new HappyError('reviewed_marks_unavailable', false, { code: 'reviewed_marks_unavailable' })))
