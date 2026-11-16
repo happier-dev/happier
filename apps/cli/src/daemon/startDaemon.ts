@@ -790,7 +790,8 @@ export async function startDaemon(
     const releaseMachineAdmissionTransport = installDaemonMachineAdmissionTransport({
       serverId: configuration.activeServerId,
       transport: machineAdmissionTransport,
-      clientActionExecute: createClientActionReverseDispatcher(() => apiMachineForSessions),
+      clientActionExecute: createClientActionReverseDispatcher(() => apiMachineForSessions, undefined,
+        { appAccountId: externalActionAccountId }),
       confidentialSecretFill: async (args) => confidentialSecretFill
         ? await confidentialSecretFill(args) : { status: 'refused', code: 'target_unavailable' },
       confidentialActionInputs: async (args) => confidentialActionInputs

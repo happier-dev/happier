@@ -44,8 +44,16 @@ type ClientActionReverseRequest = Omit<Parameters<NonNullable<ActionExecutorDeps
 export function createClientActionReverseDispatcher(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
   voiceRun?: VoiceRunActionDispatchRequestV1['voiceRun'],
+  /** The Account whose Apps the Machine transport reaches; a daemon passes its own. */
+  options?: Readonly<{ appAccountId?: string | null }>,
 ): (request: ClientActionReverseRequest) => Promise<ActionExecuteResult> {
   return async ({ actionId, input, context, executeChild, admittedHostReviewedChildren }) => {
+    // A daemon's reverse client RPC reaches its own Account's Apps. A hosted member's
+    // Action (shared Machine) never runs there with the owner's App authority.
+    const principalAccountId = context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
+    if (options?.appAccountId && principalAccountId && principalAccountId !== options.appAccountId) {
+      return { ok: false, errorCode: 'client_not_available', error: 'client_not_available' };
+    }
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
     const unavailable = () => clientId

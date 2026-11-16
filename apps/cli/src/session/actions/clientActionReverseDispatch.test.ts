@@ -27,6 +27,30 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
+  it.each(['ui.current_context.read', 'inbox.get', 'links.openExternal'] as const)(
+    'refuses %s for another Account before reaching the daemon owner App', async actionId => {
+    // MACH-PRINCIPAL-AUDIT-1116 A-R4 / SEC 1116B: the daemon's reverse client RPC
+    // reaches its own Account's Apps; a hosted member's Action must not use them.
+    const calls: string[] = [];
+    const client: ClientActionMachineRpc = { hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (method, _payload, options) => {
+        calls.push(method); options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result: {} } } };
+      } };
+    const dispatch = createClientActionReverseDispatcher(() => client, undefined, { appAccountId: 'owner' });
+    const input = actionId === 'links.openExternal' ? { url: 'https://example.com' } : {};
+    for (const context of [
+      { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'member' },
+      { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'owner',
+        externalActionExecutionAuthorization: { binding: { accountId: 'member' } } },
+    ] as unknown as ActionExecutorContext[]) {
+      expect(await dispatch({ actionId, input, context })).toMatchObject({ ok: false, errorCode: 'client_not_available' });
+    }
+    expect(calls).toEqual([]);
+    await dispatch({ actionId, input, context: { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'owner' } });
+    expect(calls).toHaveLength(1);
+  });
+
   it('keeps mounted diagnostics on the admitted Voice Run frontdoor', async () => {
     const voiceRun = { runId: 'voice-run', sessionId: 'source-session', occurrenceId: 'occurrence', turnId: 'turn', actionRequestId: 'effect' };
     const dispatch = createClientActionReverseDispatcher(() => ({
