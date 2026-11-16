@@ -27,3 +27,18 @@ test('two Stacks selecting a service port on one host before either binds get di
   assert.equal(await select('stack-a'), first, 'a Stack keeps its own selection');
   assert.notEqual(second, startPort, "another Stack's canonical loopback port is never selected");
 });
+
+test("a Stack's canonical port wins over another Stack's earlier server selection, which moves on its next selection", { skip: process.platform === 'win32' }, async t => {
+  // 2026-11-16 18:51Z: qa-release-now-1116's server took nl3:3018 before agent-qa-infra3-bed
+  // (controller port 3018) had claimed it, so the bed's reverse forward could never bind.
+  const fixture = await createTempFixture(t, { prefix: 'hstack-service-ports-canonical-' });
+  const target = { name: 'host', platform: 'linux', repoDir, cliHomeDir: fixture.path('home') };
+  const exec = async options => JSON.parse((await promisify(execFile)('bash', ['-c',
+    buildRemoteServicePortSelectionCommand(target, options)])).stdout).port;
+  const contested = await pickNextFreeTcpPort(43000);
+  const early = await exec({ stackName: 'early', startPort: contested - 1, preferredServerPort: contested });
+  assert.equal(early, contested, 'the earlier Stack first selected the contested port');
+  await exec({ stackName: 'owner', startPort: contested, preferredServerPort: null });
+  const moved = await exec({ stackName: 'early', startPort: contested - 1, preferredServerPort: contested });
+  assert.notEqual(moved, contested, "the earlier Stack leaves the other Stack's canonical port");
+});

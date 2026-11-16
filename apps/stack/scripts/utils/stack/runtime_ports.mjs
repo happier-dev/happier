@@ -95,8 +95,20 @@ export async function selectStackServicePortOnHost({ reservationDir, stackName, 
     if (!ownedByStack(value)) foreign.add(port);
     else if (value === owner) previous.push(port);
   }
+  // The canonical port is fixed by the controller and has no alternative, so it
+  // takes over another Stack's earlier *server* selection of it; that Stack
+  // moves on its next selection (2026-11-16, nl3:3018). Another Stack's
+  // canonical claim stays theirs.
   const canonical = service === 'server' ? coercePort(startPort) : null;
-  if (canonical && (foreign.has(canonical) || !await claim(canonical, `${stackName} canonical`))) foreign.add(canonical);
+  const canonicalToken = `${stackName} canonical`;
+  if (canonical) {
+    const holder = await ownerOf(canonical);
+    if (holder && !ownedByStack(holder) && !holder.endsWith(' canonical')) {
+      await writeFile(fileFor(canonical), `${canonicalToken}\n`);
+      foreign.delete(canonical);
+    }
+    if (foreign.has(canonical) || !await claim(canonical, canonicalToken)) foreign.add(canonical);
+  }
   let selected;
   for (;;) {
     selected = await selectStackServicePort({ ...selection, startPort, reservedPorts: new Set(foreign) });
