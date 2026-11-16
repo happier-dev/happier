@@ -17,7 +17,7 @@ import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGen
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { createArtifactAccessApi } from '@/sync/api/artifacts/apiArtifacts';
-import { useDestinationFocus as useIsFocused } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 
 function hasCompatibleApprovalArtifact(
     artifact: DecryptedArtifact | null,
@@ -46,6 +46,9 @@ function hasCompatibleApprovalArtifact(
     if (!headerServerIdentityId) return !requestedByPortableIdentity;
     return !expectedServerIdentityId || headerServerIdentityId === expectedServerIdentityId;
 }
+
+const subscribeNothing = () => () => {};
+const readFocused = () => true;
 
 /** One exact-Home approval reader for the detail screen and its originating form. */
 export function useApprovalArtifact(input: Readonly<{
@@ -99,7 +102,15 @@ export function useApprovalArtifact(input: Readonly<{
     // An unresolved explicit link must never fall back to the active Home.
     const serverId = unresolvedServer ? null : requestedServerTarget?.serverId ?? activeScope?.serverId ?? null;
     const { artifactId } = input;
-    const focused = useIsFocused();
+    // Only a requested approval follows focus. Every mounted Action writer holds this reader with no
+    // approval, so it must not render when its screen is covered or shown.
+    const focusSignal = useDestinationFocusSignal();
+    const followsFocus = artifactId !== null && input.observeWhileUnfocused !== true;
+    const focused = React.useSyncExternalStore(
+        followsFocus ? focusSignal.subscribe : subscribeNothing,
+        followsFocus ? focusSignal.get : readFocused,
+        followsFocus ? focusSignal.get : readFocused,
+    );
     const observing = focused || input.observeWhileUnfocused === true;
     const resolution = useServerCredentialAccountScopeResolution(artifactId ? serverId : null);
     const scopeMatches = input.scope === undefined || (resolution.kind === 'bound'

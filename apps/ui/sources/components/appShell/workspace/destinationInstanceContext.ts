@@ -2,7 +2,7 @@ import * as React from 'react';
 import * as ExpoRouter from 'expo-router';
 import type { useRouter } from 'expo-router';
 import { NavigationContext } from '@react-navigation/native';
-import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
+import { useOptionalScreenFocusSignal, useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { shallow } from 'zustand/shallow';
 
@@ -159,22 +159,12 @@ export type DestinationFocusSignal = Readonly<{ get: () => boolean; subscribe: (
  */
 export function useDestinationFocusSignal(): DestinationFocusSignal {
     const route = React.useContext(DestinationRouteContext);
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
-    const screenFocused = route ? true : useOptionalScreenIsFocused();
-    const [fallback] = React.useState(() => {
-        let current = screenFocused;
-        const listeners = new Set<() => void>();
-        return {
-            get: () => current,
-            subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-            set: (next: boolean) => { if (next === current) return; current = next; for (const listener of [...listeners]) listener(); },
-        };
-    });
-    React.useLayoutEffect(() => { if (!route) fallback.set(screenFocused); }, [fallback, route, screenFocused]);
+    // A Stack screen's focus arrives as its focus/blur events; reading them renders nothing.
+    const screen = useOptionalScreenFocusSignal();
     return React.useMemo<DestinationFocusSignal>(() => route ? {
         get: () => route.getSnapshot()?.focused === true,
         subscribe: route.subscribe,
-    } : { get: fallback.get, subscribe: fallback.subscribe }, [fallback, route]);
+    } : screen, [route, screen]);
 }
 
 /** Visibility belongs to the same retained destination context, without loading shell composition. */

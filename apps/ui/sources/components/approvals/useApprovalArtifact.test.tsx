@@ -181,13 +181,25 @@ describe('useApprovalArtifact', () => {
         const serverId = await addHome(HOME_IDENTITY);
         const artifactId = await openPresentUserApproval(serverId);
         await addHome(OTHER_IDENTITY, 'https://approval-unfocused-other.example');
-        const navigation = await import('@react-navigation/native');
-        const focus = vi.spyOn(navigation, 'useIsFocused').mockReturnValue(true);
-        const hook = await renderHook(() => useApprovalArtifact({ artifactId, serverId, observeWhileUnfocused }));
+        // The Stack screen is the boundary: its navigation object and the blur event a covering page sends.
+        const React = await import('react');
+        const { NavigationContext } = await import('@react-navigation/native');
+        let focused = true;
+        const blurListeners = new Set<() => void>();
+        const screen = {
+            isFocused: () => focused,
+            addListener: (event: string, listener: () => void) => {
+                if (event !== 'blur') return () => {};
+                blurListeners.add(listener);
+                return () => { blurListeners.delete(listener); };
+            },
+        };
+        const Screen = (props: React.PropsWithChildren) => React.createElement(
+            NavigationContext.Provider, { value: screen as never }, props.children);
+        const hook = await renderHook(() => useApprovalArtifact({ artifactId, serverId, observeWhileUnfocused }), { wrapper: Screen });
         try {
             await settle(hook, artifactId, state => expect(state.artifact?.header?.approvalStatus).toBe('open'));
-            focus.mockReturnValue(false);
-            await hook.rerender();
+            await act(async () => { focused = false; for (const listener of [...blurListeners]) listener(); });
             await expect(decideApprovalAsInbox(serverId, artifactId, 'reject')).resolves.toMatchObject({ ok: true });
             const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
             await act(async () => { publishHomeAccountChange(serverId, [artifactId], { changeKinds: ['artifact'] }); });
@@ -197,7 +209,6 @@ describe('useApprovalArtifact', () => {
                 expect(hook.getCurrent().artifact?.header?.approvalStatus).toBe('open');
             }
         } finally {
-            focus.mockRestore();
             await hook.unmount();
         }
     });

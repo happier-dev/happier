@@ -20,3 +20,31 @@ export function useOptionalScreenIsFocused(): boolean {
     // eslint-disable-next-line react-hooks/rules-of-hooks -- stable for a mounted instance (see above).
     return screenNavigation !== undefined && screenNavigation !== null && useIsFocused ? useIsFocused() : true;
 }
+
+type ScreenFocusNavigation = Readonly<{
+    isFocused: () => boolean;
+    addListener: (event: 'focus' | 'blur', listener: () => void) => () => void;
+}>;
+
+export type ScreenFocusSignal = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
+
+const ALWAYS_FOCUSED: ScreenFocusSignal = { get: () => true, subscribe: () => () => {} };
+
+/**
+ * {@link useOptionalScreenIsFocused} as a subscription: the screen's own focus and blur events, so a
+ * reader that only starts or stops work with focus does not render when the screen is covered or shown.
+ */
+export function useOptionalScreenFocusSignal(): ScreenFocusSignal {
+    const screenNavigation = navigationModule.NavigationContext
+        // eslint-disable-next-line react-hooks/rules-of-hooks -- the branch is a module constant.
+        ? React.useContext(navigationModule.NavigationContext) as ScreenFocusNavigation | undefined | null
+        : undefined;
+    return React.useMemo<ScreenFocusSignal>(() => screenNavigation ? {
+        get: () => screenNavigation.isFocused(),
+        subscribe: (listener) => {
+            const stopFocus = screenNavigation.addListener('focus', listener);
+            const stopBlur = screenNavigation.addListener('blur', listener);
+            return () => { stopFocus(); stopBlur(); };
+        },
+    } : ALWAYS_FOCUSED, [screenNavigation]);
+}
