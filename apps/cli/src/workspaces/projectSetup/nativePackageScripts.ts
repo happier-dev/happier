@@ -96,14 +96,15 @@ async function readIgnoredPathSet(root: string, scmRegistry?: ScmBackendRegistry
     return new Set((paths ?? []).map(path => path.replaceAll('\\', '/').replace(/\/+$/u, '')));
 }
 
+type DiscoveryEntries = Awaited<ReturnType<ReturnType<typeof currentWorkspaceSource>['readdir']>> | null;
+
 /**
- * Shared passive inventory; never follows directory symlinks or traverses dependency/build output.
+ * Shared passive inventory walk; never follows directory symlinks or traverses dependency/build output.
  * Inside a repository, paths its SCM ignores (Git's standard exclude sources, with tracked
  * force-added files kept) are not opened. A folder with no repository keeps the full walk.
  */
-export async function collectNativePackageDirectories(root: string | readonly string[],
-    options?: Readonly<{ scmRegistry?: ScmBackendRegistry }>): Promise<string[]> {
-    const out: string[] = [];
+async function walkNativeDiscovery(root: string | readonly string[], options: Readonly<{ scmRegistry?: ScmBackendRegistry }> | undefined,
+    onDirectory: (directory: string, entries: DiscoveryEntries, isIgnored: (name: string) => boolean) => Promise<void>): Promise<void> {
     const roots = (typeof root === 'string' ? [root] : root).map(directory => ({ directory, identity: resolve(directory) }));
     // Descendant dirents never follow symlinks, so only explicit overlapping
     // roots can repeat. Retain input identities, not every directory in the tree.
@@ -112,12 +113,8 @@ export async function collectNativePackageDirectories(root: string | readonly st
         if (visitedRoots.get(identity) === true) return;
         if (visitedRoots.has(identity)) visitedRoots.set(identity, true);
         const entries = await currentWorkspaceSource().readdir(directory).catch(() => null);
-        const packageEntry = entries?.find(entry => entry.name === 'package.json');
         const child = (name: string) => relativePath ? `${relativePath}/${name}` : name;
-        // The listing already proves ordinary file presence/absence. Only a
-        // symlink (or an unreadable listing) needs the previous followed stat.
-        if (!ignored.has(child('package.json')) && (packageEntry?.isFile() || ((!entries || packageEntry?.isSymbolicLink())
-            && await isFile(join(directory, 'package.json'))))) out.push(directory);
+        await onDirectory(directory, entries, name => ignored.has(child(name)));
         for (const entry of entries ?? []) {
             if (entry.isDirectory() && isNativePackageDiscoveryDirectory(entry.name) && !ignored.has(child(entry.name))) {
                 const childDirectory = join(directory, entry.name);
@@ -129,5 +126,27 @@ export async function collectNativePackageDirectories(root: string | readonly st
         if (visitedRoots.get(identity) === true) continue;
         await visit(directory, identity, await readIgnoredPathSet(directory, options?.scmRegistry), '');
     }
+}
+
+export async function collectNativePackageDirectories(root: string | readonly string[],
+    options?: Readonly<{ scmRegistry?: ScmBackendRegistry }>): Promise<string[]> {
+    const out: string[] = [];
+    await walkNativeDiscovery(root, options, async (directory, entries, isIgnored) => {
+        const packageEntry = entries?.find(entry => entry.name === 'package.json');
+        // The listing already proves ordinary file presence/absence. Only a
+        // symlink (or an unreadable listing) needs the previous followed stat.
+        if (!isIgnored('package.json') && (packageEntry?.isFile() || ((!entries || packageEntry?.isSymbolicLink())
+            && await isFile(join(directory, 'package.json'))))) out.push(directory);
+    });
     return out;
+}
+
+/** Absolute paths of the non-ignored files the same walk finds whose name `accept`s. */
+export async function collectNativeDiscoveryFiles(root: string, accept: (name: string) => boolean,
+    options?: Readonly<{ scmRegistry?: ScmBackendRegistry }>): Promise<string[]> {
+    const out: string[] = [];
+    await walkNativeDiscovery(root, options, async (directory, entries, isIgnored) => {
+        for (const entry of entries ?? []) if (entry.isFile() && accept(entry.name) && !isIgnored(entry.name)) out.push(join(directory, entry.name));
+    });
+    return out.sort();
 }

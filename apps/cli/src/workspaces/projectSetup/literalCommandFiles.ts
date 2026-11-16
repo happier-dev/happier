@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
+import type { ProjectCommandFileFactV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 
@@ -56,8 +57,10 @@ export function listLiteralCommandExecutedFiles(root: string, cwd: string, comma
     return [...scanLiteralCommand(root, cwd, command).files];
 }
 
-/** Each separate command line (a package script, a recipe line) starts in `cwd`. */
-function scanLiteralCommand(root: string, cwd: string, command: string | readonly string[]) {
+/** One command string, or separate lines (a package script, a recipe line) that each start in `cwd` or their own. */
+export type LiteralCommandLines = string | readonly (string | Readonly<{ command: string; cwd: string }>)[];
+
+function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLines) {
     const files = new Set<string>();
     const packageOperands = new Set<string>();
     const within = (path: string) => {
@@ -74,8 +77,8 @@ function scanLiteralCommand(root: string, cwd: string, command: string | readonl
         return file;
     };
     for (const line of typeof command === 'string' ? [command] : command) {
-        segmentCwd = cwd;
-        for (const segment of line.split(/&&|\|\||[;&|\n]/)) {
+        segmentCwd = typeof line === 'string' ? cwd : line.cwd;
+        for (const segment of (typeof line === 'string' ? line : line.command).split(/&&|\|\||[;&|\n]/)) {
             const tokens = [...segment.matchAll(TOKEN)].map(match => match[1] ?? match[2] ?? match[3] ?? '');
             // `cd <dir>` moves later segments when it stays in the checkout; `cd`, `cd -` and `~` keep the cwd.
             if (tokens[0] === 'cd') {
@@ -123,17 +126,24 @@ function scanLiteralCommand(root: string, cwd: string, command: string | readonl
     return { files, packageOperands };
 }
 
-export type LiteralCommandFileFactV1 = Readonly<{ file: string; digest: string } | { file: string; absent: true } | { file: string; directory: true } | { file: string; linkTarget: string }>;
+export type LiteralCommandFileFactV1 = Readonly<ProjectCommandFileFactV1>;
 
 /**
  * The reviewed facts for those files. A present in-checkout file contributes its bytes; an
  * absent one is recorded so adding it asks again; a link out of the checkout (a venv's
  * `bin/python`) contributes its target path, because outside bytes are not Project inputs.
  * A directory operand (`node server`) is recorded without reading what it loads.
+ * `files` names further checkout-relative inputs a native definition loads directly
+ * (a devbox `include`, a flake's `.nix` files); they become facts the same way.
  */
-export async function readLiteralCommandExecutedFiles(root: string, cwd: string, command: string | readonly string[])
+export async function readLiteralCommandExecutedFiles(root: string, cwd: string, command: LiteralCommandLines,
+    options?: Readonly<{ files?: readonly string[] }>)
     : Promise<Readonly<{ kind: 'read'; files: LiteralCommandFileFactV1[] }> | Readonly<{ kind: 'refused'; code: string }>> {
     const scan = scanLiteralCommand(root, cwd, command);
+    for (const file of options?.files ?? []) {
+        const local = relative(root, resolve(root, file.replaceAll('\\', '/')));
+        if (local && local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local)) scan.files.add(local.replaceAll('\\', '/'));
+    }
     const facts = new Map<string, LiteralCommandFileFactV1>();
     const read = async (file: string): Promise<LiteralCommandFileFactV1 | Readonly<{ refused: string }>> => {
         const result = await readProjectDefinitionFileBytes(root, file);

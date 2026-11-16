@@ -30,6 +30,18 @@ export const ProjectExecutionInputV1Schema = z.strictObject({
 });
 export type ProjectExecutionInputV1 = z.infer<typeof ProjectExecutionInputV1Schema>;
 
+/**
+ * A checkout file a reviewed command line runs: its bytes, its absence, a folder operand,
+ * or the target of a link out of the checkout. Computed on the Machine holding the checkout.
+ */
+export const ProjectCommandFileFactV1Schema = z.union([
+  z.strictObject({ file: ProjectNativeFilePathV1Schema, digest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)) }),
+  z.strictObject({ file: ProjectNativeFilePathV1Schema, absent: z.literal(true) }),
+  z.strictObject({ file: ProjectNativeFilePathV1Schema, directory: z.literal(true) }),
+  z.strictObject({ file: ProjectNativeFilePathV1Schema, linkTarget: nonempty }),
+]);
+export type ProjectCommandFileFactV1 = z.infer<typeof ProjectCommandFileFactV1Schema>;
+
 export const ProjectCommandSourceV1Schema = z.union([
   ProjectNativeRefV1Schema,
   z.strictObject({ kind: z.literal('command'), command: nonempty, cwd: z.optional(nonempty), platforms: z.optional(z.array(z.enum(['darwin', 'linux', 'windows']))) }),

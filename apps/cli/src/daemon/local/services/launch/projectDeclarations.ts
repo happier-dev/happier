@@ -314,7 +314,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             const executionInputs = [...executionFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, hash]) => ({ file, hash }));
             const serviceEffect = literalHost && service.source.kind === 'command'
                 ? { command: literalServiceCommand(service.source, basis.target.rootPath, platformFor(runtime).os),
-                    toolchain: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime) }
+                    toolchain: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime),
+                    // Read by SOURCE's inspection; the copy must carry these exact script bytes.
+                    ...(snapshot.commandExecutedFiles?.length ? { files: snapshot.commandExecutedFiles } : {}) }
                 : undefined;
             const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: 'service', declaration: request.declaration,
                 source: { ...workspaceAddressFromRefV1(association.workspace), projectKey: association.workspace.projectKey },
@@ -525,8 +527,16 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 }
             } else throw new ServiceStartRefusal('native_adapter_result_invalid');
         }
+        let executedFiles: LiteralCommandFileFactV1[] = [];
+        if (command.kind === 'literal') {
+            const literal = command;
+            const executed = await phase('native_definition', () => readLiteralCommandExecutedFiles(association.workspace.rootPath, literal.cwd, literal.source.command));
+            assertNotCancelled();
+            if (executed.kind === 'refused') throw new ServiceStartRefusal(executed.code);
+            executedFiles = executed.files;
+        }
         if (worker?.serviceEffectDigest && digest({ command, toolchain: plan.toolchain, configEnvironment: preparation.configEnvironment ?? {},
-            platform: preparation.platform }) !== worker.serviceEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
+            platform: preparation.platform, ...(executedFiles.length ? { files: executedFiles } : {}) }) !== worker.serviceEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
         const files: Array<{ file: string; digest: string }> = [];
         if (command.kind !== 'literal') {
             const nativeFiles = new Set([command.source.file, ...command.resolution.reviewInputs.map(fact => fact.file)]);
@@ -543,14 +553,6 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (command.resolution.reviewInputs.some(fact => fact.file === file && fact.content !== read.bytes.toString('utf8'))) throw new ServiceStartRefusal('project_service_effect_changed');
                 files.push({ file, digest: createHash('sha256').update(read.bytes).digest('hex') });
             }
-        }
-        let executedFiles: LiteralCommandFileFactV1[] = [];
-        if (command.kind === 'literal') {
-            const literal = command;
-            const executed = await phase('native_definition', () => readLiteralCommandExecutedFiles(association.workspace.rootPath, literal.cwd, literal.source.command));
-            assertNotCancelled();
-            if (executed.kind === 'refused') throw new ServiceStartRefusal(executed.code);
-            executedFiles = executed.files;
         }
         const portablePath = (value: string) => {
             const local = relative(association.workspace.rootPath, value);

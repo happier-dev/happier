@@ -341,6 +341,8 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const configEnvironment = config.environment;
         const reviewedToolchain = {
             selection: toolchain,
+            // Files the environment loads beyond its config file (imported .nix, locks, hook-run and sourced scripts).
+            ...(selectedToolchain.executedFiles ? { files: selectedToolchain.executedFiles } : {}),
             ...(toolchainAdapterVersion ? { adapterVersion: toolchainAdapterVersion } : {}),
             ...(toolchainTool ? { tool: {
                 ...(reviewPath(root, toolchainTool.executablePath) !== toolchainTool.executablePath ? { executable: reviewPath(root, toolchainTool.executablePath) } : {}),

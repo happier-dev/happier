@@ -126,7 +126,8 @@ export function createProjectFiniteSourceManifestInspector(params: Readonly<{
     const output = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
     if (!output.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
     return { ...output.data.definition, commands: output.data.commands,
-      toolchainExecutionInputs: output.data.toolchainExecutionInputs };
+      toolchainExecutionInputs: output.data.toolchainExecutionInputs,
+      ...(output.data.commandExecutedFiles ? { commandExecutedFiles: output.data.commandExecutedFiles } : {}) };
   };
 }
 

@@ -87,7 +87,7 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     /** Canonical projects.inspect on the exact accepted SOURCE, with requester Home authority. */
     inspectSourceProjectManifest?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal;
         command?: Extract<ProjectDefinitionInspectRead, { kind: 'execution' }>['command'] }>) => Promise<ProjectDefinitionInspectOutput['definition']
-        & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs'>>;
+        & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles'>>;
     resolveWorkerTarget?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>) => Promise<WorkspaceSyncWorkerTargetBasis>;
     /** Real B7 Sync/dequeue preparation; revalidation follows this callback. */
     prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
@@ -338,7 +338,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 request.actionId === 'projects.prepare' ? null : readExecutionPolicy(),
             ]);
             if (definitionRead.status === 'rejected') throw definitionRead.reason;
-            const sourceDefinition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs'> = definitionRead.value;
+            const sourceDefinition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles'> = definitionRead.value;
             await assertNotCancelled();
             if (sourceDefinition.document?.status === 'invalid') throw coded('invalid_manifest');
             const sourceManifest = sourceDefinition.document?.manifest;
@@ -582,6 +582,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (executable !== request.input.executable) await addFile(relative(association.workspace.rootPath, request.input.executable));
             }
             return digest({ toolchain: environment.selection, toolchainProvenance, configEnvironment: config.environment,
+                ...(environment.executedFiles ? { toolchainFiles: environment.executedFiles } : {}),
                 command,
                 files: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) });
         });

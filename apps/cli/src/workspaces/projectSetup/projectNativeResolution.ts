@@ -1,13 +1,13 @@
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ProjectDefinitionDetectionV1, ProjectDevcontainerSelectionV1, ProjectToolchainSelectionV1, ProjectExecutionInputV1, ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { PluginProjectNativeCommandResultV1 } from '@happier-dev/plugin-sdk';
 import { preserveUnconfirmedNativeProcess, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
-import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
+import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1, type LiteralCommandLines } from './literalCommandFiles';
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { inspectProjectDefinitionFacts } from './nativeDefinitionInspection';
-import { parseNativePackage, resolveNativePackageManager, type NativePackage, type NativePackageManagerSelection } from './nativePackageScripts';
+import { collectNativeDiscoveryFiles, collectNativePackageDirectories, isNativeDefinitionRecord, parseNativePackage, resolveNativePackageManager, type NativePackage, type NativePackageManagerSelection } from './nativePackageScripts';
 import { createFloxServiceActivationArgs } from './floxServiceActivation';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from '@/plugins/runtime/invocation/services/managedServiceSpecNormalization';
 
@@ -95,6 +95,98 @@ function recipeCommandLines(content: string, tool: 'make' | 'just', target: stri
     return lines;
 }
 
+type CommandLine = Exclude<LiteralCommandLines, string>[number];
+/** mise runs tasks from the config root: the file's folder, or the project above `.config/mise/`. */
+function miseConfigRoot(file: string): string {
+    const normalized = file.replaceAll('\\', '/');
+    return normalized.endsWith('/.config/mise/config.toml') ? dirname(dirname(dirname(file))) : dirname(file);
+}
+/** What a selected native target runs: its command lines and further files it loads directly. */
+type NativeExecutedInputs = Readonly<{ lines: readonly CommandLine[]; files?: readonly string[] }>;
+const textList = (value: unknown): string[] => typeof value === 'string' ? [value]
+    : Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+const recordOf = (value: unknown): Readonly<Record<string, unknown>> => isNativeDefinitionRecord(value) ? value : {};
+
+/** Visit a target and the same-file tasks it names, once each. */
+function taskClosure(target: string, visit: (name: string, push: (command: string, cwd: string) => void, queue: (name: string) => void) => void): CommandLine[] {
+    const lines: CommandLine[] = [];
+    const seen = new Set<string>();
+    const queue = [target];
+    for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        visit(name, (command, cwd) => lines.push({ command, cwd }), next => queue.push(next));
+    }
+    return lines;
+}
+
+async function taskfileExecutedInputs(content: string, target: string, base: string): Promise<NativeExecutedInputs> {
+    const yaml = await import('yaml');
+    const tasks = recordOf(recordOf({ ...yaml.default, ...yaml }.parse(content)).tasks);
+    return { lines: taskClosure(target, (name, push, queue) => {
+        const task = tasks[name];
+        if (typeof task === 'string') return push(task, base);
+        const definition: Readonly<Record<string, unknown>> = isNativeDefinitionRecord(task) ? task : { cmds: task };
+        const dir = typeof definition.dir === 'string' ? resolve(base, definition.dir) : base;
+        for (const item of [definition.cmd, ...(Array.isArray(definition.cmds) ? definition.cmds : [definition.cmds])]) {
+            if (typeof item === 'string') push(item, dir);
+            else if (isNativeDefinitionRecord(item)) {
+                if (typeof item.cmd === 'string') push(item.cmd, dir);
+                if (typeof item.task === 'string') queue(item.task);
+            }
+        }
+        for (const dep of Array.isArray(definition.deps) ? definition.deps : []) {
+            if (typeof dep === 'string') queue(dep);
+            else if (isNativeDefinitionRecord(dep) && typeof dep.task === 'string') queue(dep.task);
+        }
+    }) };
+}
+
+async function miseExecutedInputs(content: string, target: string, base: string): Promise<NativeExecutedInputs> {
+    const tasks = recordOf(recordOf((await import('smol-toml')).parse(content)).tasks);
+    const files: string[] = [];
+    const lines = taskClosure(target, (name, push, queue) => {
+        const task = tasks[name];
+        const definition: Readonly<Record<string, unknown>> = isNativeDefinitionRecord(task) ? task : { run: task };
+        const dir = typeof definition.dir === 'string' ? resolve(base, definition.dir) : base;
+        for (const item of Array.isArray(definition.run) ? definition.run : [definition.run]) {
+            if (typeof item === 'string') push(item, dir);
+            else if (isNativeDefinitionRecord(item)) for (const next of [...textList(item.task), ...textList(item.tasks)]) queue(next);
+        }
+        if (typeof definition.file === 'string') files.push(resolve(base, definition.file));
+        for (const dep of [...textList(definition.depends), ...textList(definition.depends_post)]) queue(dep.trim().split(/\s+/u)[0]!);
+    });
+    return { lines, files };
+}
+
+function devboxExecutedInputs(content: string, target: string, base: string): NativeExecutedInputs {
+    const shell = recordOf(recordOf(JSON.parse(content)).shell);
+    // `devbox run` runs the init_hook before the selected script.
+    return { lines: [...textList(shell.init_hook), ...textList(recordOf(shell.scripts)[target])].map(command => ({ command, cwd: base })) };
+}
+
+/** `turbo run <task>` runs that package script (and the tasks it depends on) in every package under turbo.json. */
+async function turboExecutedInputs(root: string, content: string, target: string, base: string): Promise<NativeExecutedInputs> {
+    const pipeline = recordOf((value => value.tasks ?? value.pipeline)(recordOf((await import('json5')).default.parse(content))));
+    const names = new Set<string>();
+    taskClosure(target, (name, _push, queue) => {
+        names.add(name);
+        for (const dep of textList(recordOf(pipeline[name]).dependsOn)) if (!dep.startsWith('$')) queue(dep.replace(/^\^/u, '').split('#').at(-1)!);
+    });
+    const lines: CommandLine[] = [];
+    const files: string[] = [];
+    for (const directory of await collectNativePackageDirectories(base)) {
+        const file = join(directory, 'package.json');
+        files.push(file);
+        const read = await readProjectDefinitionFileBytes(root, relative(root, file));
+        if (read.kind !== 'read') continue;
+        let scripts: Readonly<Record<string, string>>;
+        try { scripts = parseNativePackage(read.bytes.toString('utf8'), directory).scripts; } catch { continue; }
+        for (const name of names) lines.push(...packageScriptCommandLines(scripts, name).map(command => ({ command, cwd: directory })));
+    }
+    return { lines, files };
+}
+
 async function readPackageScriptBasis(params: Readonly<{ root: string; file: string; inheritAncestors?: boolean }>,
     readBytes = readProjectDefinitionFileBytes): Promise<PackageScriptBasis | ProjectNativeRefusal> {
     const fact = await selectedFile(params.root, params.file, readBytes);
@@ -126,13 +218,13 @@ function selectPackageScript(basis: PackageScriptBasis | ProjectNativeRefusal, t
     if (!Object.hasOwn(basis.pkg.scripts, target)) return refuse('missing', 'native_target_missing');
     if (!target || /^-|[\0\r\n]/u.test(target)) return refuse('invalid', 'native_target_invalid');
     const { pkg, ...selected } = basis;
-    return { ...selected, args: ['run', target], commandLines: packageScriptCommandLines(pkg.scripts, target) };
+    return { ...selected, args: ['run', target], executedInputs: async (): Promise<NativeExecutedInputs> => ({ lines: packageScriptCommandLines(pkg.scripts, target) }) };
 }
 
 /** Single package-script intent producer, shared by Services and native command previews. */
 export async function resolveNativePackageScript(params: Readonly<{ root: string; file: string; target: string; inheritAncestors?: boolean }>): Promise<ProjectNativeRefusal | Readonly<{
     kind: 'selected'; cwd: string; args: readonly string[]; packageManager: NativePackageManagerSelection; reviewInputs: readonly ProjectNativeFileFact[];
-    commandLines: readonly string[];
+    executedInputs: () => Promise<NativeExecutedInputs>;
 }>> {
     return selectPackageScript(await readPackageScriptBasis(params), params.target);
 }
@@ -146,6 +238,8 @@ type NativeInspectionReads = Readonly<{
 /** Resolve the actual contained config; does not produce or evaluate its environment. */
 export async function resolveProjectToolchainSelection(params: Readonly<{ root: string; selection: ProjectToolchainSelectionV1 }>): Promise<ProjectNativeRefusal | Readonly<{
     kind: 'selected'; selection: ProjectToolchainSelectionV1; file?: string; content?: string; coverage: 'complete' | 'partial'; diagnostics: readonly Readonly<{ file: string; code: string }>[];
+    /** Checkout files the environment loads beyond its config file (imported `.nix`, locks, hook-run and sourced scripts). */
+    executedFiles?: readonly LiteralCommandFileFactV1[];
 }>> {
     const selection = params.selection;
     if (selection.kind === 'host') return { kind: 'selected', selection, coverage: 'complete', diagnostics: [] };
@@ -156,7 +250,38 @@ export async function resolveProjectToolchainSelection(params: Readonly<{ root: 
     if (selection.kind === 'pluginToolchain') return { kind: 'selected', selection: normalized, ...fact, coverage: 'complete', diagnostics: [] };
     const detection = await inspectProjectDefinitionFacts(params.root, [{ ...fact, format: selection.tool }]);
     if (!detection.toolchains.some(candidate => candidate.kind === 'toolchain' && candidate.tool === selection.tool)) return refuse('invalid', 'invalid_definition');
-    return { kind: 'selected', selection: normalized, ...fact, coverage: detection.coverage, diagnostics: detection.diagnostics };
+    let inputs: NativeExecutedInputs;
+    try { inputs = await toolchainExecutedInputs(selection.tool, resolve(params.root, fact.file), fact.content); }
+    catch { return refuse('invalid', 'invalid_definition'); }
+    const executed = await readLiteralCommandExecutedFiles(params.root, dirname(resolve(params.root, fact.file)), inputs.lines, inputs.files ? { files: inputs.files } : undefined);
+    if (executed.kind === 'refused') return refuse(executed.code === 'outside_root' ? 'outside_root' : 'invalid', executed.code);
+    return { kind: 'selected', selection: normalized, ...fact, coverage: detection.coverage, diagnostics: detection.diagnostics,
+        ...(executed.files.length ? { executedFiles: executed.files } : {}) };
+}
+
+/**
+ * What an environment loads beyond its config file. Nix and devenv evaluate every `.nix` file
+ * under their root (not just the config), so all non-ignored ones and the locks are inputs; a
+ * `.nix` edit re-asks. devbox runs `init_hook`; mise sources `_.source`.
+ * Flox hooks live in its manifest, which is already the reviewed config file.
+ */
+async function toolchainExecutedInputs(tool: Extract<ProjectToolchainSelectionV1, { kind: 'toolchain' }>['tool'], file: string, content: string): Promise<NativeExecutedInputs> {
+    const base = dirname(file);
+    if (tool === 'nix_flake' || tool === 'devenv') {
+        const locks = tool === 'nix_flake' ? ['flake.lock'] : ['flake.lock', 'devenv.lock', 'devenv.yaml'];
+        return { lines: [], files: [...await collectNativeDiscoveryFiles(base, name => name.endsWith('.nix')), ...locks.map(lock => join(base, lock))] };
+    }
+    if (tool === 'devbox') {
+        // A devbox `include` is refused before review (unresolved_include), so only init_hook remains.
+        return { lines: textList(recordOf(recordOf(JSON.parse(content)).shell).init_hook).map(command => ({ command, cwd: base })) };
+    }
+    if (tool === 'mise') {
+        const sources = recordOf(recordOf(recordOf((await import('smol-toml')).parse(content)).env)._).source;
+        const paths = (Array.isArray(sources) ? sources : [sources]).flatMap(item => typeof item === 'string' ? [item]
+            : isNativeDefinitionRecord(item) && typeof item.path === 'string' ? [item.path] : []);
+        return { lines: [], files: paths.filter(path => !path.startsWith('~')).map(path => resolve(miseConfigRoot(file), path)) };
+    }
+    return { lines: [] };
 }
 
 export async function resolveProjectDevcontainerSelection(params: Readonly<{ root: string; selection: ProjectDevcontainerSelectionV1 }>): Promise<ProjectNativeRefusal | Readonly<{
@@ -172,8 +297,8 @@ export async function resolveProjectDevcontainerSelection(params: Readonly<{ roo
 
 type NativeCommandIntent = Readonly<{
     kind: 'selected'; tool: string; args: readonly string[]; cwd: string; reviewInputs: readonly ProjectNativeFileFact[];
-    /** Shell lines the target runs; the files they name join the reviewed effect. */
-    commandLines?: readonly string[];
+    /** Read lazily on the review path: what the target runs; the files it names join the reviewed effect. */
+    executedInputs?: () => Promise<NativeExecutedInputs>;
     packageManager?: NativePackageManagerSelection;
     nativeCommandToolchain?: ProjectToolchainSelectionV1;
     environmentOverlay?: Readonly<Record<string, string>>;
@@ -211,13 +336,13 @@ async function selectNativeCommand(input: Readonly<{
     let nativeCommandToolchain: ProjectToolchainSelectionV1 | undefined;
     let environmentOverlay: Readonly<Record<string, string>> | undefined;
     let reviewInputs: readonly ProjectNativeFileFact[] = [fact];
-    let commandLines: readonly string[] | undefined;
+    let executedInputs: (() => Promise<NativeExecutedInputs>) | undefined;
     if (source.tool === 'package_script') {
         const selected = observation
             ? selectPackageScript(await observation.packageScript(source.file), source.target)
             : await resolveNativePackageScript({ root: input.root, file: source.file, target: source.target });
         if (selected.kind === 'refused') return selected;
-        ({ cwd, args, packageManager, reviewInputs, commandLines } = selected);
+        ({ cwd, args, packageManager, reviewInputs, executedInputs } = selected);
         tool = packageManager.manager;
     } else if (source.tool === 'compose' && input.environment) {
         // Deployment review is authoritative only after native rendering. The
@@ -241,18 +366,21 @@ async function selectNativeCommand(input: Readonly<{
         // mise run + explicit MISE_OVERRIDE_CONFIG_FILENAMES; Docker compose --file up;
         // Devbox run --config (directory); Flox build or owned service activation.
         switch (source.tool) {
-            case 'make': args = ['-f', absoluteFile, source.target]; commandLines = recipeCommandLines(fact.content, 'make', source.target); break;
-            case 'just': args = ['--justfile', absoluteFile, source.target]; commandLines = recipeCommandLines(fact.content, 'just', source.target); break;
-            case 'taskfile': tool = 'task'; args = ['--taskfile', absoluteFile, source.target]; break;
+            case 'make': args = ['-f', absoluteFile, source.target]; executedInputs = async () => ({ lines: recipeCommandLines(fact.content, 'make', source.target) }); break;
+            case 'just': args = ['--justfile', absoluteFile, source.target]; executedInputs = async () => ({ lines: recipeCommandLines(fact.content, 'just', source.target) }); break;
+            case 'taskfile': tool = 'task'; args = ['--taskfile', absoluteFile, source.target];
+                executedInputs = () => taskfileExecutedInputs(fact.content, source.target, dirname(absoluteFile)); break;
             case 'mise':
                 cwd = resolve(input.root);
                 args = ['run', source.target];
                 nativeCommandToolchain = { kind: 'toolchain', tool: 'mise', configPath: fact.file };
                 environmentOverlay = { MISE_OVERRIDE_CONFIG_FILENAMES: absoluteFile };
+                executedInputs = () => miseExecutedInputs(fact.content, source.target, miseConfigRoot(absoluteFile));
                 break;
             case 'turbo':
                 if (basename(absoluteFile) !== 'turbo.json') return refuse('unsupported', 'native_configuration_filename_unsupported');
-                args = ['run', source.target]; break;
+                args = ['run', source.target];
+                executedInputs = () => turboExecutedInputs(input.root, fact.content, source.target, dirname(absoluteFile)); break;
             case 'compose': {
                 // A stable, requester-scoped native project is recoverable after daemon loss.
                 // The container IDs captured by its lifecycle, not this name alone, own Stop.
@@ -262,6 +390,7 @@ async function selectNativeCommand(input: Readonly<{
             case 'devbox':
                 if (basename(absoluteFile) !== 'devbox.json') return refuse('unsupported', 'native_configuration_filename_unsupported');
                 args = ['run', '--config', cwd, source.target];
+                executedInputs = async () => devboxExecutedInputs(fact.content, source.target, dirname(absoluteFile));
                 nativeCommandToolchain = { kind: 'toolchain', tool: 'devbox', configPath: fact.file }; break;
             case 'flox':
                 if (!source.file.replaceAll('\\', '/').endsWith('.flox/env/manifest.toml')) return refuse('unsupported', 'native_configuration_filename_unsupported');
@@ -277,7 +406,7 @@ async function selectNativeCommand(input: Readonly<{
                 nativeCommandToolchain = { kind: 'toolchain', tool: 'devenv', configPath: fact.file }; break;
         }
     }
-    return { kind: 'selected', tool, args, cwd, reviewInputs, ...(commandLines?.length ? { commandLines } : {}), ...(packageManager ? { packageManager } : {}),
+    return { kind: 'selected', tool, args, cwd, reviewInputs, ...(executedInputs ? { executedInputs } : {}), ...(packageManager ? { packageManager } : {}),
         ...(nativeCommandToolchain ? { nativeCommandToolchain } : {}), ...(environmentOverlay ? { environmentOverlay } : {}) };
 }
 
@@ -317,9 +446,11 @@ export async function inspectProjectNativeCommand(input: Readonly<{
     const intent = await selectNativeCommand(input);
     if (intent.kind === 'refused') return intent;
     const resolved = await resolveSelectedNativeCommand(intent, input.io, input.signal);
-    if (resolved.kind !== 'resolved' || !intent.commandLines) return resolved;
+    if (resolved.kind !== 'resolved' || !intent.executedInputs) return resolved;
     // The definition file is a review input; the scripts its selected lines run are too.
-    const executed = await readLiteralCommandExecutedFiles(input.root, intent.cwd, intent.commandLines);
+    let inputs: NativeExecutedInputs;
+    try { inputs = await intent.executedInputs(); } catch { return refuse('invalid', 'invalid_definition'); }
+    const executed = await readLiteralCommandExecutedFiles(input.root, intent.cwd, inputs.lines, inputs.files ? { files: inputs.files } : undefined);
     if (input.signal?.aborted) return refuse('cancelled', 'native_resolution_cancelled');
     if (executed.kind === 'refused') return refuse('invalid', executed.code);
     return executed.files.length ? { ...resolved, executedFiles: executed.files } : resolved;

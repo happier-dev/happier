@@ -3,6 +3,8 @@ import { createProjectNativeInspection, readProjectExecutionInputs, resolveProje
 import type { ProjectImportCandidate, ProjectNativeCommandIo } from './projectNativeResolution';
 
 import { inspectProjectDefinitionFiles } from './nativeDefinitionInspection';
+import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
+import { validatePath } from '@/rpc/handlers/pathSecurity';
 export { inspectProjectDefinitions, inspectProjectDefinitionFiles, inspectProjectDefinitionFacts } from './nativeDefinitionInspection';
 
 export { readProjectDefinitionFile } from './nativeDefinitionFiles';
@@ -93,11 +95,30 @@ export async function inspectProjectDefinitionExecutionFacts(input: Readonly<{
         } catch { signal?.throwIfAborted(); }
     }
     signal?.throwIfAborted();
+    // A selected literal command's files are read here, on the Machine holding the checkout,
+    // so a review made before copying to a worker binds the bytes the copy must carry.
+    let commandExecutedFiles: LiteralCommandFileFactV1[] | undefined;
+    const literal = input.command && manifest ? selectedLiteralCommand(manifest, input.command) : undefined;
+    if (literal) {
+        const cwd = validatePath((literal.cwd ?? '.').replaceAll('\\', '/'), root);
+        const executed = cwd.valid && cwd.resolvedPath ? await readLiteralCommandExecutedFiles(root, cwd.resolvedPath, literal.command) : undefined;
+        if (executed?.kind === 'read') commandExecutedFiles = executed.files;
+    }
+    signal?.throwIfAborted();
     const projectCandidate = <T extends ProjectImportCandidate | Omit<ProjectImportCandidate, 'preselected'>>(candidate: T) => {
         if (input.includeInvocation !== false) return candidate;
         const { invocation: _invocation, ...summary } = candidate;
         return summary;
     };
     return { importCandidates: importCandidates.map(projectCandidate), commands: commands.map(projectCandidate), tools,
-        ...(toolchainExecutionInputs ? { toolchainExecutionInputs } : {}) };
+        ...(toolchainExecutionInputs ? { toolchainExecutionInputs } : {}), ...(commandExecutedFiles ? { commandExecutedFiles } : {}) };
+}
+
+function selectedLiteralCommand(manifest: ProjectManifestV1, command: Readonly<{ usage: 'script' | 'service' | 'setup'; name: string }>) {
+    // Setup entries are named `<phase>.<index>`, as in the named-command loop above.
+    const [phase, index] = command.name.split('.');
+    const source = command.usage === 'script' ? manifest.scripts?.[command.name]?.source
+        : command.usage === 'service' ? manifest.services?.[command.name]?.source
+            : phase === 'setup' || phase === 'teardown' ? manifest.workspace?.[phase]?.[Number(index)] : undefined;
+    return source?.kind === 'command' ? source : undefined;
 }

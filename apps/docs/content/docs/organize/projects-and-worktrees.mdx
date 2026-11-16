@@ -248,11 +248,30 @@ inline `-c` code or what a script sources or reads. Commands such as
 `npm run setup` or `make setup` read their own definition files, so declare them
 with the native source kinds (`package_script`, `make` and so on) or list those
 files in `workspace.setupInputs` to make their changes ask again too. A native
-source covers its definition file and, for `package_script`, `make` and `just`,
-the checkout files that the selected target's lines run the same way: the script
-itself, its `pre`/`post` scripts and the package scripts it runs by name, or the
-recipe and the recipes it depends on. Other native kinds cover their definition
-file only:
+source covers its definition file and the checkout files that the selected task's
+commands run, read the same way:
+
+- `package_script`: the script, its `pre`/`post` scripts and the package scripts
+  it runs by name.
+- `make` and `just`: the recipe and the recipes it depends on in the same file.
+- `taskfile` and `mise` tasks: the task's commands, its dependencies, its `dir`, and
+  a mise task's `file`.
+- `devbox` scripts: the script and the `init_hook` that runs before it.
+- `turbo`: the package scripts the task and its `dependsOn` tasks run in each
+  package, and every `package.json` under `turbo.json`, so adding a script to a
+  package asks again.
+- `compose` and `flox`: the definition file only. Their effects are images and
+  environments, not checkout scripts.
+
+The selected toolchain is covered the same way. For `nix_flake` and `devenv`, Nix
+evaluates more than the config file, so the review includes every `.nix` file
+under its folder that your repository does not ignore, plus `flake.lock` (and
+`devenv.lock` and `devenv.yaml` for devenv). Editing any of those asks again.
+For devbox, the review includes what `init_hook` runs (a devbox `include` is not
+supported for review yet, so setup refuses it).
+For mise, it includes the files `_.source` loads.
+
+List other files a command reads in `workspace.setupInputs`:
 
 ```json
 {
