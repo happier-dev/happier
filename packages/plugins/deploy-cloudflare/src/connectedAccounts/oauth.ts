@@ -4,7 +4,6 @@ import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { cloudflareEnabledFeatures, cloudflarePermissionNames, cloudflarePermissionScope } from './permissions.js';
 import { CLOUDFLARE_API_ORIGIN, diagnostic, isCloudflareId, isObject, validToken } from './probe.js';
 
-export const CLOUDFLARE_CALLBACK_URL = 'https://app.happier.dev/oauth/connected-account/callback';
 export const CLOUDFLARE_OAUTH_ORIGIN = 'https://dash.cloudflare.com';
 export const CLOUDFLARE_IDENTITY_SCOPES = ['openid', 'offline_access'] as const;
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
@@ -233,7 +232,8 @@ export const cloudflareOAuthMode: Extract<ConnectedAccountAuthenticationModeRunt
     const signal = signalOf(context, options?.signal); signal.throwIfAborted();
     try {
       const config = await configuration(context, context.attemptCredentials, signal, true);
-      if (input.callbackUrl !== CLOUDFLARE_CALLBACK_URL || input.pkce.method !== 'S256' || !validToken(input.pkce.challenge)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its registered callback and PKCE challenge.');
+      // The host owns the redirect URI (the Home's relay) and checks completions against it.
+      if (input.pkce.method !== 'S256' || !validToken(input.pkce.challenge)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its PKCE challenge.');
       if (config.publicClient) {
         await context.attemptCredentials.set('oauthClientId', config.clientId, { signal });
         await context.attemptCredentials.set('oauthRegisteredScopes', JSON.stringify(config.apiScopes), { signal });
@@ -249,7 +249,7 @@ export const cloudflareOAuthMode: Extract<ConnectedAccountAuthenticationModeRunt
     const signal = signalOf(context, options?.signal); signal.throwIfAborted();
     try {
       const config = await configuration(context, context.attemptCredentials, signal);
-      if (input.callbackUrl !== CLOUDFLARE_CALLBACK_URL || !validToken(input.pkceVerifier)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its registered callback and PKCE verifier.');
+      if (!validToken(input.pkceVerifier)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its PKCE verifier.');
       const result = await exchange(context, new URLSearchParams({ grant_type: 'authorization_code', client_id: config.clientId,
         code: input.code, redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier }), signal, config, undefined, undefined, true);
       if (result.identity.status === 'selectionRequired') {

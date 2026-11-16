@@ -9,7 +9,8 @@ import { createPluginRegistrationScope } from '../../../../plugin-sdk/src/regist
 import { invokeConnectedAccountAuthenticationRuntime } from '../../../../cli-common/src/connectedAccounts/authenticationRuntimeDispatcher.js';
 
 const accountId = 'a'.repeat(32);
-const callbackUrl = 'https://app.happier.dev/oauth/connected-account/callback';
+// The host supplies the Home's relay; the plugin declares none of its own.
+const callbackUrl = 'http://happier-qa.localhost:19364/oauth/connected-account/callback';
 const service = { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' };
 const kits: PluginTestkit[] = [];
 afterEach(async () => { await Promise.all(kits.splice(0).map(kit => kit.dispose())); vi.useRealTimers(); });
@@ -123,8 +124,7 @@ describe('portable Cloudflare authentication through Account registration and th
         operation, context: h.context, registerRawForRedaction() {}, async invokeCallback(work) { return work(); } });
     const begun = await invoke({ kind: 'beginOAuth', request: { callbackUrl, state: completion.state, pkce: { challenge: 'host-challenge', method: 'S256' } } });
     expect(begun).toMatchObject({ status: 'awaitingOAuthRedirect', issuer: 'https://dash.cloudflare.com' });
-    expect(await invoke({ kind: 'completeOAuth', completion: { ...completion, callbackUrl: 'https://wrong.example/callback' } }))
-      .toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_invalid_configuration' } });
+    expect(new URL((begun as { authorizationUrl: string }).authorizationUrl).searchParams.get('redirect_uri')).toBe(callbackUrl);
     expect(h.request).not.toHaveBeenCalled();
     expect(await invoke({ kind: 'completeOAuth', completion })).toMatchObject({ status: 'connected', providerIdentity: { organizationId: accountId } });
     expect(h.staged.values.get('token')).toBe('access-private');
@@ -254,8 +254,9 @@ describe('Cloudflare OAuth through real plugin activation', () => {
     const h = await harness(product);
     const descriptor = entry.manifest.contributes?.connectedAccountDescriptors?.[0] as PluginConnectedAccountDescriptorContributionV2;
     expect(descriptor.authentication.modes.find(mode => mode.id === 'oauth')).toMatchObject({
-      kind: 'oauthAuthorizationCode', callbackUrl, pkce: 'required', scopes: ['openid', 'offline_access'],
+      kind: 'oauthAuthorizationCode', pkce: 'required', scopes: ['openid', 'offline_access'],
     });
+    expect(descriptor.authentication.modes.find(mode => mode.id === 'oauth')).not.toHaveProperty('callbackUrl');
     const begun = await h.mode.begin({ callbackUrl, state: completion.state, pkce: { challenge: 'host-challenge', method: 'S256' } }, h.context);
     expect(begun).toMatchObject({ status: 'awaitingOAuthRedirect', issuer: 'https://dash.cloudflare.com' });
     if (begun.status !== 'awaitingOAuthRedirect') throw new Error('Expected OAuth redirect');
