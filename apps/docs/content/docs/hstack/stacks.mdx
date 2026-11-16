@@ -472,7 +472,7 @@ The recovery key is written only to `~/.happier/stacks/<bed>/qa-bed/account.key`
 
 Clients:
 
-- **Web:** open the bed's `uiUrl` from `check` (or `stack info`). A bed starts with `--ui=export`, so it serves its revision's shared web export. If no stack has that export yet, the repository producer builds it once, which adds the export's queue wait and about 10 minutes to that start.
+- **Web:** open the bed's `uiUrl` from `check` (or `stack info`). It serves the producer's shared web export or borrowed dev Expo, as described above.
 - **iOS simulator / Android emulator:** install the shared development client once with `hstack mobile-dev-client --install` (Android: `--reuse` installs the cached APK from `~/.happier-stack/mobile-dev-client/<profile>/android/`, so no per-bed native build). Point it at the producer's Metro and the bed's `mobileUrl`. See [Mobile app development (iOS)](./mobile-ios).
 
 ## Edit a stack (interactive)

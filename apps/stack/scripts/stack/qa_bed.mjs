@@ -214,10 +214,11 @@ async function seedAndSignIn({ rootDir, stackName, profile }) {
 export async function startQaBedStack({ rootDir, stackName, step }, { runStackImpl = runStack } = {}) {
   // Always the reload route: it selects the producer's latest built revision
   // (`--rev` default) and adopts it. A plain first start captures the checkout
-  // instead and is gated on the producer's load sentinel. `--ui=export` serves
-  // that revision's one shared web export (the producer builds it once if no
-  // Stack has yet); the borrowed dev Metro is shared by the whole fleet.
-  const started = await runStackImpl({ rootDir, args: ['start', stackName, '--background', '--runtime=source', '--no-browser', '--restart', '--ui=export'] });
+  // instead and is gated on the producer's load sentinel. The default UI adopts
+  // the revision's shared export when one exists; `--ui=export` is not forced:
+  // a revision export captured from the moving checkout refuses on drift, which
+  // would refuse the whole start (2026-11-16 19:20Z).
+  const started = await runStackImpl({ rootDir, args: ['start', stackName, '--background', '--runtime=source', '--no-browser', '--restart'] });
   if (started?.ok === true) return started;
   // A start that failed part way can leave a remote runtime, its forwards or the
   // runner up, and a retry then cannot bind them. The Stack's own stop retires
