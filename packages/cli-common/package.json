@@ -356,6 +356,12 @@
       "import": "./dist/workspaces/index.js",
       "default": "./dist/workspaces/index.js"
     },
+    "./workspaces/literalCommandFiles": {
+      "happier-source": "./src/workspaces/literalCommandFiles.ts",
+      "types": "./dist/workspaces/literalCommandFiles.d.ts",
+      "import": "./dist/workspaces/literalCommandFiles.js",
+      "default": "./dist/workspaces/literalCommandFiles.js"
+    },
     "./service": {
       "happier-source": "./src/service/index.ts",
       "types": "./dist/service/index.d.ts",
