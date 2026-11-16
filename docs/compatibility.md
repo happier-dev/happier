@@ -1,5 +1,18 @@
 # Compatibility and version skew
 
+## Cloudflare tunnel retirement provenance (unreleased 0.3)
+
+Private Domain content optionally records closed `cloudflarePreparation.tunnelOwnership`
+as `created` or `adopted`. Existing records without it remain readable and are
+retained without inferring ownership from a tunnel name or another Domain. The
+closed Domain mutation success optionally carries `tunnel`, whose `removed` or
+`retained` disposition includes the exact ID when known and a typed retention
+reason. Matching Protocol, deployment-protocol, Cloudflare plugin and CLI readers
+and writers reload together under the development direct cut; older strict 0.3
+readers reject the added fields. The scoped clean `../0.2` frontier at
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no deployment plugin contract. This
+adds no database migration, released wire epoch or compatibility adapter.
+
 ## Attempt configuration drafts (unreleased 0.3)
 
 Accepted attempt configuration now persists in the existing sealed transaction.
@@ -9,7 +22,6 @@ can hold `{ configuration: { revision, content } }`; continuation replaces that
 draft with the ordinary authorization snapshot. Existing null drafts remain
 readable. Matching configuration readers and writers reload together under the
 unpublished 0.3 direct cut; this changes no database schema or released 0.2 format.
-
 
 ## Native firewall recovery commands (unreleased 0.3)
 
@@ -1200,6 +1212,16 @@ is introduced.
 
 ## Browser view discovery push (unreleased 0.3)
 
+`BrowserDaemonViewV1` projects optional `sourceOccurrenceId` from the existing
+capture registry. The UI passes that identity to the existing live-stream ingestion
+owner so a native profile replacement admits a fresh source without changing the
+logical Browser view. Old occurrences still retire, and guest saved-profile refusal
+still applies at fresh admission. This is a coordinated unpublished 0.3 direct cut:
+matching Protocol, daemon and UI reload together; earlier payloads may omit the
+field, while older strict development readers reject it. The inspected `../0.2`
+frontier at `c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no Browser control schema
+at this path. No released epoch, persisted format or compatibility adapter changes.
+
 Browser parity inputs add optional `engineOverride: 'embedded' | 'managed'` to workspace
 and view open/retarget, and optional `navigationIntent: 'address' | 'target'` to navigation.
 Saved-profile management Actions and `files.save`'s closed `browserDownload` source are
@@ -2216,6 +2238,22 @@ read without a probe or retry. The inspected 0.2 predecessor at
 `519c05dc1320396738f42babf2d6a2a2af754e4f` has neither operand nor page metadata
 in `packages/protocol/src/scm.ts`; new consumers continue accepting its full
 snapshot. Older consumers receive the same full response when they omit paging.
+
+## Unchanged full SCM status re-reads (unreleased 0.3)
+
+A full changed-file list reply (no `detail`, no `entriesPage`, at least one
+entry) carries `snapshot.listRevision`: a content revision of the delivered
+facts that ignores observation times (`fetchedAt`, `freshness`, the cached PR
+projection's `checkedAt`). A caller holding that list sends it back as the
+optional `knownListRevision`; when the fresh scan delivers the same list the
+reply is `{ success: true, unchanged: true }` with no snapshot, and the UI keeps
+its held snapshot object (no republish). Any other shape, or a changed list,
+returns the full reply with its new revision. The scan still runs: this removes
+the transfer, parse and store work of the deliberate re-reads (workspace-watch
+readiness, PR discovery, focus) when nothing changed, not the daemon's status
+computation. A daemon without the field never produces a revision, so it is
+never sent one; there is no persisted format and no 0.2 reader of this field. Producer: `apps/cli/src/rpc/handlers/scmStatusSnapshotProjection.ts`;
+consumer: `apps/ui/sources/scm/scmRepositoryService.ts`.
 
 ## Paged SCM capture reads (unreleased 0.3)
 
@@ -8930,8 +8968,37 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Agent Provider requirements add optional `reasoningEffortValues`
+to the closed executable declaration. Omission retains existing Provider-tier
+application; a declared list narrows picker controls and explicit launch
+admission through the shared reasoning owner. Claude declares its native effort
+values, while source catalogs retain their original tiers. Protocol, generated
+SDK declarations, bundled manifests and host readers reload together under the
+development direct cut; older strict development readers reject the new field.
+The scoped-clean `../0.2` frontier at
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no matching Agent Provider
+requirements declaration. No persisted format, migration, wire epoch or adapter
+is added.
+
+Unreleased 0.3 deployment declarations add the closed data role
+`projects.delete` and read-only `projects.observe`; runtime `teardown` already
+belongs to the role grammar.
+Lifecycle observations optionally carry positive `providerResourceAbsent: true`
+evidence. Protected provider Link content optionally records
+`providerResourceOrigin: 'created'`; older records without it default to Unlink.
+The unprepared teardown request accepts `providerRemoval: 'unlink' | 'delete'`.
+Source-free provider teardown receipts retain the same provider custody and
+existing teardown content with no native Machine/resource proof inventory.
+These authority-bearing inputs are not safely ignorable: Protocol, plugin SDK,
+plugins and host consumers reload together under the development direct cut.
+The scoped clean `../0.2` frontier at
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no deployment plugin declarations.
+No released wire epoch, database migration or predecessor adapter is added.
+
 Unreleased 0.3 Setup reports add a closed bound-target branch addressed by the
-existing managed resource and controller installation. Its Retry facts extend
+existing managed resource and controller installation, with the committed Session
+association for postbirth reports. Installation-only reports retain the existing
+bootstrap completion fact independently of Setup. Its Retry facts extend
 the existing admitted preset's private content; opaque Home state remains
 lifecycle-only. Protocol, controller CLI and Home reload together under the
 development direct cut; older strict development readers reject the new branch
@@ -8939,6 +9006,13 @@ or private field. The inspected `../0.2` frontier
 `c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no managed-machine Protocol or server
 directory. No released wire epoch, database migration, enrollment identity or
 compatibility adapter is added.
+
+The same development cut adds `boundSetup` to the existing native Setup plan
+basis and a declaration Check request to `machine effect-internal`. The basis
+names the admitted operation and existing managed resource/committed Session
+association; it carries no guest Machine identity or synthetic admission digest.
+Matching Protocol, controller and installed guest CLI consume the multi-recipe
+plan contract together. Legacy enrollment/bootstrap bases retain their meaning.
 
 Unreleased 0.3 auth-switch diagnostics retain the existing
 `continuity_unsupported` cause in `ConnectedServiceUxDiagnosticV1`, including its

@@ -179,6 +179,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
 
     const captureSource = discoveredView?.captureSource ?? null;
     const sourceId = captureSource ? discoveredView?.sourceId ?? null : null;
+    const sourceOccurrenceId = discoveredView?.sourceOccurrenceId;
     const socket = useMachineLiveStreamRelaySocket({
         machineId,
         serverId,
@@ -195,7 +196,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const viewerSocketId = socket?.socketId ?? '';
     // Viewer-specific: two tabs watching one view get two logical streams over one capture source.
     const streamId = useMachineLiveStreamId(sourceId && socket && viewerSocketId
-        ? `browser-live:${socket.machineId}:${sourceId}:${viewerSocketId}`
+        ? `browser-live:${socket.machineId}:${sourceId}:${sourceOccurrenceId ?? ''}:${viewerSocketId}`
         : '');
     const ingestion = useSimulatorRelayIngestion({
         enabled: input.enabled !== false && Boolean(streamId && transport),
@@ -209,6 +210,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         streamId,
         streamFamily: BROWSER_STREAM_FAMILY,
         ...(sourceId ? { sourceId } : {}),
+        ...(sourceOccurrenceId ? { sourceOccurrenceId } : {}),
         caps: NO_VIEWER_CAPS,
         sourceCodecs: captureSource?.supportedCodecs ?? [],
         onReceipt: receipt => {

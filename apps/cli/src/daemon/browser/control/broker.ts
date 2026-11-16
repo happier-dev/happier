@@ -56,14 +56,14 @@ function normalizeAdapterResult(
 
 export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
   const adapters = new Set<BrowserDaemonControlAdapter>();
-  const viewListeners = new Set<Readonly<{ browserSessionId: string; check: () => void }>>();
+  const viewListeners = new Set<Readonly<{ browserSessionId: string; check: (bindingChanged?: boolean) => void }>>();
   let hasRegisteredAdapter = false;
 
   const listViews = (browserSessionId: string, scope?: BrowserCommandScope) =>
     [...adapters].flatMap(adapter => adapter.listViews?.(browserSessionId, scope) ?? []);
   const notify = (browserSessionId?: string) => {
     for (const listener of viewListeners) {
-      if (!browserSessionId || listener.browserSessionId === browserSessionId) listener.check();
+      if (!browserSessionId || listener.browserSessionId === browserSessionId) listener.check(Boolean(browserSessionId));
     }
   };
 
@@ -149,7 +149,11 @@ export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
         signal?.removeEventListener('abort', settle);
         resolve();
       };
-      const listener = { browserSessionId, check: () => {
+      // A retained logical view can acquire a new native capture occurrence. Wake on
+      // the owner's lifecycle push even when membership stays equal; discovery reads
+      // the projection after synchronous lifecycle listeners publish capture readiness.
+      const listener = { browserSessionId, check: (bindingChanged = false) => {
+        if (bindingChanged) { settle(); return; }
         const views = listViews(browserSessionId, scope);
         if (views.length !== known.size || views.some(view => !known.has(view.viewId))) settle();
       } };

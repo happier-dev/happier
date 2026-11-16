@@ -122,9 +122,13 @@ The presented Session Browser also observes the broker's native view membership 
 discovery projection as `daemon.browser.view.list`. This observation exists before
 Chromium installation, so an Inbox-approved open becomes discoverable without a
 local Action operation snapshot. One initial list is followed by one parked wait per
-presented Browser host, rearmed after a membership change. Hidden hosts cancel the
+presented Browser host, rearmed after a membership or native binding change. Hidden hosts cancel the
 wait; unrelated Sessions do not wake it. Older daemons keep one-shot discovery and
 the existing retry path. There is no polling, extra view registry or revision owner.
+Discovery projects the capture registry's existing `sourceOccurrenceId` alongside
+capture capabilities. Replacing a profile retires the old admitted occurrence while
+retaining the logical tab; the owner reacquires the new occurrence through ordinary
+stream admission. Saved profiles remain unavailable to guest viewers.
 
 Protocol's `daemon/browserProjection.ts` owns contributed Browser entry identities and
 rendering-shape normalization. The daemon producer uses those shared identities and types;

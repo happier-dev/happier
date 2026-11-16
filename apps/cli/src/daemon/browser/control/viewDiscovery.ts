@@ -6,7 +6,8 @@ import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stre
 export function projectBrowserDaemonViews(views: readonly BrowserDaemonViewV1[], captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>) {
   return views.map(view => {
     const source = captureRegistry?.resolve({ sourceId: view.sourceId, streamFamily: 'browser.streamed' });
-    return { ...view, ...(source?.ok ? { captureSource: source.source.capabilities } : {}) };
+    return { ...view, ...(source?.ok ? { captureSource: source.source.capabilities,
+      sourceOccurrenceId: source.source.sourceOccurrenceId } : {}) };
   });
 }
 

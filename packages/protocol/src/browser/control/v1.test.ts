@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import * as mod from '../index.js';
+import * as mod from './v1.js';
 
 describe('browser control protocol v1', () => {
+  it('reads discovery with or without a capture occurrence and keeps the envelope closed', () => {
+    const view = { browserSessionId: 'browser', viewId: 'view', sourceId: 'source',
+      target: { kind: 'externalUrl', targetId: 'page', url: 'https://example.test' },
+      platform: 'web', adapterKind: 'chromiumSidecar', events: [] };
+    expect(mod.BrowserDaemonViewV1Schema.parse(view)).toEqual(view);
+    expect(mod.BrowserDaemonViewV1Schema.parse({ ...view, sourceOccurrenceId: 'occurrence' }))
+      .toEqual({ ...view, sourceOccurrenceId: 'occurrence' });
+    for (const sourceOccurrenceId of ['', 1, null]) {
+      expect(mod.BrowserDaemonViewV1Schema.safeParse({ ...view, sourceOccurrenceId }).success).toBe(false);
+    }
+    expect(mod.BrowserDaemonViewV1Schema.safeParse({ ...view, captureGeneration: 1 }).success).toBe(false);
+  });
   it('selects a persistent profile only when opening a managed view', () => {
     const command = { kind: 'openView', commandId: 'open-profile', browserSessionId: 'browser', viewId: 'view',
       platform: 'web', profileId: 'personal', target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test' } };

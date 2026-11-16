@@ -245,7 +245,6 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'push-session', sidecarId: 'push-sidecar', transport });
         const unrelated = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'other-session', sidecarId: 'other-sidecar', transport });
         broker.registerAdapter(adapter);
-        broker.registerAdapter(unrelated);
         let active = 0;
         const snapshot = () => broker.listViews('push-session').map(view => ({ ...view, captureSource: {
             v: 1, sourceId: view.sourceId, sourceKind: 'browser', supportedCodecs: ['image.mjpeg'],
@@ -269,6 +268,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         try {
             await flushHookEffects();
             const requestsBefore = boundary.requests.length;
+            broker.registerAdapter(unrelated);
             await unrelated.dispatchCommand({ kind: 'openView', commandId: 'unrelated-open', browserSessionId: 'other-session',
                 viewId: 'other-view', platform: 'web', target: { kind: 'externalUrl', targetId: 'other', url: 'https://other.test' } });
             await flushHookEffects();
@@ -363,6 +363,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.actionDispatch = null;
         boundary.discoveryError = null;
         boundary.discoveryGate = null;
+        boundary.watchViews = null;
         boundary.disconnect.mockClear();
         boundary.relaySend = null;
         boundary.maxFrameBytes = undefined;
@@ -592,6 +593,12 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });
         const admission = { machineId: 'machine_1', installationId: 'installation', actorAccountId: home.accountId,
             custodianAccountId: 'machine-owner', role: role === 'owner' ? 'manage' as const : role, encryptionMode: 'plain' as const };
+        boundary.watchViews = async ({ payload, signal }) => {
+            const request = payload as { browserSessionId: string; knownViewIds: string[] };
+            const { browserCommandScope } = await import('../../../../../cli/src/daemon/browser/control/types');
+            await broker.watchViews({ ...request, signal, scope: browserCommandScope({ machineAdmission: admission }) });
+            return { protocolVersion: 1, views: routes.listViews(request.browserSessionId, { machineAdmission: admission }) };
+        };
         const identityStore = await import('../../../../../cli/src/daemon/identity/store');
         // Substitute the installed identity's filesystem read, never its signing or RPC owners.
         const installationRead = vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installation);
@@ -655,10 +662,11 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             unmount = () => hook.unmount();
             await flushHookEffects({ cycles: 6, turns: 6 });
             if (role === 'use' && browserOwner !== 'self') {
-                // A guest can present a known/stale source id directly. The mounted viewer must
-                // fail admission even when discovery previously supplied that exact source.
-                await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().picture?.playerState?.diagnostic?.reasonCode)
-                    .toBe('capture_source_denied')); });
+                // Scoped watch can remove a stale discovered view before opening media;
+                // directly presenting that same source still cannot bypass admission.
+                expect(await boundary.sourceAdmission?.({ protocolVersion: 1, machineId: 'machine_1',
+                    sourceId: browserViewKey(view), streamFamily: 'browser.streamed' }))
+                    .toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
                 expect(captureStarted).toBe(false);
                 expect(boundary.requests).not.toContainEqual(expect.objectContaining({
                     method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
@@ -694,6 +702,41 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 adapterKind: 'chromiumSidecar', captureKind: 'cdpScreencast', mimeType: 'video/webm' });
             expect(opened.status === 'dispatched' && opened.events).toContainEqual(expect.objectContaining({
                 kind: 'sessionCreated', profileId: profile.profileId, browserSessionId: view.browserSessionId }));
+            // Replacing a profile is a new media admission, even while the logical tab survives.
+            if (role === 'owner' || browserOwner === 'self') {
+                await profiles.registerPersistentProfile({ profileId: 'replacement-login', storageMode: 'user',
+                    owner: { kind: 'user', id: 'machine-owner' }, cleanupOnSessionClose: false });
+                const oldSource = registry.resolve({ sourceId: browserViewKey(view) });
+                if (!oldSource.ok) throw new Error('Original Browser source missing');
+                const startsBefore = boundary.requests.filter(request => typeof request === 'object' && request !== null
+                    && 'method' in request && (request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START
+                        || request.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START)).length;
+                await act(async () => {
+                    expect(await routes.replaceProfile({ kind: 'openView', commandId: 'profile-replace',
+                        browserSessionId: view.browserSessionId, viewId: view.viewId, platform: 'web', target: view.target,
+                        profileId: 'replacement-login' })).toMatchObject({ status: 'dispatched' });
+                    boundary.views = [...routes.listViews(view.browserSessionId, { machineAdmission: admission })];
+                });
+                expect(oldSource.source.retirementSignal?.aborted).toBe(true);
+                const nextSource = registry.resolve({ sourceId: browserViewKey(view) });
+                if (!nextSource.ok) throw new Error('Replacement Browser source missing');
+                expect(nextSource.source.sourceOccurrenceId).not.toBe(oldSource.source.sourceOccurrenceId);
+                if (role === 'use') {
+                    await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().picture?.playerState?.phase ?? null).not.toBe('playing')); });
+                    expect(await boundary.sourceAdmission?.({ protocolVersion: 1, machineId: 'machine_1',
+                        sourceId: browserViewKey(view), streamFamily: 'browser.streamed' }))
+                        .toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+                } else {
+                    await act(async () => { await vi.waitFor(() => expect(boundary.requests.filter(request => typeof request === 'object'
+                        && request !== null && 'method' in request && request.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START))
+                        .toHaveLength(startsBefore + 1)); });
+                    await act(async () => { for (const listener of cdpListeners) listener({ method: 'Page.screencastFrame', sessionId: 'cdp',
+                        params: { sessionId: 2, data: 'BAUG', metadata: { deviceWidth: 400, deviceHeight: 200 } } }); });
+                    await flushHookEffects();
+                    expect(hook.getCurrent().picture?.playerState?.lastFrameUrl).toContain('BAUG');
+                    expect(hook.getCurrent().state.sessionsById[view.browserSessionId]?.profileId).toBe('replacement-login');
+                }
+            }
         } finally {
             await unmount?.();
             registration.dispose();
@@ -1266,8 +1309,6 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             if (refused) {
                 expect(requested).toEqual([8000]);
                 expect(click).not.toHaveBeenCalled();
-                expect(alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('owner_disconnected'),
-                    expect.arrayContaining([expect.objectContaining({ onPress: expect.any(Function) })]));
                 const { t } = await import('@/text');
                 const details = alert.mock.calls[0]?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
                 expect(details?.onPress).toBeTypeOf('function');

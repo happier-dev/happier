@@ -205,6 +205,7 @@ export const BrowserDaemonViewV1Schema = lazyZodSchema(() => z.strictObject({
   browserSessionId: IdSchema,
   viewId: IdSchema,
   sourceId: z.string().check(z.minLength(1)),
+  sourceOccurrenceId: z.optional(IdSchema),
   target: BrowserViewTargetV1Schema,
   platform: BrowserPlatformV1Schema,
   adapterKind: z.enum((['chromiumSidecar', 'streamedBrowserSurface'] as const).map((value) => { if (!BrowserSemanticAdapterKindV1Schema.options.includes(value)) throw new Error(`Key ${value} not found in enum`); return value; })),
