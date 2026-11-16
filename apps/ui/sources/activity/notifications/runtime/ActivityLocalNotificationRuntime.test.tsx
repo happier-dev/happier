@@ -322,6 +322,33 @@ describe('ActivityLocalNotificationRuntime', () => {
         await screen.unmount();
     });
 
+    it.each(['web', 'desktop'] as const)('delivers an already-due managed inventory reminder through the %s notification channel', async host => {
+        reactNativeRuntime.platformOs = 'web';
+        reactNativeRuntime.isDesktopHost = host === 'desktop';
+        const browser = installBrowserNotificationApiStub('granted');
+        const now = Date.now();
+        managedMachines = [ManagedMachineV1Schema.parse({ id: 'due-deletion-box', homeId: 'srv_home_a', custodianAccountId: 'account-a',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Retained build box', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'retained-box' } },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: now, availability: 'present', power: 'stopped', storage: 'retained',
+                deletionNotices: [{ kind: 'stopped-storage', at: now + 86_400_000,
+                    rule: { kind: 'after-stop', afterMs: 14 * 86_400_000 }, consequence: 'disk-deleted' }] },
+        })];
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        try {
+            await expectNotificationDelivery(() => {
+                const delivered = host === 'web' ? browser.shown : nativeNotificationShow.mock.calls.map(([value]) => value);
+                expect(delivered).toContainEqual(expect.objectContaining({ title: 'Retained build box' }));
+            });
+            expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('suppresses notifications for the focused full-window Session while main is hidden and resumes after blur', async () => {
         reactNativeRuntime.platformOs = 'web';
         reactNativeRuntime.isDesktopHost = true;

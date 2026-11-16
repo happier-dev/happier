@@ -12,7 +12,9 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
-installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'ios' } }),
+});
 const native = vi.hoisted(() => ({
     scheduleNotificationAsync: vi.fn(async (_request: Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]) => 'scheduled-reminder'),
     cancelScheduledNotificationAsync: vi.fn(async (_identifier: string) => undefined),

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { readManagedMachineDeletionAttention } from '../attention/managedMachineDeletionAttention';
 import { updateManagedMachineDeletionNotification } from './managedMachineDeletionNotification';
+import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNotification';
 
 const native = vi.hoisted(() => ({
     scheduleNotificationAsync: vi.fn(async () => 'managed-deletion-1'),
@@ -11,7 +12,7 @@ const native = vi.hoisted(() => ({
 // Expo's OS transport is the boundary; notice selection and both consumer reads remain real.
 vi.mock('expo-notifications', () => ({ ...native, SchedulableTriggerInputTypes: { DATE: 'date' } }));
 
-afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('managed Machine provider deletion reminder consumers', () => {
     const observation = ProviderObservationV1Schema.parse({
@@ -61,5 +62,31 @@ describe('managed Machine provider deletion reminder consumers', () => {
             deletionNotices: observation.deletionNotices?.map(({ at, ...notice }) => notice) });
         await updateManagedMachineDeletionNotification({ ...input, observation: unknownDate });
         expect(native.scheduleNotificationAsync).not.toHaveBeenCalled();
+    });
+
+    it('delivers at the real deadline in a mounted browser and retires a withdrawn schedule without polling', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(input.nowMs);
+        const browser = installBrowserNotificationApiStub('granted');
+        const controller = new AbortController();
+        const scheduled = updateManagedMachineDeletionNotification(input, { channel: 'web', signal: controller.signal });
+        expect(browser.shown).toEqual([]);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(browser.shown).toHaveLength(1);
+        expect(browser.shown[0]).toMatchObject({ title: input.content.title, options: { tag: input.identifier } });
+        expect(await scheduled).toBe(input.identifier);
+        expect(native.scheduleNotificationAsync).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+
+        const withdrawn = new AbortController();
+        const cancelled = updateManagedMachineDeletionNotification({ ...input, nowMs: Date.now(), leadTimeMs: 1_000 }, {
+            channel: 'web', signal: withdrawn.signal,
+        });
+        expect(vi.getTimerCount()).toBe(1);
+        withdrawn.abort();
+        expect(await cancelled).toBeNull();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(browser.shown).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
     });
 });

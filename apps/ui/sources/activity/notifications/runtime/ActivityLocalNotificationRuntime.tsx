@@ -446,7 +446,8 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     ]);
 
     // Phones get the guard's stop warning as a push; a desktop host announces it locally.
-    // Deletion reminders are scheduled native notifications, which a browser cannot hold.
-    if (isDesktopHost()) return <GuardStopWarningDesktopBanners />;
-    return Platform.OS === 'web' ? null : <ManagedMachineDeletionNotificationRuntime serverIds={reminderServerIds} />;
+    return <>
+        {isDesktopHost() ? <GuardStopWarningDesktopBanners /> : null}
+        <ManagedMachineDeletionNotificationRuntime serverIds={reminderServerIds} />
+    </>;
 }
