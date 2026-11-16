@@ -14,7 +14,7 @@ import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatch
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { readDeploymentChildResult } from './deploymentChild';
@@ -235,7 +235,7 @@ describe('installed deployment child ingress', () => {
                     isCurrent: async () => refusal !== 'target' }),
                 async acquirePluginRuntimeRegistryLease(): Promise<import('@/plugins/runtime/reload/controller').PluginRuntimeRegistryLease> {
                     nativeAcquisitions++;
-                    throw Object.assign(new Error('Native acquisition boundary reached'), { code: 'sentinel_native_reached' });
+                    throw createActionExecuteFailureError({ ok: false, error: 'Native acquisition boundary reached', errorCode: 'sentinel_native_reached' });
                 } };
             const handlers = new Map<string, RpcHandler>();
             registerDaemonDeploymentChildRpcHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, host);
@@ -271,7 +271,7 @@ describe('installed deployment child ingress', () => {
                     runtime: { async acquire() { throw new Error('Unexpected review acquisition'); },
                         async acquireCandidate() {
                             nativeAcquisitions++;
-                            throw Object.assign(new Error('Native acquisition boundary reached'), { code: 'sentinel_native_reached' });
+                            throw createActionExecuteFailureError({ ok: false, error: 'Native acquisition boundary reached', errorCode: 'sentinel_native_reached' });
                         } } });
                 const parentInput = projectNativeJsonValueForTransport(rootInput);
                 if (!isJsonObject(parentInput))

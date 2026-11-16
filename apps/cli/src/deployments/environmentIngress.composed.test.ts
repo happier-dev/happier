@@ -20,7 +20,8 @@ import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentAction
 // Only HTTP and the host identity adapters are substituted; requester admission stays real.
 afterEach(() => { vi.restoreAllMocks(); });
 
-const ownerContext: RpcActionExecutorContext = { authority: 'present_user', signal: new AbortController().signal,
+const ownerContext: RpcActionExecutorContext = { authority: 'present_user', serverId: 'home', serverIdentityId: 'home',
+    signal: new AbortController().signal,
     machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine-a',
         installationId: 'installation-a', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
 const ownerIdentity = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',

@@ -90,6 +90,8 @@ it('refuses unreadable or mismatched addresses before opening any private conten
 it('preserves exact private content reference failures instead of returning an unbound principal', async () => {
     const h = fixture();
     h.targetLink.contentBodyVersion += 1;
-    expect(await readDeploymentObservationForHost(h.input, {}, h.host)).toEqual({ ok: false, error: 'deployment_conflict' });
+    expect(await readDeploymentObservationForHost(h.input, {}, h.host)).toEqual({ ok: false, error: 'deployment_conflict',
+        failureCause: { phase: 'deployment.artifact.revision', errorClass: 'TypeError',
+            errorCode: 'deployment_conflict', httpStatus: null } });
 });
 

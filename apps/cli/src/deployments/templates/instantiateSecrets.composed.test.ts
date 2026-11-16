@@ -12,6 +12,7 @@ import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryS
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { DeploymentTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { accountSettingsParse } from '@happier-dev/protocol';
@@ -142,7 +143,7 @@ it.each((['create', 'existing'] as const).flatMap(kind => [true, false].map(refu
                 scopeKey: fixture.inHome(() => resolveAccountSettingsScopeKey(credentials)), settingsSecretsReadKeys: [] }, isCurrent: async () => true });
         const acquire = async (): Promise<never> => {
             nativeAcquisitions++;
-            throw Object.assign(new Error('native_acquisition_reached'), { code: 'native_acquisition_reached' });
+            throw createActionExecuteFailureError({ ok: false, error: 'native_acquisition_reached', errorCode: 'native_acquisition_reached' });
         };
         const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: fixture.origin, machineId: 'target',
             savedSecretOperationContext: operation, resolveRequesterIdentity: async () => requester,
