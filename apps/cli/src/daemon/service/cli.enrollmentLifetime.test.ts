@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { spawnSleepyDetachedProcess, withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { spawnDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
-import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleText, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { createHappierJsonExecutorFromTextRunner } from '@happier-dev/cli-common/systemTasks';
 import { formatSshCommandFailure, readGuestCliFailureOutput, readSshCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
 import { sshCommandFailure } from '@/capabilities/systemTasks/ssh/sshCommandFailure';
@@ -53,6 +53,7 @@ it.each([
     { scenario: 'queued-owner', platform: 'darwin' },
     { scenario: 'kickstart-exit', platform: 'darwin' },
     { scenario: 'never-owner', platform: 'linux' },
+    { scenario: 'never-owner', platform: 'linux', action: 'install' },
     { scenario: 'wrong-owner', platform: 'linux' },
     { scenario: 'wrong-owner', platform: 'darwin' },
     { scenario: 'wrong-owner', platform: 'win32' },
@@ -307,14 +308,39 @@ it.each([
                         expect(facts).toEqual({ guestCliCode: envelope.error, serviceStep: envelope.serviceStep,
                             serviceStepStatus: envelope.serviceStepStatus, ...(envelope.reason ? { serviceReason: envelope.reason } : {}),
                             ...(envelope.command ? { command: envelope.command } : {}), ...(envelope.process ? { process: envelope.process } : {}) });
-                        const message = formatSshCommandFailure('ssh_command_failed', { phase: 'daemon.service.start',
+                        const phase = action === 'uninstall' ? 'daemon.service.uninstallAll' : `daemon.service.${action}` as const;
+                        const message = formatSshCommandFailure('ssh_command_failed', { phase,
                             exitStatus: 1, stdoutPresent: true, stderrPresent: false, ...facts });
                         const failure = sshCommandFailure(output.chunks.join(''), {
                             status: 1, stdout: output.chunks.join(''), stderr: '',
-                        }, 'daemon.service.start');
+                        }, phase);
                         expect(failure.message).toBe(message);
                         expect(readSshCommandFailure(failure.code, failure.message)).toEqual({ code: 'ssh_command_failed', message });
                         expect(message).not.toContain('private-command-output-secret');
+                    }
+                    if (scenario === 'never-owner' && action === 'install') {
+                        // Reach the actual terminal presenter as well as the JSON adapter.
+                        // A successful service-manager command must not hide missing ownership.
+                        elapsedMs = 0;
+                        const priorBootstrapExitCode = process.exitCode;
+                        process.exitCode = undefined;
+                        const priorArgv = process.argv;
+                        const terminal = captureConsoleText();
+                        try {
+                            process.argv = [process.execPath, join(process.cwd(), 'src/index.ts'), 'service', 'install',
+                                '--wait-timeout-ms', String(waitTimeoutMs)];
+                            const { runCliBootstrap } = await import('@/cli/bootstrap');
+                            await runCliBootstrap(new URL('../../index.ts', import.meta.url).href);
+                            expect(process.exitCode).toBe(1);
+                            expect(terminal.text()).toContain('expected background service did not become the active daemon');
+                            expect(terminal.text()).toContain('reason: deadline_elapsed');
+                            expect(terminal.text()).toMatch(/Run `[^`]+ service status`/u);
+                            expect(terminal.text()).not.toContain('private-command-output-secret');
+                        } finally {
+                            process.argv = priorArgv;
+                            process.exitCode = priorBootstrapExitCode;
+                            terminal.restore();
+                        }
                     }
                     if (['queued-owner', 'kickstart-exit'].includes(scenario) && platform === 'darwin') expect(launchdBootstrap).toBe(false);
                 } finally { output.restore(); process.exitCode = priorExitCode; }
