@@ -2049,6 +2049,7 @@
     "sources/components/settings/appearance/themeProfiles/themeProfileFileExport.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfilePresetOptions.ts",
     "sources/components/settings/appearance/themeProfiles/useThemeActionExecution.ts",
+    "sources/components/settings/appearance/themeProfiles/useThemeProfileEditorPreview.ts",
     "sources/components/settings/appearance/useApplyThemeSelection.ts",
     "sources/components/settings/attachments/AttachmentsSettingsView.tsx",
     "sources/components/settings/bugReports/BugReportComposerSections.tsx",
