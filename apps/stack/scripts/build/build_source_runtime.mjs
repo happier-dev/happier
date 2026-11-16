@@ -1676,6 +1676,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     logSourceRuntimePhase(component, 'iroh-native', started);
   }
   let authorPackageInputIdentities;
+  let authorRuntimeImports = [];
   if (component === 'daemon') {
     phase('runtime-dependencies', 'author-packages');
     // Only hosts declaring public author packages need a physical author
@@ -1686,6 +1687,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       // Author closures can exceed the engine's function-argument limit.
       for (const path of author.codeFiles) retainedCodeFiles.push(path);
       authorPackageInputIdentities = author.inputIdentities;
+      authorRuntimeImports = author.runtimeImports;
     }
     phase('author-packages', 'runtime-resources');
     const sidecars = await bundleCliSourceSidecars({repoDir,outputDir:join(runtimeDir,'scripts'),build,workspacePackages,requireFromProject});
@@ -1795,12 +1797,12 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   // launch demand compares the closure this retained CLI actually imports.
   // Unbundled sidecars keep relative imports to their retained siblings; those
   // files already participate in the bundle identity above, not the install.
-  const runtimeImports = component === 'daemon' ? [...new Map(Object.values(result.metafile.outputs)
+  const runtimeImports = component === 'daemon' ? [...new Map([...Object.values(result.metafile.outputs)
     .flatMap(output => output.imports).filter(item => item.external && !item.path.startsWith('.'))
     .map(item => {
       const entry = { path: item.path, resolveFrom: join(sourceRepoDir, 'apps/cli/package.json') };
-      return [JSON.stringify(entry), entry];
-    })).values()] : null;
+      return entry;
+    }), ...authorRuntimeImports].map(entry => [JSON.stringify(entry), entry])).values()] : null;
   const runtimeDependencyClosure = runtimeImports ? (captureDependencies
     ? captureRuntimeDependencies({ imports: runtimeImports, outputDir, sourceRepoDir, signal })
     : { imports: runtimeImports, identity: readSourceRuntimeDependencyIdentity({ imports: runtimeImports, signal }) }) : null;

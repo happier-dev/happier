@@ -12,7 +12,7 @@ import { installSourcePreparationInputs } from '../testkit/core/source_runtime_f
 import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { emitSourceAuthorPackages } from './source_author_packages.mjs';
 import { setBundleReadOnly } from './build_source_runtime.mjs';
-import { resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
+import { captureRuntimeDependencies } from './captured_runtime_dependencies.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
 import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 
@@ -56,6 +56,10 @@ test('source author runtime emits the 18-package closure without native declarat
         destNodeModulesDir: join(directory, 'node_modules') });
     }
   }
+  captureRuntimeDependencies({
+    imports: [{ path: '@typescript/native', resolveFrom: fileURLToPath(new URL('../../../../package.json', import.meta.url)) }],
+    outputDir: repoDir, sourceRepoDir: fileURLToPath(new URL('../../../../', import.meta.url)),
+  });
   await installSourcePreparationInputs(repoDir, 'daemon');
   const sourceInputDigests = {};
   let declarationCompilers = 0;
@@ -103,11 +107,16 @@ test('source author runtime emits the 18-package closure without native declarat
   }
   const materializedSdk = join(materializationRoot, 'node_modules/@happier-dev/plugin-sdk');
   await rm(join(repoDir, 'packages'), { recursive: true, force: true });
+  // A transferred runtime must resolve its deferred compiler without the checkout.
+  captureRuntimeDependencies({ imports: result.runtimeImports ?? [], outputDir: runtimeDir, sourceRepoDir: repoDir });
+  const compiler = resolveInstalledRuntimePackage({ packageName: '@typescript/native',
+    resolveFromPackageJsonPath: join(runtimeDir, 'package.json') });
+  const compilerManifest = JSON.parse(await readFile(compiler.packageJsonPath, 'utf8'));
+  const compilerPath = join(compiler.packageDir, compilerManifest.bin.tsc);
   let authorCompilers = 0;
   await emitSourceAuthorDeclarations([materializedSdk], async (projectPath, workingDirectory) => {
     const args = ['-p', projectPath];
-    const invocation = resolveTypeScriptCliInvocation({ args, workspaceDir: repoDir, admissionClass: 'source-bundle', invocationKind: 'build' });
-    await runCapture(invocation.command, [...invocation.argsPrefix, ...args], { cwd: workingDirectory, env: process.env });
+    await runCapture(process.execPath, [compilerPath, ...args], { cwd: workingDirectory, env: process.env });
     authorCompilers++;
   });
   assert.equal(authorCompilers, 18, 'an explicit author preparation emits each captured package once, dependency first');

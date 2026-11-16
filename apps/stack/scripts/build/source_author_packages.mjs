@@ -198,7 +198,10 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
     }
     const settled = Object.values(sourceInputDigests).every(digest => digest !== null);
     console.error(`[source-author] phase=closure status=${javascriptEmissions ? 'emitted' : 'reused'} elapsedMs=${Math.round(performance.now()-started)} compilers=0 javascriptEmissions=${javascriptEmissions} files=${codeFiles.length}`);
-    return { codeFiles, inputIdentities: settled ? inputIdentities : undefined };
+    // Explicit author commands emit declarations from these captures later.
+    // This dynamic tool lookup is invisible to esbuild's import inventory.
+    const runtimeImports = [{ path: '@typescript/native', resolveFrom: join(sourceRepoDir, 'package.json') }];
+    return { codeFiles, inputIdentities: settled ? inputIdentities : undefined, runtimeImports };
   } finally {
     removeOwnedDirectorySync(workDir);
   }
