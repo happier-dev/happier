@@ -15,6 +15,15 @@ function mcpTextResult(payload: unknown) {
 const input = { actionId: 'session.stop', input: { sessionId: 's1' } };
 
 describe('readHappierActionToolFailure', () => {
+  it.each([{ message: '  Check failed; review the Run.  ', stderr: 'PRIVATE' }, { message: { secret: 'PRIVATE' }, stderr: 'PRIVATE' }, ['PRIVATE'], null].map(details => ({ details })))('projects only the safe workflow refusal reason ($details)', ({ details }) => {
+    const result = mcpTextResult({ ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE', details });
+    const failure = readHappierActionToolFailure('mcp__happier__action_execute', input, result);
+    expect(failure).toMatchObject({ code: 'action_interception_rejected', outcome: 'refused',
+      message: details && !Array.isArray(details) && typeof details.message === 'string' ? details.message.trim() : null,
+      messageTrust: 'workflow_supplied_untrusted', cause: null });
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE');
+  });
+
   it('reads the Action operand from current qualified tool provenance', () => {
     const operand = { actionId: 'session.stop', input: { sessionId: 's1' } };
     expect(readHappierActionToolPayload({

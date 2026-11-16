@@ -3,6 +3,7 @@ import { resolveToolEnvelopeMeta } from '../tools/v2/meta.js';
 import { isShellToolNameAlias } from '../tools/v2/aliases.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/schemas.js';
 import { readActionFailureCauseV1 } from './actionExecutionResult.js';
+import { readActionFailurePresentationV1, type ActionFailurePresentationV1 } from './actionFailurePresentation.js';
 
 const PREFIXES = ['mcp__happier__', 'happier__', 'happier_'] as const;
 
@@ -112,6 +113,8 @@ export function readHappierActionToolResultCandidates(result: unknown, input?: u
 }
 
 export type HappierActionToolFailure = Readonly<{
+    outcome?: ActionFailurePresentationV1['outcome'];
+    messageTrust?: ActionFailurePresentationV1['messageTrust'];
     /** The typed failure code: the Action's `errorCode`, or a spawn error's launch code. */
     code: string;
     /** The typed cause or reason the failure's `details` name, when it names one. */
@@ -153,6 +156,9 @@ export function readHappierActionToolFailure(toolName: string, input: unknown, r
     for (const candidate of readHappierActionToolResultCandidates(result, input)) {
         if (!isRecord(candidate) || candidate.ok === true) continue;
         if (typeof candidate.errorCode === 'string' && candidate.errorCode.trim() && typeof candidate.error === 'string') {
+            const presentation = readActionFailurePresentationV1(candidate.errorCode.trim(), candidate.details);
+            if (presentation) return { code: candidate.errorCode.trim(), cause: null,
+                outcome: presentation.outcome, message: presentation.message, messageTrust: presentation.messageTrust };
             const failureCause = readActionFailureCauseV1(candidate.failureCause);
             return { code: candidate.errorCode.trim(),
                 cause: readFailureCause(candidate.details) ?? ('kind' in failureCause ? null : failureCause.errorCode),
