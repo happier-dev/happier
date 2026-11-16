@@ -27,6 +27,8 @@ import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account
 import { PushNotificationClient } from '@/api/pushNotifications';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
+import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
@@ -106,18 +108,19 @@ describe('settlement notice admission and arrival cost', () => {
     const rows = new Map<string, { id: string } & Record<string, unknown>>();
     // Only HTTP/storage adapters are substituted. Notice encoding, encryption,
     // retained-condition updates and delivery decisions use the real owners.
+    const machineRow = () => ({ id: 'machine-a', active: true,
+        revokedAt: null, replacedByMachineId: null, managedMachineRef: null, dataEncryptionKey: null,
+        metadata: createMachineContentCodec(mode === 'plain' ? { encryptionMode: 'plain' }
+          : { encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey: machineKey }).encodeStored({
+          host: 'production-host', displayName: 'Production server', platform: 'linux', happyCliVersion: 'test',
+          homeDir: '/home/production', happyHomeDir: '/home/production/.happier' }) });
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       const path = new URL(url).pathname;
       if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200,
         data: createAccountEncryptionCurrentnessFixture({ mode }) };
       if (path === '/v1/machines' || path === '/v1/machines/machine-a') {
-        const machine = { id: 'machine-a', active: true,
-        revokedAt: null, replacedByMachineId: null, managedMachineRef: null, dataEncryptionKey: null,
-        metadata: createMachineContentCodec(mode === 'plain' ? { encryptionMode: 'plain' }
-          : { encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey: machineKey }).encodeStored({
-          host: 'production-host', displayName: 'Production server', platform: 'linux', happyCliVersion: 'test',
-          homeDir: '/home/production', happyHomeDir: '/home/production/.happier' }) };
+        const machine = machineRow();
         return { status: 200, data: path === '/v1/machines' ? [machine] : { machine } };
       }
       if (advanceDuringNoticeRead) { receipt.deployment.revision++; advanceDuringNoticeRead = false; }
@@ -132,6 +135,12 @@ describe('settlement notice admission and arrival cost', () => {
       return { status: row ? 200 : 404, data: row ?? {} };
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url: string, input: unknown) => {
+      if (new URL(url).pathname === '/v1/machines/read-batch') {
+        const { machineIds } = MachineReadBatchRequestV1Schema.parse(input);
+        return { status: 200, data: MachineReadBatchResponseV1Schema.parse({ results: machineIds.map(machineId =>
+          machineId === 'machine-a' ? { machineId, status: 'found', machine: machineRow() }
+            : { machineId, status: 'not_found' }) }) };
+      }
       if (new URL(url).pathname === '/v1/artifacts/read') return artifactReadResponse(input, id => rows.get(id) ?? null);
       const mutation = readCarrierMutation(input);
       const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
@@ -160,7 +169,13 @@ describe('settlement notice admission and arrival cost', () => {
         .toEqual({ environmentReads: expectedReads, receiptReads: expectedReads });
     };
     receipt.deployment.state = 'failed'; receipt.deployment.revision++;
-    receipt.content.ownServer = { ...receipt.content.ownServer!, rollbackTarget: {
+    receipt.content.ownServer = { approvedInputBasis: OwnServerDeploymentInputBasisV1Schema.parse({
+      v: 1, environmentId: environment.environment.id, environmentRevision: environment.environment.revision,
+      targetLinkId: link.id, targetLinkRevision: link.revision, sourceIntent: receipt.content.sourceIntent,
+      manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'production',
+      toolVersion: '2.40.1', services: ['app'], profiles: [], members: link.members.map(({ state: _state, ...member }) => member),
+      bindings: environment.content.bindings, images: receipt.content.images, ownServer: environment.content.ownServer,
+    }), rollbackTarget: {
       deploymentId: restored.deployment.id, revision: { kind: 'repository', sha: 'b'.repeat(40) },
     } };
     link.activeDeploymentId = restored.deployment.id;
