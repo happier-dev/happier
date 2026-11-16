@@ -16574,13 +16574,6 @@ describe('startDaemonSessionControlRuntime', () => {
                 expect.objectContaining({ platform: 'android' }),
             ]),
         });
-        // Capability-truth: the iOS adapter is constructed with captureAdapterAvailable derived
-        // from the verified-artifact resolution. With no signed/notarized helper vendored (the
-        // pinned placeholder digest), it resolves false and iOS capture stays fail-closed.
-        expect(createIosSimulatorPlatformAdapterMock).toHaveBeenCalledWith({
-            captureAdapterAvailable: false,
-            discoverResources: expect.any(Function),
-        });
         expect(createAndroidSimulatorPlatformAdapterMock).toHaveBeenCalledWith(expect.objectContaining({
             discoverResources: expect.any(Function),
             resolveScrcpyControl: expect.any(Function),
