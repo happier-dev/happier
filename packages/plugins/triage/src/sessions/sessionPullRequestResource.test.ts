@@ -77,6 +77,8 @@ function boundary(settings: { nativeObserverUnavailable?: boolean; metadataObser
     let relationChanged: (() => void) | undefined;
     const controller = new AbortController();
     const resources: ResourcesService = {
+        async invokeDemand() { throw new Error('No admitted daemon demand'); },
+        async notifyDemands() { throw new Error('No admitted daemon demand'); },
         describe() { throw new Error('No descriptor demand'); },
         async read(id) {
             if (id !== 'session-links-v1') throw new PluginError({
@@ -374,7 +376,9 @@ describe('the composed Session PR Resource', () => {
                     displayName: descriptor.displayName,
                 }] },
             } }] });
-            expect(result.kind === 'ready' && result.pullRequests[0]?.entry).toBeUndefined();
+            expect(result.kind === 'ready' && result.pullRequests[0]?.entry).toEqual(scenario === 'without a configured source' ? undefined : { entryRef: expect.objectContaining({
+                source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
+            }) });
             expect(host.counts()).toEqual({ metadataReads: 1, relationReads: initiallySelected ? 2 : 1, nativeReads: 0 });
             expect(host.nativeObservationCount()).toBe(initiallySelected ? 1 : 0);
             expect(relationRequests).toBe(scenario === 'without a configured source' ? 0 : initiallySelected ? 2 : 1);

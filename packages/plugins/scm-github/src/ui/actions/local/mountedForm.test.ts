@@ -21,6 +21,36 @@ function scopeBoundary(): PluginEphemeralSharedScope {
 const seed = { target: { kind: 'session', sessionId: 'session-a6' },
   workspace: { serverId: 'home', workspaceId: 'checkout', machineId: 'primary', rootPath: '/repo' } } as const;
 describe('local form safe mounted intent', () => {
+  it('adapts the admitted source-neutral PR request to the existing mounted form without executing a job', async () => {
+    const scope = scopeBoundary();
+    const repository = { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' } as const;
+    const cause = { repository, workflowPath: '.github/workflows/test.yml', sourceHeadSha: 'a'.repeat(40) };
+    const expectedSeed = { ...seed, workflowPath: cause.workflowPath, sourceHeadSha: cause.sourceHeadSha };
+    const host = { version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }), notify: async () => undefined,
+      presentActionFailure: async () => undefined,
+      executeAction: (async () => { throw new Error('Opening must not execute'); }) as PluginUiHostApi['executeAction'] };
+    const controller = createLocalRunControllerV1({ accountId: 'account', host, seed: expectedSeed });
+    let unbind = () => {};
+    try {
+      const input = LocalActRunFormInputV1Schema.parse({ operation: { kind: 'openPullRequest',
+        session: { serverId: 'home', sessionId: seed.target.sessionId },
+        acceptedWorkspace: { repository, checkout: seed.workspace }, pullRequestUrl: 'https://github.com/acme/widgets/pull/7', cause } });
+      await expect(executeLocalActFormIntentV1(input, { ephemeralSharedScope: scope, signal: new AbortController().signal,
+        ui: { openSurface: async (view, launch) => {
+          expect(view).toEqual({ pluginId: PLUGIN_MANIFEST.id, localId: 'github-local-act' });
+          expect(launch).toEqual({ seed: expectedSeed });
+          unbind = bindLocalActFormV1(scope, 'source-neutral-mount', expectedSeed, controller);
+        } },
+      })).resolves.toEqual({ kind: 'opened', mountId: 'source-neutral-mount' });
+      for (const bad of [
+        { ...input, operation: { ...input.operation, pullRequestUrl: 'https://github.com/acme/other/pull/7' } },
+        { ...input, operation: { ...input.operation, cause: { ...cause, repository: { ...repository, repository: 'acme/other' } } } },
+      ]) await expect(executeLocalActFormIntentV1(LocalActRunFormInputV1Schema.parse(bad), {
+        ephemeralSharedScope: scope, signal: new AbortController().signal,
+        ui: { openSurface: async () => { throw new Error('Mismatched repository must not open'); } },
+      })).resolves.toEqual({ kind: 'unavailable' });
+    } finally { unbind(); controller.dispose(); }
+  });
   it.each([
     [seed.target, 'github-local-act'],
     [{ kind: 'project', projectId: 'project-workflows' }, 'github-local-act-project'],

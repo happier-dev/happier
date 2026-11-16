@@ -2,9 +2,12 @@ import type { JsonValue, PluginCancellationOptions, PluginContributionRef } from
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolActionApprovalRequestCreatedResultSchema } from '@happier-dev/plugin-sdk/protocol';
-import { sameScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/plugin-sdk/scm';
+import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import { SessionAcceptedWorkspaceV1Schema, type ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+import { TriagePullRequestLocalFormInputV1Schema, TriagePullRequestLocalFormResultV1Schema,
+    type TriagePullRequestLocalCauseV1 as SourceLocalCause } from '@happier-dev/triage-protocol/v1';
+import { resolveTriageSourceDescriptorV1 } from '../ui/detail/sourceSurface.js';
 import {
     SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, SESSION_PULL_REQUEST_WATCH_SETTINGS,
     SessionPullRequestWatchPolicyV1Schema, SessionPullRequestFixAttemptLimitV1Schema,
@@ -87,14 +90,11 @@ export type TriagePullRequestWatchOfferV1 = Readonly<{
 type SessionState = NonNullable<Awaited<ReturnType<PluginUiHostApi['readSession']>>>;
 export type TriagePullRequestControlHostV1 = Readonly<{
     readSession(sessionId: string, options?: PluginCancellationOptions): Promise<Pick<SessionState, 'sessionId' | 'serverId' | 'acceptedWorkspace'> | null>;
+    context(options?: PluginCancellationOptions): Promise<Pick<SurfaceContext, 'targetedContributions'>>;
     executeAction(action: PluginContributionRef, input: JsonValue, options?: PluginCancellationOptions): Promise<unknown>;
 }>;
 /** Only proven local workflow selectors belong here; hosted run/job identifiers never do. */
-export type TriagePullRequestLocalCauseV1 = Readonly<{
-    repository: ScmHostingRepositoryIdentityV1;
-    workflowPath?: string;
-    sourceHeadSha?: string;
-}>;
+export type TriagePullRequestLocalCauseV1 = Omit<SourceLocalCause, 'repository'> & Partial<Pick<SourceLocalCause, 'repository'>>;
 
 /** Open/link success offers a choice; changing an Account default never changes a retained binding. */
 export function projectTriagePullRequestWatchOfferV1(
@@ -128,10 +128,10 @@ export async function acceptTriagePullRequestWatchOfferV1(
     return SessionPullRequestWatchResultV1Schema.parse(result);
 }
 
-/** c3 opens 08's form only. It never starts a process, grants rounds, changes a watch or fetches GitHub. */
+/** The admitted source opens its form only; no execution, watch change or provider read. */
 export async function openTriagePullRequestLocalFormV1(
     host: TriagePullRequestControlHostV1,
-    input: Readonly<{ session: ActionSessionAddressV1; binding: Binding; cause?: TriagePullRequestLocalCauseV1 }>,
+    input: Readonly<{ session: ActionSessionAddressV1; binding: Binding & Pick<TriageSessionPullRequestBindingV1, 'entry'>; cause?: TriagePullRequestLocalCauseV1 }>,
     options?: PluginCancellationOptions,
 ) {
     throwIfAborted(options?.signal);
@@ -142,16 +142,22 @@ export async function openTriagePullRequestLocalFormV1(
     const accepted = SessionAcceptedWorkspaceV1Schema.safeParse(state.acceptedWorkspace);
     if (!accepted.success || accepted.data.checkout.serverId !== input.session.serverId)
         return { kind: 'unavailable' as const, reason: 'workspaceUnavailable' as const };
-    const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: input.binding.link.repository };
-    if (accepted.data.repository === undefined || !sameScmHostingRepositoryIdentity(repository, accepted.data.repository)
-        || (input.cause !== undefined && !sameScmHostingRepositoryIdentity(repository, input.cause.repository)))
+    const repository = accepted.data.repository;
+    if (repository === undefined || (input.cause?.repository !== undefined && !sameScmHostingRepositoryIdentity(repository, input.cause.repository)))
         return { kind: 'unavailable' as const, reason: 'repositoryMismatch' as const };
-    const seed = {
-        target: { kind: 'session', sessionId: input.session.sessionId },
-        workspace: accepted.data.checkout,
-        ...(input.cause?.workflowPath === undefined ? {} : { workflowPath: input.cause.workflowPath }),
-        ...(input.cause?.sourceHeadSha === undefined ? {} : { sourceHeadSha: input.cause.sourceHeadSha }),
-    };
-    return host.executeAction({ pluginId: 'happier.scm.forge.github', localId: 'github/actions/local-form' },
-        { operation: { kind: 'open', seed } }, options);
+    if (input.binding.entry === undefined) return { kind: 'unavailable' as const, reason: 'sourceUnavailable' as const };
+    const context = await host.context(options);
+    throwIfAborted(options?.signal);
+    const source = input.binding.entry.entryRef.source;
+    const descriptor = resolveTriageSourceDescriptorV1(context.targetedContributions, source);
+    const localId = descriptor?.pullRequestLocalFormActionId;
+    if (localId === undefined) return { kind: 'unavailable' as const, reason: 'sourceUnavailable' as const };
+    const request = TriagePullRequestLocalFormInputV1Schema.parse({ operation: { kind: 'openPullRequest',
+        session: input.session, acceptedWorkspace: accepted.data, pullRequestUrl: input.binding.link.url,
+        ...(input.cause === undefined ? {} : { cause: { ...input.cause, repository } }),
+    } });
+    const result = await host.executeAction({ pluginId: source.pluginId, localId }, request, options);
+    const approval = ProtocolActionApprovalRequestCreatedResultSchema.safeParse(result);
+    if (approval.success) return approval.data;
+    return TriagePullRequestLocalFormResultV1Schema.parse(result);
 }

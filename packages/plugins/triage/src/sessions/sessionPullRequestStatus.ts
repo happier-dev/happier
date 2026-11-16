@@ -5,6 +5,7 @@ import { reconcileTriagePullRequestStatusV1, SessionPullRequestStatusResourceRes
 import type { ScmPullRequestSummary } from '@happier-dev/plugin-sdk/scm';
 
 import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1 } from './sessionPullRequestResourceId.js';
+import type { TriageSourceDescriptorReaderV1 } from '../ui/detail/sourceSurface.js';
 
 export type TriageSessionPullRequestBindingV1 = Extract<SessionPullRequestStatusResourceResultV1, { kind: 'ready' }>['pullRequests'][number];
 export type TriageSessionPullRequestProjectionSnapshotV1 = PluginUiResourceProjectionSnapshot<SessionPullRequestStatusResourceResultV1>;
@@ -71,12 +72,13 @@ export function projectTriageSessionPullRequestCardsV1(
     pullRequest: ScmPullRequestSummary | undefined,
     sessionId: string | null,
     value: SessionPullRequestStatusResourceResultV1 | undefined,
+    readSourceDescriptor?: TriageSourceDescriptorReaderV1,
 ): readonly TriageSessionPullRequestCardV1[] {
     const bindings = value?.kind === 'ready' && value.sessionId === sessionId ? value.pullRequests : [];
     const cards: TriageSessionPullRequestCardV1[] = bindings.map(binding => {
         const native = binding.nativeStatus.kind === 'unavailable' ? null : binding.nativeStatus.value;
         const summary = pullRequest?.url === binding.link.url ? pullRequest : {
-            provider: { displayName: 'GitHub' },
+            provider: { displayName: (binding.entry === undefined ? null : readSourceDescriptor?.(binding.entry.entryRef.source))?.displayName ?? 'Source control' },
             number: binding.link.number, url: binding.link.url, title: native?.title ?? binding.link.url,
         };
         return { kind: 'bound', pullRequest: summary, binding };

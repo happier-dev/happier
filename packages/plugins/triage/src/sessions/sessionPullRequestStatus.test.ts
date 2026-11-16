@@ -42,6 +42,20 @@ function populatedStatus(): TriagePullRequestStatusV1 {
 }
 
 describe('admitted Session PR status projection', () => {
+    it('names a bound PR from its admitted source when branch discovery supplies no summary', () => {
+        const entry = entryProof();
+        const value = TRIAGE_SESSION_PULL_REQUEST_STATUS_PROJECTION_V1.decode(content(200, null, { entry,
+            link: { provider: 'gitlab', repository: 'acme/widgets', number: 7,
+                url: 'https://gitlab.example/acme/widgets/-/merge_requests/7' },
+        }), undefined);
+        const fixture = createTriageSourceV1Fixture();
+        const descriptor = { ...fixture.descriptor, displayName: 'GitLab' };
+        const cards = projectTriageSessionPullRequestCardsV1(undefined, 'session-1', value,
+            source => source.pluginId === entry.entryRef.source.pluginId && source.localId === entry.entryRef.source.localId ? descriptor : null);
+        expect(cards[0]?.pullRequest.provider.displayName).toBe('GitLab');
+        expect(projectTriageSessionPullRequestCardsV1(undefined, 'session-1', value)[0]?.pullRequest.provider.displayName).toBe('Source control');
+    });
+
     it('delivers source recovery changes while retaining equal recovery and untouched binding leaves', () => {
         const offer = { destination: { pluginId: 'example.source', localId: 'source-settings' },
             displayName: 'Example source', kindNames: ['Pull requests'] };

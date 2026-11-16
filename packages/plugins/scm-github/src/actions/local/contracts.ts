@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/plugin-sdk/actions';
 import { GithubWorkflowShaV1Schema } from '../identity.js';
+import { TriagePullRequestLocalFormInputV1Schema, TriagePullRequestLocalFormResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '^[^\\u0000]+$' });
@@ -61,6 +62,7 @@ export type LocalActInspectResultV1 = LocalActInspection | ActionApprovalRequest
 export const LocalActInspectResultV1Schema: ProtocolComposableSchema<LocalActInspectResultV1> = defineProtocolUnion([LocalActInspectionV1Schema, ProtocolActionApprovalRequestCreatedResultSchema]);
 const unavailable = defineProtocolObject({ status: defineProtocolLiteral('unavailable') }, closed);
 export const LocalActRunFormInputV1Schema = defineProtocolUnion([
+  TriagePullRequestLocalFormInputV1Schema,
   defineProtocolObject({ operation: defineProtocolObject({ kind: defineProtocolLiteral('open'), seed: LocalActRunSeedV1Schema }, closed) }, closed),
   defineProtocolObject({ mountId: text, operation: defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('readSelection') }, closed),
@@ -69,7 +71,7 @@ export const LocalActRunFormInputV1Schema = defineProtocolUnion([
 ]);
 export type LocalActRunFormInput = ReturnType<typeof LocalActRunFormInputV1Schema.parse>;
 export const LocalActRunFormResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({ kind: defineProtocolLiteral('opened'), mountId: text }, closed),
+  TriagePullRequestLocalFormResultV1Schema,
   defineProtocolObject({ status: defineProtocolLiteral('applied'), selection: LocalRunSelectionV1Schema }, closed),
   defineProtocolObject({ status: defineProtocolLiteral('applied') }, closed), unavailable,
 ]);

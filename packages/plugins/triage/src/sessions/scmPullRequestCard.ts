@@ -3,6 +3,7 @@ import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, ScmP
 import { usePluginHostApi, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import { chooseAndLinkTriageSnapshotPullRequestV1, linkTriageSnapshotPullRequestV1, type TriageSnapshotPullRequestLinkResultV1 } from './scmPullRequestLink.js';
+import { projectTriageSourceDescriptorsV1 } from '../ui/detail/sourceSurface.js';
 import { projectTriageSessionPullRequestCardsV1, useTriageSessionPullRequestStatusV1, type TriageSessionPullRequestProjectionSnapshotV1,
     type TriageSessionPullRequestCardV1 } from './sessionPullRequestStatus.js';
 
@@ -25,15 +26,16 @@ export type TriageScmPullRequestCardControllerV1 = Readonly<{
 /** Data and admitted Actions only. The actual demanded Opus body owns presentation. */
 export function useTriageScmPullRequestCardV1(launchInput: unknown, options?: Readonly<{ enabled?: boolean }>): TriageScmPullRequestCardControllerV1 {
     const host = usePluginHostApi();
-    const { target } = useSurfaceContext();
+    const { target, targetedContributions } = useSurfaceContext();
+    const readSourceDescriptor = React.useMemo(() => projectTriageSourceDescriptorsV1(targetedContributions), [targetedContributions]);
     const input = React.useMemo(() => TriageScmPullRequestCardInputV1Schema.safeParse(launchInput), [launchInput]);
     const sessionId = target.kind === 'session' ? target.sessionId : null;
     const enabled = options?.enabled !== false && input.success;
     // Project-only branch discovery does not acquire Session metadata/native status.
     const { value: resource, refresh } = useTriageSessionPullRequestStatusV1(selectResource, enabled && sessionId !== null);
     const cards = React.useMemo(() => input.success
-        ? projectTriageSessionPullRequestCardsV1(input.data.pullRequest, sessionId, resource.value) : [],
-    [input, resource.value, sessionId]);
+        ? projectTriageSessionPullRequestCardsV1(input.data.pullRequest, sessionId, resource.value, readSourceDescriptor) : [],
+    [input, resource.value, sessionId, readSourceDescriptor]);
     // Channels owns attachment; an unavailable read must not prevent a created PR
     // from being linked. A ready projection still supplies the already-linked card.
     const createdHere = enabled && input.success && input.data.origin === 'createdHere' && sessionId !== null;

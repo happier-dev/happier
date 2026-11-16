@@ -1,4 +1,5 @@
 import { githubDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
+import { LOCAL_ACT_ACTION_IDS } from '../actions/local/contracts.js';
 import {
   TriageSourceDescriptorV1Schema,
   type TriageSourceDescriptorV1,
@@ -189,6 +190,7 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
   // the contributor identity the host already admitted, so a descriptor can never
   // name another plugin's page.
   settingsPageId: GITHUB_TRIAGE_SETTINGS_PAGE_ID_V1,
+  pullRequestLocalFormActionId: LOCAL_ACT_ACTION_IDS.form,
   displayName: 'GitHub',
   scopeUnit: { singularLabel: 'Repository', pluralLabel: 'Repositories' },
   kinds: Object.freeze([

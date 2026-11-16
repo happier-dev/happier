@@ -9,7 +9,8 @@ import { acceptTriagePullRequestWatchOfferV1, openTriagePullRequestLocalFormV1, 
     type TriagePullRequestLocalCauseV1, type TriagePullRequestWatchAcceptanceResultV1,
     type TriagePullRequestWatchOfferV1 } from './sessionPullRequestControls.js';
 
-type Binding = Extract<SessionPullRequestWatchReadResultV1, { kind: 'ready' }>['bindings'][number];
+type Binding = Extract<SessionPullRequestWatchReadResultV1, { kind: 'ready' }>['bindings'][number]
+    & Pick<import('./sessionPullRequestStatus.js').TriageSessionPullRequestBindingV1, 'entry'>;
 
 /** Invoke only for an actual open/link offer. Mounting (including a hidden glance) performs no read. */
 export function useTriageSessionPullRequestWatchDefaultsV1(enabled: boolean):

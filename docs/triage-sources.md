@@ -29,6 +29,25 @@ duplicate id refuses the whole result with
 Composer; the same id in separate snapshots remains valid. This is a Triage
 domain rule, independent of the JSON Schema transport.
 
+## Session pull-request local forms (0.3 development source)
+
+A source may name its own local-form Action in its descriptor. An explicit
+Session local-reproduction request selects that capability from the exact
+source relation and the mounted host's admitted contribution snapshot. It sends
+the accepted Session workspace, native PR URL and any proven workflow cause
+through the shared [local-form input](../packages/triage-protocol/src/v1/pullRequestLocalForm.ts).
+The source checks that the PR and cause address that repository and opens its
+existing unsent form. Opening performs no provider read or job execution.
+
+The Session PR Resource retains an exact relation's entry identity even when no
+configured source instance can read native status. Local forms can therefore
+remain available independently of provider-read configuration. Missing or
+ambiguous relations, absent source admission and sources without the capability
+return the existing visible unavailable state rather than guessing a forge.
+GitHub adapts this request through its existing mounted local-form Action;
+its prior direct-open and mounted-edit operands remain accepted. These matching
+development source contracts add no persistence format or released wire epoch.
+
 ## Task creation places (0.3 development source)
 
 Sources may advertise the optional `listCreationPlaces` task operation. Invoke it
@@ -1322,7 +1341,7 @@ The host's immediate-caller attachment rule preserves Triage's declaring-plugin
 identity without changing the Channels sender or accepting caller qualification.
 
 The local-reproduction
-control opens the existing GitHub local form with the Session's admitted source
+control opens the admitted source's existing local form with the Session's accepted
 checkout and only already-proven workflow/SHA hints. Unmapped or non-CI feedback
 does not fabricate a YAML job id, and opening the form grants no fixing rounds,
 starts no process and does not answer a question. Visual mounting and the complete

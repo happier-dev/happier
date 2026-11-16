@@ -1,6 +1,8 @@
 import { PluginError, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
-import { LocalActRunFormInputV1Schema, type LocalActRunFormInput, type LocalActRunFormResult, type LocalActRunSeedV1 } from '../../../actions/local/contracts.js';
+import { LocalActRunFormInputV1Schema, LocalActRunSeedV1Schema, type LocalActRunFormInput, type LocalActRunFormResult, type LocalActRunSeedV1 } from '../../../actions/local/contracts.js';
+import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
+import { parseGithubResourceUrl, buildGithubRepositoryKey } from '../../../triage/locator.js';
 import type { LocalRunController } from './localRunController.js';
 import { GITHUB_PLUGIN_ID } from '../../../observations/githubProviderContracts.js';
 import { GITHUB_LOCAL_ACT_SESSION_VIEW_ID_V1, GITHUB_LOCAL_ACT_PROJECT_VIEW_ID_V1 } from '../../forge/surfaceIds.js';
@@ -78,6 +80,23 @@ export async function executeLocalActFormIntentV1(input: LocalActRunFormInput, c
   const admitted = LocalActRunFormInputV1Schema.parse(input);
   if ('mountId' in admitted) return !context.ephemeralSharedScope || context.signal.aborted ? { status: 'unavailable' as const }
     : await invokeLocalActFormV1(context.ephemeralSharedScope, admitted);
+  if (admitted.operation.kind === 'openPullRequest') {
+    const { session, acceptedWorkspace, pullRequestUrl, cause } = admitted.operation;
+    const route = parseGithubResourceUrl({ kind: 'pullRequest', url: pullRequestUrl });
+    const repository = route === null ? null : { kind: 'github' as const, deployment: 'https://github.com',
+      repository: buildGithubRepositoryKey(route) ?? '' };
+    if (acceptedWorkspace.checkout.serverId !== session.serverId
+      || !sameScmHostingRepositoryIdentity(repository, acceptedWorkspace.repository)
+      || (cause !== undefined && !sameScmHostingRepositoryIdentity(repository, cause.repository))) return { kind: 'unavailable' as const };
+    const seed = LocalActRunSeedV1Schema.safeParse({ target: { kind: 'session', sessionId: session.sessionId },
+      workspace: acceptedWorkspace.checkout,
+      ...(cause?.workflowPath === undefined ? {} : { workflowPath: cause.workflowPath }),
+      ...(cause?.sourceHeadSha === undefined ? {} : { sourceHeadSha: cause.sourceHeadSha }),
+    });
+    if (!seed.success) return { kind: 'unavailable' as const };
+    if (!context.ephemeralSharedScope || context.signal.aborted) throw new PluginError({ code: 'client_context_required' });
+    return await openLocalActFormV1(context.ephemeralSharedScope, seed.data, context.ui, context.signal);
+  }
   if (!context.ephemeralSharedScope || context.signal.aborted) throw new PluginError({ code: 'client_context_required' });
   return await openLocalActFormV1(context.ephemeralSharedScope, admitted.operation.seed, context.ui, context.signal);
 }

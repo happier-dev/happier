@@ -3,8 +3,13 @@ import { SessionPullRequestWatchReadResultV1Schema } from '@happier-dev/channels
 import type { SessionAcceptedWorkspaceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { ProtocolActionApprovalRequestCreatedResultSchema } from '@happier-dev/plugin-sdk/protocol';
 import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
-// The cross-plugin host boundary admits against the actual L08 owner schema.
+import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
+import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
 import { LocalActRunFormInputV1Schema } from '../../../scm-github/src/actions/local/contracts.js';
+import { executeLocalActFormIntentV1 } from '../../../scm-github/src/ui/actions/local/mountedForm.js';
+import { GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 } from '../../../scm-github/src/triage/contribution.js';
 
 import { acceptTriagePullRequestWatchOfferV1, openTriagePullRequestLocalFormV1, projectTriagePullRequestWatchOfferV1,
     readTriageSessionPullRequestWatchDefaultsV1 } from './sessionPullRequestControls.js';
@@ -14,6 +19,22 @@ const repository = { kind: 'github', deployment: 'https://github.com', repositor
 const acceptedWorkspace: SessionAcceptedWorkspaceV1 = { repository,
     checkout: { serverId: session.serverId, workspaceId: 'workspace-1', machineId: 'machine-1', rootPath: '/work/widgets' } };
 const policy = { mode: 'notify', archiveAfterMerge: false } as const;
+const entry = { entryRef: testkitEntryRef() };
+function sourceContext(actionId = 'example/local-form', source = entry.entryRef.source) {
+    const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
+    const custody = { kind: 'development', registeredRootId: 'source-root' } as const;
+    const targetedContributions: PluginUiTargetedContributionsV1 = {
+        target: { pluginId: 'happier.triage', occurrenceId: 'target', sourceCustody: custody },
+        points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol, contributions: [{
+            protocol, contributor: { pluginId: source.pluginId, contributionId: source.localId,
+                occurrenceId: 'source', sourceCustody: custody }, operations: [], surfaces: [],
+            descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
+                kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
+                pullRequestLocalFormActionId: actionId },
+        }] }] }],
+    };
+    return { targetedContributions };
+}
 function binding(mode = 'off', state = 'open') {
     const read = SessionPullRequestWatchReadResultV1Schema.parse({ kind: 'ready', sessionId: session.sessionId, bindings: [{
         bindingId: 'binding-1', revision: 7,
@@ -127,23 +148,29 @@ describe('Session PR control operands', () => {
         expect(actions).toEqual([{ pluginId: 'happier.channels', localId: 'session-pull-request-watch-v1' }]);
     });
 
-    it('opens only the existing local form with the accepted source checkout and proven cause, with no run or retry', async () => {
+    it('opens a non-GitHub admitted source form with the accepted checkout and proven cause, with no run or retry', async () => {
         const effects: unknown[] = [];
+        const repository = { kind: 'gitlab', deployment: 'https://gitlab.example', repository: 'acme/widgets' } as const;
+        const acceptedWorkspace = { repository, checkout: { serverId: session.serverId, workspaceId: 'workspace-1', machineId: 'machine-1', rootPath: '/work/widgets' } };
         const host = {
             async readSession(id: string) { effects.push({ readSession: id }); return { ...session, acceptedWorkspace }; },
+            async context() { return sourceContext(); },
             async executeAction(action: unknown, input: unknown) {
-                effects.push({ action, input: LocalActRunFormInputV1Schema.parse(input) });
+                effects.push({ action, input });
                 return { kind: 'opened', mountId: 'mount-1' };
             },
         };
         const cause = { repository, workflowPath: '.github/workflows/test.yml', sourceHeadSha: 'a'.repeat(40) };
-        await expect(openTriagePullRequestLocalFormV1(host, { session, binding: binding(), cause }))
+        const original = binding();
+        const selected = { ...original, entry, link: { ...original.link, provider: 'gitlab' as const,
+            url: 'https://gitlab.example/acme/widgets/-/merge_requests/7' } };
+        await expect(openTriagePullRequestLocalFormV1(host, { session, binding: selected, cause }))
             .resolves.toEqual({ kind: 'opened', mountId: 'mount-1' });
         expect(effects).toEqual([
             { readSession: session.sessionId },
-            { action: { pluginId: 'happier.scm.forge.github', localId: 'github/actions/local-form' },
-                input: { operation: { kind: 'open', seed: { target: { kind: 'session', sessionId: session.sessionId }, workspace: acceptedWorkspace.checkout,
-                    workflowPath: cause.workflowPath, sourceHeadSha: cause.sourceHeadSha } } } },
+            { action: { pluginId: entry.entryRef.source.pluginId, localId: 'example/local-form' },
+                input: { operation: { kind: 'openPullRequest', session, acceptedWorkspace,
+                    pullRequestUrl: selected.link.url, cause } } },
         ]);
     });
 
@@ -151,14 +178,53 @@ describe('Session PR control operands', () => {
         let writes = 0;
         const action = async () => { writes += 1; return { kind: 'opened', mountId: 'wrong' }; };
         for (const state of [null, { ...session }, { ...session, sessionId: 'another' },
-            { ...session, serverId: 'other-home', acceptedWorkspace },
-            { ...session, acceptedWorkspace: { ...acceptedWorkspace, repository: { ...repository, repository: 'acme/other' } } }]) {
-            await expect(openTriagePullRequestLocalFormV1({ readSession: async () => state, executeAction: action },
-                { session, binding: binding() })).resolves.toMatchObject({ kind: 'unavailable' });
+            { ...session, serverId: 'other-home', acceptedWorkspace }]) {
+            await expect(openTriagePullRequestLocalFormV1({ readSession: async () => state, context: async () => sourceContext(), executeAction: action },
+                { session, binding: { ...binding(), entry } })).resolves.toMatchObject({ kind: 'unavailable' });
         }
-        await expect(openTriagePullRequestLocalFormV1({ readSession: async () => ({ ...session, acceptedWorkspace }), executeAction: action },
-            { session, binding: binding(), cause: { repository: { ...repository, repository: 'acme/other' }, workflowPath: 'unrelated.yml' } }))
+        await expect(openTriagePullRequestLocalFormV1({ readSession: async () => ({ ...session, acceptedWorkspace }), context: async () => sourceContext(), executeAction: action },
+            { session, binding: { ...binding(), entry }, cause: { repository: { ...repository, repository: 'acme/other' }, workflowPath: 'unrelated.yml' } }))
             .resolves.toEqual({ kind: 'unavailable', reason: 'repositoryMismatch' });
         expect(writes).toBe(0);
+    });
+
+    it('requires the exact admitted source capability instead of choosing another forge or a legacy provider hint', async () => {
+        let writes = 0;
+        const host = { readSession: async () => ({ ...session, acceptedWorkspace }),
+            executeAction: async () => { writes++; throw new Error('No matching source'); } };
+        const selected = { ...binding(), entry };
+        const snapshot = sourceContext();
+        for (const [bindingValue, context] of [
+            [binding(), snapshot],
+            [{ ...selected, entry: { entryRef: testkitEntryRef({ source: { ...entry.entryRef.source, localId: 'another-source' } }) } }, snapshot],
+            [selected, { targetedContributions: undefined }],
+        ] as const) await expect(openTriagePullRequestLocalFormV1({ ...host, context: async () => context },
+            { session, binding: bindingValue })).resolves.toEqual({ kind: 'unavailable', reason: 'sourceUnavailable' });
+        expect(writes).toBe(0);
+    });
+
+    it('retains visible unavailability from the real GitHub form when the bound PR belongs to another repository', async () => {
+        const githubSource = { pluginId: 'happier.scm.forge.github', localId: 'github-forge' };
+        const original = binding();
+        const selected = { ...original, link: { ...original.link, url: 'https://github.com/acme/other/pull/7' },
+            entry: { entryRef: testkitEntryRef({ source: githubSource }) } };
+        const result = await openTriagePullRequestLocalFormV1({
+            readSession: async () => ({ ...session, acceptedWorkspace }),
+            context: async () => sourceContext(GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.pullRequestLocalFormActionId!, githubSource),
+            executeAction: async (_action, input) => executeLocalActFormIntentV1(LocalActRunFormInputV1Schema.parse(input), {
+                ephemeralSharedScope: null, signal: new AbortController().signal,
+                ui: { openSurface: async () => { throw new Error('Mismatched repository cannot open'); } },
+            }),
+        }, { session, binding: selected });
+        expect(result).toMatchObject({ kind: 'unavailable' });
+    });
+
+    it('preserves the host approval envelope without reporting an opened form or retrying', async () => {
+        const approval = ProtocolActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created',
+            artifactId: 'approval-local-form', actionId: 'example/local-form' });
+        await expect(openTriagePullRequestLocalFormV1({
+            readSession: async () => ({ ...session, acceptedWorkspace }), context: async () => sourceContext(),
+            executeAction: async () => approval,
+        }, { session, binding: { ...binding(), entry } })).resolves.toEqual(approval);
     });
 });

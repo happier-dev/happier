@@ -48,7 +48,8 @@ type State = {
     observer?: { invalidate(): void; options: PluginDynamicResourceInvocationOptionsV1; controller: AbortController };
 };
 type StagedRead = Extract<SessionPullRequestStatusResourceResultV1, { kind: 'unavailable' }>
-    | { kind: 'ready'; sessionId: string; bindings: readonly { binding: Binding; demand: NativeDemand | null; unavailableStatus?: NativeStatus }[] };
+    | { kind: 'ready'; sessionId: string; bindings: readonly { binding: Binding; demand: NativeDemand | null;
+        entry?: Ready['pullRequests'][number]['entry']; unavailableStatus?: NativeStatus }[] };
 
 // The host owns this object's exact Account/plugin occurrence/Session lifetime.
 // Last-demand abort deletes our admitted bytes even when the host retains its descriptor context.
@@ -114,18 +115,20 @@ function resolveDemand(binding: Binding, relations: TriageReadSourceSessionLinks
     const matches = relations?.links.filter(link => link.sessionId === id && link.locator?.webUrl === binding.link.url);
     if (matches?.length !== 1) return null;
     const link = matches[0]!;
+    const entry = { entryRef: link.entryRef,
+        ...(link.sourceInstanceId === undefined ? {} : { sourceInstanceId: link.sourceInstanceId }) };
     // The relation owner retained the link but did not select a configured authority.
     // This says nothing about whether its repository is configured or readable.
-    if (link.sourceInstanceId === undefined) return { failure: withSourceSetupRecovery(unavailable({
+    if (link.sourceInstanceId === undefined) return { entry, failure: withSourceSetupRecovery(unavailable({
         class: 'unsupportedContract', code: 'sessionLinksSourceInstanceRequired',
     }), relations, link.entryRef.source.pluginId) };
-    if (link.sourceInstanceRevision === undefined || link.sourceInstanceRowId === undefined || link.locator === undefined) return null;
+    if (link.sourceInstanceRevision === undefined || link.sourceInstanceRowId === undefined || link.locator === undefined) return { entry };
     const input: TriageReobserveEntryActionInputV1 = { v: 1, entryRef: link.entryRef,
         sourceInstanceId: link.sourceInstanceId, sourceInstanceRowId: link.sourceInstanceRowId, lastKnownLocator: link.locator };
     // Storage revisions include label edits; the observed authority lifetime owns retirement.
     const key = JSON.stringify([link.sourceInstanceId, link.sourceInstanceRowId, link.entryRef.source.pluginId,
         link.entryRef.source.localId, link.entryRef.kindId, link.entryRef.collisionScope, link.entryRef.entryId, link.locator.webUrl]);
-    return { key, input };
+    return { key, input, entry };
 }
 
 async function disposeObservation(observation: Disposable | undefined): Promise<void> {
@@ -279,10 +282,12 @@ async function read(state: State, options: PluginDynamicResourceInvocationOption
     const wanted = new Map<string, NativeDemand>();
     const bindings = metadata.bindings.map(binding => {
         const resolved = resolveDemand(binding, state.relations, id);
-        if (!resolved || resolved.failure !== undefined) return { binding, demand: null, unavailableStatus: resolved?.failure };
+        if (!resolved || !('input' in resolved)) return { binding, demand: null,
+            ...(resolved?.entry === undefined ? {} : { entry: resolved.entry }),
+            ...(!resolved || !('failure' in resolved) ? {} : { unavailableStatus: resolved.failure }) };
         const demand = wanted.get(resolved.key) ?? state.native.get(resolved.key) ?? { input: resolved.input, dirty: true };
         wanted.set(resolved.key, demand);
-        return { binding, demand };
+        return { binding, demand, entry: resolved.entry };
     });
     const retired = [...state.native].filter(([key]) => !wanted.has(key)).map(([, demand]) => disposeDemand(demand));
     state.native = wanted;
@@ -311,8 +316,8 @@ export const TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME: PluginDynamicR
             const result = await read(state, options, updates);
             throwIfAborted(options.signal);
             const value: SessionPullRequestStatusResourceResultV1 = result.kind === 'ready'
-                ? { kind: 'ready', sessionId: result.sessionId, pullRequests: result.bindings.map(({ binding, demand, unavailableStatus }) => ({ ...binding,
-                    ...(demand ? { entry: { entryRef: demand.input.entryRef, sourceInstanceId: demand.input.sourceInstanceId } } : {}),
+                ? { kind: 'ready', sessionId: result.sessionId, pullRequests: result.bindings.map(({ binding, demand, entry, unavailableStatus }) => ({ ...binding,
+                    ...(entry === undefined ? {} : { entry }),
                     nativeStatus: unavailableStatus ?? withSourceSetupRecovery((demand && (updates.get(demand)?.status ?? demand.status))
                         ?? unavailable(state.relationFailure ?? { class: 'unsupportedContract', code: 'configuredSourceUnavailable' }), state.relations),
                 })) } : result;

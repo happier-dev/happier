@@ -10,8 +10,8 @@ export type PullRequestLocalOpenStateV1 = 'idle' | 'opening' | 'unavailable';
 /**
  * Where the glance's two ways out lead, through the host's own owners: the latest update opens where it
  * happened (the retained Session input through `revealSessionInput`, or the provider page), and "Run the job
- * locally" opens 08's local-run form for this Session's accepted checkout. Opening never runs a process,
- * grants fixing rounds or reads GitHub.
+ * locally" opens the admitted source's local-run form for this Session's accepted checkout. Opening never
+ * runs a process, grants fixing rounds or reads the provider.
  */
 export function usePullRequestGlanceNavigationV1(session: Readonly<{ serverId: string; sessionId: string }> | null, signal: AbortSignal) {
     const host = usePluginHostApi();
@@ -30,11 +30,10 @@ export function usePullRequestGlanceNavigationV1(session: Readonly<{ serverId: s
         setLocalOpen('opening');
         try {
             const sha = binding.watch.progress?.sourceHeadSha;
-            const result = await openTriagePullRequestLocalFormV1(host, { session, binding, cause: {
-                repository: { kind: 'github', deployment: 'https://github.com', repository: binding.link.repository },
-                ...(sha === undefined ? {} : { sourceHeadSha: sha }),
-            } }, { signal });
-            if (!signal.aborted) setLocalOpen(result !== null && typeof result === 'object' && 'kind' in result && result.kind === 'unavailable' ? 'unavailable' : 'idle');
+            const result = await openTriagePullRequestLocalFormV1(host, { session, binding,
+                ...(sha === undefined ? {} : { cause: { sourceHeadSha: sha } }),
+            }, { signal });
+            if (!signal.aborted) setLocalOpen(result.kind === 'unavailable' ? 'unavailable' : 'idle');
         } catch {
             if (!signal.aborted) setLocalOpen('unavailable');
         }
