@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createArtifactAccessActionsV1 } from './artifactAccessActions.js';
+import { normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
 import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
 import type { ArtifactAccessGrantRowV1 } from '../../artifacts/artifactAccessV1.js';
 import { createWorkBoardV1 } from '../../boards/workBoardV1.js';
@@ -27,8 +28,14 @@ it('lists the authenticated grant roster without reading private Artifact conten
   await expect(owner({ actionId: 'artifact.access.grants.list', input: { artifactId: listed.artifactId } }))
     .resolves.toEqual(listed);
   available = false;
-  await expect(owner({ actionId: 'artifact.access.grants.list', input: { artifactId: listed.artifactId } }))
-    .rejects.toMatchObject({ code: 'artifact_access_forbidden' });
+  let failure: unknown;
+  try {
+    await owner({ actionId: 'artifact.access.grants.list', input: { artifactId: listed.artifactId } });
+  } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: 'artifact_access_forbidden' });
+  expect(settleActionOutput('artifact.access.grants.list', {
+    ok: false, ...normalizeActionExecutorThrownError(failure),
+  })).toMatchObject({ ok: false, errorCode: 'artifact_access_forbidden' });
   expect(bodyReads).toBe(0);
 });
 

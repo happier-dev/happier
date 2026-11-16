@@ -1,6 +1,7 @@
 import {
   ArtifactAccessActionInputSchemasV1,
   ArtifactAccessActionOutputSchemasV1,
+  ArtifactAccessErrorCodeV1Schema,
   type ArtifactAccessActionIdV1,
   type ArtifactAccessGrantsListInputV1,
   type ArtifactAccessGrantSetInputV1,
@@ -9,6 +10,7 @@ import {
   type ArtifactAccessGrantMutationResponseV1,
 } from '../../artifacts/artifactAccessV1.js';
 import { getArtifactUseTargetV1, type ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
+import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 
 export type ArtifactAccessActionTransportV1 = Readonly<{
   list: (input: ArtifactAccessGrantsListInputV1, signal?: AbortSignal) => Promise<ArtifactAccessGrantsListResponseV1>;
@@ -23,32 +25,39 @@ export function createArtifactAccessActionsV1(params: Readonly<{
   prepareSharing?: (resource: ArtifactSharingResourceV1, signal?: AbortSignal) => Promise<void>;
 }>) {
   return async (args: Readonly<{ actionId: ArtifactAccessActionIdV1; input: unknown; signal?: AbortSignal }>) => {
-    args.signal?.throwIfAborted();
-    const input = ArtifactAccessActionInputSchemasV1[args.actionId].parse(args.input);
-    if (args.actionId === 'artifact.access.grants.list') {
-      const result = await params.transport.list(input, args.signal);
+    try {
       args.signal?.throwIfAborted();
-      return ArtifactAccessActionOutputSchemasV1[args.actionId].parse(result);
-    }
-    const resource = await params.read(input.artifactId, args.signal ? { signal: args.signal } : undefined);
-    args.signal?.throwIfAborted();
-    if (!resource) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
-    // Kind admission prevents new grants, not inspection or revocation of retained access.
-    if (args.actionId === 'artifact.access.grants.set' && !getArtifactUseTargetV1(resource).canShare) {
-      throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
-    }
-    if (!resource.access) throw Object.assign(new Error('artifact_access_unavailable'), { code: 'artifact_access_unavailable' });
-    if (resource.access !== 'owner' && resource.access !== 'admin') {
-      throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });
-    }
-    let result: ArtifactAccessGrantMutationResponseV1;
-    switch (args.actionId) {
-      case 'artifact.access.grants.set':
-        await params.prepareSharing?.(resource, args.signal);
+      const input = ArtifactAccessActionInputSchemasV1[args.actionId].parse(args.input);
+      if (args.actionId === 'artifact.access.grants.list') {
+        const result = await params.transport.list(input, args.signal);
         args.signal?.throwIfAborted();
-        result = await params.transport.set(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
-      case 'artifact.access.grants.remove': result = await params.transport.remove(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
+        return ArtifactAccessActionOutputSchemasV1[args.actionId].parse(result);
+      }
+      const resource = await params.read(input.artifactId, args.signal ? { signal: args.signal } : undefined);
+      args.signal?.throwIfAborted();
+      if (!resource) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
+      // Kind admission prevents new grants, not inspection or revocation of retained access.
+      if (args.actionId === 'artifact.access.grants.set' && !getArtifactUseTargetV1(resource).canShare) {
+        throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
+      }
+      if (!resource.access) throw Object.assign(new Error('artifact_access_unavailable'), { code: 'artifact_access_unavailable' });
+      if (resource.access !== 'owner' && resource.access !== 'admin') {
+        throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });
+      }
+      let result: ArtifactAccessGrantMutationResponseV1;
+      switch (args.actionId) {
+        case 'artifact.access.grants.set':
+          await params.prepareSharing?.(resource, args.signal);
+          args.signal?.throwIfAborted();
+          result = await params.transport.set(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
+        case 'artifact.access.grants.remove': result = await params.transport.remove(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
+      }
+      return ArtifactAccessActionOutputSchemasV1[args.actionId].parse(result);
+    } catch (error) {
+      args.signal?.throwIfAborted();
+      const code = ArtifactAccessErrorCodeV1Schema.safeParse(error instanceof Error && 'code' in error ? error.code : undefined);
+      if (!code.success) throw error;
+      throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code.data, error: code.data }), { cause: error });
     }
-    return ArtifactAccessActionOutputSchemasV1[args.actionId].parse(result);
   };
 }
