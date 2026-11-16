@@ -28,9 +28,13 @@ export const CuaLocalOptionsQueryV1Schema = defineProtocolObject({
     runtimeId: CuaLocalRuntimeSchema.optional(), imageId: nativeId.optional(), size: CuaLocalOptionsSizeV1Schema.optional(),
 }, closed);
 export type CuaLocalOptionsQueryV1 = ProtocolSchemaOutput<typeof CuaLocalOptionsQueryV1Schema>;
-export const CuaLocalLaunchV1Schema = defineProtocolObject({
+const localLaunch = {
     on: defineProtocolLiteral('local'), runtimeId: CuaLocalRuntimeSchema, imageId: nativeId,
     size: CuaLocalSizeV1Schema,
+};
+export const CuaLocalBaseLaunchV1Schema = defineProtocolObject(localLaunch, closed);
+export const CuaLocalLaunchV1Schema = defineProtocolObject({ ...localLaunch,
+    preparedOperationId: CuaLocalNameSchema.optional(),
 }, closed);
 export type CuaLocalLaunchV1 = ProtocolSchemaOutput<typeof CuaLocalLaunchV1Schema>;
 export const CuaLocalResourceV1Schema = defineProtocolUnion([

@@ -59,6 +59,16 @@ function selected(options: MachineProvisionerOptionsResultV1, selection: Machine
 }
 
 describe('Cua native read facts', () => {
+    it.each([['x86_64', 'amd64', 'x64'], ['aarch64', 'arm64', 'arm64']] as const)(
+        'supplies the actual Linux image build target on %s hosts', async (hostArch, imageArch, targetArch) => {
+            const report = { ...doctor, host: { ...doctor.host, arch: hostArch } };
+            const options = await harness(report, [{ ...image, arch: [imageArch],
+                sizes: { digest, platforms: [{ arch: imageArch, disk: 21474836480 }] } }]).facts.options(undefined,
+                { size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } });
+            expect(selected(options)).toMatchObject({ kind: 'ready', nativeFacts: {
+                preparationGuest: { target: { os: 'linux', arch: targetArch }, remoteHomeDir: '/opt/happier' },
+            } });
+        });
     it.each([['linux', 'linux'], ['macos', 'darwin'], ['windows', 'windows']] as const)(
         'publishes the selected image OS %s independently of the controller', async (os, guestPlatform) => {
             const options = await harness(doctor, [{ ...image, os }]).facts.options(undefined,

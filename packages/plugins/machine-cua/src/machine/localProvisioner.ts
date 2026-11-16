@@ -1,10 +1,11 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
 import { observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerObservationV1, MachineProvisionerOptionsResultV1,
     MachineProvisionerPowerResultV1, MachineProvisionerNativeIntentV1,
     MachineProvisionerProcessConfigV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { createCuaLocalSandbox } from './localSandbox.js';
+import { createCuaLocalSandbox, cuaLocalImageMatches } from './localSandbox.js';
 import { createCuaLocalSpace } from './localSpace.js';
 import { createCuaNativeFacts } from './nativeFacts.js';
 import { CUA_UNSUPPORTED_INTENT, cuaPowerAfter } from './nativePower.js';
@@ -61,6 +62,10 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
             ...(observed.existence === 'unknown' ? { reason: 'cua_native_resource_unknown' } : {}) });
     }
     return {
+        async stream(input: unknown, argv: readonly string[], exec: Pick<ExecService, 'spawn'>) {
+            const value = await running(input);
+            return native.streamGuest(value.sandboxId, argv, exec, signal);
+        },
         check: () => facts.check(signal),
         async options(input: unknown): Promise<MachineProvisionerOptionsResultV1> {
             const selectors = CuaLocalOptionsQueryV1Schema.parse(input);
@@ -71,7 +76,7 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
             const value = resource(operation.resource);
             try {
                 const observed = await leaf.inspect(value, signal);
-                if (observed.existence === 'present' && observed.imageId === operation.imageId
+                if (observed.existence === 'present' && cuaLocalImageMatches(value.kind, observed.imageId, operation.imageId)
                     && (!('registry' in observed) || observed.registry === 'present')) {
                     return { kind: 'bound' as const, resource: { ...reference(value), origin: 'created' as const } };
                 }

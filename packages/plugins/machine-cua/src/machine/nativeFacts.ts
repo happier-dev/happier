@@ -1,6 +1,6 @@
 import * as z from 'zod/mini';
 import type { MachineProvisionerCheckResultV1, MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { CuaNativeClient, CuaNativeOutcome } from './nativeClient.js';
+import { CUA_PREPARATION_HOME, type CuaNativeClient, type CuaNativeOutcome } from './nativeClient.js';
 import { CuaLocalOptionsQueryV1Schema, CuaNativeImageRefSchema, type CuaLocalLaunchV1, type CuaLocalOptionsQueryV1 } from './schemas.js';
 import { machinePresentationLabel } from '../ui/translations.js';
 
@@ -158,6 +158,10 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
                                 ...(size && size.diskBytes === undefined && diskBytes !== undefined ? [{ path: 'size.diskBytes', value: diskBytes }] : [])],
                             available: image.spacesd && image.os !== 'windows' && image.architectures.includes(nativeArch),
                             nativeFacts: { image: { id: image.imageId, title: image.imageId },
+                                ...(image.os === 'linux' && image.architectures.includes(nativeArch) ? {
+                                    preparationGuest: { target: { os: 'linux' as const, arch: nativeArch === 'amd64' ? 'x64' as const : 'arm64' as const },
+                                        remoteHomeDir: CUA_PREPARATION_HOME },
+                                } : {}),
                                 ...(sizeIdentity && size?.diskBytes === undefined && diskBytes !== undefined
                                     ? { size: { ...sizeIdentity, diskBytes } } : {}) },
                         };

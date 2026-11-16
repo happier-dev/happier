@@ -1,8 +1,15 @@
-import type { CuaNativeClient } from './nativeClient.js';
+import { cuaPreparedNames, type CuaNativeClient } from './nativeClient.js';
 import { cuaNativePowerVerb, type CuaPowerIntent } from './nativePower.js';
 import { readCuaSpaceRegistryEntry } from './nativeSpaces.js';
 import { CuaLocalLaunchV1Schema, CuaLocalNameSchema, parseCuaLocalResource, CuaNativeSandboxSchema, CuaNativeDeleteSchema,
     type CuaLocalResourceV1 } from './schemas.js';
+
+/** QEMU info/ls/connect omit image in v0.27.5. The admitted exact id/runtime
+ * owns a plain sandbox; a Space additionally has authoritative registry image.
+ * Reject a reported mismatch, without inventing missing sandbox image evidence. */
+export function cuaLocalImageMatches(kind: CuaLocalResourceV1['kind'], imageId: string | undefined, expected: string) {
+    return imageId === expected || (kind === 'sandbox' && imageId === undefined);
+}
 
 export function createCuaLocalSandbox(native: CuaNativeClient) {
     async function inspect(input: unknown, signal?: AbortSignal) {
@@ -45,6 +52,18 @@ export function createCuaLocalSandbox(native: CuaNativeClient) {
             if (launch.size.diskBytes !== imageDiskBytes) return { kind: 'unavailable' as const, reason: 'image_disk_mismatch' as const };
             const recovery = { namespace: 'local' as const, runtimeId: launch.runtimeId, sandboxId: `local:${name}` };
             const resource: CuaLocalResourceV1 = { kind: 'sandbox', ...recovery };
+            if (launch.preparedOperationId !== undefined) {
+                // Fork restores the artifact's retained sizing. S1 supplies its
+                // complete launch after revision matching; this is not a resize.
+                const checkpoint = await native.preparedCheckpoint(launch.preparedOperationId, launch, signal);
+                if (checkpoint.kind !== 'present' || !checkpoint.pinned) return { kind: 'unknown' as const, recovery };
+                const forked = await native.effect(['--embedded', 'sandbox', 'fork',
+                    cuaPreparedNames(launch.preparedOperationId).checkpoint, name], signal);
+                if (forked.kind !== 'success') return { kind: 'unknown' as const, recovery };
+                const observed = await inspect(resource, signal);
+                return observed.existence === 'present' && observed.power === 'running' && cuaLocalImageMatches('sandbox', observed.imageId, launch.imageId)
+                    ? { kind: 'bound' as const, resource } : { kind: 'unknown' as const, recovery };
+            }
             // Native open() otherwise follows CUA_DAEMON or daemon discovery.
             // Embedded uses the same native state store on this controller.
             const response = await native.json(['--embedded', 'sandbox', 'create', '--on=local', `--runtime=${launch.runtimeId}`,
@@ -80,7 +99,7 @@ export function createCuaLocalSandbox(native: CuaNativeClient) {
                 // registration is the image evidence while compute is present.
                 const imageId = before.imageId ?? (resource.kind === 'space'
                     ? (await readCuaSpaceRegistryEntry(native, resource.spaceId, signal, 'local')).image : undefined);
-                if (imageId !== expectedImageId) return { kind: 'unknown' as const, existence: 'unknown' as const, resource };
+                if (!cuaLocalImageMatches(resource.kind, imageId, expectedImageId)) return { kind: 'unknown' as const, existence: 'unknown' as const, resource };
             }
             // Immutable native basis 2bce4442: sandbox-core/sandbox.rs
             // 2349–2382,3373–3379 awaits local runtime deletion (or typed native

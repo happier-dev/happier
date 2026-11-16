@@ -1,12 +1,25 @@
-import { projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type ManagedGuestCliBuildInputV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { projectPluginFailureText, PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginExecSpawnRequest } from '@happier-dev/plugin-sdk/exec';
 import { createSecureTempDirectorySync, writeAtomicFile } from '@happier-dev/plugin-sdk/fs';
 import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import * as z from 'zod/mini';
-import { CuaLocalNameSchema } from './schemas.js';
+import { CuaLocalNameSchema, type CuaLocalLaunchV1 } from './schemas.js';
+
+const checkpointSchema = z.object({ name: z.string(), source: z.string(), runtime_type: z.string(),
+    pinned: z.boolean(), host: z.string() });
+export const CUA_PREPARATION_HOME = '/opt/happier';
+export function cuaPreparedNames(operationId: string) {
+    CuaLocalNameSchema.parse(operationId);
+    return { builder: `happier-prepared-build-${operationId}`, checkpoint: `happier-prepared-${operationId}` };
+}
+export function cuaLocalNativeImage(launch: CuaLocalLaunchV1, kind: 'sandbox' | 'space') {
+    return kind === 'space' && launch.runtimeId === 'qemu' && launch.preparedOperationId !== undefined
+        ? `checkpoint:${cuaPreparedNames(launch.preparedOperationId).checkpoint}` : launch.imageId;
+}
 
 const uploadSchema = z.object({ direction: z.literal('upload'), size: z.number(), sha256: z.string() });
 const daemonStartSchema = z.object({ ok: z.literal(true), status: z.enum(['started', 'already_running']) });
@@ -161,7 +174,50 @@ export function createCuaNativeClient(options: {
         }
     }
     return {
+        /** v0.27.5 CheckpointSummary: embedded local records only, never a remote host or another source. */
+        async preparedCheckpoint(operationId: string, launch: CuaLocalLaunchV1, signal?: AbortSignal) {
+            const names = cuaPreparedNames(operationId);
+            const response = await this.json(['--embedded', 'sandbox', 'checkpoints'], signal);
+            const parsed = response.kind === 'success' ? z.array(checkpointSchema).safeParse(response.value) : undefined;
+            if (!parsed?.success) return { kind: 'unknown' as const };
+            const matches = parsed.data.filter(row => row.name === names.checkpoint);
+            if (!matches.length) return { kind: 'absent' as const };
+            const row = matches[0];
+            // Space VM checkpoints need not retain a registry image. Source is
+            // the exact operation-owned builder; S1 owns its retained launch choices.
+            if (matches.length !== 1 || row.source !== names.builder || row.runtime_type !== launch.runtimeId
+                || row.host !== '') return { kind: 'unknown' as const };
+            return { kind: 'present' as const, pinned: row.pinned };
+        },
+        /** cua-sdk-v0.27.5 shell::stream preserves argv/bytes, forwards signals and kills on disconnect. */
+        async streamGuest(sandboxId: string, argv: readonly string[], exec: Pick<ExecService, 'spawn'>, signal?: AbortSignal) {
+            signal?.throwIfAborted();
+            return exec.spawn({ executable: options.executable,
+                args: ['--embedded', 'sandbox', 'exec', '-i', '--timeout', '0', qualifiedSandboxId(sandboxId), '--', ...argv],
+                env: environment }, { signal, outputDelivery: 'invocation' });
+        },
         putGuestFile,
+        async prepareGuest(sandboxId: string, cli: ManagedGuestCliBuildInputV1, setupScript?: string, signal?: AbortSignal) {
+            const directory = await privateDirectory(sandboxId, signal);
+            try {
+                for (const file of cli.files) {
+                    const relative = posix.normalize(file.path);
+                    if (relative === '.' || relative === '..' || relative.startsWith('../') || posix.isAbsolute(relative)
+                        || relative.includes('\\') || relative.includes('\0')) throw new Error('cua_invalid_guest_path');
+                    const destination = `${directory}/${relative}`;
+                    const made = await shell(sandboxId, `mkdir -p -- ${quote(posix.dirname(destination))}`, signal);
+                    if (!completed(made) || (await uploadPrivateFile(sandboxId, destination, Buffer.from(file.contentsBase64, 'base64'), signal)).kind !== 'confirmed') {
+                        throw new Error('cua_private_input_unavailable');
+                    }
+                }
+                // Only this build effect needs root. Preserve the image's user;
+                // missing passwordless sudo fails visibly before a checkpoint.
+                const script = `set -eu\ncd -- ${quote(directory)}\nsh -c ${quote(cli.installScript)}\nchmod -R a+rX ${quote(CUA_PREPARATION_HOME)}\nsh -c ${quote(setupScript ?? '')}\n`;
+                return await this.execGuest(sandboxId, ['sh', '-c',
+                    'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi', 'happier-prepare', 'sh', '-s'],
+                new TextEncoder().encode(script), signal);
+            } finally { await removePrivateDirectory(sandboxId, directory); }
+        },
         async configureGuestProcess(sandboxId: string, detachedArgv: readonly string[], signal?: AbortSignal) {
             qualifiedSandboxId(sandboxId);
             if (!detachedArgv.length || detachedArgv.some((arg) => arg.includes('\0'))) throw new Error('cua_invalid_guest_argv');

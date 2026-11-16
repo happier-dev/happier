@@ -1,5 +1,5 @@
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { CuaNativeClient } from './nativeClient.js';
+import { cuaLocalNativeImage, type CuaNativeClient } from './nativeClient.js';
 import { createCuaLocalSandbox } from './localSandbox.js';
 import type { CuaPowerIntent } from './nativePower.js';
 import { readCuaSpaceRegistryEntry, removeCuaSpaceRegistration } from './nativeSpaces.js';
@@ -67,11 +67,20 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
             if (!Number.isInteger(memoryMiB) || !Number.isInteger(diskGiB)) {
                 return { kind: 'unavailable', reason: 'native_size_units_unrepresentable' };
             }
+            const preparedOperationId = launch.preparedOperationId;
+            const prepared = preparedOperationId !== undefined;
+            if (preparedOperationId !== undefined) {
+                const checkpoint = await native.preparedCheckpoint(preparedOperationId, launch, signal);
+                if (checkpoint.kind !== 'present' || !checkpoint.pinned) return { kind: 'unknown', recovery: resource };
+            }
+            const imageId = cuaLocalNativeImage(launch, 'space');
+            // A prepared checkpoint already owns CPU/memory/disk; restore it.
             // --on=local alone still follows CUA_DAEMON. The native global flag
             // selects this controller's embedded runtime and canonical state dir.
             const created = await native.json(['--embedded', 'spaces', 'create', '--on=local',
-                `--runtime=${launch.runtimeId}`, `--name=${name}`, `--cpus=${launch.size.cpu}`,
-                `--memory-mb=${memoryMiB}`, `--disk-gb=${diskGiB}`, '--', launch.imageId], signal);
+                ...(prepared ? [] : [`--runtime=${launch.runtimeId}`]), `--name=${name}`,
+                ...(prepared ? [] : [`--cpus=${launch.size.cpu}`, `--memory-mb=${memoryMiB}`, `--disk-gb=${diskGiB}`]),
+                '--', imageId], signal);
             if (created.kind !== 'success') return { kind: 'unknown', recovery: resource, nativeCause: created.nativeCause };
             const parsed = CuaNativeSpaceRegistrySchema.safeParse(created.value);
             if (!parsed.success || parsed.data.spaces.length !== 1 || parsed.data.spaces[0].id !== resource.spaceId
@@ -82,6 +91,8 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
             // exact sandbox, never create again. `spaces create` answers a row
             // without an image, so the qualification reads the registry listing.
             const inspected = await inspectSpace(resource, signal);
+            // A restored Space records the checkpoint's original base image,
+            // not the checkpoint:NAME create argument (v0.27.5 native registry).
             return inspected.existence === 'present' && inspected.power === 'running' && inspected.registry === 'present' && inspected.imageId === launch.imageId
                 ? { kind: 'bound', resource }
                 : { kind: 'unknown', recovery: resource };

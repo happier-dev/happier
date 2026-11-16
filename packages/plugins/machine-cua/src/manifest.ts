@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { machinePresentationLabel, machineCheckPresentation, configurationLabel } from './ui/translations.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { observeMachineProvisionerNativeRead, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
-    MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+    MachineProvisionerNativeExecResultV1Schema, MachineProvisionerNativeStreamResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
     MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema, projectMachineProvisionerActionFailure,
     type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CuaLocalProvisionerSchemas as schemas, CuaLocalNativeOperationV1Schema, CuaLocalReconciliationSchemas, localReconciliationOperation } from './machine/localProvisionerSchemas.js';
@@ -10,27 +10,57 @@ import { CuaLocalLaunchV1Schema, CuaLocalOptionsQueryV1Schema, CuaLocalResourceV
     type CuaLocalLaunchV1, type CuaLocalResourceV1, type CuaLocalOptionsQueryV1 } from './machine/schemas.js';
 import type { CuaLocalProvisionerId } from './machine/localProvisioner.js';
 import { remoteAccounts, remoteProvisioner, remoteRoles } from './machine/remoteDeclarations.js';
-import { CUA_DEPENDENCY_ID as dependencyId, resolveCuaExecutable } from './machine/nativeDependency.js';
+import { CUA_DEPENDENCY_ID as dependencyId, CUA_CLI_LOCAL_MINIMUM_VERSION, resolveCuaExecutable } from './machine/nativeDependency.js';
 import { CUA_CLI_ARCHIVE_SOURCE } from './machine/nativeInstall.js';
 import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
+import { CuaPreparationInput, CuaPreparationReference, CuaPreparationSchemas, createCuaPreparation } from './machine/preparation.js';
 
 const pluginId = 'happier.machine.cua';
 const processAccess = 'cua-native-process';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
 
+async function nativeClient(context: PluginInvocationContext) {
+    const executable = await resolveCuaExecutable(context, CUA_CLI_LOCAL_MINIMUM_VERSION);
+    const { createCuaNativeClient } = await import('./machine/nativeClient.js');
+    return createCuaNativeClient({ exec: context.services.exec, executable });
+}
 async function provider(id: CuaLocalProvisionerId, context: PluginInvocationContext) {
-    const executable = await resolveCuaExecutable(context);
-    const [{ createCuaNativeClient }, { createCuaLocalProvisioner }] = await Promise.all([
-        import('./machine/nativeClient.js'), import('./machine/localProvisioner.js'),
-    ]);
-    return createCuaLocalProvisioner(createCuaNativeClient({ exec: context.services.exec, executable }),
-        id, context.invokedAtMs, context.signal);
+    const { createCuaLocalProvisioner } = await import('./machine/localProvisioner.js');
+    return createCuaLocalProvisioner(await nativeClient(context), id, context.invokedAtMs, context.signal);
 }
 function bytes(encoded: string) {
     return Buffer.from(encoded, 'base64');
 }
 function roles(id: CuaLocalProvisionerId) {
     return {
+        prepareBuild: { ...defaults, title: 'Prepare a clean Cua checkpoint', dangerLevel: 'writesLocal' as const,
+            confirmation: { title: 'Build this prepared Cua image?' },
+            inputSchema: CuaPreparationSchemas.buildInput, resultSchema: CuaPreparationSchemas.buildResult,
+            async run(input: ReturnType<typeof CuaPreparationSchemas.buildInput.parse>, context: PluginInvocationContext) {
+                return createCuaPreparation(await nativeClient(context), id, context.invokedAtMs, context.signal).build(input.operationId, input.input);
+            } },
+        prepareInspect: { ...defaults, title: 'Inspect an owned Cua checkpoint', dangerLevel: 'safe' as const,
+            inputSchema: CuaPreparationSchemas.inspectInput, resultSchema: CuaPreparationSchemas.inspectResult,
+            async run(input: ReturnType<typeof CuaPreparationSchemas.inspectInput.parse>, context: PluginInvocationContext) {
+                const value = 'nativeOperation' in input ? input.nativeOperation.value : { operationId: input.operationId, launch: input.launch };
+                return createCuaPreparation(await nativeClient(context), id, context.invokedAtMs, context.signal).inspect(value);
+            } },
+        prepareDestroy: { ...defaults, title: 'Delete an owned Cua checkpoint', dangerLevel: 'destructive' as const,
+            confirmation: { title: 'Delete this prepared Cua image?' },
+            inputSchema: CuaPreparationSchemas.destroyInput, resultSchema: CuaPreparationSchemas.destroyResult,
+            async run(input: ReturnType<typeof CuaPreparationSchemas.destroyInput.parse>, context: PluginInvocationContext) {
+                // The admitted union requires at least one qualified reference.
+                const value = input.artifact ? input.artifact.value : input.nativeOperation!.value;
+                return createCuaPreparation(await nativeClient(context), id, context.invokedAtMs, context.signal).destroy(value);
+            } },
+        stream: { ...defaults, title: 'Open a private Cua child channel', dangerLevel: 'writesLocal' as const,
+            confirmation: { title: 'Open this Cua child channel?' },
+            inputSchema: schemas.streamInput, resultSchema: MachineProvisionerNativeStreamResultV1Schema,
+            async run(input: ReturnType<typeof schemas.streamInput.parse>, context: PluginInvocationContext) {
+                const channel = await (await provider(id, context)).stream(input.resource, input.argv, context.services.exec);
+                try { return { termination: await channel.waitForExit() }; }
+                finally { await channel.dispose(); }
+            } },
         reconcile: { ...defaults, title: 'Recover the exact Cua local allocation', dangerLevel: 'safe' as const,
             inputSchema: CuaLocalReconciliationSchemas.input, resultSchema: CuaLocalReconciliationSchemas.result,
             async run(input: ReturnType<typeof CuaLocalReconciliationSchemas.input.parse>, context: PluginInvocationContext) {
@@ -153,7 +183,10 @@ function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinit
         actions: { check: `${prefix}-check`, options: `${prefix}-options`, acquire: `${prefix}-acquire`, bootstrap: `${prefix}-bootstrap`,
             inspect: `${prefix}-inspect`, power: `${prefix}-power`, destroy: `${prefix}-destroy` },
         reconciliation: { action: `${prefix}-reconcile`, nativeOperationSchema: CuaLocalNativeOperationV1Schema.jsonSchema },
-        bootstrapTransport: { kind: 'native', exec: `${prefix}-exec`, putFile: `${prefix}-put-file` } };
+        preparation: { inputSchema: CuaPreparationInput.jsonSchema, artifactSchema: CuaPreparationReference.jsonSchema,
+            nativeOperationSchema: CuaPreparationReference.jsonSchema, artifactLaunchPath: 'launch',
+            actions: { build: `${prefix}-prepare-build`, inspect: `${prefix}-prepare-inspect`, destroy: `${prefix}-prepare-destroy` } },
+        bootstrapTransport: { kind: 'native', exec: `${prefix}-exec`, putFile: `${prefix}-put-file`, stream: `${prefix}-stream` } };
 }
 export const CUA_PLUGIN = definePlugin({
     id: pluginId, version: '0.0.0', displayName: 'Cua Machines',
@@ -215,6 +248,9 @@ export const CUA_PLUGIN = definePlugin({
         'byoc-reconcile': byoc.reconcile, 'byoc-bootstrap': byoc.bootstrap, 'byoc-inspect': byoc.inspect,
         'byoc-power': byoc.power, 'byoc-destroy': byoc.destroy, 'byoc-exec': byoc.exec, 'byoc-put-file': byoc.putFile,
         'sandbox-reconcile': sandbox.reconcile, 'space-reconcile': space.reconcile,
+        'sandbox-stream': sandbox.stream, 'space-stream': space.stream,
+        'sandbox-prepare-build': sandbox.prepareBuild, 'sandbox-prepare-inspect': sandbox.prepareInspect, 'sandbox-prepare-destroy': sandbox.prepareDestroy,
+        'space-prepare-build': space.prepareBuild, 'space-prepare-inspect': space.prepareInspect, 'space-prepare-destroy': space.prepareDestroy,
         'sandbox-check': sandbox.check, 'sandbox-options': sandbox.options, 'sandbox-acquire': sandbox.acquire,
         'sandbox-bootstrap': sandbox.bootstrap, 'sandbox-inspect': sandbox.inspect, 'sandbox-power': sandbox.power,
         'sandbox-destroy': sandbox.destroy, 'sandbox-exec': sandbox.exec, 'sandbox-put-file': sandbox.putFile,

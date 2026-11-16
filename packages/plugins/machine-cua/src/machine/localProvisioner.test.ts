@@ -5,7 +5,7 @@ import { PluginError, type PluginApi, type PluginInvocationContext } from '@happ
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { ManagedDependencyStatus, ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import type { ExecService, PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ExecService, PluginExecSpawnRequest, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCuaNativeClient } from './nativeClient.js';
 import { createCuaLocalProvisioner } from './localProvisioner.js';
 import { CUA_PLUGIN } from '../manifest.js';
@@ -44,6 +44,9 @@ function harness(createReplyLost = false, observedRuntime: 'qemu' | 'gvisor' | '
         const args = request.args ?? [];
         if (args.includes('doctor')) return result(doctor);
         if (args.includes('images')) return result(images);
+        if (args.includes('spaces') && args.includes('ls')) return result({ spaces: [
+            { id: resource.sandboxId, provider: 'local', image: launch.imageId },
+        ] });
         if (args.includes('create')) {
             if (createReplyLost) throw new Error('dropped response');
             const name = args.find((arg) => arg.startsWith('--name='))?.slice(7);
@@ -67,6 +70,163 @@ function harness(createReplyLost = false, observedRuntime: 'qemu' | 'gvisor' | '
     return { requests, copiedBytes, run, provider: createCuaLocalProvisioner(createCuaNativeClient({ exec: { run }, executable: { kind: 'systemTool', id: 'cua' } }), 'local-sandbox', 10) };
 }
 
+// Native process boundary only: checkpoint state, lost replies and exact deletion.
+function preparationHarness(options: { lostCheckpointReply?: boolean; failedSetup?: boolean; foreignCheckpoint?: boolean; lostWarmReply?: boolean } = {}) {
+    const h = harness();
+    const requests: PluginExecSpawnRequest[] = [];
+    const builder = 'happier-prepared-build-one';
+    const checkpoint = 'happier-prepared-one';
+    let present = false;
+    let saved = options.foreignCheckpoint === true;
+    let pinned = saved;
+    const spaces = new Map<string, string>();
+    const info = (name: string) => ({ id: `local:${name}`, name, location: 'local', runtime: 'qemu',
+        kind: 'vm', image: launch.imageId, status: 'ready', state: 'running', ephemeral: false });
+    const run: ExecService['run'] = async request => {
+        requests.push(request);
+        const args = request.args ?? [];
+        if (args.includes('checkpoints')) {
+            if (args.includes('unpin')) { pinned = false; return result(null); }
+            if (args.includes('rm')) { saved = false; return result(null); }
+            return result(saved ? [{ name: checkpoint, source: options.foreignCheckpoint ? 'somebody-else' : builder,
+                runtime_type: 'qemu', image: launch.imageId, pinned, host: '' }] : []);
+        }
+        if (args.includes('checkpoint')) {
+            saved = true; pinned = true;
+            if (options.lostCheckpointReply) throw new Error('native connection lost');
+            return result({ name: checkpoint, source: builder, runtime: 'qemu', pinned: true, host: '' });
+        }
+        if (args.includes('create')) {
+            const name = args.find(arg => arg.startsWith('--name='))?.slice(7) ?? builder;
+            if (name === builder) present = true;
+            if (args.includes('spaces')) {
+                // v0.27.5 restores the checkpoint's base image into the registry.
+                spaces.set(`local:${name}`, args.at(-1)!.startsWith('checkpoint:') ? launch.imageId : args.at(-1)!);
+                if (name === 'happier-warm' && options.lostWarmReply) throw new Error('create reply lost');
+                return result({ spaces: [{ id: `local:${name}`, provider: 'local' }] });
+            }
+            return result(info(name));
+        }
+        if (args.includes('fork')) return result({ id: 'local:happier-warm', name: 'happier-warm', source: checkpoint });
+        if (args.includes('info')) {
+            const name = args.includes('local:happier-warm') ? 'happier-warm' : builder;
+            // Observed on mac QEMU: create reports the base; later info/ls do not.
+            if (name === 'happier-warm' || present) return result({ ...info(name), image: null });
+            return { ...result(null), termination: {
+                observed: { kind: 'exit', exitCode: 3 }, requestedBy: { kind: 'none' } } };
+        }
+        if (args.includes('spaces') && args.includes('rm')) { spaces.delete(args.at(-1)!); return result(null); }
+        if (args.includes('rm')) { present = false; return result({ deleted: `local:${builder}`, missing: false }); }
+        if (args.includes('spaces') && args.includes('add')) return result({ id: 'local:happier-warm', provider: 'local' });
+        if (args.includes('spaces') && args.includes('ls')) return result({ spaces: [...spaces].map(([id, image]) => ({ id, image, provider: 'local' })) });
+        const response = await h.run(request);
+        return options.failedSetup && args.includes('shell') && args.at(-1)?.includes("'sh' '-s'")
+            ? { ...response, termination: { observed: { kind: 'exit', exitCode: 17 }, requestedBy: { kind: 'none' } } } : response;
+    };
+    return { requests, run, copiedBytes: h.copiedBytes, state: () => ({ checkpoint: saved, builder: present }) };
+}
+
+function preparationInput(prefix: string, choices = launch, setupScript = 'echo prepared') {
+    return { launch: { provider: { pluginId: CUA_PLUGIN.manifest.id, localId: `local-${prefix}` }, schemaVersion: 1, choices },
+        cli: { identity: 'home-payload:fixture', versionId: '0.3.0', binaryPath: '/opt/happier/cli/happier',
+            installScript: 'printf cli-installed', files: [{ path: 'happier-cli-payload.tar.gz', contentsBase64: 'AP8=' }] },
+        setupScript };
+}
+
+describe('credential-free native Cua preparation', () => {
+    it.each(['sandbox', 'space'] as const)('accepts the shared preset build envelope and raw recovery for %s', async prefix => {
+        const native = preparationHarness();
+        const h = await activated(true, native.run);
+        const kit = await createPluginTestkit({ manifest: CUA_PLUGIN.manifest, module: CUA_PLUGIN,
+            services: h.context.services as unknown as PluginTestServicesFixture });
+        const provider = { pluginId: CUA_PLUGIN.manifest.id, localId: `local-${prefix}` };
+        try {
+            const built = await kit.invokeAction(`${prefix}-prepare-build`, { operationId: 'one', input: {
+                launch: { provider, schemaVersion: 1, choices: launch },
+                cli: { identity: 'home-payload:fixture', versionId: '0.3.0', binaryPath: '/opt/happier/cli/happier',
+                    installScript: 'printf cli-installed', files: [{ path: 'happier-cli-payload.tar.gz', contentsBase64: 'AP8=' }] },
+                setupScript: 'printf setup-after-cli',
+            } }, { surface: 'plugin' });
+            expect(built).toMatchObject({ kind: 'ready', artifact: { value: { launch: { preparedOperationId: 'one' } } } });
+            expect(await kit.invokeAction(`${prefix}-prepare-inspect`, { operationId: 'one', launch }, { surface: 'plugin' })).toEqual(built);
+            expect(native.copiedBytes).toContainEqual(Buffer.from([0, 255]));
+            const script = native.copiedBytes.map(bytes => bytes.toString()).find(value => value.includes('cli-installed'));
+            expect(script).toBeDefined();
+            expect(script!.indexOf('cli-installed')).toBeLessThan(script!.indexOf('setup-after-cli'));
+            expect(JSON.stringify(native.requests)).not.toContain('AP8=');
+            expect(JSON.stringify(native.requests)).not.toContain('cli-installed');
+        } finally { await kit.dispose(); }
+    });
+    it.each(['sandbox', 'space'] as const)('builds, launches and destroys only its owned %s checkpoint', async prefix => {
+        const native = preparationHarness();
+        const h = await activated(true, native.run);
+        const built = await h.action(`${prefix}-prepare-build`)({ operationId: 'one', input: preparationInput(prefix) }, h.context);
+        expect(built).toMatchObject({ kind: 'ready', artifact: { contributionRef: { localId: `local-${prefix}` },
+            value: { operationId: 'one', launch: { ...launch, preparedOperationId: 'one' } } } });
+        expect(native.state()).toEqual({ checkpoint: true, builder: false });
+        const artifact = (built as { artifact: { value: unknown } }).artifact;
+        const creates = native.requests.filter(request => request.args?.includes('create'));
+        expect(creates).toHaveLength(1);
+        expect(creates[0].args).toContain(launch.imageId);
+        const acquired = await h.action(`${prefix}-acquire`)({ managedId: 'warm', launch: (artifact.value as { launch: unknown }).launch }, h.context);
+        expect(acquired).toMatchObject({ kind: 'bound', resource: { value: { sandboxId: 'local:happier-warm' } } });
+        if (prefix === 'sandbox') expect(native.requests.filter(request => request.args?.includes('fork'))).toHaveLength(1);
+        else expect(native.requests.filter(request => request.args?.includes('create')).map(request => request.args?.at(-1)))
+            .toEqual([launch.imageId, 'checkpoint:happier-prepared-one']);
+        expect(await h.action(`${prefix}-prepare-destroy`)({ artifact }, h.context)).toEqual({ kind: 'confirmed' });
+        expect(native.state()).toEqual({ checkpoint: false, builder: false });
+        expect(native.requests.some(request => request.args?.includes('prune'))).toBe(false);
+    });
+    it('preserves a Space preset with a grown QEMU disk during clean preparation', async () => {
+        const native = preparationHarness();
+        const h = await activated(true, native.run);
+        const larger = { ...launch, size: { ...size, diskBytes: 40 * 1024 ** 3 } };
+        const built = await h.action('space-prepare-build')({ operationId: 'one', input: preparationInput('space', larger) }, h.context);
+        expect(built).toMatchObject({ kind: 'ready', artifact: { value: { launch: { ...larger, preparedOperationId: 'one' } } } });
+        expect(native.requests.find(request => request.args?.includes('create'))?.args).toContain('--disk-gb=40');
+    });
+    it('reconciles a prepared Space after a lost create reply using its checkpoint registry image', async () => {
+        const native = preparationHarness({ lostWarmReply: true });
+        const h = await activated(true, native.run);
+        const built = await h.action('space-prepare-build')({ operationId: 'one', input: preparationInput('space') }, h.context);
+        const preparedLaunch = (built as { artifact: { value: { launch: unknown } } }).artifact.value.launch;
+        const acquired = await h.action('space-acquire')({ managedId: 'warm', launch: preparedLaunch }, h.context);
+        expect(acquired).toMatchObject({ kind: 'pending', nativeOperationRef: { value: { imageId: launch.imageId } } });
+        const nativeOperation = (acquired as { nativeOperationRef: { value: unknown } }).nativeOperationRef.value;
+        expect(await h.action('space-reconcile')({ nativeOperation }, h.context)).toMatchObject({ kind: 'bound', resource: { value: { spaceId: 'local:happier-warm' } } });
+        expect(native.requests.filter(request => request.args?.includes('create') && request.args.includes('checkpoint:happier-prepared-one'))).toHaveLength(1);
+    });
+    it('recovers a lost checkpoint reply by inspecting the retained operation without another create', async () => {
+        const native = preparationHarness({ lostCheckpointReply: true });
+        const h = await activated(true, native.run);
+        const built = await h.action('sandbox-prepare-build')({ operationId: 'one', input: preparationInput('sandbox') }, h.context);
+        expect(built).toMatchObject({ kind: 'unknown', nativeOperationRef: { value: { operationId: 'one', launch } } });
+        const nativeOperation = (built as { nativeOperationRef: unknown }).nativeOperationRef;
+        const before = native.requests.length;
+        expect(await h.action('sandbox-prepare-inspect')({ nativeOperation }, h.context)).toMatchObject({ kind: 'pending' });
+        expect(native.requests.slice(before).some(request => request.args?.includes('rm'))).toBe(false);
+        expect(await h.action('sandbox-prepare-build')({ operationId: 'one', input: preparationInput('sandbox') }, h.context)).toMatchObject({ kind: 'ready' });
+        expect(native.requests.filter(request => request.args?.includes('create'))).toHaveLength(1);
+    });
+    it('does not checkpoint failed setup and lets owned cleanup settle the builder', async () => {
+        const native = preparationHarness({ failedSetup: true });
+        const h = await activated(true, native.run);
+        const built = await h.action('sandbox-prepare-build')({ operationId: 'one', input: preparationInput('sandbox', launch, 'exit 17') }, h.context);
+        expect(built).toMatchObject({ kind: 'unknown' });
+        expect(native.requests.some(request => request.args?.includes('checkpoint'))).toBe(false);
+        expect(await h.action('sandbox-prepare-destroy')({ nativeOperation: (built as { nativeOperationRef: unknown }).nativeOperationRef }, h.context)).toEqual({ kind: 'confirmed' });
+    });
+    it('refuses to overwrite or delete a foreign checkpoint with the same native name', async () => {
+        const native = preparationHarness({ foreignCheckpoint: true });
+        const h = await activated(true, native.run);
+        const reference = { contributionRef: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, schemaVersion: 1,
+            value: { operationId: 'one', launch } };
+        expect(await h.action('sandbox-prepare-build')({ operationId: 'one', input: preparationInput('sandbox') }, h.context)).toMatchObject({ kind: 'unknown' });
+        expect(await h.action('sandbox-prepare-destroy')({ nativeOperation: reference }, h.context)).toMatchObject({ kind: 'unknown' });
+        expect(native.requests.some(request => request.args?.includes('create') || request.args?.includes('unpin') || request.args?.includes('rm'))).toBe(false);
+    });
+});
+
 it('preserves authored failure details through local acquisition and retained reconciliation', async () => {
     const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
     const h = harness();
@@ -80,7 +240,7 @@ it('preserves authored failure details through local acquisition and retained re
 });
 
 async function activated(dependencyReady = true, nativeRun?: ExecService['run'], signal = new AbortController().signal,
-    version = '0.5.0', supervise?: (spec: ManagedServiceSpec) => Promise<unknown>, observedRuntime: 'qemu' | 'gvisor' | 'runc' = 'qemu') {
+    version = '0.27.5', supervise?: (spec: ManagedServiceSpec) => Promise<unknown>, observedRuntime: 'qemu' | 'gvisor' | 'runc' = 'qemu') {
     const h = harness(false, observedRuntime);
     const actions = new Map<string, ActionHandler>();
     // Substitute only external host registration/services and native processes;
@@ -105,6 +265,59 @@ async function activated(dependencyReady = true, nativeRun?: ExecService['run'],
 }
 
 describe('consumed Cua local provisioner roles', () => {
+    it.each(['sandbox', 'space'] as const)('holds the %s native byte channel until exit and disposes its carrier', async prefix => {
+        const h = await activated(true, undefined, undefined, '0.27.5');
+        const termination = { observed: { kind: 'exit', exitCode: 37 }, requestedBy: { kind: 'none' } } as const;
+        let finish!: () => void;
+        const exited = new Promise<typeof termination>(resolve => { finish = () => resolve(termination); });
+        const dispose = vi.fn(async () => {});
+        // External Exec host boundary: the host owns the private invocation byte channel.
+        const spawn: ExecService['spawn'] = vi.fn(async () => ({ waitForExit: () => exited, dispose }) as unknown as PluginProcessHandle);
+        Object.assign(h.context.services.exec, { spawn });
+        const target = prefix === 'space' ? { kind: 'space', spaceId: resource.sandboxId,
+            sandboxId: resource.sandboxId, runtimeId: 'qemu' } : resource;
+        let settled = false;
+        const pending = h.action(`${prefix}-stream`)({ resource: target, argv: ['happier', 'stdio', 'literal ; $HOME'] }, h.context)
+            .then(value => { settled = true; return value; });
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+        expect(settled).toBe(false);
+        expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
+            args: ['--embedded', 'sandbox', 'exec', '-i', '--timeout', '0', resource.sandboxId,
+                '--', 'happier', 'stdio', 'literal ; $HOME'],
+        }), { signal: h.context.signal, outputDelivery: 'invocation' });
+        finish();
+        expect(await pending).toEqual({ termination });
+        expect(dispose).toHaveBeenCalledOnce();
+    });
+    it('disposes a failed native channel and preserves the host cancellation', async () => {
+        const h = await activated();
+        const aborted = new PluginError({ code: 'plugin_action_aborted', message: 'Cancelled' });
+        const dispose = vi.fn(async () => {});
+        // Genuine host-process boundary; internal role and resource admission run unchanged.
+        Object.assign(h.context.services.exec, { spawn: async () => ({
+            waitForExit: async () => { throw aborted; }, dispose,
+        }) as unknown as PluginProcessHandle });
+        await expect(h.action('sandbox-stream')({ resource, argv: ['happier', 'stdio'] }, h.context)).rejects.toBe(aborted);
+        expect(dispose).toHaveBeenCalledOnce();
+    });
+    it.each(['sandbox', 'space'] as const)('repairs a missing CLI inline before checking %s again', async prefix => {
+        const h = await activated(false);
+        const check = await h.action(`${prefix}-check`)({}, h.context);
+        expect(check).toMatchObject({ available: false, prerequisites: [{
+            repairAction: { action: { pluginId: CUA_PLUGIN.manifest.id, localId: 'install' }, input: {} },
+        }] });
+        const installed = await activated();
+        // Managed dependency installation/status is the host boundary; the
+        // registered repair Action and subsequent native check remain real.
+        h.context.services.managedServices.dependencies.ensure = async () => {
+            h.context.services.managedServices.dependencies.status = installed.context.services.managedServices.dependencies.status;
+            const status = await installed.context.services.managedServices.dependencies.status('cua-cli');
+            if (status.state !== 'ready') throw new Error('Fixture installation did not become ready');
+            return status;
+        };
+        await h.action('install')({}, h.context);
+        expect(await h.action(`${prefix}-check`)({}, h.context)).toMatchObject({ available: true });
+    });
     it.each(['local-sandbox', 'local-space'] as const)('retains projected native create failure for %s', async localId => {
         const h = harness();
         const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: {
@@ -477,7 +690,7 @@ describe('consumed Cua local provisioner roles', () => {
         const detachedArgv = ['sh', '-c', "exec env '/home/cua/.happier/cli/current/happier' 'daemon' 'start' '--json'"];
         const processConfig = { environment: { HOME: '/home/cua', HAPPIER_HOME_DIR: '/home/cua/.happier' },
             detachedDaemonStartArgv: detachedArgv };
-        const first = await activated(true, run, new AbortController().signal, '0.5.0', undefined, 'runc');
+        const first = await activated(true, run, new AbortController().signal, '0.27.5', undefined, 'runc');
         let settled = false;
         const configured = first.action('sandbox-exec')({ resource: runc, argv, processConfig }, first.context)
             .then((value) => { settled = true; return value; });
@@ -492,32 +705,32 @@ describe('consumed Cua local provisioner roles', () => {
         expect(requests.some(({ request }) => request.args?.at(-1)?.includes('host-owned foreground invocation'))).toBe(false);
 
         const notReady = await activated(true, async (request) => request.args?.at(-1) === detachedCommand
-            ? result({ ok: true, status: 'starting' }) : native.run(request), new AbortController().signal, '0.5.0', undefined, 'runc');
+            ? result({ ok: true, status: 'starting' }) : native.run(request), new AbortController().signal, '0.27.5', undefined, 'runc');
         await expect(notReady.action('sandbox-exec')({ resource: runc, argv, processConfig }, notReady.context))
             .rejects.toMatchObject({ code: 'cua_guest_daemon_hold_unavailable' });
     });
     it('refuses a foreground hold whose home is not the home the guest shell actually runs in', async () => {
-        const h = await activated(true, undefined, new AbortController().signal, '0.5.0', undefined, 'runc');
+        const h = await activated(true, undefined, new AbortController().signal, '0.27.5', undefined, 'runc');
         const processConfig = { environment: { HOME: '/root', HAPPIER_HOME_DIR: '/root/.happier' },
             detachedDaemonStartArgv: ['true'] };
         await expect(h.action('sandbox-exec')({ resource: { ...resource, runtimeId: 'runc' }, argv: ['true'], processConfig }, h.context))
             .rejects.toMatchObject({ code: 'cua_guest_daemon_hold_unavailable' });
     });
     it('returns the existing unavailable reason when a runtime cannot own detached daemon startup', async () => {
-        const h = await activated(true, undefined, new AbortController().signal, '0.5.0', undefined, 'gvisor');
+        const h = await activated(true, undefined, new AbortController().signal, '0.27.5', undefined, 'gvisor');
         const processConfig = { environment: { HOME: '/home/cua', HAPPIER_HOME_DIR: '/home/cua/.happier' },
             detachedDaemonStartArgv: ['true'] };
         await expect(h.action('sandbox-exec')({ resource: { ...resource, runtimeId: 'gvisor' }, argv: ['true'], processConfig }, h.context))
             .rejects.toMatchObject({ code: 'cua_guest_daemon_hold_unavailable' });
     });
-    it('qualifies the installed cua CLI against the oldest release that has every flag called, failing at check and before any native effect', async () => {
-        // 0.3.0 is the first release containing the pinned vendor commit (trycua/cua@2bce4442) all flags were read from.
-        const old = await activated(true, undefined, undefined, '0.2.9');
+    it('qualifies local Sessions against the reviewed native streaming release before any effect', async () => {
+        // Local Session placement needs the released non-PTY `sandbox exec -i` carrier.
+        const old = await activated(true, undefined, undefined, '0.27.4');
         expect(await old.action('sandbox-check')({}, old.context)).toMatchObject({ available: false, code: 'cua_native_outdated',
             status: { key: 'machineCua.presentation.cua_native_outdated' } });
         expect(await old.action('sandbox-acquire')({ launch, managedId }, old.context)).toEqual({ kind: 'rejected', code: 'provider_unavailable' });
         expect(old.requests).toEqual([]);
-        for (const version of ['0.3.0', '0.10.1']) {
+        for (const version of ['0.27.5', '0.28.0']) {
             const current = await activated(true, undefined, undefined, version);
             expect(await current.action('sandbox-check')({}, current.context)).toMatchObject({ available: true });
         }
