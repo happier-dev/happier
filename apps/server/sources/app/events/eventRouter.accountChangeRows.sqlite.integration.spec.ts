@@ -207,7 +207,7 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
         }
     });
 
-    it('never lets a page claim the cursors of a wake its socket was excluded from', async () => {
+    it('gives a socket its current-view wake\'s page, marked as pushed to that Session, so its cursor never gaps', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `excluded-${crypto.randomUUID()}` } });
         const viewed = await db.session.create({ data: { accountId: account.id, tag: 'viewed', encryptionMode: 'plain', metadata: '{}' } });
         const other = await db.session.create({ data: { accountId: account.id, tag: 'other', encryptionMode: 'plain', metadata: '{}' } });
@@ -235,15 +235,17 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
             await new Promise<void>((resolve, reject) => { client.once('joined', () => resolve()); client.once('connect_error', reject); });
             await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: other.id }));
             await vi.waitFor(() => expect(wakes).toHaveLength(1));
-            // Excluded: its rows reach this socket in no page.
+            // The bare wake excludes this socket (the Session's current view reaches it); its page still comes,
+            // marked so a consumer holding that Session's live socket applies none of its facts twice.
             await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: viewed.id, currentViewSessionId: viewed.id }));
-            const excludedCursor = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
+            const viewedCursor = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
             await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: other.id }));
-            await vi.waitFor(() => expect(wakes).toHaveLength(2));
-            const last = wakes[1]!.body.rows!;
-            // The page covers only its own wake: a consumer still before the excluded cursor reads that gap.
-            expect(last.after).toBe(excludedCursor);
-            expect(last.page.changes.every(change => change.cursor > excludedCursor)).toBe(true);
+            await vi.waitFor(() => expect(wakes).toHaveLength(3));
+            const [first, viewedWake, last] = wakes as [Wake, Wake, Wake];
+            expect((viewedWake.body as { rowFactsPushedSessionId?: string }).rowFactsPushedSessionId).toBe(viewed.id);
+            expect(viewedWake.body.rows!.page.changes.map(change => change.cursor)).toEqual([viewedCursor]);
+            // Each page covers exactly its wake; together they are contiguous.
+            expect([viewedWake.body.rows!.after, last.body.rows!.after]).toEqual([first.body.rows!.page.nextCursor, viewedCursor]);
         } finally {
             client.close();
             eventRouter.clearIo();

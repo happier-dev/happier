@@ -633,6 +633,10 @@ class EventRouter {
         delivery: AccountChangeRowsDeliveryV1, recipients: readonly AccountChangeRowsRecipient[],
     ): Promise<void> {
         const included: AccountChangeRowsRecipient[] = [];
+        // A socket the bare wake skips because that Session's current view reaches it still needs this
+        // wake's page, or its cursor gaps and it re-reads the feed; the page says the facts were pushed.
+        const coveredByView = new Set<AccountChangeRowsRecipient>();
+        const viewedSessionId = delivery.recipientFilter.exceptSessionCurrentView;
         for (const recipient of recipients) {
             const state = recipient.socket.data.accountChangeRows;
             if (!state) continue;
@@ -640,11 +644,17 @@ class EventRouter {
             const connection = { connectionType: recipient.clientType, machineId: recipient.socket.data.machineId,
                 sessionId: recipient.socket.data.sessionId, socket: recipient.socket } as unknown as ClientConnection;
             if (this.shouldSendToConnection(connection, delivery.recipientFilter as RecipientFilter)) included.push(recipient);
+            else if (viewedSessionId && this.shouldSendToConnection(connection,
+                { ...delivery.recipientFilter, exceptSessionCurrentView: undefined } as RecipientFilter)) {
+                included.push(recipient);
+                coveredByView.add(recipient);
+            }
         }
         if (included.length === 0) return;
         const payload = delivery.payload as UpdatePayload;
+        // A socket covered by the current view needs no bare wake: its consumer would only re-read.
         const sendBare = (targets: readonly AccountChangeRowsRecipient[]) => {
-            for (const target of targets) target.emit(payload);
+            for (const target of targets) if (!coveredByView.has(target)) target.emit(payload);
         };
         if (!delivery.rows) return sendBare(included);
 
@@ -698,7 +708,8 @@ class EventRouter {
                 continue;
             }
             const pushed: PushedAccountChangesPageV1 = { v: 1, after: delivery.fromCursor - 1, page: page.page };
-            for (const recipient of group.recipients) recipient.emit({ ...payload, body: { ...payload.body, rows: pushed } });
+            for (const recipient of group.recipients) recipient.emit({ ...payload, body: { ...payload.body, rows: pushed,
+                ...(coveredByView.has(recipient) ? { rowFactsPushedSessionId: viewedSessionId } : {}) } });
         }
     }
 
