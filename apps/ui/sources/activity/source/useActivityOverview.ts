@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
+import { areSnapshotProjectionsEquivalent, retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { buildActivityOverviewFromCandidates } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
 import { isHomeCompletedBotCandidate, type HomeCompletedBots } from '@/activity/presentation/selectHomeCompletedBots';
@@ -96,17 +96,22 @@ function createMountedActivityOverviewProjector() {
         classify: (source, addresses) => new Map(buildActivityOverviewFromSource({
             source, nowMs, includeWarmSourceWhenNotReady: true, addresses,
         }).candidates.map(candidate => [sessionAddressKey(candidate.address!), candidate])),
+        // A re-classified candidate equal to the one held keeps its identity, so an arrival that moves no
+        // Activity fact (each streamed delta of a viewed Session) publishes no new overview.
+        isSame: areSnapshotProjectionsEquivalent,
     });
     let table = createTable();
-    let nextAttentionBoundaryMs: number | null = null;
+    let published: Readonly<{ overview: ActivityOverviewSnapshot; nextAttentionBoundaryMs: number | null }> | undefined;
     return (input: ActivitySourceProjectionInput) => {
         nowMs = input.nowMs;
         // An arrival can run after the deadline while its timer is still queued.
-        if (nextAttentionBoundaryMs !== null && nextAttentionBoundaryMs <= nowMs) table = createTable();
-        table.update(input.source, input.state);
+        const expired = published?.nextAttentionBoundaryMs != null && published.nextAttentionBoundaryMs <= nowMs;
+        if (expired) table = createTable();
+        // A publication that moves no candidate keeps the overview, so its readers re-derive nothing.
+        if (!table.update(input.source, input.state) && published && !expired) return published;
         const overview = buildActivityOverviewFromCandidates([...table.entries().values()]);
-        nextAttentionBoundaryMs = readNextAttentionBoundaryMs(input.source, overview.candidates, nowMs);
-        return { overview, nextAttentionBoundaryMs };
+        published = { overview, nextAttentionBoundaryMs: readNextAttentionBoundaryMs(input.source, overview.candidates, nowMs) };
+        return published;
     };
 }
 

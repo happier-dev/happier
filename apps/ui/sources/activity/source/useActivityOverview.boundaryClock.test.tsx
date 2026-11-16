@@ -110,6 +110,31 @@ describe('mounted Activity overview boundary clock', () => {
         expect(dot.read()).toBe(true);
     });
 
+    it('keeps the overview identity when a transcript update moves no Activity fact', async () => {
+        // Streaming: each delta republishes the viewed Session's transcript. The Live Activity / widget
+        // reconciler must not re-render when the re-classified candidate is equal (iOS: 73 of 88 per turn).
+        seedLegacySession('message_user_action');
+        let latest: ActivityOverviewSnapshot | null = null;
+        let renders = 0;
+        function Probe() {
+            latest = useActivityOverview().overview;
+            renders += 1;
+            return null;
+        }
+        await renderScreen(<Probe />);
+        const first = latest;
+        const rendersBefore = renders;
+        for (let delta = 0; delta < 3; delta += 1) {
+            await act(async () => {
+                const state = storage.getState();
+                const transcript = state.sessionMessages['legacy-session']!;
+                storage.setState({ sessionMessages: { ...state.sessionMessages, 'legacy-session': { ...transcript } } });
+            });
+        }
+        expect(latest).toBe(first);
+        expect(renders - rendersBefore).toBeLessThanOrEqual(3);
+    });
+
     it('keeps the same request in the full Inbox attention projection while its runtime is live', async () => {
         const overview = await renderOverview();
         expect(overview.hasAttention()).toBe(true);
