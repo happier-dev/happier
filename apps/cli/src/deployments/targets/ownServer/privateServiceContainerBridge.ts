@@ -39,7 +39,7 @@ export async function acquirePrivateServiceContainerBridge(input: Readonly<{
     docker: ProjectNativeDockerPort;
     engine: NativeDockerEngineFacts;
     networkId: string;
-    forward: Readonly<{ host: '127.0.0.1'; port: number }>;
+    forward: Readonly<{ host: string; port: number }>;
     preferredListenPort?: number;
     signal?: AbortSignal;
 }>): Promise<PrivateServiceContainerBridge> {

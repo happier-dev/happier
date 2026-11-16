@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { create as createTar } from 'tar';
 import nacl from 'tweetnacl';
 import axios from 'axios';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { onTestFailed, vi } from 'vitest';
 import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentActionInputSchemasV1, DeploymentChildRpcV1Schema, DeploymentReceiptListResultV1Schema, DeploymentTransitionInputV1Schema } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -228,8 +229,8 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         installations: readonly Readonly<{ machineId: string; installationId: string; seed: Uint8Array }>[] }>;
 }>) => Promise<void>, options: Readonly<{ mode?: 'source' | 'mixed' | 'prebuilt' | 'stored' | 'closure'; secretRevision?: number;
     deploymentId?: string; buildSecret?: boolean; revokeAfter?: 'config' | 'build'; registryAccess?: 'pull' | 'pushPull'; failBuild?: boolean;
-    coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean; secretBuildArgument?: boolean;
-    referenceBindAddress?: string; referencePublishedPort?: number; referenceIroh?: boolean; referenceDualPublication?: boolean; referenceNetworkObserved?: boolean }> = {}) {
+    coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean;
+    referenceRemoteConsumer?: boolean; referenceBindAddress?: string; referencePublishedPort?: number; referenceIroh?: boolean; referenceDualPublication?: boolean; referenceNetworkObserved?: boolean }> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'happier-build-receipt-'));
     const homeServerIdentityId = 'srv_build_receipt';
     const previousConfiguration = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile,
@@ -313,8 +314,9 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
             // retained service selection and address resolution remain real.
             const metadata = vi.spyOn(axios, 'get').mockImplementation(async url => {
                 if (String(url).endsWith('/v1/account/encryption-mode')) return { status: 200, data: { mode: 'plain' } };
-                if (!String(url).endsWith('/v1/machines/builder-c')) throw new Error('Unexpected reference metadata read');
-                return { status: 200, data: { machine: { id: 'builder-c', kind: 'persistent', revokedAt: null,
+                const machineId = options.referenceRemoteConsumer && String(url).endsWith('/v1/machines/consumer-d') ? 'consumer-d' : 'builder-c';
+                if (!String(url).endsWith(`/v1/machines/${machineId}`)) throw new Error('Unexpected reference metadata read');
+                return { status: 200, data: { machine: { id: machineId, kind: 'persistent', revokedAt: null,
                     replacedByMachineId: null, seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
                     metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({ host: 'fixture', platform: 'linux',
                         happyCliVersion: '0.0.0', homeDir: root, happyHomeDir: root })), metadataVersion: 1,
@@ -472,7 +474,6 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
                 if (request.args.includes('--print')) return { exitCode: 0, stdout: JSON.stringify({ target: Object.fromEntries(
                     Object.entries(projected.services).map(([name, value]) => [name, { context: value.build.context,
                         dockerfile: 'Dockerfile', tags: [value.image],
-                        ...(options.secretBuildArgument && name === 'app' ? { args: { CANARY: 'build-owner-secret-sentinel' } } : {}),
                         secret: name === 'app' && usesBuildSecret ? [{ id: 'token', env: 'BUILD_TOKEN' }] : [] }])) }) };
                 if (options.failBuild) {
                     // Process IO is the genuine boundary; the sink contract is already-masked output.
@@ -558,4 +559,26 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         try { releaseReferenceBoundary(); await mounted.dispose(); }
         finally { Object.assign(configuration, previousConfiguration); await rm(root, { recursive: true, force: true }); }
     }
+}
+
+/** Remote Machine RPC is the network boundary; rows still come from the real managed owner. */
+export async function withOwnServerRemoteReferenceFixture(
+    run: Parameters<typeof withOwnServerBuildFixture>[0], options: Parameters<typeof withOwnServerBuildFixture>[1] = {},
+) {
+    await withOwnServerBuildFixture(async fixture => {
+        const { tryAcquireAuthoritativePluginRuntimeRegistryLease } = await import('@/plugins/runtime/reload/runtimeLease');
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('Source service owner required');
+        try {
+            const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost(fixture.host.serverId, 'source-database');
+            const handle = lease.registry.projectManagedServices.resolveEnvironmentService(fixture.host.serverId, {
+                kind: 'deployment', machineId: fixture.host.machineId, environmentId: 'source-database', environmentInstanceId,
+                composeService: 'db', serviceId: `${environmentInstanceId}/db` });
+            if (!handle) throw new Error('Source service required');
+            const rpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async () => ({ kind: 'snapshot',
+                services: [lease.registry.projectManagedServices.machineServiceRows.read(handle)] }));
+            try { await run({ ...fixture, host: { ...fixture.host, machineId: 'consumer-d' } }); }
+            finally { rpc.mockRestore(); }
+        } finally { await lease.release(); }
+    }, { ...options, buildReference: true, referenceRemoteConsumer: true });
 }

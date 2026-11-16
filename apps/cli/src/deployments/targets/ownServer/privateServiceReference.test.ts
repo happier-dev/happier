@@ -1,8 +1,9 @@
 import { expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { withOwnServerBuildFixture } from './buildReceipt.testkit';
+import { withOwnServerBuildFixture, withOwnServerRemoteReferenceFixture } from './buildReceipt.testkit';
 import { resolvePrivateServiceReferenceForHost, resolvePrivateServiceExportAdmissionForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
+import { DeploymentReferenceAddressV1Schema } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { DeploymentReferenceSourceV1Schema, DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 it('verifies B against its applied declarations without reading a later saved Environment', async () => {
@@ -17,7 +18,7 @@ it('verifies B against its applied declarations without reading a later saved En
                 owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
                 installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
             });
-            if (admission.kind !== 'iroh') throw new Error('Expected admitted Iroh source');
+            if (admission.kind !== 'local') throw new Error('Expected admitted Iroh source');
             const handle = lease.registry.projectManagedServices.resolveEnvironmentService(host.serverId, admission.serviceExport.service);
             if (!handle) throw new Error('Expected the serving source handle');
             // A save is not an applied deployment. B keeps the declaration it admitted.
@@ -25,15 +26,15 @@ it('verifies B against its applied declarations without reading a later saved En
             const applied = { kind: 'applied' as const, exportKey: 'database', machineId: host.machineId,
                 installationId: 'installation-c', exports: handle.appliedServiceExports ?? [],
                 row: lease.registry.projectManagedServices.machineServiceRows.read(handle), signal: new AbortController().signal };
-            expect(await resolvePrivateServiceExportAdmissionForHost(applied)).toEqual(admission);
+            expect(await resolvePrivateServiceExportAdmissionForHost(applied)).toEqual({ ...admission, kind: 'iroh' });
             // An exposed target is observable but cannot supply a host forward destination.
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, row: { ...applied.row,
                 configuration: { ports: [{ target: 5432, published: null, bindAddress: null, protocol: 'tcp' }] },
-            } })).rejects.toMatchObject({ code: 'reference_unavailable' });
+            } })).rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, exports: [] }))
-                .rejects.toMatchObject({ code: 'reference_unavailable' });
+                .rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, installationId: 'replacement' }))
-                .rejects.toMatchObject({ code: 'reference_unavailable' });
+                .rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
         } finally { await lease.release(); }
     }, { buildReference: true, referenceBindAddress: '127.0.0.1', referenceIroh: true });
 });
@@ -56,7 +57,7 @@ it.each([undefined, 'host', 'port'] as const)('uses the current source member na
             delete referenceEnvironment.targetLinks[0]!.targetLink.activeDeploymentId;
             await expect(resolve()).resolves.toBe(component === 'host' ? '100.64.0.7' : component === 'port' ? '25432' : 'postgres://100.64.0.7:25432');
         } finally { await lease.release(); }
-    }, { buildReference: true });
+    }, { buildReference: true, referenceDualPublication: true });
 });
 
 it('admits the actual loopback publication and exact managed occurrence for an Iroh export', async () => {
@@ -74,16 +75,16 @@ it('admits the actual loopback publication and exact managed occurrence for an I
                 installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
             };
             const admission = await resolvePrivateServiceExportAdmissionForHost(input);
-            expect(admission).toMatchObject({ kind: 'iroh', machineId: host.machineId, scheme: 'postgres',
+            expect(admission).toMatchObject({ kind: 'local', machineId: host.machineId, scheme: 'postgres',
                 serviceExport: { exportKey: 'database', installationId: 'installation-c', deploymentId: 'source-release',
                     service: { environmentId: 'source-database', composeService: 'db' },
                     destination: { host: '127.0.0.1', port: 25432 } } });
-            if (admission.kind !== 'iroh') throw new Error('Iroh admission required');
+            if (admission.kind !== 'local') throw new Error('Iroh admission required');
             expect(admission.serviceExport.generation).toBeTruthy();
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...input, targetMachineId: 'another-machine' }))
-                .rejects.toMatchObject({ code: 'reference_unavailable' });
+                .rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
             referenceEnvironment.targetLinks[0]!.targetLink.members[0]!.installationId = 'replacement-installation';
-            await expect(resolvePrivateServiceExportAdmissionForHost(input)).rejects.toMatchObject({ code: 'reference_unavailable' });
+            await expect(resolvePrivateServiceExportAdmissionForHost(input)).rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
         } finally { await lease.release(); }
     }, { buildReference: true, referenceBindAddress: '127.0.0.1' });
 });
@@ -101,12 +102,12 @@ it('refuses an Iroh export when its actual TCP publication is on a private inter
                 context: request.context, actionId: request.actionId, signal: new AbortController().signal,
                 owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
                 installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
-            })).rejects.toMatchObject({ code: 'reference_unavailable' });
+            })).rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
         } finally { await lease.release(); }
     }, { buildReference: true });
 });
 
-it.each([undefined, 'host', 'port'] as const)('materializes an admitted Iroh export through the consumer-owned forward and records the actual route (%s)', async component => {
+it.each([undefined, 'host', 'port'] as const)('materializes a same-Machine loopback export locally and records the native route (%s)', async component => {
     await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
         referenceEnvironment.content.ownServer!.serviceExports = [{ key: 'database', service: 'db', containerPort: 5432,
             scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }];
@@ -120,13 +121,9 @@ it.each([undefined, 'host', 'port'] as const)('materializes an admitted Iroh exp
                 context: request.context, actionId: request.actionId, signal: new AbortController().signal,
                 owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
                 installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
-                async acquireForward(admission) {
-                    expect(admission.serviceExport.destination).toEqual({ host: '127.0.0.1', port: 25432 });
-                    return { host: '127.0.0.1', port: 32567, observedPath: 'relay', async close() {} };
-                },
             });
-            expect(material).toEqual({ value: component === 'host' ? '127.0.0.1' : component === 'port' ? '32567' : 'postgres://127.0.0.1:32567',
-                route: { kind: 'iroh', observedPath: 'relay' } });
+            expect(material).toEqual({ value: component === 'host' ? '127.0.0.1' : component === 'port' ? '25432' : 'postgres://127.0.0.1:25432',
+                route: { kind: 'local' } });
         } finally { await lease.release(); }
     }, { buildReference: true, referenceBindAddress: '127.0.0.1' });
 });
@@ -134,7 +131,7 @@ it.each([undefined, 'host', 'port'] as const)('materializes an admitted Iroh exp
 // Owner ruling 2026-11-10: auto prefers the shared observed publication, then Iroh.
 it.each([
     { via: 'auto', shared: true, iroh: true, expected: 'privateNetwork' },
-    { via: 'auto', shared: false, iroh: true, expected: 'iroh' },
+    { via: 'auto', shared: false, iroh: true, expected: 'local' },
     { via: 'auto', shared: false, iroh: false, expected: 'refusal' },
     { via: 'privateNetwork', shared: true, iroh: true, expected: 'privateNetwork' },
 ] as const)('selects $expected with via=$via shared=$shared iroh=$iroh', async ({ via, shared, iroh, expected }) => {
@@ -148,7 +145,7 @@ it.each([
                 owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
                 installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey };
             if (expected === 'refusal') {
-                await expect(resolvePrivateServiceExportAdmissionForHost(input)).rejects.toMatchObject({ code: 'reference_unavailable' });
+                await expect(resolvePrivateServiceExportAdmissionForHost(input)).rejects.toMatchObject({ code: 'reference_unavailable', failureCause: { phase: 'deployment.reference.resolve', errorCode: 'service_export_unavailable' } });
                 return;
             }
             const admission = await resolvePrivateServiceExportAdmissionForHost(input);
@@ -159,8 +156,70 @@ it.each([
                 expect(await resolvePrivateServiceReferenceMaterialForHost(input)).toEqual({ value: 'postgres://100.64.0.7:25432',
                     route: { kind: 'privateNetwork', networkIdentity: 'network' } });
             } else {
-                expect(admission).toMatchObject({ kind: 'iroh', serviceExport: { destination: { host: '127.0.0.1', port: 25433 } } });
+                expect(admission).toMatchObject({ kind: 'local', serviceExport: { destination: { host: '127.0.0.1', port: 25433 } } });
             }
         } finally { await lease.release(); }
     }, { buildReference: true, referenceDualPublication: iroh, referenceNetworkObserved: shared });
+});
+
+it('uses Iroh for a cross-Machine export', async () => {
+    await withOwnServerRemoteReferenceFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('Source service owner required');
+        try {
+            const material = await resolvePrivateServiceReferenceMaterialForHost({
+                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' },
+                environment, readEnvironment: async () => referenceEnvironment, host,
+                context: request.context, actionId: request.actionId, signal: new AbortController().signal,
+                owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId, installationId: 'installation-c',
+                privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
+                async acquireForward(admission) {
+                    expect(admission).toMatchObject({ kind: 'iroh', machineId: 'builder-c' });
+                    return { host: '127.0.0.1', port: 32567, observedPath: 'relay', async close() {} };
+                },
+            });
+            expect(material).toEqual({ value: 'postgres://127.0.0.1:32567', route: { kind: 'iroh', observedPath: 'relay' } });
+        } finally { await lease.release(); }
+    }, { referenceIroh: true, referenceBindAddress: '127.0.0.1' });
+});
+
+it('materializes a local loopback publication through the existing container bridge', async () => {
+    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('Source owner required');
+        try {
+            const material = await resolvePrivateServiceReferenceMaterialForHost({
+                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' },
+                environment, readEnvironment: async () => referenceEnvironment, host,
+                context: request.context, actionId: request.actionId, signal: new AbortController().signal,
+                owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
+                installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
+                async materializeForwardAddress(forward) {
+                    expect(forward).toMatchObject({ host: '127.0.0.1', port: 25432 });
+                    return { host: '172.18.0.1', port: 32567, networkId: 'consumer-network' };
+                },
+            });
+            expect(material).toEqual({ value: 'postgres://172.18.0.1:32567', route: { kind: 'local', containerNetworkId: 'consumer-network' } });
+        } finally { await lease.release(); }
+    }, { buildReference: true, referenceIroh: true, referenceBindAddress: '127.0.0.1' });
+});
+
+it('preserves an IPv6 native loopback publication and its persisted local route', async () => {
+    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('Source owner required');
+        try {
+            const source = { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' } as const;
+            const material = await resolvePrivateServiceReferenceMaterialForHost({ source,
+                environment, readEnvironment: async () => referenceEnvironment, host,
+                context: request.context, actionId: request.actionId, signal: new AbortController().signal,
+                owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
+                installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
+            });
+            expect(material).toEqual({ value: 'postgres://[::1]:25432', route: { kind: 'local' } });
+            if (typeof material === 'string') throw new Error('Native route required');
+            expect(DeploymentReferenceAddressV1Schema.parse({ machineId: host.machineId, installationId: 'installation-c',
+                phase: 'runtime', name: 'DATABASE_URL', source, address: material.value, route: material.route }).route).toEqual({ kind: 'local' });
+        } finally { await lease.release(); }
+    }, { buildReference: true, referenceIroh: true, referenceBindAddress: '::1' });
 });

@@ -3,11 +3,11 @@ import { once } from 'node:events';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { withOwnServerBuildFixture } from './buildReceipt.testkit';
+import { withOwnServerBuildFixture, withOwnServerRemoteReferenceFixture } from './buildReceipt.testkit';
 import { restorePrivateServiceReferencesForHost } from './privateServiceReferenceRecovery';
 
 it('rebinds the recorded native reference address on restart and closes it with retained observation custody', async () => {
-    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+    await withOwnServerRemoteReferenceFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
         referenceEnvironment.content.ownServer!.serviceExports = [{ key: 'database', service: 'db', containerPort: 5432,
             scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }];
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -41,7 +41,7 @@ it('rebinds the recorded native reference address on restart and closes it with 
 });
 
 it('restores a recorded Iroh auto route even when the export now has a shared network', async () => {
-    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+    await withOwnServerRemoteReferenceFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
         referenceEnvironment.content.ownServer!.serviceExports = [{ key: 'database', service: 'db', containerPort: 5432,
             scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'network', transport: { kind: 'iroh' } }];
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -72,4 +72,24 @@ it('restores a recorded Iroh auto route even when the export now has a shared ne
             expect(server.listening).toBe(false);
         } finally { if (server.listening) await new Promise<void>(resolve => server.close(() => resolve())); await lease.release(); }
     }, { buildReference: true, referenceDualPublication: true });
+});
+
+it('recovers a native local reference without acquiring an Iroh self-route', async () => {
+    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('Source owner required');
+        try {
+            const restored = await restorePrivateServiceReferencesForHost({ environmentId: environment.environment.id,
+                referenceAddresses: [{ machineId: host.machineId, installationId: 'installation-c', phase: 'runtime', name: 'DATABASE_URL',
+                    source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' },
+                    address: 'postgres://127.0.0.1:25432', route: { kind: 'local' } }],
+                host: { ...host, async acquireServiceExportForward() { throw new Error('Iroh self-route attempted'); } },
+                context: request.context, signal: new AbortController().signal, owner: lease.registry.projectManagedServices,
+                homeServerIdentityId: host.serverId, installationId: 'installation-c',
+                privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey,
+                readEnvironment: async ({ environmentId }) => environmentId === referenceEnvironment.environment.id ? referenceEnvironment : environment,
+            });
+            await restored.close();
+        } finally { await lease.release(); }
+    }, { buildReference: true, referenceIroh: true, referenceBindAddress: '127.0.0.1' });
 });

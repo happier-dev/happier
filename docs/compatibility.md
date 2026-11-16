@@ -2046,6 +2046,23 @@ older servers refuse this new carrier. There is no unsigned or legacy retry.
 HTTP 431 is a typed `request_headers_too_large` transport refusal, not a
 deployment output schema failure; no server header limit is raised.
 
+## Local private service reference routes (unreleased 0.3)
+
+The private service reference resolver selects the native loopback publication
+when source and consumer share a Machine. Cross-Machine exports continue using
+Iroh; direct-route grants still require distinct endpoints. Local references
+reuse the existing container bridge and retained observation custody. Receipt
+reference addresses record the closed `local` route with an optional
+`containerNetworkId`, so restart recovery restores the same bridge without an
+Iroh self-route. Missing export observations carry `service_export_unavailable`
+through the existing deployment exception and Action failure-cause projectors.
+
+This is the unpublished 0.3 direct cut: matching Protocol and daemon readers
+reload together; older strict development readers reject the new route member.
+The scoped-clean 0.2 frontier at `c680de922e4475b7dfbaeedcd63a8af7d985d3c3`
+has no deployment reference-address schema. No migration, gate or predecessor
+adapter is introduced.
+
 ## Deployment output diagnostics (unreleased 0.3)
 
 The public receipt-list read accepts either its existing closed header or that

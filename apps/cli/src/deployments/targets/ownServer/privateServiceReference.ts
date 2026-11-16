@@ -1,3 +1,6 @@
+import { isIPv6 } from 'node:net';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { MachineServicesListResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readSharedPrivateNetworkAddresses } from '@/machines/reachability/sharedPrivateNetworkAddresses';
@@ -15,7 +18,7 @@ import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths'
 import { privateServiceForwardAcquisitionError } from '../../deploymentFailure';
 
 type ResolveInput = Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['secrets']['resolveNonSecret']>>[0];
-const unavailable = (): never => { throw Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable' }); };
+const unavailable = (): never => { throw Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable', failureCause: projectActionFailureCauseV1({ code: 'service_export_unavailable' }, 'deployment.reference.resolve') }); };
 
 /** Resolves only declared service exports, from the retained service owner and
  * P21's current network observations. A scalar endpoint is never a private fact. */
@@ -31,13 +34,14 @@ export type PrivateServiceReferenceHostInput = Readonly<{
     /** Exact destination selector used by B's local admission adapter. */
     targetMachineId?: string;
     /** Cold recovery restores the transport already embedded in the consumer. */
-    retainedRoute?: 'iroh';
+    retainedRoute?: 'iroh' | 'local';
 }>;
 
 export type PrivateServiceExportAdmissionForHost =
     | Readonly<{ kind: 'compose'; url: string }>
     | Readonly<{ kind: 'privateNetwork'; url: string; networkIdentity: string }>
-    | Readonly<{ kind: 'iroh'; machineId: string; scheme: string; serviceExport: TcpTunnelServiceExportBindingV1 }>;
+    | Readonly<{ kind: 'iroh'; machineId: string; scheme: string; serviceExport: TcpTunnelServiceExportBindingV1 }>
+    | Readonly<{ kind: 'local'; machineId: string; scheme: string; serviceExport: TcpTunnelServiceExportBindingV1 }>;
 
 export type PrivateServiceAppliedExportHostInput = Readonly<{
     kind: 'applied'; exportKey: string; machineId: string; installationId: string;
@@ -110,7 +114,7 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
     const consumer = await readMachine(host.machineId);
     const observerNetworks = consumer?.daemonState?.reachability?.privateNetworks ?? [];
     const urls = new Set<string>();
-    const forwards: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' }>[] = [];
+    const forwards: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>[] = [];
     for (const member of link.members) {
         if (member.state !== 'active' || input.targetMachineId && member.machineId !== input.targetMachineId) continue;
         const machine = member.machineId === host.machineId ? consumer : await readMachine(member.machineId);
@@ -139,9 +143,9 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
             if (iroh) {
                 const admitted = selectIrohExport(exported, row, { environmentId: source.environmentId,
                     machineId: member.machineId, installationId: member.installationId });
-                if (admitted) forwards.push(admitted);
+                if (admitted) forwards.push(member.machineId === host.machineId ? { ...admitted, kind: 'local' } : admitted);
             }
-            if (!network || input.retainedRoute === 'iroh') continue;
+            if (!network || input.retainedRoute !== undefined) continue;
             if (row.environmentId !== source.environmentId || row.deployment?.installationId !== member.installationId
                 || row.deployment.service.composeService !== exported.service
                 || row.health?.freshness !== 'current' || row.health.status === 'down'
@@ -158,11 +162,11 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
             }
         }
     }
-    if (input.retainedRoute !== 'iroh' && network && urls.size === 1)
+    if (input.retainedRoute === undefined && network && urls.size === 1)
         return { kind: 'privateNetwork', url: [...urls][0]!, networkIdentity: exported.privateNetwork! };
     // Explicit network references keep exact-network semantics. Loopback-only
     // Iroh exports retain their existing privateNetwork reference syntax.
-    if (iroh && (source.via === 'auto' || !network || input.retainedRoute === 'iroh'))
+    if (iroh && (source.via === 'auto' || !network || input.retainedRoute !== undefined))
         return forwards.length === 1 ? forwards[0]! : unavailable();
     return unavailable();
 }
@@ -174,7 +178,7 @@ export async function resolvePrivateServiceReferenceForHost(input: PrivateServic
 
 /** The existing Environment materializer receives the address and its actual route together. */
 export async function resolvePrivateServiceReferenceMaterialForHost(input: PrivateServiceReferenceHostInput & Readonly<{
-    acquireForward?: (admission: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' }>) =>
+    acquireForward?: (admission: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>) =>
         Promise<import('@/daemon/peer/iroh/serviceExportMachineForward').ServiceExportMachineForward>;
     materializeForwardAddress?: (forward: import('@/daemon/peer/iroh/serviceExportMachineForward').ServiceExportMachineForward) =>
         Promise<Readonly<{ host: string; port: number; networkId?: string }>>;
@@ -190,10 +194,20 @@ export async function resolvePrivateServiceReferenceMaterialForHost(input: Priva
     if (admission.kind === 'compose') return project(admission.url);
     if (admission.kind === 'privateNetwork') return { value: project(admission.url),
         route: { kind: 'privateNetwork', networkIdentity: admission.networkIdentity } };
-    if (!input.acquireForward) return unavailable();
-    const forward = await input.acquireForward(admission).catch(error => { throw privateServiceForwardAcquisitionError(error); });
+    const forward = await (input.acquireForward ? input.acquireForward(admission)
+        : acquirePrivateServiceReferenceForwardForHost(admission, async () => unavailable())).catch(error => { throw privateServiceForwardAcquisitionError(error); });
     const address = input.materializeForwardAddress ? await input.materializeForwardAddress(forward) : forward;
-    return { value: project(`${admission.scheme}://${address.host}:${address.port}`),
-        route: { kind: 'iroh', observedPath: forward.observedPath,
+    return { value: project(`${admission.scheme}://${isIPv6(address.host) ? `[${address.host}]` : address.host}:${address.port}`),
+        route: { ...(admission.kind === 'local' ? { kind: 'local' as const } : { kind: 'iroh' as const, observedPath: forward.observedPath }),
             ...('networkId' in address && address.networkId ? { containerNetworkId: address.networkId } : {}) } };
+}
+
+/** Local selection borrows the native publication; only remote selections acquire a carrier. */
+export async function acquirePrivateServiceReferenceForwardForHost(
+    admission: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>,
+    acquireRemote: (admission: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' }>) => Promise<ServiceExportMachineForward>,
+): Promise<ServiceExportMachineForward> {
+    if (admission.kind === 'local') return { host: admission.serviceExport.destination.host,
+        port: admission.serviceExport.destination.port, observedPath: 'direct', async close() {} };
+    return acquireRemote(admission);
 }

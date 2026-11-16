@@ -110,7 +110,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             failures.push(...await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
                 async restoreServiceReferences({ docker, engine, onFailure }) {
                     const addresses = receipt.content.ownServer?.referenceAddresses ?? [];
-                    if (!addresses.some(address => address.route?.kind === 'iroh')) return { async close() {} };
+                    if (!addresses.some(address => address.route?.kind === 'iroh' || address.route?.kind === 'local')) return { async close() {} };
                     const identity = readInstallationIdentityIfExistsSync();
                     if (!identity || identity.installationId !== input.installationId) return refuse('admission_unavailable');
                     const acquirePluginRuntimeRegistryLease = async () => {

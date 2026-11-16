@@ -21,7 +21,7 @@ import { awaitMachineCarrierControlPlane, awaitMachineCarrierTunnelOpen, machine
   MachineCarrierError, verifyMachineCarrierHandshakeV1 } from './machineCarrier';
 
 export type ServiceExportMachineForward = Readonly<{
-  host: '127.0.0.1'; port: number; observedPath: 'direct' | 'relay' | 'unknown'; close(): Promise<void>;
+  host: string; port: number; observedPath: 'direct' | 'relay' | 'unknown'; close(): Promise<void>;
 }>;
 
 /** One consumer-owned loopback publication; authorization belongs to grant issuance and B's inner open. */

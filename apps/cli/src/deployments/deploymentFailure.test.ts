@@ -32,6 +32,12 @@ describe('deployment failure diagnostics', () => {
         expect(result.failureCause).toEqual(failureCause);
         expect(JSON.stringify(result)).not.toContain('private-native-token');
     });
+    it('retains an authored reference cause through deployment exception projection', () => {
+        const failureCause = projectActionFailureCauseV1({ code: 'service_export_unavailable' }, 'deployment.reference.resolve');
+        const error = Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable', failureCause });
+        expect(projectDeploymentException(error).failureCause).toEqual(failureCause);
+    });
+
     it.each([
         [new MachineCarrierError('service_export_unavailable', 'private-export'), 'private_service_forward_refused'],
         [Object.assign(new Error('private-destination'), { code: 'ECONNREFUSED' }), 'private_service_destination_unreachable'],

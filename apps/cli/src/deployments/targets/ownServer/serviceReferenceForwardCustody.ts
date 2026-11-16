@@ -3,7 +3,7 @@ import { logger } from '@/ui/logger';
 import type { PrivateServiceExportAdmissionForHost } from './privateServiceReference';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-type Admission = Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' }>;
+type Admission = Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>;
 
 /** Render/start share one local address; the retained service group owns it after activation. */
 export function createServiceReferenceForwardCustody(input: Readonly<{

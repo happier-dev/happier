@@ -19,6 +19,7 @@ const referenceBinding = () => ({ name: EnvironmentVariableBindingV1Schema.shape
 export const DeploymentReferenceAddressV1Schema = lazyZodSchema(() => z.strictObject({
   ...referenceBinding(), machineId: id, installationId: id, address: z.string(),
   route: z.optional(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('local'), containerNetworkId: z.optional(id) }),
     z.strictObject({ kind: z.literal('iroh'), observedPath: z.enum(['direct', 'relay', 'unknown']), containerNetworkId: z.optional(id) }),
     z.strictObject({ kind: z.literal('privateNetwork'), networkIdentity: id }),
   ])),

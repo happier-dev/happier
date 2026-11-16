@@ -34,7 +34,7 @@ import { resolveOwnServerDeploymentIdentityForHost, resolveOwnServerDeploymentRo
 import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
-import { resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
+import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
 import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
 import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
@@ -217,20 +217,24 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     return await bridge;
                 };
                 const referenceForwards = createServiceReferenceForwardCustody({ signal: hostSignal, async acquire(selected, lifetimeSignal) {
-                    if (!host.acquireServiceExportForward) return refuse('machine_carrier_unavailable');
                     const acquisition = new AbortController();
                     const abort = () => acquisition.abort(signal.reason);
                     signal.throwIfAborted();
                     signal.addEventListener('abort', abort, { once: true });
                     let nativeForward: ServiceExportMachineForward;
-                    try { nativeForward = await host.acquireServiceExportForward({ targetMachineId: selected.machineId,
-                        serviceExport: selected.serviceExport, context: request.context,
-                        onFailure(error) {
-                            const failure = privateServiceForwardAcquisitionError(error);
-                            referenceForwards.reportFailure(selected, projectDeploymentFailure(failure.code, failure));
-                        },
-                        onRecovered() { referenceForwards.reportFailure(selected, null); },
-                        signal: AbortSignal.any([lifetimeSignal, acquisition.signal]) }); }
+                    try {
+                        nativeForward = await acquirePrivateServiceReferenceForwardForHost(selected, remote => {
+                            if (!host.acquireServiceExportForward) return refuse('machine_carrier_unavailable');
+                            return host.acquireServiceExportForward({ targetMachineId: remote.machineId,
+                                serviceExport: remote.serviceExport, context: request.context,
+                                onFailure(error) {
+                                    const failure = privateServiceForwardAcquisitionError(error);
+                                    referenceForwards.reportFailure(selected, projectDeploymentFailure(failure.code, failure));
+                                },
+                                onRecovered() { referenceForwards.reportFailure(selected, null); },
+                                signal: AbortSignal.any([lifetimeSignal, acquisition.signal]) });
+                        });
+                    }
                     finally { signal.removeEventListener('abort', abort); }
                     const forward: ServiceExportMachineForward = { ...nativeForward, async close() {
                         try { await (await referenceBridges.get(forward))?.close(); }

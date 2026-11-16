@@ -1,4 +1,5 @@
-import type { DeploymentExecEnvPortV1, DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
+import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -8,7 +9,7 @@ import { prepareEnvironmentSecretBindingsForLaunch } from '../secrets/prepareEnv
 import { resolveEnvironmentDeploymentFactForHost } from '../secrets/deploymentFacts';
 import { readEnvironmentSecretLaunchAdmissionForHost } from '../secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { createServiceReferenceForwardCustody } from './ownServer/serviceReferenceForwardCustody';
-import { resolvePrivateServiceReferenceMaterialForHost } from './ownServer/privateServiceReference';
+import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceReferenceMaterialForHost } from './ownServer/privateServiceReference';
 import type { DeploymentTargetRoleAdmissionForHost, DeploymentTargetRoleAdmissionHost } from './admitDeploymentTargetRoleForHost';
 
 type RuntimeAdmission = DeploymentTargetRoleAdmissionForHost & Readonly<{
@@ -33,15 +34,17 @@ export function createDeploymentTargetRoleExecEnvironmentForHost(input: Readonly
     const placement = admission.executionEnvironment;
     return createDeploymentExecEnvPortForHost({ source, phase: placement.phase, signal: input.signal,
         isCurrent: () => !input.signal.aborted,
-        async prepare({ phase, signal }) {
+        async prepare({ phase, signal }: Readonly<{ phase: 'build' | 'runtime'; signal: AbortSignal }>) {
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity || identity.installationId !== placement.installationId) return unavailable();
             const privateKey = decodeBase64(identity.privateKey, 'base64url');
             const seed = privateKey.slice(0, 32);
             const forwards = createServiceReferenceForwardCustody({ signal, async acquire(selected, forwardSignal) {
-                if (!host.acquireServiceExportForward) return unavailable();
-                return host.acquireServiceExportForward({ targetMachineId: selected.machineId,
-                    serviceExport: selected.serviceExport, context: input.context, signal: forwardSignal });
+                return acquirePrivateServiceReferenceForwardForHost(selected, remote => {
+                    if (!host.acquireServiceExportForward) return unavailable();
+                    return host.acquireServiceExportForward({ targetMachineId: remote.machineId,
+                        serviceExport: remote.serviceExport, context: input.context, signal: forwardSignal });
+                });
             } });
             input.retainCleanup({ dispose: forwards.release });
             let custody: Awaited<ReturnType<typeof readEnvironmentSecretLaunchAdmissionForHost>> | undefined;
@@ -60,7 +63,9 @@ export function createDeploymentTargetRoleExecEnvironmentForHost(input: Readonly
                         if (binding.kind === 'deploymentFact') return resolveEnvironmentDeploymentFactForHost(binding.fact, {
                             environmentName: admission.environment.content.name,
                             deploymentId: admission.receipt.deployment.id,
-                            commitSha: admission.receipt.content.sourceIntent.kind === 'repository' ? admission.receipt.content.sourceIntent.sha : undefined,
+                            commitSha: admission.receipt.content.sourceIntent?.kind === 'repository' ? admission.receipt.content.sourceIntent.sha : undefined,
+                            domainUrl: undefined,
+                            primaryUrl: undefined,
                         });
                         const owner = input.readOwner();
                         if (!owner) return unavailable();
