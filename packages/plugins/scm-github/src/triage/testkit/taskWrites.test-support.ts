@@ -1,12 +1,12 @@
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
-import { GITHUB_PLUGIN, GITHUB_TRIAGE_ACTION_IDS_V1 } from '../src/manifest.js';
-import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../src/observations/githubProviderContracts.js';
-import { GITHUB_RESPONSE_FAILURE_CODE } from '../src/observations/githubResponseFailure.js';
-import { GITHUB_ISSUE_RESPONSE, GITHUB_REPOSITORY_RESPONSE } from '../src/triage/__fixtures__/githubResponses.js';
-import { encodeGithubTriageConfiguration } from '../src/triage/configuration.js';
-import { createStubGithubTransport, GITHUB_TEST_ACCOUNT, readRecordedJsonBody } from '../src/triage/testkit/githubTriage.test-support.js';
+import { GITHUB_PLUGIN, GITHUB_TRIAGE_ACTION_IDS_V1 } from '../../manifest.js';
+import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
+import { GITHUB_RESPONSE_FAILURE_CODE } from '../../observations/githubResponseFailure.js';
+import { GITHUB_ISSUE_RESPONSE, GITHUB_REPOSITORY_RESPONSE } from '../__fixtures__/githubResponses.js';
+import { encodeGithubTriageConfiguration } from '../configuration.js';
+import { createStubGithubTransport, GITHUB_TEST_ACCOUNT, readRecordedJsonBody } from './githubTriage.test-support.js';
 
 /** Registered GitHub Task Actions with only HTTP and connected-account boundaries replaced. */
 export async function createGithubTaskWriteTestkit(kind: 'refused' | 'uncertain') {

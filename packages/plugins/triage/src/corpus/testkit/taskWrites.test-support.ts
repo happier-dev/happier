@@ -1,11 +1,11 @@
 import type { StorageService } from '@happier-dev/plugin-sdk/storage';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
-import { createTestkitCorpusCollections } from '../src/corpus/testkit/corpusCollections.test-support.js';
-import { toCorpusStoredValue } from '../src/corpus/collections/rowCodec.js';
-import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../src/corpus/collections/ids.js';
-import { CORPUS_SOURCE_INSTANCES_COLLECTION, CORPUS_SESSION_LINKS_COLLECTION, CORPUS_USER_MARKS_COLLECTION } from '../src/corpus/collections/definitions.js';
+import { createTestkitCorpusCollections } from './corpusCollections.test-support.js';
+import { toCorpusStoredValue } from '../collections/rowCodec.js';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
+import { CORPUS_SOURCE_INSTANCES_COLLECTION, CORPUS_SESSION_LINKS_COLLECTION, CORPUS_USER_MARKS_COLLECTION } from '../collections/definitions.js';
 
-export { TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 } from '../src/actions/tasksProtocol.js';
+export { TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
 
 /** The canonical in-memory Account collection boundary, seeded with an owned source. */
 export function createConfiguredTaskSourceStorage(configured: TriageConfiguredSourceInstanceV1): StorageService {

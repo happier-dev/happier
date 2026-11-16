@@ -7,7 +7,9 @@
   "types": "./dist/index.d.ts",
   "exports": {
     "./testkit": {
-      "happier-source": "./testkit/taskWrites.test-support.ts"
+      "happier-source": "./src/triage/testkit/taskWrites.test-support.ts",
+      "types": "./dist/triage/testkit/taskWrites.test-support.d.ts",
+      "default": "./dist/triage/testkit/taskWrites.test-support.js"
     },
     ".": {
       "happier-source": "./src/index.ts",
