@@ -6,6 +6,7 @@ import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1 } from '@happier-dev/protocol/devi
 
 import { defaultSimulatorToolRunner, type SimulatorToolRunner } from '../process';
 import { getSimulatorDeviceOperationCapabilities } from '../operations/capabilities';
+import { createIosSimulatorAccessibility } from './accessibility';
 import { createIosSimulatorUnavailableHealth } from './diagnostics';
 import {
     resolveIosSimulatorHelperArtifact,
@@ -52,6 +53,7 @@ export type DiscoverIosSimulatorResourcesInput = Readonly<{
     }>) => Promise<IosSimulatorAdapterHealthV1>;
     runSimctl: IosSimulatorSimctlRunner;
     captureAdapterAvailable?: boolean;
+    accessibilityAvailable?: boolean;
     timeoutMs?: number;
 }>;
 
@@ -121,6 +123,7 @@ export function createIosSimulatorResource(input: Readonly<{
     device: IosSimulatorDiscoveryDevice;
     health: IosSimulatorAdapterHealthV1;
     captureAdapterAvailable?: boolean;
+    accessibilityAvailable?: boolean;
 }>): SimulatorDeviceResourceV1 {
     const state = input.device.available === false || input.device.state === 'unavailable'
         ? 'unavailable' : input.device.state === 'shutdown' ? 'stopped' : 'running';
@@ -132,7 +135,7 @@ export function createIosSimulatorResource(input: Readonly<{
         displayName: input.device.name,
         state,
         ...(state === 'running' ? { runtimeId: input.device.udid } : {}),
-        ...getSimulatorDeviceOperationCapabilities('ios', state),
+        ...getSimulatorDeviceOperationCapabilities('ios', state, { accessibilityAvailable: input.accessibilityAvailable }),
     };
 
     if (state !== 'running') {
@@ -325,6 +328,7 @@ export async function discoverIosSimulatorResources(
             device,
             health,
             captureAdapterAvailable: input.captureAdapterAvailable,
+            accessibilityAvailable: input.accessibilityAvailable,
         })),
         diagnostics: health.status !== 'available'
             ? [diagnostic({
@@ -364,8 +368,12 @@ export function createDefaultIosSimulatorResourcesDiscovery(
     const runCommand = input.runCommand ?? createDefaultCommandRunner(sharedRunner);
     const runHelper = input.runHelper ?? createDefaultHelperRunner(sharedRunner);
     const timeoutMs = input.timeoutMs ?? 5_000;
+    const accessibility = createIosSimulatorAccessibility({
+        ...(input.platform ? { platform: input.platform as NodeJS.Platform } : {}),
+    });
 
     return async () => await discoverIosSimulatorResources({
+        accessibilityAvailable: await accessibility.isAvailable(),
         resolveXcodeEnvironment: async () => await resolveIosSimulatorXcodeEnvironment({
             ...(input.platform ? { platform: input.platform } : {}),
             runCommand,

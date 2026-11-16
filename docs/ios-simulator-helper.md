@@ -142,3 +142,20 @@ version sidecar; it skips release digest pinning and Apple notarization. A missi
 `helper_version_mismatch`. Rebuild after changing the CLI version. Published/package runtimes
 continue using only the pinned signed/notarized artifact, even if a dev build is present.
 Helper health, capture capability and input availability still come from the ordinary native probe.
+
+
+## Simulator accessibility Actions (0.3 development)
+
+`devices.simulator.accessibility.snapshot` reads the foreground iOS simulator application's native
+accessibility tree, including identifiers, labels, values, frames and explicit truncation.
+`devices.simulator.accessibility.press` resolves a unique identifier in XCTest at the time of the
+effect and synthesizes the press there. Missing, ambiguous, disabled or non-hittable elements return
+a typed failure. Neither Action uses preview image coordinates or claims a successful effect from a
+keyframe request. Snapshot is read-only; press uses the existing Action consent policy.
+
+The daemon's `ios/accessibility.ts` owns the guest AX/XCTest adapter. It uses bundled native sources
+and the selected full Xcode installation through `xcrun`/`xcodebuild`, with owned temporary build
+files removed after the request. Inventory advertises these operations only when their native
+sources and tooling are available; preview capture health is independent. Android, missing assets
+and unavailable Xcode tooling return `simulator_accessibility_unavailable`. The native dependency
+closure must be applied before this development capability is advertised by default.

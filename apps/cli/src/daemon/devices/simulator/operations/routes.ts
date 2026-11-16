@@ -30,7 +30,9 @@ export function createSimulatorDeviceOperationRoutes(input: Readonly<{
                     ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}) };
             }
             if (operation.operation !== 'screenshot') {
-                return { ok: true, ...(result.device ? { device: result.device } : {}) };
+                return { ok: true, ...(result.device ? { device: result.device } : {}),
+                    ...(result.snapshot ? { snapshot: result.snapshot } : {}),
+                    ...(result.pressedIdentifier ? { pressedIdentifier: result.pressedIdentifier } : {}) };
             }
             if (!result.png) return { ok: false, errorCode: 'simulator_screenshot_unavailable', step: 'screenshot' };
             const written = await input.mediaWriter.write({ sessionId: operation.sessionId,

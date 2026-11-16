@@ -2,12 +2,13 @@ import { Buffer } from 'node:buffer';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SimulatorDeviceOperationV1, SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import type { SimulatorAccessibilitySnapshotV1, SimulatorDeviceOperationV1, SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
 
 import { createAndroidSimulatorResource } from '../android/discovery';
 import { androidHardwareButtonKeyCode } from '../android/input';
 import { createAndroidSimulatorUnavailableHealth } from '../android/diagnostics';
 import { resolveAndroidAdbTooling, resolveAndroidEmulatorCommand, type AndroidAdbToolingResolution } from '../android/tooling';
+import { createIosSimulatorAccessibility } from '../ios/accessibility';
 import { createIosSimulatorResource, parseIosSimulatorDevices } from '../ios/discovery';
 import { createIosSimulatorUnavailableHealth } from '../ios/diagnostics';
 import { createSimulatorOperationRunner, type SimulatorOperationProcessResult, type SimulatorOperationRunner } from '../process';
@@ -16,7 +17,7 @@ import { isSimulatorDeviceOperationBacked } from './capabilities';
 import { parseAndroidAvdName, readAndroidSimulatorInventory } from './inventory';
 
 export type SimulatorDeviceOperationResult = Readonly<
-    | { ok: true; device?: SimulatorDeviceResourceV1; png?: Buffer }
+    | { ok: true; device?: SimulatorDeviceResourceV1; png?: Buffer; snapshot?: SimulatorAccessibilitySnapshotV1; pressedIdentifier?: string }
     | { ok: false; errorCode: string; step: string; exitCode?: number; cause?: string }
 >;
 
@@ -32,6 +33,7 @@ export type CreateSimulatorDeviceOperationsOptions = Readonly<{
     resolveAdb?: () => Promise<AndroidAdbToolingResolution>;
     resolveEmulator?: (adbCommand: string) => Promise<string | null>;
     spawnEmulator?: AndroidEmulatorSpawn;
+    accessibility?: Omit<NonNullable<Parameters<typeof createIosSimulatorAccessibility>[0]>, 'platform'>;
 }>;
 
 function failed(step: string, result: SimulatorOperationProcessResult): SimulatorDeviceOperationResult {
@@ -74,12 +76,17 @@ function lifecycleResource(platform: 'ios' | 'android', deviceId: string, state:
 export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOperationsOptions = {}): SimulatorDeviceOperations {
     const platform = options.platform ?? process.platform;
     const env = options.env ?? process.env;
+    const accessibility = createIosSimulatorAccessibility({ ...options.accessibility, platform });
     const run = options.run ?? createSimulatorOperationRunner({ env });
     const resolveAdb = options.resolveAdb ?? (() => resolveAndroidAdbTooling({ env }));
     const resolveEmulator = options.resolveEmulator ?? ((adbCommand) => resolveAndroidEmulatorCommand({ adbCommand, env }));
     const execute = async (input: SimulatorDeviceOperationV1, signal?: AbortSignal): Promise<SimulatorDeviceOperationResult> => {
         const unavailable = (): SimulatorDeviceOperationResult => ({ ok: false, errorCode: 'simulator_operation_unavailable', step: input.operation });
         if (signal?.aborted) return { ok: false, errorCode: 'operation_cancelled', step: input.operation };
+        if (input.operation === 'accessibility_snapshot' || input.operation === 'accessibility_press') {
+            return input.platform === 'ios' ? accessibility.execute(input, signal)
+                : { ok: false, errorCode: 'simulator_accessibility_unavailable', step: input.operation };
+        }
         if (input.platform === 'ios' && platform !== 'darwin') return unavailable();
         if (!isSimulatorDeviceOperationBacked(input.platform, input.operation)) return unavailable();
         try {
@@ -101,7 +108,6 @@ export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOp
                     }
                 }
                 switch (input.operation) {
-                    case 'accessibility_snapshot': case 'accessibility_press': return unavailable();
                     case 'boot': args = ['simctl', 'boot', input.deviceId]; break;
                     case 'power_off': args = ['simctl', 'shutdown', input.deviceId]; break;
                     case 'app_launch': args = ['simctl', 'launch', input.deviceId, input.appId]; break;
@@ -140,7 +146,6 @@ export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOp
                 }
                 let shell: readonly string[] | undefined;
                 switch (input.operation) {
-                    case 'accessibility_snapshot': case 'accessibility_press': return unavailable();
                     case 'app_launch': shell = ['monkey', '-p', input.appId, '-c', 'android.intent.category.LAUNCHER', '1']; args = []; break;
                     case 'app_terminate': shell = ['am', 'force-stop', input.appId]; args = []; break;
                     case 'open_url': shell = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', input.url]; args = []; break;
@@ -200,7 +205,9 @@ export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOp
                 const result = await run({ command: 'xcrun', args: ['simctl', 'list', 'devices', '--json'], signal });
                 if (result.exitCode === 0) {
                     const parsed = parseIosSimulatorDevices(result.stdout.toString('utf8'));
-                    if (parsed.ok) resources.push(...parsed.devices.map((device) => createIosSimulatorResource({ device,
+                    const accessibilityAvailable = parsed.ok && parsed.devices.some((device) => device.state === 'booted')
+                        ? await accessibility.isAvailable() : false;
+                    if (parsed.ok) resources.push(...parsed.devices.map((device) => createIosSimulatorResource({ device, accessibilityAvailable,
                         health: createIosSimulatorUnavailableHealth({ reasonCode: 'ios_native_producer_unavailable' }) })));
                 }
             }
