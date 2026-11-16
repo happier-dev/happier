@@ -345,6 +345,73 @@ describe('native package effects through the public recipe interpreter', () => {
         expect(installed).toEqual(new Set(['already']));
     });
 
+    it.each([
+        { initiallyTrusted: false, removing: false },
+        { initiallyTrusted: true, removing: false },
+        { initiallyTrusted: false, removing: true },
+    ])('trusts only a selected Homebrew installation and preserves existing trust (%s)', async ({ initiallyTrusted, removing }) => {
+        const prefix = await mkdtemp(join(tmpdir(), 'happier-brew-trust-')); roots.push(prefix);
+        let trusted = initiallyTrusted, tapped = initiallyTrusted, installed = initiallyTrusted;
+        const effects: string[][] = [];
+        const step = declaration({ id: 'sbx', kind: 'package', manager: 'brew', state: removing ? 'absent' : 'present', packages: [{ name: 'docker/tap/sbx', kind: 'formula' }] });
+        const backend = createMachineSetupNativeBackend({ run: async input => {
+            if (input.executable === 'id') return ok(`${process.getuid?.()}\n`);
+            expect(input.executable).toBe('brew');
+            if (input.args[0] === '--version') return ok('Homebrew 5.0.0\n');
+            if (input.args[0] === '--prefix') return ok(prefix + '\n');
+            if (input.args[0] === 'trust' && input.args.includes('--json=v1')) return ok(JSON.stringify({ taps: [], formulae: trusted ? ['docker/tap/sbx'] : [], casks: [], commands: [] }));
+            if (input.args[0] === 'tap' && input.args.length === 1) return ok(tapped ? 'docker/tap\n' : '');
+            if (input.args[0] === 'info') {
+                if (!trusted || !tapped) return { code: 1, stdout: '', stderr: 'Missing or untrusted tap' };
+                return ok(JSON.stringify({ formulae: [{ name: 'sbx', full_name: 'docker/tap/sbx', versions: { stable: '0.53.0' }, installed: installed ? [{ version: '0.53.0' }] : [] }], casks: [] }));
+            }
+            effects.push([...input.args]);
+            if (input.args[0] === 'trust') { expect(input.args).toEqual(['trust', '--formula', '--', 'docker/tap/sbx']); trusted = true; }
+            else if (input.args[0] === 'tap') { expect(input.args).toEqual(['tap', '--', 'docker/tap']); tapped = true; }
+            else { expect(trusted).toBe(true); installed = true; }
+            return ok();
+        } });
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+        expect(plan.nativeFacts).toMatchObject([{ status: initiallyTrusted ? 'satisfied' : 'drifted' }]);
+        expect(effects).toEqual([]);
+        if (removing) {
+            expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'failed', reason: 'required_fact_unavailable' });
+            expect(effects).toEqual([]);
+            return;
+        }
+        expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied', completedStepIds: initiallyTrusted ? [] : ['sbx'] });
+        expect(effects).toEqual(initiallyTrusted ? [] : [['trust', '--formula', '--', 'docker/tap/sbx'], ['tap', '--', 'docker/tap'], ['install', '--formula', '--', 'docker/tap/sbx']]);
+        expect(await applyMachineSetupEffectPlan({ plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend }), backend })).toMatchObject({ status: 'applied', completedStepIds: [] });
+    });
+
+    it.each(['user', 'machine', undefined] as const)('uses a native WinGet candidate installer with scope %s without requiring a portable package', async scope => {
+        let installed = false;
+        const effects: MachineSetupNativeCommand[] = [];
+        // Docker's published WinGet manifest declares wix/machine. Native
+        // defaults can select a scope independently from an explicit selection.
+        const step = declaration({ id: 'sbx', kind: 'package', manager: 'winget', packages: [{ name: 'Docker.sbx', source: 'winget', ...(scope ? { scope } : {}) }] });
+        const run = async (input: MachineSetupNativeCommand) => {
+            if (input.executable === 'whoami.exe') return ok('"machine\\daemon","S-1-5-21-111-222-333-1001"\r\n');
+            expect(input.executable).toBe('winget.exe');
+            if (input.args[0] === '--version') return ok('v1.29.380\r\n');
+            expect(input.args).toEqual(expect.arrayContaining(['--id', 'Docker.sbx', '--exact', '--source', 'winget', '--disable-interactivity']));
+            if (scope) expect(input.args).toEqual(expect.arrayContaining(['--scope', scope]));
+            else expect(input.args).not.toContain('--scope');
+            if (input.args[0] === 'list') return installed ? ok(`Docker sbx [Docker.sbx]\r\nVersion: 0.53.0\r\nInstaller Category: msi\r\nInstalled Scope: ${scope ?? 'user'}\r\n`) : { code: -1978335212, stdout: '', stderr: '' };
+            if (input.args[0] === 'show') {
+                expect(input.args).not.toContain('--installer-type');
+                return ok('Found Docker sbx [Docker.sbx]\r\nVersion: 0.53.0\r\nInstaller:\r\n  Installer Type: wix\r\n');
+            }
+            effects.push(input);
+            expect(input.args).toEqual(expect.arrayContaining(['--silent', '--installer-type', 'wix', '--version', '0.53.0']));
+            installed = true;
+            return ok();
+        };
+        expect(await apply(step, run)).toMatchObject({ status: 'applied', completedStepIds: ['sbx'] });
+        expect(await apply(step, run)).toMatchObject({ status: 'applied', completedStepIds: [] });
+        expect(effects).toHaveLength(1);
+    });
+
     it('uses exact WinGet source and user scope for native portable installation, drift and removal without accepting agreements', async () => {
         let installed = false;
         const effects: MachineSetupNativeCommand[] = [];
@@ -388,12 +455,36 @@ describe('native package effects through the public recipe interpreter', () => {
         expect(effects).toHaveLength(3);
     });
 
-    it('refuses missing managers, unavailable pins, native locks, wrong identities and protected WinGet scope before effects', async () => {
+    it('preserves portable data only for its exact WinGet source and scope identity during removal', async () => {
+        const installed = new Set(['user', 'machine']);
+        const effects: Array<{ scope: string; preserve: boolean }> = [];
+        const step = declaration({ id: 'remove', kind: 'package', manager: 'winget', state: 'absent',
+            packages: ['user', 'machine'].map(scope => ({ name: 'Example.Tool', source: 'winget', scope })) });
+        const backend = createMachineSetupNativeBackend({ run: async input => {
+            if (input.executable === 'whoami.exe') return ok('"machine\\daemon","S-1-5-21-111-222-333-1001"\r\n');
+            expect(input.executable).toBe('winget.exe');
+            if (input.args[0] === '--version') return ok('v1.29.380\r\n');
+            const scope = input.args[input.args.indexOf('--scope') + 1]!;
+            if (input.args[0] === 'list') return installed.has(scope)
+                ? ok(`Tool [Example.Tool]\r\nVersion: 1\r\nInstaller Category: ${scope === 'user' ? 'portable' : 'msi'}\r\nInstalled Scope: ${scope}\r\n`)
+                : { code: -1978335212, stdout: '', stderr: '' };
+            expect(input.args[0]).toBe('uninstall');
+            effects.push({ scope, preserve: input.args.includes('--preserve') });
+            installed.delete(scope);
+            return ok();
+        } });
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+        expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });
+        expect(effects).toEqual([{ scope: 'user', preserve: true }, { scope: 'machine', preserve: false }]);
+    });
+
+    it('refuses missing managers, unavailable pins, native locks and wrong package or WinGet identities before effects', async () => {
         const dnf = declaration({ id: 'software', kind: 'package', manager: 'dnf', packages: [{ name: 'wanted', version: '2:3.4-1' }] });
         let mode = 'missing';
         const effects: MachineSetupNativeCommand[] = [];
         const run = async (input: MachineSetupNativeCommand) => {
             if (input.executable === 'winget.exe' && input.args[0] === '--version') return ok('v1.29.380\r\n');
+            if (input.executable === 'whoami.exe') return ok('"NT AUTHORITY\\SYSTEM","S-1-5-18"\r\n');
             if (mode === 'missing') return { code: null, errorCode: 'ENOENT', stdout: '', stderr: '' };
             if (input.executable === 'dnf' && input.args.includes('--version')) return ok('4.22.0\n');
             if (input.executable === 'rpm' && input.args[0] === '--eval') return ok('x86_64\n');
@@ -411,10 +502,10 @@ describe('native package effects through the public recipe interpreter', () => {
             expect(await apply(dnf, run)).toMatchObject({ status: value === 'busy' || value === 'identity' ? 'unavailable' : 'unsupported',
                 reason: value === 'busy' ? 'package_manager_busy' : 'required_fact_unavailable' });
         }
-        const protectedStep = declaration({ id: 'protected', kind: 'package', manager: 'winget', packages: [
+        const wrongUserStep = declaration({ id: 'system-identity', kind: 'package', manager: 'winget', packages: [
             { name: 'Example.Protected', source: 'winget', scope: 'machine' },
         ] });
-        expect(await apply(protectedStep, run)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+        expect(await apply(wrongUserStep, run)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
         expect(effects).toEqual([]);
     });
 });

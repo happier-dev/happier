@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolJsonValue, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
   observeMachineProvisionerNativeRead,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -13,9 +13,12 @@ import {
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesProvider, DOCKER_SANDBOXES_DEPENDENCY_ID, DOCKER_SANDBOXES_PLUGIN_ID,
   DOCKER_SANDBOXES_PROVISIONER_ID } from './machine/provider.js';
-import { DOCKER_SANDBOXES_ROLE_SCHEMAS, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS,
-  DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema } from './machine/schemas.js';
+import { DOCKER_SANDBOXES_ROLE_SCHEMAS, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS, DOCKER_SANDBOXES_PREPARATION_SCHEMAS,
+  DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema, DockerSandboxesPreparationInputSchema,
+  DockerSandboxesPreparedArtifactSchema, DockerSandboxesPreparationOperationSchema } from './machine/schemas.js';
 import { DOCKER_ACCOUNT_DESCRIPTOR, DOCKER_ACCOUNT_SERVICE, DOCKER_ACCOUNT_PURPOSE, prepareDockerAccount } from './machine/dockerAccount.js';
+import { DOCKER_SANDBOXES_INSTALL_RECIPE } from './machine/installRecipe.js';
+import { dockerSandboxesInstallSources, installDockerSandboxes } from './machine/installRuntime.js';
 import { DOCKER_CLOUD_PROVISIONER } from './cloud/contribution.js';
 import { createCloudClient, cloudCode, cloudFailure } from './cloud/nativeClient.js';
 import { createCloudPreparation } from './cloud/preparation.js';
@@ -57,6 +60,10 @@ export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
   reconciliation: { nativeOperationSchema: DockerSandboxesResourceV1Schema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: DockerSandboxesPreparationInputSchema.jsonSchema,
+    artifactSchema: DockerSandboxesPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: DockerSandboxesPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
@@ -86,6 +93,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
     scope: { targets: [{ kind: 'httpsHostSuffix', hostSuffix: 'docker.com' }], methods: ['GET', 'POST', 'PUT', 'DELETE'] },
   }], optional: [] },
   connectedAccountDescriptors: { [DOCKER_ACCOUNT_SERVICE.localId]: DOCKER_ACCOUNT_DESCRIPTOR },
+  machineRecipes: { 'docker-sandboxes-install': DOCKER_SANDBOXES_INSTALL_RECIPE },
   managedDependencies: { [DOCKER_SANDBOXES_DEPENDENCY_ID]: {
     id: DOCKER_SANDBOXES_DEPENDENCY_ID, title: 'Docker Sandboxes', executable: 'sbx',
     description: 'User-installed sbx under the Docker subscription license.',
@@ -108,6 +116,24 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
   ] },
   machineProvisioners: { [DOCKER_SANDBOXES_PROVISIONER_ID]: DOCKER_SANDBOXES_MACHINE_PROVISIONER, 'docker-cloud': DOCKER_CLOUD_PROVISIONER },
   actions: {
+    'install-runtime': { title: 'Install Docker Sandboxes', scopes: ['machine'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'writesLocal',
+      confirmation: { title: 'Install Docker Sandboxes', body: 'Review and apply Docker’s native package installation on this computer.' },
+      inputSchema: defineProtocolObject({}, { policy: 'closed' }), resultSchema: defineProtocolJsonValue(),
+      async run(_input, context) { return installDockerSandboxes(context); } },
+    'prepare-build': { ...actionDefaults, title: 'Prepare Docker Sandbox template', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Prepare Docker Sandbox template', body: 'Builds a dedicated local guest and retains its template until deleted.' },
+      inputSchema: DOCKER_SANDBOXES_PREPARATION_SCHEMAS.buildInput, resultSchema: DOCKER_SANDBOXES_PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return (await provider(context)).buildPreparation(input); } },
+    'prepare-inspect': { ...actionDefaults, title: 'Inspect prepared Docker Sandbox template', dangerLevel: 'safe',
+      inputSchema: DOCKER_SANDBOXES_PREPARATION_SCHEMAS.inspectInput, resultSchema: DOCKER_SANDBOXES_PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return (await provider(context)).inspectPreparation('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...actionDefaults, title: 'Delete prepared Docker Sandbox template', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete prepared Docker Sandbox template', body: 'Deletes only its owned template and dedicated builder.' },
+      inputSchema: DOCKER_SANDBOXES_PREPARATION_SCHEMAS.destroyInput, resultSchema: DOCKER_SANDBOXES_PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return (await provider(context)).destroyPreparation({ artifact: input.artifact?.value,
+        nativeOperation: input.nativeOperation?.value }); } },
     'cloud-prepare-build': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Prepare Docker cloud image', dangerLevel: 'writesRemote',
       confirmation: { title: 'Prepare Docker cloud image', body: 'Docker may bill the builder, snapshot and retained storage.' },
       inputSchema: CLOUD_PREPARATION.buildInput, resultSchema: CLOUD_PREPARATION.buildResult,
@@ -212,7 +238,8 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
           return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: errorCode(error),
           ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const,
             id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } }, status: 'unavailable' as const,
-            repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-docs' }, input: {} } }] } : {}),
+            setupSources: dockerSandboxesInstallSources(),
+            repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-runtime' }, input: {} } }] } : {}),
         })); }
       },
     },

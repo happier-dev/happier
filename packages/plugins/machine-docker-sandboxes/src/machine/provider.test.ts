@@ -1,3 +1,4 @@
+import { arch } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -32,6 +33,24 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     spawn.mockClear();
     await expect(provider.stream(resource, [])).rejects.toMatchObject({ code: 'invalid_request' });
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('reads the sbx 0.48+ array inventory (present: %s)', async present => {
+    const run = vi.fn<ExecService['run']>(async () => result(0, JSON.stringify(present
+      ? [{ name: resource.sandboxName, status: 'running', guest_unresponsive: false }] : [])));
+    expect(await createDockerSandboxesNativeClient({ run }, executable).inspect(resource)).toMatchObject(present
+      ? { presence: 'present', power: 'running' } : { presence: 'absent' });
+  });
+
+  it('starts with the native detached flag accepted by current sbx', async () => {
+    // sbx 0.53.0 run --detached --help exits1: unknown flag. The process
+    // boundary models that observed refusal; retained native inventory is real.
+    const run = vi.fn<ExecService['run']>(async request => request.args?.[0] === 'ls'
+      ? result(0, inventory(resource.sandboxName))
+      : request.args?.includes('--detached') ? result(1) : result(0));
+    expect(await createDockerSandboxesNativeClient({ run }, executable).start(resource))
+      .toMatchObject({ status: 'start-accepted' });
+    expect(run.mock.calls.at(-1)?.[0].args).toEqual(['run', '-d', '--name', resource.sandboxName]);
   });
 
   it('preserves authored failure details across native reads and effects', async () => {
@@ -75,7 +94,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     process.run.mockClear();
     expect(await provisioner.power(resource, 'start')).toEqual({ kind: 'confirmed' });
     expect(process.run.mock.calls.map(([request]) => request.args)).toEqual([
-      ['ls', '--json'], ['run', '--detached', '--name', resource.sandboxName], ['ls', '--json'],
+      ['ls', '--json'], ['run', '-d', '--name', resource.sandboxName], ['ls', '--json'],
     ]);
   });
 
@@ -109,6 +128,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     const options = await nativeModule.createDockerSandboxesProvider(process, executable, 123).options();
     expect(options.base.launch).toEqual({ name: 'happier' });
     expect(options.base.guestPlatform).toBe('linux');
+    expect(options.base).toMatchObject({ nativeFacts: { preparationGuest: { target: { os: 'linux', arch: arch() }, remoteHomeDir: '/home/agent' } } });
     expect(options.dimensions.image).toEqual(['docker.io/example/first:1', 'docker.io/example/second:2'].map(id => ({
       id, title: id, guestPlatform: 'linux', assignments: [{ path: 'templateId', value: id }], nativeFacts: { image: { id, title: id } },
     })));
@@ -145,7 +165,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     expect(process.run.mock.calls.map(([request]) => request.args)).toEqual([
       ['template', 'ls', '--quiet'],
       ['create', '--name', resource.sandboxName, '--template', launch.templateId, 'shell'],
-      ['ls', '--json'], ['run', '--detached', '--name', resource.sandboxName], ['ls', '--json'],
+      ['ls', '--json'], ['run', '-d', '--name', resource.sandboxName], ['ls', '--json'],
     ]);
   });
 

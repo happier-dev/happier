@@ -1,6 +1,7 @@
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
+  defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 // sbx v0.46.0 `create --help`: at least two characters, letter/digit first,
 // then letters/digits/hyphens/periods; the exact name `default` is reserved.
@@ -27,17 +28,22 @@ const operationIdPattern = '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?';
 const operationIdMaxLength = 63 - DOCKER_SANDBOXES_PREPARATION_BUILDER_PREFIX.length;
 export const DockerSandboxesPreparationOperationSchema = defineProtocolObject({
   operationId: defineProtocolString({ pattern: `^${operationIdPattern}$`, maxLength: operationIdMaxLength }),
+  launch: DockerSandboxesLaunchV1Schema,
 }, { policy: 'closed' });
-export const DockerSandboxesPreparationInputSchema = defineProtocolObject({
-  templateId: defineProtocolString({ minLength: 1 }), setupScript: defineProtocolString({ minLength: 1 }),
-}, { policy: 'closed' });
+export const DockerSandboxesPreparationInputSchema = createManagedMachinePresetPreparationBuildInputV1Schema(DockerSandboxesLaunchV1Schema);
+const preparedTemplateIdSchema = defineProtocolString({ pattern: `^${DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX}${operationIdPattern}$`,
+  maxLength: DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX.length + operationIdMaxLength });
 export const DockerSandboxesPreparedArtifactSchema = defineProtocolObject({
-  templateId: defineProtocolString({ pattern: `^${DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX}${operationIdPattern}$`,
-    maxLength: DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX.length + operationIdMaxLength }),
+  templateId: preparedTemplateIdSchema,
+  launch: DockerSandboxesLaunchV1Schema,
 }, { policy: 'closed' });
 export function isDockerSandboxesPreparedTemplateId(templateId: string) {
-  return DockerSandboxesPreparedArtifactSchema.safeParse({ templateId }).success;
+  return preparedTemplateIdSchema.safeParse(templateId).success;
 }
+export const DOCKER_SANDBOXES_PREPARATION_SCHEMAS = defineMachineProvisionerPreparationSchemas({
+  input: DockerSandboxesPreparationInputSchema, launch: DockerSandboxesLaunchV1Schema,
+  artifact: DockerSandboxesPreparedArtifactSchema, nativeOperation: DockerSandboxesPreparationOperationSchema,
+});
 
 export const DOCKER_SANDBOXES_ROLE_SCHEMAS = defineMachineProvisionerSchemas({
   launch: DockerSandboxesLaunchV1Schema, resource: DockerSandboxesResourceV1Schema,

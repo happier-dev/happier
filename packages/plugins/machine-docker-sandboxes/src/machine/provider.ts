@@ -1,3 +1,4 @@
+import { arch } from 'node:os';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerNativeIntentV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -50,7 +51,14 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'> & P
     async options() {
       const catalog = await native.templates(signal);
       if (catalog.status !== 'available') fail('docker_sandbox_options_unavailable');
-      return { base: { launch: { name: 'happier' }, guestPlatform: 'linux' as const }, dimensions: { size: [], location: [], network: [], duration: [],
+      // Local sbx uses the host runtime's CPU platform, including on macOS and
+      // Windows; every local guest is Linux. No guest allocation is discovery.
+      // https://docs.docker.com/ai/sandboxes/cloud/local-vs-cloud/
+      const hostArch = arch();
+      const preparationGuest = hostArch === 'x64' || hostArch === 'arm64'
+        ? { target: { os: 'linux' as const, arch: hostArch }, remoteHomeDir: '/home/agent' } : undefined;
+      return { base: { launch: { name: 'happier' }, guestPlatform: 'linux' as const,
+        ...(preparationGuest ? { nativeFacts: { preparationGuest } } : {}) }, dimensions: { size: [], location: [], network: [], duration: [],
         image: catalog.templateIds.map(templateId => ({ id: templateId, title: templateId, guestPlatform: 'linux' as const,
           assignments: [{ path: 'templateId', value: templateId }], nativeFacts: { image: { id: templateId, title: templateId } } })) } };
     },

@@ -229,7 +229,26 @@ async function brew(run: NativeRun, step: PackageStep) {
         const requested = step.packages.filter(pkg => pkg.kind === kind);
         if (!requested.length) continue;
         const result = await run('brew', ['info', '--json=v2', `--${kind}`, '--', ...requested.map(pkg => pkg.name)], brewEnv);
-        if (result.code !== 0) return unavailable(step);
+        if (result.code !== 0) {
+            const qualified = requested.filter(pkg => pkg.name.split('/').length === 3 && !pkg.name.startsWith('homebrew/'));
+            if (!qualified.length) return unavailable(step);
+            const result = await run('brew', ['trust', '--json=v1'], brewEnv);
+            let trust: unknown;
+            try { trust = JSON.parse(result.stdout); } catch { return unavailable(step); }
+            if (result.code !== 0 || !object(trust)) return unavailable(step);
+            const taps = trust.taps, entries = trust[kind === 'formula' ? 'formulae' : 'casks'];
+            if (!Array.isArray(taps) || !taps.every(value => typeof value === 'string')
+                || !Array.isArray(entries) || !entries.every(value => typeof value === 'string')) return unavailable(step);
+            const untrusted = qualified.filter(pkg => !entries.includes(pkg.name) && !taps.includes(pkg.name.split('/').slice(0, 2).join('/')));
+            const tapped = await run('brew', ['tap'], brewEnv);
+            if (tapped.code !== 0) return unavailable(step);
+            const repositories = tapped.stdout.trim().split(/\r?\n/).filter(Boolean);
+            const untapped = [...new Set(qualified.map(pkg => pkg.name.split('/').slice(0, 2).join('/')))].filter(tap => !repositories.includes(tap));
+            if (!untrusted.length && !untapped.length) return unavailable(step);
+            // Loading this exact formula/cask is already part of the reviewed
+            // package effect. CHECK never changes Homebrew's trust configuration.
+            return observation(step, 'drifted', { manager: 'brew', prefix: path, uid, untrustedPackages: untrusted.map(pkg => pkg.name), untappedRepositories: untapped });
+        }
         let data: unknown;
         try { data = JSON.parse(result.stdout); } catch { return unavailable(step); }
         if (!object(data) || !Array.isArray(data.formulae) || !Array.isArray(data.casks)) return unavailable(step);
@@ -269,23 +288,24 @@ async function brew(run: NativeRun, step: PackageStep) {
 }
 
 const noWingetPackage = -1978335212; // APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND (0x8a150014).
-function wingetArgs(pkg: Package) { return ['--id', pkg.name, '--exact', '--source', pkg.source!, '--scope', 'user', '--disable-interactivity']; }
+function wingetArgs(pkg: Package) { return ['--id', pkg.name, '--exact', '--source', pkg.source!, ...(pkg.scope ? ['--scope', pkg.scope] : []), '--disable-interactivity']; }
 function detail(text: string, key: string) { return text.split(/\r?\n/).map(line => line.trim()).find(line => line.startsWith(`${key}:`))?.slice(key.length + 1).trim(); }
 function wingetIdentity(text: string, name: string) {
     const ids = [...text.matchAll(/^.* \[([^\]\r\n]+)\]\s*$/gm)].map(match => match[1]);
     return ids.length === 1 && ids[0] === name;
 }
 /** WinGet list --details native labels are from WorkflowBase.cpp/en-us resources.
- * Unknown/localized output fails closed, never absence. No attended UAC route. */
+ * Unknown/localized output fails closed, never absence. Installer execution
+ * remains under the daemon user; native installers own their required rights. */
 async function winget(run: NativeRun, step: PackageStep) {
     const manager = await run('winget.exe', ['--version'], locale);
     if (manager.errorCode === 'ENOENT') return unsupported(step, 'packageManager');
     if (manager.code !== 0 || !/^v\d+\.\d+\.\d+/.test(manager.stdout.trim())) return unavailable(step);
-    if (step.packages.some(pkg => pkg.scope !== 'user' || !pkg.source)) return unsupported(step, 'packageInstallerAuthority');
+    if (step.packages.some(pkg => !pkg.source)) return unsupported(step, 'packageInstallerAuthority');
     const identity = await run('whoami.exe', ['/user', '/fo', 'csv', '/nh'], locale);
     const sid = /"(S-1-5-21-(?:\d+-){3}\d+)"/u.exec(identity.stdout)?.[1];
     if (identity.code !== 0 || !sid) return unsupported(step, 'packageManagerIdentity');
-    const packages: Facts[] = [], candidates: string[] = [];
+    const packages: Facts[] = [], candidates: string[] = [], candidateInstallerTypes: string[] = [], portablePackages: string[] = [];
     let changed = false;
     for (const pkg of step.packages) {
         const result = await run('winget.exe', ['list', ...wingetArgs(pkg), '--details'], locale);
@@ -295,23 +315,26 @@ async function winget(run: NativeRun, step: PackageStep) {
         if (!missing) {
             if (!wingetIdentity(result.stdout, pkg.name)) return unavailable(step);
             version = detail(result.stdout, 'Version');
-            if (!version || detail(result.stdout, 'Installed Scope') !== 'user') return unavailable(step);
-            if (detail(result.stdout, 'Installer Category') !== 'portable') return unsupported(step, 'packageInstallerAuthority');
+            const scope = detail(result.stdout, 'Installed Scope'), installer = detail(result.stdout, 'Installer Category');
+            if (!version || (scope !== 'user' && scope !== 'machine') || pkg.scope !== undefined && scope !== pkg.scope || !installer) return unavailable(step);
+            if (installer === 'portable') portablePackages.push(packageKey(pkg));
         }
-        packages.push({ manager: 'winget', name: pkg.name, source: pkg.source!, scope: 'user', present: !missing, ...(version ? { version } : {}) });
+        packages.push({ manager: 'winget', name: pkg.name, source: pkg.source!, ...(pkg.scope ? { scope: pkg.scope } : {}), present: !missing, ...(version ? { version } : {}) });
         if (step.state === 'absent' ? !missing : missing || pkg.version !== undefined && version !== pkg.version) {
             changed = true;
             if (step.state === 'absent') continue;
-            const available = await run('winget.exe', ['show', ...wingetArgs(pkg), '--installer-type', 'portable', ...(pkg.version ? ['--version', pkg.version] : [])], locale);
+            const available = await run('winget.exe', ['show', ...wingetArgs(pkg), ...(pkg.version ? ['--version', pkg.version] : [])], locale);
             if (available.code === noWingetPackage || available.code === 0x8a150014) return unsupported(step, 'packageAvailability');
             if (available.code !== 0) return unavailable(step);
             const candidate = detail(available.stdout, 'Version');
             if (!wingetIdentity(available.stdout, pkg.name) || !candidate || pkg.version !== undefined && candidate !== pkg.version) return unsupported(step, 'packageVersion');
-            if (detail(available.stdout, 'Installer Type') !== 'portable' || /^\s*Dependencies:/m.test(available.stdout)) return unsupported(step, 'packageInstallerAuthority');
+            const installer = detail(available.stdout, 'Installer Type');
+            if (!installer || /^\s*Dependencies:/m.test(available.stdout)) return unsupported(step, 'packageInstallerAuthority');
             candidates.push(candidate);
+            candidateInstallerTypes.push(installer);
         }
     }
-    return observation(step, changed ? 'drifted' : 'satisfied', { manager: 'winget', sid, packages, candidates });
+    return observation(step, changed ? 'drifted' : 'satisfied', { manager: 'winget', sid, packages, candidates, candidateInstallerTypes, portablePackages });
 }
 
 export function createNativePackageBackend(currentProcessRun: NativeRun, runAsDaemonUser?: NativeRun) {
@@ -334,6 +357,19 @@ export function createNativePackageBackend(currentProcessRun: NativeRun, runAsDa
             const result = await run(executable, args, env);
             if (result.code !== 0) throw new MachineSetupEffectError(step.manager === 'dnf' && result.code === 200 ? 'package_manager_busy' : 'native_effect_failed');
         };
+        const untrusted = state.facts.untrustedPackages;
+        if (step.manager === 'brew' && step.state !== 'absent' && Array.isArray(untrusted)) {
+            for (const pkg of step.packages.filter(pkg => untrusted.includes(pkg.name))) {
+                await effect('brew', ['trust', `--${pkg.kind}`, '--', pkg.name], brewEnv);
+            }
+            const repositories = state.facts.untappedRepositories;
+            if (Array.isArray(repositories)) for (const repository of repositories) {
+                if (typeof repository === 'string') await effect('brew', ['tap', '--', repository], brewEnv);
+            }
+            state = await observe(step);
+            if (state.status === 'satisfied') return;
+            if (state.status !== 'drifted' || state.facts.untrustedPackages !== undefined) throw new MachineSetupEffectError('required_fact_unavailable');
+        }
         if (step.manager === 'apt' && step.state !== 'absent' && Array.isArray(state.facts.unresolvedPackages) && state.facts.unresolvedPackages.length) {
             await mutateApt(run, ['update', '--error-on=any']); state = await observe(step);
             if (state.status === 'satisfied') return;
@@ -378,8 +414,12 @@ export function createNativePackageBackend(currentProcessRun: NativeRun, runAsDa
                 const version = step.state === 'absent' ? installed.get(packageKey(pkg))?.version
                     : Array.isArray(candidates) && typeof candidates[index] === 'string' ? candidates[index] : undefined;
                 if (!version) throw new MachineSetupEffectError('required_fact_unavailable');
+                const installerTypes = state.facts.candidateInstallerTypes;
+                const installer = Array.isArray(installerTypes) && typeof installerTypes[index] === 'string' ? installerTypes[index] : undefined;
+                if (step.state !== 'absent' && !installer) throw new MachineSetupEffectError('required_fact_unavailable');
                 await effect('winget.exe', [step.state === 'absent' ? 'uninstall' : 'install', ...wingetArgs(pkg), '--silent',
-                    ...(step.state === 'absent' ? ['--preserve'] : ['--installer-type', 'portable']), '--version', version]);
+                    ...(step.state === 'absent' ? Array.isArray(state.facts.portablePackages) && state.facts.portablePackages.includes(packageKey(pkg)) ? ['--preserve'] : []
+                        : ['--installer-type', installer!]), '--version', version]);
             }
         }
     } };

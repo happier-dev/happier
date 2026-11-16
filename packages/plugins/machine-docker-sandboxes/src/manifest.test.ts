@@ -46,7 +46,7 @@ describe('activated Docker Sandboxes public role boundary', () => {
       expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false,
         prerequisites: [{ requirement: { kind: 'managedDependency', id: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id,
           localId: 'docker-sandboxes-cli' } }, status: 'unavailable', repairAction: {
-            action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'install-docs' }, input: {},
+            action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'install-runtime' }, input: {},
           } }] });
       expect(run).not.toHaveBeenCalled();
       // A failed dependency read is unknown, not evidence that the tool is missing.
@@ -165,6 +165,45 @@ describe('activated Docker Sandboxes public role boundary', () => {
       expect(delivered && Array.from(delivered)).toEqual([0]);
     } finally { await kit.dispose(); }
   });
+  it('builds, inspects and destroys an owned prepared template through the shared qualified roles', async () => {
+    const operationId = 'public-build';
+    const launch = { templateId: 'docker.io/sbx/shell:latest', name: 'my-sandbox' };
+    const builder = `happier-prepared-${operationId}`;
+    const templateId = `happier-prepared:${operationId}`;
+    const templates = new Set(['someone-else:keep']);
+    const builders = new Set<string>();
+    const run = vi.fn<ExecService['run']>(async request => {
+      const args = request.args ?? [];
+      if (args[0] === 'template' && args[1] === 'ls') return exited(new TextEncoder().encode([...templates].join('\n')));
+      if (args[0] === 'ls') return exited(new TextEncoder().encode(JSON.stringify({ sandboxes: [...builders].map(name => ({ name, status: 'stopped' })) })));
+      if (args[0] === 'create') builders.add(builder);
+      if (args[0] === 'template' && args[1] === 'save') templates.add(templateId);
+      if (args[0] === 'template' && args[1] === 'rm') templates.delete(args.at(-1)!);
+      if (args[0] === 'rm') builders.delete(args.at(-1)!);
+      return exited(new Uint8Array());
+    });
+    const boundary = fixture(run);
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
+    const contributionRef = { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'docker-sandboxes' };
+    const nativeOperation = { contributionRef, schemaVersion: 1, value: { operationId, launch } };
+    try {
+      const built = await kit.invokeAction('prepare-build', { operationId,
+        input: { launch: { provider: contributionRef, schemaVersion: 1, choices: launch },
+          cli: { identity: 'public-cli', versionId: '0.3.0', binaryPath: '/opt/happier/happier', installScript: 'true', files: [] },
+          setupScript: 'printf prepared > /opt/prepared\n' } }, { surface: 'plugin' });
+      expect(built).toEqual({ kind: 'ready', artifact: { contributionRef, schemaVersion: 1, value: { templateId, launch: { ...launch, templateId } } } });
+      expect(await kit.invokeAction('prepare-inspect', { operationId, launch }, { surface: 'plugin' })).toEqual(built);
+      expect(await kit.invokeAction('prepare-inspect', { nativeOperation }, { surface: 'plugin' })).toEqual(built);
+      expect(await kit.invokeAction('prepare-destroy', { artifact: { contributionRef, schemaVersion: 1, value: { templateId, launch: { ...launch, templateId } } }, nativeOperation }, { surface: 'plugin' }))
+        .toEqual({ kind: 'confirmed' });
+      expect(templates).toEqual(new Set(['someone-else:keep']));
+      expect(builders.size).toBe(0);
+      await expect(kit.invokeAction('prepare-destroy', { artifact: { contributionRef, schemaVersion: 1,
+        value: { templateId: 'someone-else:keep', launch } } }, { surface: 'plugin' })).rejects.toBeDefined();
+      expect(templates).toEqual(new Set(['someone-else:keep']));
+    } finally { await kit.dispose(); }
+  });
+
 });
 
 describe('brand mark', () => {
@@ -175,4 +214,5 @@ describe('brand mark', () => {
     expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
+
 });

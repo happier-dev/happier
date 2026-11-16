@@ -60,14 +60,15 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       return exec.spawn({ executable, args },
         { signal, outputDelivery: 'invocation' });
     },
-    async create(input: DockerSandboxesLaunchV1, signal?: AbortSignal) {
+    async create(input: DockerSandboxesLaunchV1, signal?: AbortSignal, options?: { hostIntegrations: 'disabled' }) {
       const launch = DockerSandboxesLaunchV1Schema.safeParse(input);
       if (!launch.success) return { status: 'refused', code: 'docker_sandbox_launch_invalid' } as const;
       const resource = { sandboxName: launch.data.name };
       let failed: PluginProcessResult | undefined;
       try {
         const result = await run(['create', '--name', launch.data.name, '--template', launch.data.templateId,
-          ...(isDockerSandboxesPreparedTemplateId(launch.data.templateId) ? ['--pull', 'never'] : []), 'shell'], signal);
+          ...(isDockerSandboxesPreparedTemplateId(launch.data.templateId) ? ['--pull', 'never'] : []),
+          ...(options?.hostIntegrations === 'disabled' ? ['--skills', 'off', '--static-mcp', 'none'] : []), 'shell'], signal);
         if (completed(result)) return { status: 'allocated', resource, readiness: 'unqualified' } as const;
         failed = result;
       } catch (error) {
@@ -109,15 +110,16 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       if (!DockerSandboxesResourceV1Schema.safeParse(resource).success) return invalidResource();
       const locator = readLocator(resource);
       try {
-        // v0.46.0 (991967dc90ce) commands.jsonLsEntry: name/status and
-        // guest_unresponsive supply presence and power from one full inventory.
+        // v0.46.0 wraps rows in sandboxes; v0.48+ returns the rows directly.
+        // Both supply presence and power from one complete native inventory.
         // Neither native presence nor power is enrollment evidence.
         const result = await run(['ls', '--json'], signal);
         if (!completed(result) || result.stdoutTruncated) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
         const inventory: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout));
-        if (typeof inventory !== 'object' || inventory === null || !('sandboxes' in inventory)
-          || !Array.isArray(inventory.sandboxes)) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
-        const values: readonly unknown[] = inventory.sandboxes;
+        const values: readonly unknown[] | undefined = Array.isArray(inventory) ? inventory
+          : typeof inventory === 'object' && inventory !== null && 'sandboxes' in inventory && Array.isArray(inventory.sandboxes)
+            ? inventory.sandboxes : undefined;
+        if (!values) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
         let power: 'running' | 'stopped' | 'unknown' | undefined;
         for (const value of values) {
           if (typeof value !== 'object' || value === null || !('name' in value) || typeof value.name !== 'string' || !isSandboxName(value.name)) {
@@ -152,7 +154,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
         ? 'docker_sandbox_absent' : 'docker_sandbox_presence_unknown' } as const;
       let failed: PluginProcessResult | undefined;
       try {
-        const result = await run(['run', '--detached', '--name', resource.sandboxName], signal);
+        const result = await run(['run', '-d', '--name', resource.sandboxName], signal);
         if (completed(result)) {
           return { status: 'start-accepted', resource: readLocator(resource) } as const;
         }

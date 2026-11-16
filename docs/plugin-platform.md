@@ -813,6 +813,17 @@ result with cleanup identity. A new explicit Prepare uses the existing Retry
 flow to destroy that leftover and rebuild; an image whose builder is already
 absent can be adopted. These are unreleased 0.3 development contracts.
 
+Local Docker Sandboxes uses a new mountless shell guest with host skills and
+static MCP disabled. It installs the supplied CLI files and bakeable setup,
+saves an owned local template, and removes its builder before returning ready.
+Its artifact launches that saved tag without a registry pull; recovery and Delete
+inspect complete native inventories and touch only the exact owned tag/builder.
+Docker Hub authentication remains a Connected Account and does not enter the
+builder's inputs. See [Docker's template contract](https://docs.docker.com/ai/sandboxes/usage/#saving-a-sandbox-as-a-template).
+The missing native runtime contributes an SBX-only Setup recipe. The existing
+Plan, review, approval and Apply flow installs it through the native package
+owner; Docker Engine and Desktop are not prerequisites for standalone sbx.
+
 The development `machineRecipes` and `machineSetupPresets` families use the
 existing Protocol contribution catalog, manifest admission, public SDK authoring
 and normalized projections. Both are data-only, with `activationDemand: 'none'`;
