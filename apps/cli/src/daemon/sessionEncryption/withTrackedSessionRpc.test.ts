@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -12,6 +13,10 @@ import { createGuardSessionAccess } from '../guard/sessionAccess';
 import { createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionCredentials';
 import type { TrackedSession } from '../types';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 
 const sessionId = 'caaaaaaaaaaaaaaaaaaaaaaaa';
 afterEach(() => vi.restoreAllMocks());
@@ -141,5 +146,57 @@ describe('tracked Session Guard notice acknowledgement lifetime', () => {
       expect(owner.metadata()).toHaveProperty('sessionGuardStateV1.kind', 'stopping');
       await expect(owner.send(new AbortController().signal, null)).resolves.toBeNull();
     } finally { released.resolve(); await owner.close(); }
+  });
+});
+
+// OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads": the Guard memory-ceiling scan reads every
+// live Session's metadata on each plan pass. A read-only tracked operation borrows the held,
+// push-updated Account observation; the Session record stays fresh, and other operations keep
+// the fresh witness.
+describe('tracked Session read operations', () => {
+  it('borrow the held Account observation for read usage and keep the fresh witness otherwise', async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '');
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify(AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+          updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null })));
+      } else if (request.url === `/v2/sessions/${sessionId}`) {
+        response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session: createSessionRecordFixture({
+          id: sessionId, encryptionMode: 'plain', metadata: '{}', dataEncryptionKey: null }) })));
+      } else {
+        response.writeHead(404).end('{}');
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
+    const base = `http://127.0.0.1:${address.port}`;
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const token = 'tracked-read-held-fixture';
+    const holder = acquireRequesterAccountEncryptionCurrentness({ accountId: 'account', token, serverBaseUrl: base });
+    const count = (url: string) => requests.filter(value => value === url).length;
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(321), pid: 321, startedBy: 'daemon', happySessionId: sessionId };
+    const run = (usage?: 'read') => withTrackedSessionRpc({ tracked, credentials: { token, encryption: null },
+      custodianAccountId: 'account', serverId: 'home', machineId: 'machine', serverHttpBaseUrl: base,
+      isTrackedCurrent: () => true, ...(usage ? { usage } : {}) },
+    async (_callRpc, access) => ({ mode: access.accountEncryptionMode, sessionId: access.rawSession.id }));
+    try {
+      await runWithServerHttpBaseUrl(base, async () => { await holder.read(); });
+      const witnessesBefore = count('/v1/account/encryption/currentness');
+      for (let index = 0; index < 3; index += 1) {
+        await expect(run('read')).resolves.toEqual({ mode: 'plain', sessionId });
+      }
+      expect(count('/v1/account/encryption/currentness') - witnessesBefore).toBe(0);
+      expect(count(`/v2/sessions/${sessionId}`)).toBe(3);
+      await expect(run()).resolves.toEqual({ mode: 'plain', sessionId });
+      expect(count('/v1/account/encryption/currentness') - witnessesBefore).toBe(1);
+    } finally {
+      await holder.dispose();
+      await channel.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 });

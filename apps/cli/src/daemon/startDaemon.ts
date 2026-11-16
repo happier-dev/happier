@@ -3060,7 +3060,8 @@ export async function startDaemon(
                 const tracked = [...trackedSessionsByKey.values()].find(item => item.happySessionId === ownerSessionId
                   && (item.sessionRunnerPid ?? item.pid) === root.pid);
                 if (!tracked) continue;
-                const target = await withGuardAccess(tracked, guardAccess => withTrackedSessionRpc(guardAccess, async (_callRpc, access) => {
+                // Read-only metadata scan on every plan pass: borrow the held Account observation.
+                const target = await withGuardAccess(tracked, guardAccess => withTrackedSessionRpc({ ...guardAccess, usage: 'read' }, async (_callRpc, access) => {
                   const metadata = tryDecryptSessionOwnerMetadataView({ credentials: access.credentials,
                     accountEncryptionMode: access.accountEncryptionMode, rawSession: access.rawSession });
                   if (!metadata) return null;
@@ -3353,7 +3354,7 @@ export async function startDaemon(
               const tracked = [...trackedSessionsByKey.values()].find(session => session.happySessionId === sessionId);
               if (!tracked) return { status: 'unknown' as const };
               try {
-                return await withGuardAccess(tracked, guardAccess => withTrackedSessionRpc(guardAccess, async (_rpc, access) => readSessionDraftPresence({
+                return await withGuardAccess(tracked, guardAccess => withTrackedSessionRpc({ ...guardAccess, usage: 'read' }, async (_rpc, access) => readSessionDraftPresence({
                   sessionId, requester: { token: access.credentials.token, serverHttpBaseUrl: access.serverHttpBaseUrl,
                     isCurrent: access.isCurrent },
                 }))) ?? { status: 'unknown' as const };

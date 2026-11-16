@@ -31,6 +31,12 @@ type TrackedSessionRpcInput = Readonly<{
   retainedRecordSignal?: AbortSignal;
   /** Authenticated network boundary; production uses the incumbent transport. */
   callRpc?: typeof callSessionRpc;
+  /**
+   * `read`: the operation only opens this Session's content to read it, so the transport borrows
+   * the held, push-updated Account observation (`resolveSessionTransportContext`). Operations that
+   * seal, write or decide a stop omit it and keep the fresh witness. The Session record stays fresh.
+   */
+  usage?: 'read';
 }>;
 
 /**
@@ -95,7 +101,8 @@ function createTrackedSessionRpcCall(input: TrackedSessionRpcInput, admitted: Ad
 
 const resolveTrackedSessionTransport = async (input: TrackedSessionRpcInput, admitted: AdmittedTrackedSession) => {
   const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials: admitted.credentials,
-    idOrPrefix: admitted.sessionId, ...(input.signal ? { signal: input.signal } : {}) });
+    idOrPrefix: admitted.sessionId, ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.usage ? { usage: input.usage } : {}) });
   return transport.ok && transport.sessionId === admitted.sessionId && await admitted.isCurrent() ? transport : null;
 };
 
