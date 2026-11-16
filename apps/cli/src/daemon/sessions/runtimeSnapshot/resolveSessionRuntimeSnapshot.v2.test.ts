@@ -23,6 +23,7 @@ describe('resolveSessionRuntimeSnapshot connected-services V2', () => {
     expect(result.spawnOptions.teamCredentialBindings).toEqual([{
       v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 7,
       deliveryMode: 'brokered', teamId: 'team-1',
+      providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-1' },
     }]);
     expect(result.spawnOptions.modelSelection).toMatchObject({
       ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'model-1' },
