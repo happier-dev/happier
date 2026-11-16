@@ -1,3 +1,5 @@
+import * as React from 'react';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeEditorDraft } from './themeProfileEditorActions';
 import type { ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
@@ -16,21 +18,26 @@ export function useThemeProfileEditorPreview(input: Readonly<{
     const draft = input.draft?.draft;
     const mode = input.draft?.mode;
     const css = input.draft?.css;
-    React.useEffect(() => {
-        if (!document || !draft || !mode) return;
-        const timeout = setTimeout(() => {
-            void input.preview({ document, draft, mode, ...(css !== undefined ? { css } : {}) })
-                .then(result => { receipt.current = result.previewRef; }, input.onFailure);
-        }, 150);
-        return () => clearTimeout(timeout);
-    }, [css, document, draft, input.onFailure, input.preview, mode]);
-    React.useEffect(() => () => {
-        if (receipt.current === null) return;
-        try { input.owner.revert(receipt.current); }
+    const revert = React.useCallback((previewRef: string) => {
+        try { input.owner.revert(previewRef); }
         catch (error) {
             if (readActionErrorCodeV1(error) !== 'theme_preview_stale') input.onFailure(error);
         }
     }, [input.onFailure, input.owner]);
+    React.useEffect(() => {
+        if (!document || !draft || !mode) return;
+        let cancelled = false;
+        const timeout = setTimeout(() => {
+            void input.preview({ document, draft, mode, ...(css !== undefined ? { css } : {}) })
+                .then(result => {
+                    if (cancelled) revert(result.previewRef);
+                    else receipt.current = result.previewRef;
+                }, input.onFailure);
+        }, 150);
+        return () => { cancelled = true; clearTimeout(timeout); };
+    }, [css, document, draft, input.onFailure, input.preview, mode, revert]);
+    React.useEffect(() => () => {
+        if (receipt.current === null) return;
+        revert(receipt.current);
+    }, [revert]);
 }
-import * as React from 'react';
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';

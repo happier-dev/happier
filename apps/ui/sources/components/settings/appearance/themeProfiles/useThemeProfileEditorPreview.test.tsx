@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { ThemeEditorDraft } from './themeProfileEditorActions';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
@@ -71,5 +71,48 @@ describe('useThemeProfileEditorPreview', () => {
         expect(state.previews()).toBe(2);
         expect(state.owner.read()?.document?.profile.name).toBe('Changed draft');
         await hook.unmount();
+    });
+
+    it('reverts its preview when a pending Action resolves after the editor unmounts', async () => {
+        vi.useFakeTimers();
+        const state = fixture();
+        // The mounted Action boundary can wait for library readiness before
+        // publishing its preview and acknowledging the receipt.
+        const admitted = createDeferred<void>();
+        const preview = async (input: ThemeEditorDraft) => {
+            await admitted.promise;
+            return state.preview(input);
+        };
+        const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
+            draft: { document: state.document, draft: state.document.profile, mode: 'light' }, preview,
+            onFailure: error => { throw error; } }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        await hook.unmount();
+        await act(async () => { admitted.resolve(); await admitted.promise; });
+        expect(state.previews()).toBe(1);
+        expect(state.owner.read()).toBeNull();
+        expect(state.writes()).toBe(0);
+    });
+
+    it('preserves a newer shared preview when its stale Action receipt arrives after unmount', async () => {
+        vi.useFakeTimers();
+        const state = fixture();
+        // The Action has applied this effect, but its acknowledgement is still
+        // crossing the async execution boundary.
+        const acknowledgement = createDeferred<void>();
+        const preview = async (input: ThemeEditorDraft) => {
+            const result = await state.preview(input);
+            await acknowledgement.promise;
+            return result;
+        };
+        const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
+            draft: { document: state.document, draft: state.document.profile, mode: 'light' }, preview,
+            onFailure: error => { throw error; } }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        await hook.unmount();
+        const replacement = state.owner.begin({ document: state.document, mode: 'dark', origin: { kind: 'agent' } });
+        await act(async () => { acknowledgement.resolve(); await acknowledgement.promise; });
+        expect(state.owner.read()).toBe(replacement);
+        expect(state.writes()).toBe(0);
     });
 });
