@@ -1,0 +1,155 @@
+{
+  "updatedAt": 1794814059776,
+  "missedSchedules": [],
+  "automationId": "71868d9e-5fa1-44f3-ac0d-11f2609cc464",
+  "revision": 1,
+  "enabled": true,
+  "scopeSessionId": null,
+  "health": "available",
+  "target": {
+    "kind": "workflow",
+    "ref": "builtin:review-and-converge"
+  },
+  "project": {
+    "machineId": "65e8df3f-0c06-4ca5-bb4c-807a64735330",
+    "directory": "/home/happier/replay136-c2-workspace"
+  },
+  "context": {
+    "approvalProfileId": null,
+    "workspace": {
+      "directory": "/home/happier/replay136-c2-workspace"
+    },
+    "executionTarget": {
+      "kind": "session"
+    }
+  },
+  "destinations": {
+    "targetSessionIds": [],
+    "usesOriginSession": true,
+    "unresolvedWorkflowRefs": [],
+    "leaves": [
+      {
+        "sourceKey": "$root",
+        "blockId": "verify",
+        "ordinal": 1,
+        "name": "Verify and fix the findings",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "review",
+        "ordinal": 2,
+        "name": "Review the changes",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "disputes-get",
+        "ordinal": 3,
+        "name": "Read the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "judge",
+        "ordinal": 4,
+        "name": "Resolve the disputes",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "dismiss-project-with-evidence",
+        "ordinal": 5,
+        "name": "Dismiss the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "dismiss-project",
+        "ordinal": 6,
+        "name": "Dismiss the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "dismiss-workspace-with-evidence",
+        "ordinal": 7,
+        "name": "Dismiss the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "dismiss-workspace",
+        "ordinal": 8,
+        "name": "Dismiss the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "uphold-project",
+        "ordinal": 9,
+        "name": "Uphold the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "uphold-workspace",
+        "ordinal": 10,
+        "name": "Uphold the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "comments-get",
+        "ordinal": 11,
+        "name": "Read the finding",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "check",
+        "ordinal": 12,
+        "name": "Check convergence",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "report",
+        "ordinal": 13,
+        "name": "Verify and report the findings",
+        "sessionIds": []
+      },
+      {
+        "sourceKey": "$root",
+        "blockId": "notify",
+        "ordinal": 14,
+        "name": "Tell me about it",
+        "sessionIds": []
+      }
+    ]
+  },
+  "placements": [
+    {
+      "machineId": "65e8df3f-0c06-4ca5-bb4c-807a64735330",
+      "directory": "/home/happier/replay136-c2-workspace"
+    }
+  ],
+  "triggers": [
+    {
+      "id": "7a73b1ea-4145-42ca-a73f-8474d5acf286",
+      "revision": 0,
+      "enabled": false,
+      "createdAt": 1794814059781,
+      "updatedAt": 1794814059781,
+      "kind": "schedule",
+      "schedule": {
+        "kind": "cron",
+        "scheduleExpr": "15 * * * *",
+        "everyMs": null,
+        "timezone": "UTC"
+      },
+      "nextRunAt": null,
+      "triggerDefinitionEnvelope": null
+    }
+  ]
+}

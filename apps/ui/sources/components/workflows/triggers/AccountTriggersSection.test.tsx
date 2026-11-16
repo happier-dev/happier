@@ -29,6 +29,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN } from '../../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
+import capturedBuiltinTriggerSet from './builtinTriggerSet.testFixture.json';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const routeState = vi.hoisted(() => ({ params: {} as Record<string, string> }));
@@ -56,7 +57,7 @@ const { TriggerRunsOnRow } = await import('./TriggerRunsOnRow');
 
 const { AccountTriggersSection, NewAccountTriggerPopover, useAccountWorkflowEditor } = await import('./AccountTriggersSection');
 const { useWorkflowLibraryView, workflowLibraryRowTitle } = await import('../library/useWorkflowLibraryView');
-const { formatTriggerSetSummary } = await import('./formatTriggerSummary');
+const { formatTriggerSetSentence, formatTriggerSetSummary } = await import('./formatTriggerSummary');
 const { TriggerPopover } = await import('./TriggerPopover');
 const { buildTriggerDefinition } = await import('./sessionTriggerForm');
 const project = { machineId: 'm1', directory: '/repo' };
@@ -238,14 +239,14 @@ afterEach(async () => {
 });
 function serve(set: ReturnType<typeof fixture>) {
     const row = AutomationDefinitionDetailSchema.parse({ id: set.automationId, name: 'Morning digest', description: null,
-        enabled: set.enabled, workflowDefinitionId: null, scopeSessionId: null, templateVersion: set.revision,
+        enabled: set.enabled, workflowDefinitionId: set.target?.kind === 'workflow' ? set.target.ref : null, scopeSessionId: null, templateVersion: set.revision,
         targetType: set.legacy ? 'existingSession' : null, existingSessionId: set.legacy ? 'session-old' : null,
         lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: (set.placements ?? [set.project ?? project]).map(value => ({ machineId: value.machineId,
             enabled: true, priority: 0, updatedAt: 1 })), triggers: set.triggers,
         ...(set.legacy ? { templateCiphertext: set.legacy.lockedReason ? AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED : AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN } : {
             executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: set.revision,
                 workflow: { t: 'plain', v: { workspace: { directory: set.project?.directory ?? '/repo' }, executionTarget: { kind: 'session' },
-                    inlineDefinition: set.target?.kind === 'inline' ? set.target.definition : undefined } }, triggerEvidence: null }),
+                    ...(set.target?.kind === 'inline' ? { inlineDefinition: set.target.definition } : {}) } }, triggerEvidence: null }),
         }) });
     rows = [row];
     installRow(row.id);
@@ -269,6 +270,23 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
+    it('shows the captured built-in trigger on its ordinary catalog page and opens its editor', async () => {
+        const set = WorkflowTriggerSetV1Schema.parse(capturedBuiltinTriggerSet);
+        serve(set);
+        const { WorkflowBuiltinEditorHostScreen } = await import('../screens/WorkflowCatalogEditorHostScreen');
+        const { WorkflowEditorBody } = await import('../screens/WorkflowEditorBody');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const screen = await renderAccountScreen(<AppPaneProvider><WorkflowBuiltinEditorHostScreen workflow="builtin:review-and-converge" /></AppPaneProvider>);
+        await waitForHomeGovernance(() => {
+            expect(screen.findByType(WorkflowEditorBody).props.triggersSummary).toBe(formatTriggerSetSentence(set.triggers));
+        });
+        await screen.pressByTestIdAsync('workflow-builtin-when-toggle');
+        const row = screen.findByTestId(`workflows-column:trigger:${set.automationId}`);
+        expect(row).not.toBeNull();
+        await act(async () => row!.props.onPress());
+        expect(screen.findByTestId('workflows-column-trigger-popover-submit')).not.toBeNull();
+    });
+
     it('saves a contextual scheduled service command through the Account trigger owner without starting an Agent', async () => {
         const { buildTriggerTarget } = await import('./sessionTriggerForm');
         const target = buildTriggerTarget({ kind: 'doAction', actionId: 'machines.services.exec', input: {

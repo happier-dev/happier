@@ -202,7 +202,7 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         [pending, openRow, remove, toggle, popover, thenOptions.resolveWorkflowTitle]);
 }
 
-function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
+export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
     read: ReturnType<typeof useWorkflowTriggerSets> }>) {
     const { sets, status, retry: refresh } = props.read;
     const { pending, open: openRow, toggle, popover, resolveWorkflowTitle } = useAccountWorkflowEditor(props);

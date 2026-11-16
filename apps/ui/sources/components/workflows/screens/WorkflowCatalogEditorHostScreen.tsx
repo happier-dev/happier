@@ -21,6 +21,9 @@ import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workf
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { createWorkflowStartPlacementChips } from '../run/workflowStartPlacementChips';
 import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
+import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
+import { AccountTriggersReadContent } from '../triggers/AccountTriggersSection';
+import { formatTriggerSetSentence } from '../triggers/formatTriggerSummary';
 import { useWorkflowRunComposerModal } from '../run/useWorkflowRunComposerModal';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
 import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
@@ -79,6 +82,8 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const router = useRouter();
     const accountLifetime = useWorkflowAccountLifetime();
     const focusedMachines = useActiveMachineFacts(accountLifetime === undefined);
+    const triggerRequest = React.useMemo(() => ({ workflow: plugin.workflow }), [plugin.workflow]);
+    const triggerRead = useWorkflowTriggerSets(triggerRequest, accountLifetime);
     const addressedMachines = useMachineListForServer(accountLifetime?.scope.serverId ?? '', accountLifetime !== undefined);
     const machines = accountLifetime === undefined ? focusedMachines : addressedMachines ?? [];
     const { recentMachinePaths } = useWorkflowEditorAccountMemory(accountLifetime, { workspaceRefs: false });
@@ -166,6 +171,8 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             description={plugin.description}
             headerMeta={[{ key: 'catalog', text: builtin === null ? `${plugin.pluginId} · ${plugin.version}` : t('workflows.page.blocks.builtin') }]}
             authoringFacts={host.authoringFacts} composerScope={host.composerScope}
+            triggersSummary={formatTriggerSetSentence(triggerRead.sets.flatMap(set => set.triggers))}
+            triggersSection={<AccountTriggersReadContent first read={triggerRead} accountLifetime={accountLifetime} />}
             currentWorkflowRef={plugin.workflow} testIDPrefix={prefix}
         />
     </>;
