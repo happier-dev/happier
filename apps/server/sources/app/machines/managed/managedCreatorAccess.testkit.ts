@@ -194,6 +194,40 @@ export async function exerciseManagedCreatorAccess() {
     expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId, archived: true } })).machines.map(machine => machine.id)).toEqual([row.id]);
 }
 
+/** Owner ruling 2026-11-16: a member deletes the Team container they created; nobody else's. */
+export async function exerciseManagedCreatorDelete() {
+    const { homeId, custodian, creator, stranger, controller, launch, create } = await createCreatorFixture();
+    const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const enrolledFor = async (requesterId: string) => {
+        const row = await create(requesterId);
+        const guest = await db.machine.create({ data: { id: randomUUID(), accountId: requesterId,
+            metadata: '{}', installationId: randomUUID() } });
+        // Team presets are sealed: Home keeps the opaque launch and never resolves the provisioner.
+        return db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id, allocation: 'bound',
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: `native-${row.id}` } },
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+                content: { t: 'plain', v: { v: 1, name: launch.name, launch } } }) } });
+    };
+    const remove = (managedId: string) => ({ action: 'machines.managed.delete' as const, requestId: randomUUID(), input: {
+        homeId, managedId, when: 'now' as const, intent: 'delete' as const, expectedRevision: 0, reviewedDependencies: true as const,
+    } });
+    const own = await enrolledFor(creator.id);
+    const othersOwn = await enrolledFor(stranger.id);
+    // Another member, and someone outside the Team, cannot delete a container they did not create.
+    for (const actor of [stranger, outsider]) {
+        await expect(admitManagedControl({ actorAccountId: actor.id, custodianAccountId: custodian.id, input: remove(own.id) }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+    }
+    await expect(admitManagedControl({ actorAccountId: creator.id, custodianAccountId: custodian.id, input: remove(othersOwn.id) }))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    expect(await admitManagedControl({ actorAccountId: creator.id, custodianAccountId: custodian.id, input: remove(own.id) }))
+        .toMatchObject({ machine: { id: own.id, desired: 'delete', intentRevision: 1 } });
+    // The Team owner keeps Delete on every container their controller runs.
+    expect(await admitManagedControl({ actorAccountId: custodian.id, custodianAccountId: custodian.id, input: remove(othersOwn.id) }))
+        .toMatchObject({ machine: { id: othersOwn.id, desired: 'delete', intentRevision: 1 } });
+    expect(controller.accountId).toBe(custodian.id);
+}
+
 export async function exerciseManagedCreatorControllerProjection() {
     const { homeId, creator, custodian, controller, launch, row } = await createCreatorFixture();
     const installationPublicKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey;

@@ -322,6 +322,54 @@ describe('managed Machine detail', () => {
             } else expect(check).toBeUndefined();
         } finally { await screen.unmount(); }
     });
+    it.each([
+        { requester: 'viewer', deletable: true },
+        { requester: 'other-member', deletable: false },
+    ] as const)('offers Delete to the member who created a Team container, never power or Archive (requester: $requester)', async ({ requester, deletable }) => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-member-delete.test', scope: 'tab' });
+        const homeId = 'srv_managed_member_delete';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('viewer', { currentAccount: true }) });
+        const provider = { pluginId: 'custom.provisioner', localId: 'native' };
+        // The Team owner's controller stays private to the member: it is not in the member's machine list.
+        const controller = { machineId: 'owner-controller', installationId: 'installation' };
+        const launch = { provider, schemaVersion: 1, name: 'Team container', choices: {} };
+        const machine: ManagedMachineFullV1 = { id: 'member-created', homeId, custodianAccountId: 'owner', enrollmentAccountId: requester,
+            launch, controller, allocation: 'bound', creationState: 'active', enrolledMachineId: 'member-guest',
+            observation: { observedAt: 1, availability: 'present', power: 'running' },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },
+                prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'member-guest' })] } });
+        setRuntimeFetch(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const screen = await renderScreen(<ManagedEnrolledMachineSections serverId={target.id} enrolledMachineId="member-guest" />);
+        try {
+            await flushHookEffects({ cycles: 30 });
+            expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.stop')).toBeNull();
+            expect(screen.findByTestId('managed-machine.resize')).toBeNull();
+            expect(screen.findByTestId('managed-machine.remove')).toBeNull();
+            const remove = screen.findByTestId('managed-machine.delete');
+            if (!deletable) { expect(remove).toBeNull(); return; }
+            expect(remove).not.toBeNull();
+            expect(remove?.props.disabled).not.toBe(true);
+            await act(async () => { remove?.props.onPress(); });
+            await flushHookEffects({ cycles: 30 });
+            // Delete opens the same dependency review and confirmation the owner gets.
+            expect(screen.findByTestId('managed-machine.delete-review')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.delete-confirm')?.props.disabled).not.toBe(true);
+        } finally { await screen.unmount(); }
+    });
     it('renders an Account-owned Machine without inventing a managing computer', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-account-detail.test', scope: 'tab' });
         const homeId = 'srv_managed_account_detail';
@@ -2614,7 +2662,7 @@ describe('managed Machine detail', () => {
         expect(moveTargets).toEqual([{ kind: 'machine', machineId: next.machineId }]);
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine.controller).toEqual(controller);
     });
-    it.each(['controller', 'guest', 'cleanup-retry', 'canceled-no-native-ref', 'canceled-native-ref', 'canceled-bound', 'canceled-absent', 'creator-canceled', 'stalled-target', 'read-unavailable-after-review', 'controller-refusal', 'typed-controller-read-failure'] as const)('requires controller Manage and deletes only after a settled in-page review (%s)', async authority => {
+    it.each(['controller', 'guest', 'cleanup-retry', 'canceled-no-native-ref', 'canceled-native-ref', 'canceled-bound', 'canceled-absent', 'creator-canceled', 'stalled-target', 'read-unavailable-after-review', 'controller-refusal', 'typed-controller-read-failure'] as const)('requires controller Manage or creation, and deletes only after a settled in-page review (%s)', async authority => {
         await sodium.ready;
         const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(11));
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-delete-review.test', scope: 'tab' });
@@ -2657,7 +2705,12 @@ describe('managed Machine detail', () => {
             if (authority === 'canceled-native-ref') machine.nativeOperationRef = {
                 contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'retained-acquisition' },
             };
-            if (creatorOnly) machine.enrollmentAccountId = 'owner';
+            if (creatorOnly) {
+                // Home projects the custodian's controller key to the member who created it (projectManagedMachineForActorInTx).
+                machine.enrollmentAccountId = 'owner';
+                machine.controllerAccess = { installationPublicKey: encodeBase64(installation.publicKey, 'base64url'),
+                    custodian: { accountId: 'foreign-owner' } };
+            }
         }
         const nativeRequests: unknown[] = [];
         const additionalConfirmations: string[] = [];
@@ -2715,6 +2768,10 @@ describe('managed Machine detail', () => {
                     machineId: controller.machineId, custodianAccountId: 'foreign-owner', installationId: controller.installationId,
                     accountEncryptionMode: 'plain', actionId: 'machines.managed.delete', requestId: request.envelope.requestId,
                     target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                    // Home's one creator decision for this exact Delete (externalActionManagedAdmission → auth.ts).
+                    ...(creatorOnly && request.envelope.v === 1 ? { managedAdmission: {
+                        ...projectExternalActionManagedAdmissionV1('machines.managed.delete', request.envelope.input),
+                        authority: 'creator_recovery' } } : {}),
                 } });
                 authorizations.push(authorization);
                 return Response.json(authorization);
@@ -2757,7 +2814,9 @@ describe('managed Machine detail', () => {
         const screen = await renderScreen(canceled
             ? <ManagedMachineDetail managedId={machine.id} serverId={target.id} executeAction={executeAction} />
             : <ManagedEnrolledMachineSections enrolledMachineId="guest" serverId={target.id} executeAction={executeAction} />);
-        if (authority === 'guest' || creatorOnly || authority === 'canceled-absent') {
+        // Owner ruling 2026-11-16: the member who created it deletes it through this same review
+        // (creator-canceled); a Use member who did not create it still has no Delete.
+        if (authority === 'guest' || authority === 'canceled-absent') {
             // OWNER-RULINGS 2026-10-31: Use has no Machine-wide resource controls.
             await flushHookEffects({ cycles: 30 });
             expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
@@ -2822,8 +2881,19 @@ describe('managed Machine detail', () => {
                     .map(node => node.props.diagnosticCode),
                 minted: minted.length, http: httpFacts.slice(-12),
             })).toHaveLength(1);
-            expect(deleted).toHaveLength(1);
+            // The custodian's controller consumes Home's creator decision without an Ask
+            // (executeExternalAction approvedCreationRecovery, covered by memberContainerJourney);
+            // this fake controller stops at that boundary for the member who created it.
+            if (!creatorOnly) expect(deleted).toHaveLength(1);
         });
+        if (creatorOnly) {
+            expect(minted).toHaveLength(1);
+            expect(nativeCarriers[0]?.executionAuthorization.binding).toMatchObject({ accountId: 'owner',
+                custodianAccountId: 'foreign-owner', actionId: 'machines.managed.delete',
+                managedAdmission: { actionId: 'machines.managed.delete', authority: 'creator_recovery' } });
+            await screen.unmount();
+            return;
+        }
         expect(additionalConfirmations).toEqual([]);
         expect(screen.findByTestId('managed-machine.approval')).toBeNull();
         // Confirmation reuses its reviewed target and dependency census. The

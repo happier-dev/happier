@@ -79,6 +79,12 @@ Session**. Creating the Machine chooses one eligible, connected Pool controller
 and enrolls a fresh container or VM to the requesting member's Account. The
 preset keeps its creation cap and retention policy.
 
+The member who created a container can delete it from its Machine page with
+**Delete…**: they review what still uses it, confirm, and approve the request,
+the same way the preset's owner does. The owner's controller then removes the
+container. Other members cannot delete it. Starting, stopping, resizing and
+archiving it stay with the preset's owner.
+
 Pool placement is available for provisioners that create a guest through a
 Machine's daemon. Account-hosted provisioners keep their existing creation flow.
 The review shows one recipe common to the Pool's enabled, compatible controllers,

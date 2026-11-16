@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, it } from 'vitest';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { exerciseManagedCreatorAccess, exerciseManagedCreatorBirth, exerciseManagedCreatorPublication, exerciseManagedCreatorSetupRecovery, exerciseManagedCreatorControllerProjection, exerciseManagedRequesterRetention, exerciseManagedEnrollmentInstallationContext, exerciseManagedBoundSetupRecovery } from './managedCreatorAccess.testkit';
+import { exerciseManagedCreatorAccess, exerciseManagedCreatorDelete, exerciseManagedCreatorBirth, exerciseManagedCreatorPublication, exerciseManagedCreatorSetupRecovery, exerciseManagedCreatorControllerProjection, exerciseManagedRequesterRetention, exerciseManagedEnrollmentInstallationContext, exerciseManagedBoundSetupRecovery } from './managedCreatorAccess.testkit';
 
 describe('managed creator lifecycle on SQLite', () => {
     let harness: LightSqliteHarness;
@@ -10,6 +10,7 @@ describe('managed creator lifecycle on SQLite', () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
     it('admits only the exact creator without controller grants', exerciseManagedCreatorAccess);
+    it('lets a member delete only the container they created, keeping the custodian\'s Delete', exerciseManagedCreatorDelete);
     it('projects only the exact creator resource controller without private credential references', exerciseManagedCreatorControllerProjection);
     it('publishes pre-enrollment progress to the creator and custodian', exerciseManagedCreatorPublication);
     it('admits creation birth only on the exact resulting guest', exerciseManagedCreatorBirth);

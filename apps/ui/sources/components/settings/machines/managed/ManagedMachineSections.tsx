@@ -5,7 +5,7 @@ import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointe
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { useUnistyles } from 'react-native-unistyles';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_RESIZE_ACTION_ID_V1, isManagedCreatorActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1, type ManagedGuestDiagnosticsV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -314,6 +314,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const creatorScoped = isManagedMachineEnrollmentRequester(machine, props.binding?.accountId);
     const canMutate = props.current && props.binding?.isCurrent() === true && machine.archivedAt === undefined
         && canManage && pending === null && !moveLoading && !approval.approvalPending;
+    // Home admits Delete for the member who created this resource as well as for Manage
+    // (requireManagedCreationAccessInTx); power, resize, Archive and moves stay with Manage.
+    const canDelete = props.current && props.binding?.isCurrent() === true && machine.archivedAt === undefined
+        && (canManage || creatorScoped) && pending === null && !moveLoading && !approval.approvalPending;
     const canRecoverCreation = props.current && props.binding?.isCurrent() === true && machine.archivedAt === undefined && machine.creationState === 'active'
         && (canManage || creatorScoped) && pending === null && !moveLoading && !approval.approvalPending;
     const destinationVisible = useDestinationVisibility();
@@ -408,10 +412,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         const binding = props.binding;
         const interest = interestRef.current;
         if (!binding?.isCurrent() || !props.current || pendingRef.current || !interest || interest.signal.aborted
-            || (actionId !== 'machines.managed.inspect' && !canManage && !(creatorScoped
-                && (actionId === 'machines.managed.bootstrap.respond' || actionId === 'machines.managed.bootstrap.retry'
-                    || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.setup.skip'
-                    || actionId === 'machines.setup.apply')))) return false;
+            || (actionId !== 'machines.managed.inspect' && !canManage && !(creatorScoped && isManagedCreatorActionIdV1(actionId)))) return false;
         pendingRef.current = true;
         setPending(actionId);
         setError(null);
@@ -573,7 +574,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     }), { tag: 'ManagedMachineSections.readGuestLogs' }); };
     const reviewDependencies = () => {
         if (pendingDeleteApprovalId) { openApproval(pendingDeleteApprovalId); return; }
-        if (!canMutate) return;
+        if (!canDelete) return;
         setDeleteReview(null);
         fireAndForget(run('machines.managed.references.get', target, result => {
             const review = qualifyManagedMachineDeleteReview(machine, result);
@@ -657,8 +658,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         }
     })(), { tag: 'ManagedMachineSections.rebuildReview' });
     // Native controls sit at the receipt's foot, where its cost and launch state the consequence.
-    const allReceiptActions: NonNullable<ManagedReceiptModel['secondary']> = canManage && bound && machine.archivedAt === undefined ? [
-        ...(machine.creationState === 'active' ? managedReceiptPowerIntents(machine, supportedIntents, enrolledMachine && reachabilityScope ? {
+    const allReceiptActions: NonNullable<ManagedReceiptModel['secondary']> = (canManage || creatorScoped) && bound && machine.archivedAt === undefined ? [
+        ...(canManage && machine.creationState === 'active' ? managedReceiptPowerIntents(machine, supportedIntents, enrolledMachine && reachabilityScope ? {
             machineId: enrolledMachine.id,
             online: describeMachinePresenceLine(enrolledMachine, presenceNowMs, undefined, reachabilityScope).online,
         } : undefined) : []).map(intent => {
@@ -670,14 +671,14 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 onPress: () => fireAndForget(run('machines.managed.power.set', { ...target, when: 'now', expectedRevision: machine.intentRevision,
                     intent }), { tag: 'ManagedMachineSections.power' }) };
         }),
-        ...(machine.creationState === 'active' && !resourceGone ? [{ label: t('managedMachines.resize.title'),
+        ...(canManage && machine.creationState === 'active' && !resourceGone ? [{ label: t('managedMachines.resize.title'),
             testID: 'managed-machine.resize', tone: 'bordered' as const, disabled: !canMutate,
             loading: pending === MANAGED_RESIZE_ACTION_ID_V1, onPress: reviewResize }] : []),
-        ...(machine.creationState === 'active' && supportedIntents.includes('rebuild') ? [{ label: t('managedMachines.actions.rebuild'), testID: 'managed-machine.rebuild',
+        ...(canManage && machine.creationState === 'active' && supportedIntents.includes('rebuild') ? [{ label: t('managedMachines.actions.rebuild'), testID: 'managed-machine.rebuild',
             tone: 'bordered' as const, disabled: !canRebuild,
             loading: pending === 'machines.provisioners.options' || pending === 'machines.managed.rebuild', onPress: reviewRebuild }] : []),
         ...(supportedIntents.includes('delete') ? [{ label: t('managedMachines.actions.delete'), testID: 'managed-machine.delete',
-            tone: 'text' as const, disabled: !canMutate && !pendingDeleteApprovalId,
+            tone: 'text' as const, disabled: !canDelete && !pendingDeleteApprovalId,
             loading: pending === 'machines.managed.references.get' || pending === 'machines.managed.delete', onPress: reviewDependencies }] : []),
     ] : [];
     const receiptController = machine.reviewedFacts?.controller ?? machine.controller;
@@ -818,10 +819,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             online={creationContext.enrolledMachine?.online ?? null} /> : null}
         {/* The decision is one quiet button row: the way back, then the irreversible step last, then its consequence. */}
         <ManagedDecisionRow testID="managed-machine.delete-decision" footnote={t('managedMachines.dependencies.help')}
-            onCancel={canMutate ? () => setDeleteReview(null) : undefined}
-            confirm={{ label: t('managedMachines.actions.deleteMachine'), testID: 'managed-machine.delete-confirm', disabled: !canMutate,
+            onCancel={canDelete ? () => setDeleteReview(null) : undefined}
+            confirm={{ label: t('managedMachines.actions.deleteMachine'), testID: 'managed-machine.delete-confirm', disabled: !canDelete,
                 loading: pending === 'machines.managed.delete', onPress: () => {
-                    if (!canMutate || !currentDeleteReview) return;
+                    if (!canDelete || !currentDeleteReview) return;
                     const input = buildReviewedManagedMachineDeleteInput(machine, currentDeleteReview);
                     if (!input) { setError('intent_changed'); return; }
                     fireAndForget(runConfirmed('machines.managed.delete', input, undefined, undefined, currentDeleteReview),
@@ -884,8 +885,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 buildManagedMachineConfigurationRoute({ serverId: props.serverId, provisioner: buildQualifiedPluginContributionKey(machine.launch.provider),
                     ...(machine.controller ? { controller: machine.controller } : {}),
                     ...(machine.preset ? { presetId: machine.preset.id } : {}) }) as never) } : {}),
-            ...(canMutate && currentControllerAvailable ? { deleteNow: reviewDependencies } : {}),
-            ...(canMutate && currentControllerAvailable && machine.creationState === 'active'
+            ...(canDelete && (currentControllerAvailable || creatorScoped) ? { deleteNow: reviewDependencies } : {}),
+            ...(canDelete && (currentControllerAvailable || creatorScoped) && machine.creationState === 'active'
                 && machine.submittedNativeEffect?.intent === 'delete' ? { tryAgain: reviewDependencies } : {}),
             ...(canMutate && props.binding?.accountId === machine.custodianAccountId ? {
                 reconnect: (event?: GestureResponderEvent) => {

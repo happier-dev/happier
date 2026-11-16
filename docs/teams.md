@@ -323,6 +323,21 @@ exclusion; downstream access and entitlement owners consume it rather than respe
 The admission history-horizon choice is hidden for `guest` for the same reason — offering it
 would promise access the role does not carry.
 
+### Member-created containers
+
+A container a member creates from a Team preset stays in the preset custodian's custody: the
+custodian's controller runs it, and Manage (power, resize, Archive, controller moves) stays with
+the custodian or a Manage grant on that controller. The member who created it is its
+`enrollmentAccountId`. `requireManagedCreationAccessInTx`
+(`apps/server/sources/app/machines/managed/managedRead.ts`) is the one admission owner for
+Cancel and Delete: it admits that exact requester or a manager, and nobody else (owner ruling
+2026-11-16, "Members can delete their own Team containers"). Home decides once at the Action
+root and stamps `authority: 'creator_recovery'` on the signed Cancel/Delete admission; the
+custodian's controller executes the native removal from that decision without a second Ask
+(see [compatibility](compatibility.md)). The UI offers Delete… with the owner's dependency
+review and approval, and gates its dispatch with the protocol list `MANAGED_CREATOR_ACTION_IDS_V1`.
+Another member's container, or a non-member's request, is refused with `permission_denied`.
+
 ## Lifecycle
 
 ### Creation

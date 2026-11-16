@@ -129,6 +129,20 @@ export function isManagedCreationMutationActionIdV1(actionId: string): actionId 
   return MANAGED_CREATION_MUTATION_ACTION_IDS_V1.some(id => id === actionId);
 }
 
+/**
+ * What the enrollment requester may start on its own managed resource without Manage: finish or
+ * abandon creation, and Delete it after reviewing its dependencies. Home admits each one through its
+ * creator owner (`requireManagedCreationAccessInTx` for Cancel and Delete); power, resize, Archive
+ * and controller moves stay with Manage.
+ */
+export const MANAGED_CREATOR_ACTION_IDS_V1 = [
+  'machines.managed.bootstrap.respond', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
+  'machines.managed.setup.skip', MACHINE_SETUP_APPLY_ACTION_ID_V1, 'machines.managed.references.get', 'machines.managed.delete',
+] as const;
+export function isManagedCreatorActionIdV1(actionId: string): actionId is typeof MANAGED_CREATOR_ACTION_IDS_V1[number] {
+  return MANAGED_CREATOR_ACTION_IDS_V1.some(id => id === actionId);
+}
+
 /** Creation and recovery consume the same reviewed enrollment policy children. */
 export const MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1 = [
   'machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set', 'machines.roles.set',
