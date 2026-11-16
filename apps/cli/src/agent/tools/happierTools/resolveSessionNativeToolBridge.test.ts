@@ -136,7 +136,7 @@ describe('resolveSessionNativeToolDescriptors', () => {
     if (!example) throw new Error('Expected the canonical Board authoring example');
     const input: unknown = JSON.parse(example);
     expect(spec.inputSchema.safeParse(input).success).toBe(true);
-    const tool = resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'session-1',
+    const tool = resolveSessionNativeToolDescriptors({ accountSettings: { actionsSettingsV1: { v: 1, actions: {"session.board.item.upsert": { toolExposureModes: { agent: 'direct' } }} } }, sessionId: 'session-1',
       memoryRecallGuidanceEnabled: false, isServerFeatureEnabled: () => true,
     }).find(candidate => candidate.name === 'session_board_item_upsert');
     if (!tool?.inputSchema || typeof tool.inputSchema !== 'object') throw new Error('Expected the native Board tool');
@@ -195,7 +195,6 @@ describe('resolveSessionNativeToolDescriptors', () => {
       'change_title',
       'action_spec_search',
       'action_spec_get',
-      'action_options_resolve',
       'action_execute',
     ]));
     expect(base.map((tool) => tool.name)).not.toContain('memory_search');
@@ -225,7 +224,7 @@ describe('resolveSessionNativeToolDescriptors', () => {
 
   it('exposes the current-Session presentation Action to the real native Agent tool catalog', () => {
     const tools = resolveSessionNativeToolDescriptors({
-      accountSettings: {},
+      accountSettings: { actionsSettingsV1: { v: 1, actions: {"session.presentation.apply": { toolExposureModes: { agent: 'direct' } }} } },
       profileId: null,
       sessionId: 'session-1',
       sessionMachineId: 'machine-1',
@@ -237,7 +236,7 @@ describe('resolveSessionNativeToolDescriptors', () => {
 
   it('projects settings parity and mounted tab opening into the real Session Agent tool catalog', () => {
     const tools = resolveSessionNativeToolDescriptors({
-      accountSettings: {},
+      accountSettings: { actionsSettingsV1: { v: 1, actions: {"settings.list": { toolExposureModes: { agent: 'direct' } },"settings.get": { toolExposureModes: { agent: 'direct' } },"settings.set": { toolExposureModes: { agent: 'direct' } },"settings.reset": { toolExposureModes: { agent: 'direct' } },"workspace.tabs.open": { toolExposureModes: { agent: 'direct' } }} } },
       profileId: null,
       sessionId: 'session-1',
       sessionMachineId: 'machine-1',
@@ -256,7 +255,7 @@ describe('resolveSessionNativeToolDescriptors', () => {
   it('admits Board tools only when the exact Home feature and shared Action policy both allow them', () => {
     const resolve = (overrides: Partial<Parameters<typeof resolveSessionNativeToolDescriptors>[0]> = {}) => (
       resolveSessionNativeToolDescriptors({
-        accountSettings: {},
+        accountSettings: { actionsSettingsV1: { v: 1, actions: {"session.board.get": { toolExposureModes: { agent: 'direct' } },"session.board.item.upsert": { toolExposureModes: { agent: 'direct' } },"session.board.item.remove": { toolExposureModes: { agent: 'direct' } },"session.board.layout.update": { toolExposureModes: { agent: 'direct' } },"session.presentation.apply": { toolExposureModes: { agent: 'direct' } }} } },
         profileId: null,
         sessionId: 'session-1',
         sessionMachineId: 'machine-1',

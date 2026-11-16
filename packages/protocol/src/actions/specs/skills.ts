@@ -190,7 +190,7 @@ function createSkillActionSpecsV1() {
     approval: { result: 'none' }, approvalPolicy: {}, safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'account', executionPlacements: ['account', 'session'],
     executionPlacementForInput: (raw: unknown) => SkillReadInputV1Schema.parse(raw).sessionId ? 'session' : 'account', placements: [],
     surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false }, bindings: { rpcMethod: 'skills.read', mcpToolName: 'skills_read' },
-    toolExposure: { agent: 'direct', mcp: 'direct', cli: 'direct' }, inputSchema: SkillReadInputV1Schema, outputSchema: SkillReadResultV1Schema, inputHints: { fields: [] },
+    toolExposure: { cli: 'direct' }, inputSchema: SkillReadInputV1Schema, outputSchema: SkillReadResultV1Schema, inputHints: { fields: [] },
     cli: { acceptsServerId: true, inputSchema: z.strictObject({ itemId: z.string(), file: z.optional(z.string()) }),
       bindInput: (raw: unknown) => { const input = readRecord(raw); return { skillId: input.itemId, ...(input.file ? { file: input.file } : {}) }; },
       commands: [{ path: ['skills', 'show'], positionals: ['itemId'], visibility: 'canonical' }, { path: ['skills', 'read'], visibility: 'alias' }] } },

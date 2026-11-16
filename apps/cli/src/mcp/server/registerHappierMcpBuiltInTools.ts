@@ -14,7 +14,7 @@ import { z } from 'zod/mini';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
-import { toMcpToolInputSchema, toMcpToolObjectSchema } from './toolSchemas';
+import { toMcpToolInputSchema } from './toolSchemas';
 import {
     BrowserMediaUnavailableError,
     browserMediaToStructuredImageInput,
@@ -185,9 +185,6 @@ export function prepareHappierMcpToolInventory(params: Readonly<{
             const actionId = params.inventory.actionToolNameToId.get(tool.name) ?? null;
             const pluginToolMcpMeta = buildPluginToolMcpMeta(tool);
             const annotations = resolveMcpToolAnnotations(tool);
-            const outputSchema = tool.outputSchema === undefined
-                ? undefined
-                : toMcpToolObjectSchema(tool.outputSchema, 'outputSchema');
             const meta = {
                 description: tool.description,
                 title: tool.title,
@@ -195,7 +192,6 @@ export function prepareHappierMcpToolInventory(params: Readonly<{
                     actionId, inputSchema: tool.inputSchema, sessionId: params.sessionId,
                     sessionMachineId: params.sessionMachineId, sessionRootPath: params.sessionRootPath, contextualDefaults: tool.contextualDefaults,
                 }),
-                ...(outputSchema === undefined ? {} : { outputSchema }),
                 ...(annotations === undefined ? {} : { annotations }),
                 ...(pluginToolMcpMeta === undefined ? {} : { _meta: pluginToolMcpMeta }),
             };

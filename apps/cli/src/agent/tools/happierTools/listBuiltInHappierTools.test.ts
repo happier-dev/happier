@@ -347,14 +347,13 @@ describe('listBuiltInHappierTools', () => {
     expect(names).toEqual(expect.arrayContaining([
       'action_spec_search',
       'action_spec_get',
-      'action_options_resolve',
       'action_execute',
       'change_title',
-      'execution_run_list',
-      'execution_run_get',
-      'execution_run_wait',
       'acme_review_start',
     ]));
+    expect(names).toContain('session_list');
+    expect(names).not.toContain('execution_run_list');
+    expect(names).not.toContain('action_options_resolve');
     expect(names).not.toContain('review_start');
     expect(names).not.toContain('subagents_plan_start');
     expect(names).not.toContain('subagents_delegate_start');

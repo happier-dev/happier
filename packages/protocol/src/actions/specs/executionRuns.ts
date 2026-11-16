@@ -447,7 +447,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
     inputSchema: ExecutionRunStartInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.list', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
+    id: 'execution.run.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List execution runs',
     description: `List agent execution runs in the selected scope. Saved workflow definitions are read with workflow.definition.list; workflow Run history is read with workflow.run.list. An empty runs result says only that this execution scope has no matching runs. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -494,7 +494,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
     })),
 	  } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.get', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
+    id: 'execution.run.get', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Get execution run',
     description: `Get one execution run from the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -806,7 +806,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
     outputSchema: lazyZodSchema(() => z.strictObject({ ok: z.literal(true) })),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'execution.run.wait', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
+    id: 'execution.run.wait', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Wait for execution run',
     description: `Observe an execution run until terminal by default, or select permission attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',

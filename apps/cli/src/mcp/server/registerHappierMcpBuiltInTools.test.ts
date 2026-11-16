@@ -103,9 +103,10 @@ describe('registerHappierMcpBuiltInTools', () => {
   it('publishes built-in operands while omitted arguments reach canonical Action repair', async () => {
     const spec = getActionSpec('workflow.run.get');
     const server = new McpServer({ name: 'built-in-schema-test', version: '1' });
-    const bridge = createActionToolExecutorBridge({ surface: 'mcp',
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'workflow.run.get': { toolExposureModes: { mcp: 'direct' } } } });
+    const bridge = createActionToolExecutorBridge({ surface: 'mcp', actionsSettings: settings,
       executor: createActionExecutor(createUnavailableActionTransportDeps()) });
-    registerHappierMcpBuiltInTools(server, { sessionId: '', surface: 'mcp',
+    registerHappierMcpBuiltInTools(server, { sessionId: '', surface: 'mcp', actionsSettings: settings,
       toolInventory: prepareHappierMcpToolInventory({ sessionId: '', inventory: {
         tools: [{ name: 'workflow_run_get', title: spec.title, description: spec.description ?? spec.title,
           actionId: spec.id, inputSchema: spec.inputSchema }],
@@ -259,7 +260,7 @@ describe('registerHappierMcpBuiltInTools', () => {
     } finally { await client.close(); await server.close(); }
   });
 
-  it('advertises the real usage output through MCP discovery with resolvable document-local references', async () => {
+  it('omits Action output schemas from MCP advertisements', async () => {
     const spec = getActionSpec('usage.query');
     const inventory = prepareHappierMcpToolInventory({ sessionId: 'cli-global', inventory: {
       tools: [{ name: 'usage_query', title: spec.title, description: spec.description ?? spec.title,
@@ -276,11 +277,12 @@ describe('registerHappierMcpBuiltInTools', () => {
       await client.connect(clientTransport);
       // The real SDK client compiles advertised output schemas during discovery.
       const result = await client.listTools();
-      expect(result.tools).toEqual([expect.objectContaining({ name: 'usage_query', outputSchema: expect.any(Object) })]);
+      expect(result.tools).toEqual([expect.objectContaining({ name: 'usage_query' })]);
+      expect(result.tools[0]).not.toHaveProperty('outputSchema');
     } finally { await client.close(); await server.close(); }
   });
 
-  it('presents Mini Action inputs and validates completed outputs without treating parsers as JSON', () => {
+  it('presents Mini Action inputs without advertising output schemas', () => {
     const schema = mini.strictObject({ label: mini.string().check(mini.minLength(1)) });
     const inventory = {
       tools: [{ name: 'mini_action', title: 'Mini Action', description: 'Read a label', inputSchema: schema, outputSchema: schema }],
@@ -291,11 +293,8 @@ describe('registerHappierMcpBuiltInTools', () => {
     expect(z.toJSONSchema(meta.inputSchema, { target: 'draft-7', io: 'input' })).toMatchObject({
       type: 'object', properties: { label: { type: 'string', minLength: 1 } }, required: ['label'],
     });
-    // Input admission belongs to Action dispatch; output validation stays here.
+    // Input admission and output validation belong to Action dispatch.
     expect(meta.inputSchema.safeParse({ label: 'Garden' }).success).toBe(true);
-    expect(meta.outputSchema.safeParse({ label: 'Garden' }).success).toBe(true);
-    expect(meta.outputSchema.safeParse({ label: '' }).success).toBe(false);
-    expect(meta.outputSchema.safeParse({ label: 'Garden', undeclared: true }).success).toBe(false);
   });
 
   it('keeps tools available when optional output metadata is unrepresentable while refusing unrepresentable inputs', () => {
@@ -306,7 +305,7 @@ describe('registerHappierMcpBuiltInTools', () => {
     const prepared = prepareHappierMcpToolInventory({ inventory, sessionId: 'sess-1' });
     expect(prepared.registrations.map(entry => entry.tool.name)).toEqual(['opaque_result', 'representable_result']);
     expect(prepared.registrations[0].meta).not.toHaveProperty('outputSchema');
-    expect(prepared.registrations[1].meta).toHaveProperty('outputSchema');
+    expect(prepared.registrations[1].meta).not.toHaveProperty('outputSchema');
     expect(() => prepareHappierMcpToolInventory({
       inventory: { ...inventory, tools: [{ ...tool, inputSchema: outputSchema }] }, sessionId: 'sess-1',
     })).toThrow(ActionJsonSchemaProjectionError);
@@ -548,7 +547,7 @@ describe('registerHappierMcpBuiltInTools', () => {
       registerTool: (name, meta) => registrations.set(name, meta as Record<string, unknown>),
     }, {
       sessionId: 'sess-1',
-      surface: 'agent',
+      surface: 'agent', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {"execution.run.list": { toolExposureModes: { agent: 'direct' } },"execution.run.get": { toolExposureModes: { agent: 'direct' } },"execution.run.wait": { toolExposureModes: { agent: 'direct' } }} }),
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName: async () => ({ ok: true as const, result: {} }),
@@ -678,29 +677,8 @@ describe('registerHappierMcpBuiltInTools', () => {
       required: ['scope'],
       additionalProperties: false,
     });
-    const advertisedOutput = meta?.outputSchema ? z.toJSONSchema(meta.outputSchema, { target: 'draft-7' }) : null;
-    expect(advertisedOutput).toMatchObject({ type: 'object' });
-    const outputBranches = advertisedOutput?.anyOf as readonly unknown[];
-    expect(outputBranches[0]).toMatchObject({ properties: { completed: { type: 'boolean' },
-      literal: { const: { $ref: '#/definitions/literal-data' } } }, required: ['completed'], additionalProperties: false });
-    expect(outputBranches[1]).toMatchObject({ properties: { kind: { const: 'approval_request_created' } },
-      required: ['kind', 'artifactId', 'actionId'], additionalProperties: false });
-    if (!advertisedOutput) throw new Error('Expected advertised output schema');
-    const validateAdvertisedOutput = compilePluginJsonSchema(JSON.parse(JSON.stringify(advertisedOutput)));
-    expect(validateAdvertisedOutput({ completed: true, literal: { $ref: '#/definitions/literal-data' } })).toBe(true);
-    expect(validateAdvertisedOutput({ completed: 'true' })).toBe(false);
-    expect(validateAdvertisedOutput({ kind: 'approval_request_created', artifactId: 'approval',
-      actionId: 'acme.review.plugin/actions/review-start' })).toBe(true);
-    expect(validateAdvertisedOutput({ kind: 'approval_request_created', artifactId: '',
-      actionId: 'acme.review.plugin/actions/review-start' })).toBe(false);
-    expect(meta?.outputSchema?.safeParse({ completed: true }).success).toBe(true);
-    expect(meta?.outputSchema?.safeParse({ completed: 'true' }).success).toBe(false);
-    expect(meta?.outputSchema?.safeParse({ kind: 'approval_request_created', artifactId: 'approval',
-      actionId: 'acme.review.plugin/actions/review-start' }).success).toBe(true);
-    expect(meta?.outputSchema?.safeParse({ kind: 'approval_request_created', artifactId: '',
-      actionId: 'acme.review.plugin/actions/review-start' }).success).toBe(false);
-    expect(meta?.outputSchema?.safeParse({ kind: 'approval_request_created', artifactId: 'approval',
-      actionId: 'acme.review.plugin/actions/review-start', completed: true }).success).toBe(false);
+    // Output contracts are fetched through Action describe, never advertised up front.
+    expect(meta?.outputSchema).toBeUndefined();
     expect(meta?.annotations).toEqual({ destructiveHint: true });
     expect(meta?._meta).toEqual({
       'happier.dev/pluginTool': {
@@ -766,7 +744,7 @@ describe('registerHappierMcpBuiltInTools', () => {
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
       actions: {
-        'execution.run.list': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+        'session.list': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
       },
     });
 
@@ -784,7 +762,7 @@ describe('registerHappierMcpBuiltInTools', () => {
         },
       });
 
-      expect(registered).toContain('execution_run_list');
+      expect(registered).toContain('session_list');
     } finally {
       if (previous === undefined) {
         delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;

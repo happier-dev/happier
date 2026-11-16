@@ -64,7 +64,7 @@ function processSpec<const Id extends MachineProcessesActionId>([id, title, desc
   safety, sideEffectClass, placements: [], executionPlacement: 'machine',
   ...(id === 'machines.processes.stop' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
   ...(id === 'machines.processes.kill' ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
-  toolExposure: { agent: id === 'machines.processes.list' ? 'direct' : 'discoverable_only' },
+  toolExposure: { agent: 'discoverable_only' },
   prompting: { agentGuidance: `In a session, machineId defaults to the session's Machine; explicit input wins. ${sideEffectClass === 'read'
     ? 'Read the requester-scoped census before explaining process use. Read machines.guard.get for canonical stop candidates and why other work is kept; do not invent a competing stop heuristic.'
     : id === 'machines.processes.startAgain'

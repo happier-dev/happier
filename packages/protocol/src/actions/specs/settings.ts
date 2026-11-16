@@ -35,10 +35,8 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonl
 ]> = lazyActionSpecArray(() => Object.freeze([
   ...(SETTINGS_DECLARATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
     id, approval: { result: 'required' }, originalExecution: { terminalRoot: 'host' },
-    // The operation schema stays behind realtime discovery; the native Agent
-    // and Local Voice instructions share its ordinary direct-tool exposure.
+    // Settings remain reachable through Action discovery and generic execution.
     prompting: { voiceHotPath: id !== 'settings.invoke' },
-    toolExposure: { agent: 'direct' },
     // Personal preferences carry their safety at the declaration; security and unknown anchors retain danger.
     ...(id === 'settings.set' || id === 'settings.reset' ? {
       approvalPolicy: { uiConfirmation: 'direct' as const }, safetyForInput: readBuiltInSettingsWriteSafetyV1,

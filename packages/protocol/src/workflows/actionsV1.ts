@@ -607,7 +607,42 @@ export const WorkflowDefinitionExportResultV1Schema = lazyZodSchema(() => z.unio
 
 export { WORKFLOW_ACTION_IDS_V1, type WorkflowActionIdV1 };
 
-export const WorkflowActionInputSchemasV1 = {
+export const WorkflowActionInputSchemasV1: {
+  readonly 'workflow.validate': typeof WorkflowValidateRequestV1Schema;
+  readonly 'workflow.run.start': typeof WorkflowRunStartRequestV1Schema;
+  readonly 'workflow.run.list': typeof WorkflowRunListRequestV1Schema;
+  readonly 'workflow.run.summaries': typeof WorkflowRunSummariesRequestV1Schema;
+  readonly 'workflow.run.get': typeof WorkflowRunGetRequestV1Schema;
+  readonly 'workflow.run.read_state.set': typeof WorkflowRunReadStateSetRequestV1Schema;
+  readonly 'workflow.run.wait': typeof WorkflowRunWaitRequestV1Schema;
+  readonly 'workflow.run.pause': typeof WorkflowRunPauseRequestV1Schema;
+  readonly 'workflow.run.resume': typeof WorkflowResumeInputV1Schema;
+  readonly 'workflow.run.cancel': typeof WorkflowRunCancelRequestV1Schema;
+  readonly 'workflow.run.invocations.list': typeof WorkflowInvocationListRequestV1Schema;
+  readonly 'workflow.run.invocations.get': typeof WorkflowInvocationGetRequestV1Schema;
+  readonly 'workflow.run.invocations.retry': typeof WorkflowInvocationRetryInputV1Schema;
+  readonly 'workflow.run.invocations.publish_draft': typeof WorkflowInvocationPublishDraftRequestV1Schema;
+  readonly 'workflow.run.invocations.complete_review': typeof WorkflowInvocationCompleteReviewRequestV1Schema;
+  readonly 'workflow.run.delete': typeof WorkflowRunDeleteRequestV1Schema;
+  readonly 'workflow.definition.list': typeof WorkflowDefinitionListRequestV1Schema;
+  readonly 'workflow.definition.get': typeof WorkflowDefinitionGetRequestV1Schema;
+  readonly 'workflow.definition.create': typeof WorkflowDefinitionCreateRequestV1Schema;
+  readonly 'workflow.definition.update': typeof WorkflowDefinitionUpdateRequestV1Schema;
+  readonly 'workflow.definition.edit': typeof WorkflowDefinitionEditRequestV1Schema;
+  readonly 'workflow.definition.delete': typeof WorkflowDefinitionDeleteRequestV1Schema;
+  readonly 'workflow.definition.import': typeof WorkflowDefinitionImportRequestV1Schema;
+  readonly 'workflow.definition.capture': typeof WorkflowDefinitionCaptureRequestV1Schema;
+  readonly 'workflow.definition.export': typeof WorkflowDefinitionExportRequestV1Schema;
+  readonly 'workflow.trigger.list': typeof WorkflowTriggerListRequestV1Schema;
+  readonly 'workflow.trigger.add': typeof WorkflowTriggerAddRequestV1Schema;
+  readonly 'workflow.trigger.update': typeof WorkflowTriggerUpdateRequestV1Schema;
+  readonly 'workflow.trigger.remove': typeof WorkflowTriggerRemoveRequestV1Schema;
+  readonly 'workflow.trigger.run_now': typeof WorkflowTriggerRunNowRequestV1Schema;
+  readonly 'session.trigger.list': typeof SessionTriggerListRequestV1Schema;
+  readonly 'session.trigger.add': typeof SessionTriggerAddRequestV1Schema;
+  readonly 'session.trigger.update': typeof SessionTriggerUpdateRequestV1Schema;
+  readonly 'session.trigger.remove': typeof SessionTriggerRemoveRequestV1Schema;
+} = {
   'workflow.validate': WorkflowValidateRequestV1Schema,
   'workflow.run.start': WorkflowRunStartRequestV1Schema,
   'workflow.run.list': WorkflowRunListRequestV1Schema,
@@ -642,7 +677,7 @@ export const WorkflowActionInputSchemasV1 = {
   'session.trigger.add': SessionTriggerAddRequestV1Schema,
   'session.trigger.update': SessionTriggerUpdateRequestV1Schema,
   'session.trigger.remove': SessionTriggerRemoveRequestV1Schema,
-} as const satisfies Record<WorkflowActionIdV1, z.ZodMiniType>;
+};
 
 export const WorkflowActionOutputSchemasV1: {
   readonly 'workflow.validate': typeof WorkflowValidateResultV1Schema;

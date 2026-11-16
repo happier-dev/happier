@@ -2,7 +2,6 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod/mini';
 import {
   WORKFLOW_READ_ACTION_IDS as readActionIds,
-  WORKFLOW_DIRECT_MCP_ACTION_IDS as directMcpActionIds,
   WORKFLOW_DANGER_ACTION_IDS as dangerActionIds,
 } from './specs/workflows.js';
 
@@ -560,12 +559,8 @@ describe('ActionSpec-generated plugin action types', () => {
       });
       expect(spec.bindings?.mcpToolName).toBe(actionId.replaceAll('.', '_'));
       expect(spec.bindings?.rpcMethod).toBe(actionId);
-      // Direct MCP projection stays limited to the four interactive tools;
-      // every other Workflow operation is discoverable-only on MCP so generic
-      // `action_execute` remains its only generic transport projection.
-      expect(spec.toolExposure, actionId).toEqual(
-        directMcpActionIds.has(actionId) ? { agent: 'direct', mcp: 'direct' } : { mcp: 'discoverable_only' },
-      );
+      // Workflow tools inherit discoverable-only; generic execution stays reachable.
+      expect(spec.toolExposure, actionId).toBeUndefined();
     }
 
     type ExpectedWorkflowActionInputs = Readonly<{

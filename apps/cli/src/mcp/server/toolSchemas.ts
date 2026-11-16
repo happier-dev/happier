@@ -5,7 +5,7 @@ import { projectActionOutputJsonSchema } from '@happier-dev/protocol/actions/act
 import { projectActionSchemaForToolAdvertisement } from '@happier-dev/protocol/actions/actionSpecSections';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
-import { projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
+import { bindContextualActionToolInput, projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
 import { projectMcpToolInputJsonSchema, rewriteMcpJsonSchemaReferences } from './projectMcpToolInputJsonSchema';
 import { compactToolJsonSchema } from './compactToolJsonSchema';
 
@@ -19,6 +19,10 @@ const ACTION_OPERATION_ACCEPTED_RESULT_JSON_SCHEMA = zodSchemaToJsonSchemaObject
     { target: 'draft-7' },
 );
 
+// Input presentation depends on the schema and supplied field names, never
+// Session values. Keep static schema conversion out of subsequent Session starts.
+const inputSchemas = new WeakMap<object, Map<string, z.ZodMiniType>>();
+
 export function toMcpToolInputSchema(params: Readonly<{
     actionId: string | null | undefined;
     inputSchema: unknown;
@@ -27,21 +31,36 @@ export function toMcpToolInputSchema(params: Readonly<{
     sessionRootPath?: string | null;
     contextualDefaults: HappierBuiltInToolDefinition['contextualDefaults'];
 }>): z.ZodMiniType {
+    const context = {
+        defaultSessionId: params.sessionId,
+        defaultSessionMachineId: params.sessionMachineId,
+        defaultSessionRootPath: params.sessionRootPath,
+    };
+    const fields = params.actionId ? Object.keys(bindContextualActionToolInput({
+        actionId: params.actionId, input: {}, context, contextualDefaults: params.contextualDefaults,
+    }) as Record<string, unknown>).sort() : [];
+    const key = JSON.stringify(fields);
+    const cache = params.inputSchema && typeof params.inputSchema === 'object'
+        ? inputSchemas.get(params.inputSchema) : undefined;
+    const cached = cache?.get(key);
+    if (cached) return cached;
     const contextualInputSchema = params.actionId
         ? projectSessionBoundActionToolInputSchema({
             actionId: params.actionId,
             inputSchema: params.inputSchema,
-            context: {
-                defaultSessionId: params.sessionId,
-                defaultSessionMachineId: params.sessionMachineId,
-                defaultSessionRootPath: params.sessionRootPath,
-            },
+            context,
             // Plugin defaults travel with the admitted tool; first-party
             // defaults still resolve through the canonical Action owner.
             contextualDefaults: params.contextualDefaults,
         })
         : params.inputSchema;
-    return toMcpToolObjectSchema(contextualInputSchema, 'inputSchema');
+    const result = toMcpToolObjectSchema(contextualInputSchema, 'inputSchema');
+    if (params.inputSchema && typeof params.inputSchema === 'object') {
+        const entries = cache ?? new Map<string, z.ZodMiniType>();
+        entries.set(key, result);
+        inputSchemas.set(params.inputSchema, entries);
+    }
+    return result;
 }
 
 export function toMcpToolObjectSchema(schema: unknown, field: 'inputSchema'): z.ZodMiniType;

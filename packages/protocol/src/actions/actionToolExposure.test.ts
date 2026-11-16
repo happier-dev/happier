@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { searchSerializedActionSpecsForSurface, actionSpecToActionDefinitionV1, projectActionDefinitionForExternalDiscovery } from './actionCatalog.js';
 import {
   WORKFLOW_ACTION_IDS_V1,
-  type WorkflowActionIdV1,
 } from '../workflows/actionsV1.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { isRuntimeActionIdV1 } from './actionIds.js';
@@ -65,7 +64,7 @@ describe('actionToolExposure', () => {
     }
   });
 
-  it('publishes settings parity and mounted tab opening as direct Session Agent tools', () => {
+  it('keeps settings and mounted tab opening discoverable', () => {
     for (const actionId of [
       'settings.list',
       'settings.get',
@@ -77,7 +76,7 @@ describe('actionToolExposure', () => {
       const spec = getActionSpec(actionId);
       expect(spec.surfaces, actionId).toMatchObject({ agent: true, mcp: true });
       expect(spec.bindings?.mcpToolName, actionId).toBe(actionId.replaceAll('.', '_'));
-      expect(isActionDirectToolExposedOn(spec, 'agent'), actionId).toBe(true);
+      expect(isActionDirectToolExposedOn(spec, 'agent'), actionId).toBe(false);
       expect(isActionDirectToolExposedOn(spec, 'mcp'), actionId).toBe(false);
       expect(isActionDiscoverableOnToolSurface(spec, 'mcp'), actionId).toBe(true);
     }
@@ -88,16 +87,12 @@ describe('actionToolExposure', () => {
     expect(definition.prompting).toMatchObject({ agentGuidance: expect.any(String) });
   });
 
-  it('keeps the five resource overview reads direct and every resource effect discoverable', () => {
-    const directReads = new Set([
-      'machines.vitals.get', 'machines.processes.list', 'machines.storage.summary.get',
-      'machines.storage.suggestions.list', 'machines.guard.get',
-    ]);
+  it('keeps resource reads and effects discoverable', () => {
     const resourceSpecs = listActionSpecs().filter((spec) => /^machines\.(vitals|resources|processes|storage|guard)\./u.test(spec.id));
-    expect(resourceSpecs.length).toBeGreaterThan(directReads.size);
+    expect(resourceSpecs.length).toBeGreaterThan(0);
     for (const spec of resourceSpecs) {
       expect(isActionDiscoverableOnToolSurface(spec, 'agent'), spec.id).toBe(true);
-      expect(isActionDirectToolExposedOn(spec, 'agent'), spec.id).toBe(directReads.has(spec.id));
+      expect(isActionDirectToolExposedOn(spec, 'agent'), spec.id).toBe(false);
       if (spec.sideEffectClass !== 'read') {
         expect(spec.prompting?.agentGuidance, spec.id).toEqual(expect.any(String));
       }
@@ -162,10 +157,10 @@ describe('actionToolExposure', () => {
     expect(isActionDiscoverableOnToolSurface(getActionSpec('memory.search'), 'agent', { sessionMemoryEnabled: false })).toBe(true);
   });
 
-  it('directly exposes goal recovery through the canonical Agent action policy', () => {
+  it('discovers goal recovery through the canonical Agent action policy', () => {
     for (const id of ['session.goal.get', 'session.goal.set', 'session.goal.clear'] as const) {
       const spec = getActionSpec(id);
-      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(true);
+      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(false);
       expect(spec.contextualDefaults).toEqual({ sessionId: 'current_session' });
       const settings = ActionsSettingsV1Schema.parse({
         v: 1, actions: { [id]: { toolExposureModes: { agent: 'discoverable_only' } } },
@@ -178,7 +173,7 @@ describe('actionToolExposure', () => {
 
   it('narrows unbound MCP hosts without removing the bound Agent Session presentation tool', () => {
     const spec = getActionSpec('session.presentation.apply');
-    expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(true);
+    expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(false);
     expect(isActionExecutableFromStandaloneMcp(spec)).toBe(false);
     for (const id of ['sessions.external.candidates.list', 'sessions.external.materialize.start', 'session.status.get', 'ui.find'] as const) {
       expect(isActionExecutableFromStandaloneMcp(getActionSpec(id)), id).toBe(true);
@@ -219,7 +214,7 @@ describe('actionToolExposure', () => {
     }
   });
 
-  it.each(['agent', 'mcp'] as const)('keeps %s action discovery, execution observation, and reload specs directly exposed', (surface) => {
+  it.each(['agent', 'mcp'] as const)('keeps only %s core discovery directly exposed', (surface) => {
     for (const id of [
       'action.spec.search',
       'action.spec.get',
@@ -231,26 +226,27 @@ describe('actionToolExposure', () => {
     ] as const) {
       const spec = getActionSpec(id);
 
-      expect(resolveActionToolExposureMode(spec, surface)).toBe('direct');
-      expect(isActionDirectToolExposedOn(spec, surface)).toBe(true);
+      const core = id === 'action.spec.search' || id === 'action.spec.get';
+      expect(resolveActionToolExposureMode(spec, surface)).toBe(core ? 'direct' : 'discoverable_only');
+      expect(isActionDirectToolExposedOn(spec, surface)).toBe(core);
       expect(isActionDiscoverableOnToolSurface(spec, surface)).toBe(true);
     }
   });
 
-  it('directly exposes the current-Session presentation command to Agents and MCP', () => {
+  it('discovers the current-Session presentation command to Agents and MCP', () => {
     const spec = getActionSpec('session.presentation.apply');
 
-    expect(resolveActionToolExposureMode(spec, 'agent')).toBe('direct');
-    expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(true);
+    expect(resolveActionToolExposureMode(spec, 'agent')).toBe('discoverable_only');
+    expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(false);
     expect(isActionDiscoverableOnToolSurface(spec, 'agent')).toBe(true);
-    expect(resolveActionToolExposureMode(spec, 'mcp')).toBe('direct');
-    expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(true);
+    expect(resolveActionToolExposureMode(spec, 'mcp')).toBe('discoverable_only');
+    expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(false);
     expect(isActionDiscoverableOnToolSurface(spec, 'mcp')).toBe(true);
   });
 
-  it('directly exposes the primary Discussion reply while retaining explicit exposure and disable policy', () => {
+  it('discovers the primary Discussion reply while retaining explicit exposure and disable policy', () => {
     const spec = getActionSpec('discussion.reply');
-    expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(true);
+    expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(false);
     expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(false);
     expect(isActionDiscoverableOnToolSurface(spec, 'mcp')).toBe(true);
     const discoverable = ActionsSettingsV1Schema.parse({ v: 1, actions: {
@@ -264,7 +260,7 @@ describe('actionToolExposure', () => {
     expect(isActionDiscoverableOnToolSurface(spec, 'agent', { settings: disabled })).toBe(false);
   });
 
-  it('directly exposes the Session Board Action family to Agents and MCP', () => {
+  it('discovers the Session Board Action family to Agents and MCP', () => {
     for (const id of [
       'session.board.get',
       'session.board.item.upsert',
@@ -273,22 +269,16 @@ describe('actionToolExposure', () => {
     ] as const) {
       const spec = getActionSpec(id);
 
-      expect(resolveActionToolExposureMode(spec, 'agent')).toBe('direct');
-      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(true);
+      expect(resolveActionToolExposureMode(spec, 'agent')).toBe('discoverable_only');
+      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(false);
       expect(isActionDiscoverableOnToolSurface(spec, 'agent')).toBe(true);
-      expect(resolveActionToolExposureMode(spec, 'mcp')).toBe('direct');
-      expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(true);
+      expect(resolveActionToolExposureMode(spec, 'mcp')).toBe('discoverable_only');
+      expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(false);
       expect(isActionDiscoverableOnToolSurface(spec, 'mcp')).toBe(true);
     }
   });
 
-  it('surfaces every Workflow Action on MCP while only the four interactive tools stay direct', () => {
-    const directMcpActionIds = new Set<WorkflowActionIdV1>([
-      'workflow.run.start',
-      'workflow.run.get',
-      'workflow.run.wait',
-      'workflow.run.cancel',
-    ]);
+  it('keeps every Workflow Action discoverable on MCP', () => {
 
     for (const actionId of WORKFLOW_ACTION_IDS_V1) {
       const spec = getActionSpec(actionId);
@@ -304,13 +294,8 @@ describe('actionToolExposure', () => {
       }));
       expect(isActionDiscoverableOnToolSurface(spec, 'mcp'), actionId).toBe(true);
 
-      if (directMcpActionIds.has(actionId)) {
-        expect(resolveActionToolExposureMode(spec, 'mcp'), actionId).toBe('direct');
-        expect(isActionDirectToolExposedOn(spec, 'mcp'), actionId).toBe(true);
-      } else {
         expect(resolveActionToolExposureMode(spec, 'mcp'), actionId).toBe('discoverable_only');
         expect(isActionDirectToolExposedOn(spec, 'mcp'), actionId).toBe(false);
-      }
     }
   });
 

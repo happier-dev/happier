@@ -397,7 +397,6 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
         ? 'account' as const : 'machine' as const,
     } : {}),
     originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
-    ...(actionId === 'plugins.reload' ? { toolExposure: { agent: 'direct' as const, mcp: 'direct' as const } } : {}),
     approval: isRead
       ? { result: 'required' }
       : { result: 'optional', flow: 'deferred' },

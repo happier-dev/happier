@@ -205,7 +205,7 @@ export const SessionExchangeControlPublicInputSchema = lazyZodSchema(() => sessi
 function createSessionMessageActionSpecs() {
   return Object.freeze([
   {
-    id: 'session.message.send', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.message.send', toolExposure: { agent: 'direct', mcp: 'direct' }, executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     machineRuntimeDemandForInput: (input, context) => {
       // The existing selector owner expands groups into exact leaves; a selector is not a Session id.
       const requested = readRecord(input).sessionId;

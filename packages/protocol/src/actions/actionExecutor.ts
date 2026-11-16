@@ -5490,7 +5490,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const schemaPath = typeof data.schemaPath === 'string' ? data.schemaPath : undefined;
           const includeOutputSchema = schemaPath?.startsWith('/outputSchema') === true || (typeof data.includeOutputSchema === 'boolean'
             ? data.includeOutputSchema
-            : ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli' && ctx.surface !== 'voice');
+            : true);
           const projectDiscovery = (definition: Parameters<typeof projectActionSpecSchemaSections>[0]): ActionExecuteResult => {
             const scope = deps.widgetAccountScope?.();
             const sessionId = ctx.defaultSessionId;

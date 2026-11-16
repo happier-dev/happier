@@ -34,7 +34,6 @@ function createMachineVitalsActionSpecs() {
   return [
   {
     ...read, id: 'machines.vitals.get', approval: {result: 'required'}, title: 'Read machine vitals',
-    toolExposure: { agent: 'direct' },
     prompting: { agentGuidance: 'Read current vitals before diagnosing resource use. Unknown metrics are not zero. For memory pressure, read machines.processes.list and machines.guard.get; the Guard ladder is the canonical source of stop candidates.' },
     description: 'CPU, memory pressure, disk and network of a machine, now and over the last five minutes.',
     executionPlacement: 'machine',

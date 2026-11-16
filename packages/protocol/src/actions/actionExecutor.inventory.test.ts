@@ -2232,8 +2232,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     if (!detail.ok) throw new Error('Explicit Action detail failed');
     const definition = ActionDiscoveryDefinitionV1Schema.parse(detail.result.actionSpec);
     expect(definition.inputSchema).toMatchObject({ type: 'object' });
-    if (surface === 'api') expect(definition.outputSchema).toBeDefined();
-    else expect(Object.hasOwn(definition, 'outputSchema')).toBe(false);
+    expect(definition.outputSchema).toBeDefined();
     const fullDetail = await executor.execute('action.spec.get', { id: 'action.spec.get', includeOutputSchema: true }, { surface });
     if (!fullDetail.ok) throw new Error('Full Action detail failed');
     expect(ActionDiscoveryDefinitionV1Schema.parse(fullDetail.result.actionSpec).outputSchema).toBeDefined();

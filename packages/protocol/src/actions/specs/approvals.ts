@@ -53,10 +53,15 @@ export const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.strictObje
   serverIdentityId: z.optional(z.string().check(z.minLength(1))),
 }));
 
-function createApprovalRequestActionSpecs() {
+function createApprovalRequestActionSpecs(): readonly [
+  PreNormalizedActionSpec & { readonly id: 'approval.request.list'; readonly inputSchema: typeof ApprovalRequestListInputSchema; readonly outputSchema: typeof ApprovalQueueListResultV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'approval.request.get'; readonly inputSchema: typeof ApprovalRequestGetInputSchema; readonly outputSchema: typeof ApprovalRequestGetResultV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'approval.request.create'; readonly inputSchema: typeof ApprovalRequestCreateInputSchema; readonly outputSchema: typeof StrictJsonValueSchema; readonly surfaceBindings: { readonly plugin: { readonly inputSchema: typeof PluginSurfaceApprovalRequestCreateInputSchema } } },
+  PreNormalizedActionSpec & { readonly id: 'approval.request.decide'; readonly inputSchema: typeof ApprovalRequestDecideInputSchema; readonly outputSchema: typeof StrictJsonValueSchema },
+] {
   return Object.freeze([
   {
-    id: 'approval.request.list', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
+    id: 'approval.request.list', toolExposure: { agent: 'direct', mcp: 'direct' }, executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
     prompting: { voiceHotPath: true },
     title: 'List approval requests',
     description: 'List approval queue entries from targeted approval artifact headers, with the Automation and Discussion each request belongs to.',
@@ -156,7 +161,7 @@ function createApprovalRequestActionSpecs() {
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'approval.request.decide', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'none'},
+    id: 'approval.request.decide', toolExposure: { agent: 'direct', mcp: 'direct' }, executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'none'},
     prompting: { voiceHotPath: true },
     projectObservationOutput: (value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return value;

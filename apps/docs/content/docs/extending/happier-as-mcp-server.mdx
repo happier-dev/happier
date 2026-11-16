@@ -143,22 +143,24 @@ In 0.3 development, try the discovery path first:
 That gives you a quick end-to-end check that the server, account auth, action catalog, and approval routing are all connected.
 
 Search for `session.list`, inspect its spec, then call `action_execute` with
-`{"actionId":"session.list","input":{}}`. A direct override also makes its
-named `session_list` tool available.
+`{"actionId":"session.list","input":{}}`. Its named `session_list` tool is also available by default.
 
 ## Tool call examples
 
 The exact JSON shape depends on your MCP host, but tool calls generally pass an **args** object that matches the tool’s input schema.
 
-The named Action tools below require **Direct tool** exposure in 0.3 development.
+In 0.3 development, the default tools are discovery, describe, execute, change title,
+Session list/activity/send, and approval list/decide. Other named Action tools
+require **Direct tool** exposure. Describe includes output schemas by default;
+the initial tool advertisement includes only input schemas.
 For a discoverable-only Action, use `action_execute` with the Action id returned
 by discovery and put the same arguments in `input`. The manual `change_title`
 tool keeps its existing direct default.
 
 If you’re unsure about a tool’s fields, use the discovery tools first:
 
-- `action_spec_get` (to see `inputSchema`, `inputHints`, and examples)
-- `action_options_resolve` (to resolve valid options for a field)
+- `action_spec_get` (to see `inputSchema`, `outputSchema`, `inputHints`, and examples)
+- `action_execute` with `actionId: "action.options.resolve"` (to resolve valid options for a field)
 
 ### List sessions
 

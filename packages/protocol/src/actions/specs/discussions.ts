@@ -310,7 +310,6 @@ function createDiscussionActionSpecsV1() {
     title: 'Reply in a discussion',
     description: 'Reply to one committed message in this Discussion through the same admitted message writer. A reply to an Agent-produced message can address that participant and start a turn, subject to its answer policy and current delivery admission. Replying grants no source access or additional authority. Attachment leaves accept attachmentSources: [{blobId,path}], using absolute file paths on the invoking Machine and the same verified upload as discussion.post.',
     safety: 'danger', sideEffectClass: 'danger', placements: [],
-    toolExposure: { agent: 'direct' },
     bindings: { mcpToolName: 'discussion_reply', voiceClientToolName: 'discussion_reply' },
     serverTransport: { method: 'POST', path: DISCUSSION_HTTP_PATHS_V1.messages },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },

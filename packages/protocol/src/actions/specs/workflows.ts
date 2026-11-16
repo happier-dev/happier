@@ -9,10 +9,6 @@ import { WORKFLOW_ACTION_IDS_V1 } from '../actionIds.js';
 import { getWorkflowInputHints, WORKFLOW_AUTOMATION_REMOVAL_WARNING } from './workflowInputHints.js';
 
 
-export const WORKFLOW_DIRECT_MCP_ACTION_IDS = new Set<WorkflowActionIdV1>([
-  'workflow.run.start', 'workflow.run.get', 'workflow.run.wait', 'workflow.run.cancel',
-]);
-
 export const WORKFLOW_DANGER_ACTION_IDS = new Set<WorkflowActionIdV1>([
   'workflow.run.delete', 'workflow.definition.delete',
   'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove',
@@ -108,7 +104,6 @@ function removesWholeTriggerSet(input: unknown): boolean {
 }
 
 export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => WORKFLOW_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
-  const directMcp = WORKFLOW_DIRECT_MCP_ACTION_IDS.has(actionId);
   // Voice reaches the ordinary Action owner but cannot complete a person's review.
   const voice = actionId !== 'workflow.run.invocations.complete_review';
   const voiceArgsExample = WORKFLOW_TRIGGER_VOICE_ARGS_EXAMPLES[actionId];
@@ -177,13 +172,6 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
       cli: true,
       rpc: true,
     },
-    // Only the four interactive operations project as direct MCP tools; the
-    // other Workflow operations stay executable through the generic external
-    // MCP `action_execute` transport and discoverable through Action search
-    // without gaining a dedicated tool row.
-    toolExposure: directMcp
-      ? { agent: 'direct' as const, mcp: 'direct' as const }
-      : { mcp: 'discoverable_only' as const },
     sideEffectClass,
     inputSchema: WorkflowActionInputSchemasV1[actionId],
     outputSchema: WorkflowActionOutputSchemasV1[actionId],

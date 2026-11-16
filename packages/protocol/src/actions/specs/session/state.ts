@@ -594,8 +594,7 @@ function createSessionStateActionSpecs() {
     title: 'Get session goal',
     description: 'Get the editable session goal when the provider supports native goals.',
     safety: 'safe',
-    toolExposure: { agent: 'direct' },
-    placements: [],
+        placements: [],
     bindings: { mcpToolName: 'session_goal_get' },
     examples: {
       mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
@@ -622,8 +621,7 @@ function createSessionStateActionSpecs() {
     title: 'Set session goal',
     description: 'Set or update the native session goal.',
     safety: 'safe',
-    toolExposure: { agent: 'direct' },
-    placements: [],
+        placements: [],
     bindings: { mcpToolName: 'session_goal_set', rpcMethod: SESSION_RPC_METHODS.SESSION_GOAL_SET },
     examples: {
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","objective":"Ship goal controls"}' },
@@ -656,8 +654,7 @@ function createSessionStateActionSpecs() {
     title: 'Clear session goal',
     description: 'Clear the native session goal.',
     safety: 'safe',
-    toolExposure: { agent: 'direct' },
-    placements: [],
+        placements: [],
     bindings: { mcpToolName: 'session_goal_clear' },
     examples: {
       mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },

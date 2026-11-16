@@ -38,7 +38,6 @@ function createSessionLifetimeControlActionSpecs() {
     title: 'Compact conversation',
     description: "Compact a Session's conversation into a summary to free context; runs after the current turn. Use after a large, self-contained piece of work in a long conversation — not after small tasks or mid-task. `instructions` (optional; only some Agents support it): what the summary must keep.",
     safety: 'safe', sideEffectClass: 'write', placements: ['session_action_menu'],
-    toolExposure: { agent: 'direct' },
     bindings: { voiceClientToolName: 'session_compact', mcpToolName: 'session_compact', rpcMethod: SESSION_RPC_METHODS.SESSION_COMPACT },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputHints: { title: 'Compact conversation', fields: [

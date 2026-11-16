@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { Session } from 'node:inspector';
 import { performance } from 'node:perf_hooks';
 import { ActionsSettingsV1Schema, type ActionId } from '@happier-dev/protocol';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -8,43 +7,6 @@ import { prepareHappierMcpToolInventory } from '@/mcp/server/registerHappierMcpB
 import { z } from 'zod/mini';
 
 describe('native tool inventory cost', () => {
-  it('does not repeat the static approval schema projection on subsequent tools/list conversions', async () => {
-    const inspector = new Session();
-    const post = <T>(method: string, params?: Record<string, unknown>) => new Promise<T>((resolve, reject) => {
-      inspector.post(method, params ?? {}, (error, result) => error ? reject(error) : resolve(result as T));
-    });
-    inspector.connect();
-    try {
-      await post('Profiler.enable');
-      await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
-      const inventory = prepareHappierMcpToolInventory({
-        sessionId: 'schema-projection-cost',
-        inventory: {
-          tools: [{
-            name: 'schema_projection_cost', title: 'Schema projection cost', description: 'Fixture',
-            inputSchema: z.object({}), outputSchema: z.object({ ok: z.boolean() }),
-          }],
-          actionToolNameToId: new Map(),
-        },
-      });
-      const outputSchema = inventory.registrations[0]?.meta.outputSchema;
-      expect(outputSchema).toBeDefined();
-      z.toJSONSchema(outputSchema!, { io: 'output' });
-      await post('Profiler.takePreciseCoverage');
-      z.toJSONSchema(outputSchema!, { io: 'output' });
-      const coverage = await post<{
-        result: Array<{ functions: Array<{ functionName: string; ranges: Array<{ count: number }> }> }>;
-      }>('Profiler.takePreciseCoverage');
-      const repeatedProjections = coverage.result.flatMap(script => script.functions)
-        .filter(fn => fn.functionName === 'zodSchemaToJsonSchemaObject')
-        .reduce((total, fn) => total + (fn.ranges[0]?.count ?? 0), 0);
-      expect(repeatedProjections).toBe(0);
-    } finally {
-      await post('Profiler.stopPreciseCoverage').catch(() => undefined);
-      inspector.disconnect();
-    }
-  });
-
   it('projects catalog replacement without retaining a previous inventory index', () => {
     const declaration: ProjectedPluginToolCatalogEntry = {
       toolId: 'acme.inventory/read', actionId: 'acme.inventory/actions/read', name: 'acme_read',

@@ -727,7 +727,33 @@ export const ManagedMachineActionInputSchemasV1 = {
   'machines.managed.controller.update': ManagedControllerUpdateInputV1Schema,
   'machines.managed.retire': ManagedRetireInputV1Schema,
 } as const;
-export const ManagedMachineActionOutputSchemasV1 = {
+export const ManagedMachineActionOutputSchemasV1: {
+  readonly 'machines.provisioners.list': z.ZodMiniLazy<typeof MachineProvisionersListResultV1Schema>;
+  readonly 'machines.provisioners.check': z.ZodMiniLazy<typeof MachineProvisionerCheckResultV1Schema>;
+  readonly 'machines.provisioners.options': z.ZodMiniLazy<typeof MachineProvisionerOptionsResultV1Schema>;
+  readonly 'machines.managed.acquire': typeof ManagedAcceptedV1Schema;
+  readonly 'machines.managed.credentials.install': typeof ManagedCredentialDeliveryResultV1Schema;
+  readonly 'machines.managed.list': typeof ManagedListOutputV1Schema;
+  readonly 'machines.managed.get': typeof ManagedGetOutputV1Schema;
+  readonly 'machines.managed.birth.get': typeof ManagedMachineBirthResultV1Schema;
+  readonly 'machines.managed.references.get': z.ZodMiniLazy<typeof MachineReferenceCensusV1Schema>;
+  readonly 'machines.managed.inspect': typeof ManagedInspectOutputV1Schema;
+  readonly 'machines.managed.bootstrap.retry': typeof ManagedAcceptedV1Schema;
+  readonly 'machines.managed.setup.skip': typeof ManagedGetOutputV1Schema;
+  readonly 'machines.setup.plan': z.ZodMiniUnion<[typeof MachineSetupPlanResultV1Schema, typeof MachineSetupCombinedPlanResultV1Schema]>;
+  readonly 'machines.setup.apply': typeof MachineSetupApplyResultV1Schema;
+  readonly 'machines.setup.remove': typeof MachineSetupApplyResultV1Schema;
+  readonly 'machines.setup.updates.apply': typeof MachineSetupApplyResultV1Schema;
+  readonly 'machines.setup.updates.rollout': typeof MachineSetupApplyResultV1Schema;
+  readonly 'machines.managed.cancel': typeof ManagedCancelOutputV1Schema;
+  readonly 'machines.managed.power.set': z.ZodMiniLazy<typeof ManagedIntentResultSchema>;
+  readonly 'machines.managed.rebuild': z.ZodMiniLazy<typeof ManagedIntentResultSchema>;
+  readonly 'machines.managed.resize': typeof ManagedResizeOutputV1Schema;
+  readonly 'machines.managed.retention.update': typeof ManagedGetOutputV1Schema;
+  readonly 'machines.managed.delete': typeof ManagedDeleteOutputV1Schema;
+  readonly 'machines.managed.controller.update': typeof ManagedGetOutputV1Schema;
+  readonly 'machines.managed.retire': typeof ManagedGetOutputV1Schema;
+} = {
 
   'machines.provisioners.list': lazyZodSchema(() => z.lazy(() => MachineProvisionersListResultV1Schema)),
   'machines.provisioners.check': lazyZodSchema(() => z.lazy(() => MachineProvisionerCheckResultV1Schema)),
@@ -754,7 +780,7 @@ export const ManagedMachineActionOutputSchemasV1 = {
   'machines.managed.delete': ManagedDeleteOutputV1Schema,
   'machines.managed.controller.update': ManagedGetOutputV1Schema,
   'machines.managed.retire': ManagedGetOutputV1Schema,
-} as const;
+};
 export const ManagedControlAdmissionInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('machines.managed.power.set'), input: ManagedPowerInputV1Schema, requestId: id() }),
   z.strictObject({ action: z.literal('machines.managed.rebuild'), input: ManagedRebuildInputV1Schema, requestId: id() }),

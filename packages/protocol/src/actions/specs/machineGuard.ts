@@ -60,7 +60,6 @@ function presentSessionCeiling(input: unknown, context?: ApprovalPresentationCon
 function createMachineGuardActionSpecs() {
   return [
   { id: 'machines.guard.get', approval: {result: 'required'}, title: 'Read the guard', description: 'What the guard watches on a machine, and what it would stop first if memory ran short.',
-    toolExposure: { agent: 'direct' },
     prompting: { agentGuidance: 'Use this planner’s live ladder as the canonical source of stop candidates, sizes and why-not reasons. Explain what Guard would do without inventing a second process-selection heuristic.' },
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_guard_get', rpcMethod: RPC_METHODS.MACHINES_GUARD_GET },

@@ -267,7 +267,6 @@ function row<const TId extends WorkspaceActionId>(actionId: TId, title: string,
       : actionId === 'workspace.tabs.move' ? WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.move'] : null;
   return {
     id: actionId, approval: { result: 'required' }, title,
-    ...(actionId === 'workspace.tabs.open' ? { toolExposure: { agent: 'direct' as const } } : {}),
     description,
     safety: 'safe', sideEffectClass: actionId === 'workspace.tabs.list' || actionId === 'workspace.tabs.closed.list' || actionId === 'workspace.files.link.get' ? 'read' : 'external',
     executionPlacement: 'client', placements: [],

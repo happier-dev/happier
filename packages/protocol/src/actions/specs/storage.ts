@@ -114,7 +114,7 @@ function cleanupSpec<const Id extends MachineStorageActionId>([id, title, descri
       },
     } } : {}),
     ...(id === 'machines.storage.protected.remove' ? { approvalPolicy: { agentDefault: 'authority' as const, requiredSurfaces: ['mcp', 'plugin'] as const } } : {}),
-    toolExposure: { agent: id === 'machines.storage.suggestions.list' ? 'direct' as const : 'discoverable_only' as const },
+    toolExposure: { agent: 'discoverable_only' },
     prompting: { agentGuidance: id === 'machines.storage.docker.prune'
       ? 'Use this Machine’s exact target and one explicit reviewed image set or the safe unused selection. Never infer custody from a native id, tagless status or Docker’s dangling label. The receiving Storage owner proves expired deployment receipt aliases and retained/running protection. Volumes, bind data, foreign images and unproven build cache are kept. This Action’s own user setting decides approval; never substitute shell prune commands.'
       : `${storageReferenceGuidance} ${sideEffectClass === 'read'
@@ -160,7 +160,6 @@ function createMachineStorageActionSpecs() {
   return [
   {
     ...base, id: 'machines.storage.summary.get', approval: {result: 'required'}, title: 'Read Happier storage',
-    toolExposure: { agent: 'direct' },
     prompting: { agentGuidance: `${storageReferenceGuidance} Read this summary before analysing disk use or proposing cleanup. Happier’s share is allocated storage, not the amount a Trash move immediately frees; read suggestions and check the selected item set next.` },
     description: 'How much space Happier uses on a machine, by kind, and how full the disk is.',
     bindings: { rpcMethod: RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, mcpToolName: 'machines_storage_summary_get', voiceClientToolName: 'getMachineStorageSummary' },

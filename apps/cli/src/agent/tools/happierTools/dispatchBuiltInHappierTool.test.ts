@@ -66,9 +66,9 @@ describe('built-in Happier tools', () => {
     expect(names).toContain('change_title');
     expect(names).toContain('action_spec_search');
     expect(names).toContain('action_spec_get');
-    expect(names).toContain('action_options_resolve');
+    expect(names).not.toContain('action_options_resolve');
     expect(names).toContain('action_execute');
-    expect(names).toContain('plugins_reload');
+    expect(names).not.toContain('plugins_reload');
     expect(names).not.toContain('review_start');
     expect(names).not.toContain('subagents_plan_start');
     expect(names).not.toContain('subagents_delegate_start');
@@ -158,7 +158,7 @@ describe('built-in Happier tools', () => {
     expect(changeTitle).not.toHaveBeenCalled();
   });
 
-  it('uses canonical Action executor discovery and projects Session-bound schemas', async () => {
+  it.each(['template.draft', 'subagents.plan.start', 'session.spawn_new'] as const)('uses canonical Action executor discovery and projects Session-bound schemas (%s)', async (actionId) => {
     const { executeActionByToolName } = createActionToolExecutorBridge({
       surface: 'agent',
       executor: createActionExecutor(createUnavailableActionTransportDeps()),
@@ -171,7 +171,7 @@ describe('built-in Happier tools', () => {
       const definitions: Record<string, unknown> = {};
       for (const section of (root.schemaSections ?? []).filter(section => section.path.startsWith('/inputSchema/'))) {
         const fetched = await dispatchBuiltInHappierTool({ toolName: 'action_spec_get',
-          args: { id: definition.id, schemaPath: section.path }, sessionId: 'sess-1',
+          args: { id: definition.id, schemaPath: section.path, includeOutputSchema: false }, sessionId: 'sess-1',
           deps: { changeTitle: async () => ({ success: true }), executeActionByToolName } });
         if (!fetched.ok) throw new Error(`Action section unavailable: ${fetched.errorCode}`);
         const response = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(fetched.result);
@@ -182,60 +182,67 @@ describe('built-in Happier tools', () => {
       }
       return { ...definition.inputSchema, ...(Object.keys(definitions).length ? { definitions } : {}) };
     };
-    const draftResult = await dispatchBuiltInHappierTool({ toolName: 'action_spec_get',
-      args: { id: 'template.draft' }, sessionId: 'sess-1',
-      deps: { changeTitle: async () => ({ success: true }), executeActionByToolName } });
-    expect(draftResult.ok, JSON.stringify(draftResult)).toBe(true);
-    if (!draftResult.ok) throw new Error(`Expected draft discovery: ${draftResult.errorCode}`);
-    const draftDefinition = ActionDefinitionV1Schema.parse(
-      PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(draftResult.result).actionSpec);
-    const validateDraft = new Ajv({ strict: false, validateFormats: false }).compile(await readCompleteInputSchema(draftResult.result));
-    const draftInput = { sourceSessionRef: { serverId: 'home', sessionId: 'sess-1' },
-      content: { v: 1, identity: { name: 'Helper', description: 'Reusable helper' },
-        instructions: { markdown: 'Help with work.' }, memoryRules: [], skills: [],
-        needs: { software: [], connectedAccounts: [], mcpServers: [] } } };
-    expect(validateDraft(draftInput), JSON.stringify(validateDraft.errors)).toBe(true);
-    expect(validateDraft({ ...draftInput, expectedRevision: { headerVersion: 1, bodyVersion: 1 } })).toBe(false);
-    expect(draftDefinition.inputHints?.fields.some(field => field.path.startsWith('expectedRevision'))).toBe(false);
+    if (actionId === 'template.draft') {
+      const draftResult = await dispatchBuiltInHappierTool({ toolName: 'action_spec_get',
+        args: { id: 'template.draft' }, sessionId: 'sess-1',
+        deps: { changeTitle: async () => ({ success: true }), executeActionByToolName } });
+      expect(draftResult.ok, JSON.stringify(draftResult)).toBe(true);
+      if (!draftResult.ok) throw new Error(`Expected draft discovery: ${draftResult.errorCode}`);
+      const draftDefinition = ActionDefinitionV1Schema.parse(
+        PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(draftResult.result).actionSpec);
+      const validateDraft = new Ajv({ strict: false, validateFormats: false }).compile(await readCompleteInputSchema(draftResult.result));
+      const draftInput = { sourceSessionRef: { serverId: 'home', sessionId: 'sess-1' },
+        content: { v: 1, identity: { name: 'Helper', description: 'Reusable helper' },
+          instructions: { markdown: 'Help with work.' }, memoryRules: [], skills: [],
+          needs: { software: [], connectedAccounts: [], mcpServers: [] } } };
+      expect(validateDraft(draftInput), JSON.stringify(validateDraft.errors)).toBe(true);
+      expect(validateDraft({ ...draftInput, expectedRevision: { headerVersion: 1, bodyVersion: 1 } })).toBe(false);
+      expect(draftDefinition.inputHints?.fields.some(field => field.path.startsWith('expectedRevision'))).toBe(false);
 
-    const listResult = await dispatchBuiltInHappierTool({
-      toolName: 'action_spec_search',
-      args: { query: 'review' },
-      sessionId: 'sess-1',
-      deps: {
-        changeTitle: async () => ({ success: true }),
-        executeActionByToolName,
-      },
-    });
+      const listResult = await dispatchBuiltInHappierTool({
+        toolName: 'action_spec_search',
+        args: { query: 'review' },
+        sessionId: 'sess-1',
+        deps: {
+          changeTitle: async () => ({ success: true }),
+          executeActionByToolName,
+        },
+      });
 
-    expect(listResult.ok, JSON.stringify(listResult)).toBe(true);
-    if (!listResult.ok) {
-      throw new Error(`expected action_spec_search to succeed: ${listResult.errorCode}`);
+      expect(listResult.ok, JSON.stringify(listResult)).toBe(true);
+      if (!listResult.ok) {
+        throw new Error(`expected action_spec_search to succeed: ${listResult.errorCode}`);
+      }
+      expect(Array.isArray((listResult.result as { actionSpecs?: unknown }).actionSpecs)).toBe(true);
+      expect((listResult.result as { actionSpecs: Array<{ id: string }> }).actionSpecs.some((spec) => spec.id === 'session.mode.set')).toBe(false);
+
+      return;
     }
-    expect(Array.isArray((listResult.result as { actionSpecs?: unknown }).actionSpecs)).toBe(true);
-    expect((listResult.result as { actionSpecs: Array<{ id: string }> }).actionSpecs.some((spec) => spec.id === 'session.mode.set')).toBe(false);
+    if (actionId === 'subagents.plan.start') {
+      const getResult = await dispatchBuiltInHappierTool({
+        toolName: 'action_spec_get',
+        args: { id: 'subagents.plan.start' },
+        sessionId: 'sess-1',
+        deps: {
+          changeTitle: async () => ({ success: true }),
+          executeActionByToolName,
+        },
+      });
 
-    const getResult = await dispatchBuiltInHappierTool({
-      toolName: 'action_spec_get',
-      args: { id: 'subagents.plan.start' },
-      sessionId: 'sess-1',
-      deps: {
-        changeTitle: async () => ({ success: true }),
-        executeActionByToolName,
-      },
-    });
+      if (!getResult.ok) throw new Error('Expected plan Action discovery');
+      const planDefinition = ActionDefinitionV1Schema.parse((getResult.result as { actionSpec: unknown }).actionSpec);
+      expect(planDefinition.outputSchema).toBeDefined();
+      expect(planDefinition).toMatchObject({ id: 'subagents.plan.start', kindVersion: 1 });
+      if (!planDefinition.inputSchema) throw new Error('Expected plan input schema');
+      const validatePlan = new Ajv({ strict: false, validateFormats: false }).compile(await readCompleteInputSchema(getResult.result));
+      const planInput = { backendTargetKeys: [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })],
+        instructions: 'Plan the workspace change.' };
+      expect(validatePlan(planInput), JSON.stringify(validatePlan.errors)).toBe(true);
+      expect(validatePlan({ ...planInput, backendTargetKeys: [] })).toBe(false);
+      expect(validatePlan({ ...planInput, backendTargetKeys: [42] })).toBe(false);
 
-    if (!getResult.ok) throw new Error('Expected plan Action discovery');
-    const planDefinition = ActionDefinitionV1Schema.parse((getResult.result as { actionSpec: unknown }).actionSpec);
-    expect(planDefinition).toMatchObject({ id: 'subagents.plan.start', kindVersion: 1 });
-    if (!planDefinition.inputSchema) throw new Error('Expected plan input schema');
-    const validatePlan = new Ajv({ strict: false, validateFormats: false }).compile(await readCompleteInputSchema(getResult.result));
-    const planInput = { backendTargetKeys: [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })],
-      instructions: 'Plan the workspace change.' };
-    expect(validatePlan(planInput), JSON.stringify(validatePlan.errors)).toBe(true);
-    expect(validatePlan({ ...planInput, backendTargetKeys: [] })).toBe(false);
-    expect(validatePlan({ ...planInput, backendTargetKeys: [42] })).toBe(false);
-
+      return;
+    }
     const spawnGetResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_get',
       args: { id: 'session.spawn_new' },
@@ -311,6 +318,9 @@ describe('built-in Happier tools', () => {
     }));
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_options_resolve',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'action.options.resolve': { toolExposureModes: { agent: 'direct' } },
+      } }),
       args: { actionId: 'subagents.plan.start', fieldPath: 'backendTargetKeys' },
       sessionId: 'sess-1',
       deps: {
@@ -358,6 +368,9 @@ describe('built-in Happier tools', () => {
 
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_options_resolve',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'action.options.resolve': { toolExposureModes: { agent: 'direct' } },
+      } }),
       args: {
         actionId: 'session.spawn_new',
         fieldPath: 'modelSelection',
@@ -399,6 +412,9 @@ describe('built-in Happier tools', () => {
     }));
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_options_resolve',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'action.options.resolve': { toolExposureModes: { agent: 'direct' } },
+      } }),
       args: { optionsSourceId: 'session.modes.available' },
       sessionId: 'sess-1',
       surface: 'cli',
@@ -433,6 +449,9 @@ describe('built-in Happier tools', () => {
     }));
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_options_resolve',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'action.options.resolve': { toolExposureModes: { agent: 'direct' } },
+      } }),
       args: { optionsSourceId: 'session.modes.available' },
       sessionId: 'sess-1',
       deps: {
@@ -825,7 +844,7 @@ describe('built-in Happier tools', () => {
       instructions: 'Start voice agent.',
       backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       intent: 'voice_agent',
-      permissionMode: 'read_only',
+      permissionMode: 'default',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',
       ioMode: 'streaming',

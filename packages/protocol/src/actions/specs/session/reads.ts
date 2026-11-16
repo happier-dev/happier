@@ -449,7 +449,7 @@ export const SESSION_READ_ACTION_SPECS: ReturnType<typeof createSessionReadActio
 function createSessionDiscoveryActionSpecs() {
   return Object.freeze([
   {
-    id: 'session.list', executionPlacement: 'account', approval: {result: 'required'},
+    id: 'session.list', toolExposure: { agent: 'direct', mcp: 'direct' }, executionPlacement: 'account', approval: {result: 'required'},
     title: 'List sessions',
     sideEffectClass: 'read',
     description: 'List recent sessions the user can target.',
@@ -505,7 +505,7 @@ function createSessionDiscoveryActionSpecs() {
     cli: SESSION_LIST_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.activity.get', executionPlacement: 'session', approval: {result: 'required'},
+    id: 'session.activity.get', toolExposure: { agent: 'direct', mcp: 'direct' }, executionPlacement: 'session', approval: {result: 'required'},
     originalExecution: { daemonIngressSurfaces: [] },
     title: 'Get session activity',
     sideEffectClass: 'read',
