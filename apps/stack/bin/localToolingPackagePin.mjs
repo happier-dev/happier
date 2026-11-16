@@ -63,7 +63,7 @@ function git(repoDir, args, options = {}) {
 }
 
 /** HEAD's blob ids for every pinned module; rewritten by the controller only when HEAD moves. */
-export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoDir, '.git')) }) {
+export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoDir, '.git')), refreshChanged = false }) {
   const pinDir = join(repoDir, TOOLING_PIN_DIR);
   const manifestPath = join(pinDir, 'manifest.json');
   let recorded = null;
@@ -71,7 +71,10 @@ export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoD
   if (recorded?.version !== MANIFEST_VERSION) recorded = null;
   if (!hasGit) return recorded ? { ...recorded, hasGit } : null;
   const revision = String(git(repoDir, ['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' })).trim();
-  if (recorded?.revision === revision) return { ...recorded, hasGit };
+  if (recorded?.revision === revision) {
+    if (refreshChanged) writeChangedModuleBlobs({ repoDir, pinDir, blobs: recorded.blobs });
+    return { ...recorded, hasGit };
+  }
   const blobs = {};
   for (const line of String(git(repoDir, ['ls-tree', '-r', '-z', '--full-tree', revision, '--', 'packages', 'apps'],
     { encoding: 'utf8' })).split('\0')) {
@@ -91,12 +94,21 @@ export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoD
 }
 
 function writeChangedModuleBlobs({ repoDir, pinDir, blobs }) {
-  const ids = [...new Set(String(git(repoDir, ['diff', '--name-only', '-z', 'HEAD', '--', 'packages', 'apps', ':!apps/stack'],
-    { encoding: 'utf8' })).split('\0').filter(path => blobs[path]).map(path => blobs[path]))]
-    .filter(id => !existsSync(join(pinDir, 'blobs', id)));
-  if (!ids.length) return;
+  // `diff-index` against HEAD uses the index's stat data without re-hashing (a
+  // superset when other lanes' writes left stat data stale); the blob id check
+  // below keeps only modules whose bytes really differ, or that are deleted.
+  const ids = new Set();
+  for (const path of String(git(repoDir, ['diff-index', '--name-only', '-z', 'HEAD', '--', 'packages', 'apps', ':!apps/stack'],
+    { encoding: 'utf8' })).split('\0')) {
+    const id = blobs[path];
+    if (!id || existsSync(join(pinDir, 'blobs', id))) continue;
+    let bytes = null;
+    try { bytes = readFileSync(join(repoDir, path)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!bytes || gitBlobId(bytes) !== id) ids.add(id);
+  }
+  if (!ids.size) return;
   // One batch read: `<id> blob <size>\n<bytes>\n` per object.
-  const output = git(repoDir, ['cat-file', '--batch'], { input: `${ids.join('\n')}\n` });
+  const output = git(repoDir, ['cat-file', '--batch'], { input: `${[...ids].join('\n')}\n` });
   let offset = 0;
   for (const id of ids) {
     const newline = output.indexOf(0x0a, offset);
@@ -216,4 +228,24 @@ export function registerToolingPackagePin({ repoDir, env = process.env, stderr =
       });
     },
   };
+}
+
+/**
+ * The controller's sync flush barrier (hstack-dev-target-control --sync-flush)
+ * runs this before every flush, so each remote dispatch carries HEAD's bytes of
+ * every pinned module the checkout changed, including edits made since the
+ * last commit. Only changed modules are diffed and copied.
+ */
+export function refreshToolingPin({ repoDir }) {
+  if (!existsSync(join(repoDir, '.git'))) return null;
+  return readToolingPinManifest({ repoDir, hasGit: true, refreshChanged: true });
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv[2] === '--refresh') {
+  try {
+    refreshToolingPin({ repoDir: resolve(process.argv[3] ?? fileURLToPath(new URL('../../../', import.meta.url))) });
+  } catch (error) {
+    process.stderr.write(`[tooling-pin] refresh before sync flush failed: ${error instanceof Error ? error.message : error}\n`);
+    process.exitCode = 1;
+  }
 }

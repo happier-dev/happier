@@ -246,7 +246,19 @@ EOF
   return 0
 }
 
+refresh_tooling_pin() {
+  # Every remote dispatch crosses this flush: give it HEAD's bytes of each package
+  # module the checkout changed, so remote stack tooling never loads another
+  # lane's half-landed edit (P03-TOOLING-ISOLATION). A failure is reported and
+  # leaves that host on the checkout's bytes; it never blocks the flush.
+  pin_repo=${HAPPIER_STACK_SYNC_SOURCE_DIR:-$control_dir/../../..}
+  [ -f "$control_dir/localToolingPackagePin.mjs" ] && [ -e "$pin_repo/.git" ] || return 0
+  node "$control_dir/localToolingPackagePin.mjs" --refresh "$pin_repo" >&2 \
+    || printf '%s\n' 'hstack-dev-target-control: tooling pin refresh failed; remote tooling may load uncommitted package edits' >&2
+}
+
 flush_and_check_sync() {
+  refresh_tooling_pin
   control_child=''
   cancel_control_flush() {
     trap - HUP INT TERM

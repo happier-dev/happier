@@ -137,4 +137,15 @@ test('checkout tooling loads product packages at the committed revision, on the 
   const fromMirror = probe(mirror);
   assert.equal(fromMirror.status, 0, fromMirror.stderr);
   assert.equal(fromMirror.stdout, 'committed+helper');
+  // An edit after the controller's last load: the sync flush barrier refreshes
+  // the pin before every remote dispatch, so the mirror still gets HEAD's bytes.
+  await write('packages/protocol/src/scm.ts', 'export const ScmRefusal: string = (() => { throw new Error("half-landed"); })();\n');
+  const refresh = spawnSync(process.execPath, [join(controller, 'apps/stack/bin/localToolingPackagePin.mjs'), '--refresh', controller],
+    { cwd: controller, encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '' } });
+  assert.equal(refresh.status, 0, refresh.stderr);
+  const flushed = join(root, 'mirror-after-flush');
+  await cp(controller, flushed, { recursive: true, verbatimSymlinks: true, filter: source => source !== join(controller, '.git') });
+  const afterFlush = probe(flushed);
+  assert.equal(afterFlush.status, 0, afterFlush.stderr);
+  assert.equal(afterFlush.stdout, 'committed+helper');
 });
