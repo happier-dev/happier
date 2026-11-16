@@ -1317,7 +1317,7 @@ async function runSdkStreamUntilEof() {
     // Long streaming run (P03-LONG-TRANSCRIPT): a prompt "lsl <rounds> <deltas> <deltaMs>" streams N rounds of
     // real stream_event text deltas, each followed by the assembled assistant message and a Bash tool call +
     // result. Selected by the prompt because a scenario env var does not reach a daemon-spawned Session.
-    const longStream = /^\s*lsl\s+(\d+)\s+(\d+)\s+(\d+)/.exec(String(promptText));
+    const longStream = /(?:^|\s)lsl\s+(\d+)\s+(\d+)\s+(\d+)(?:\s|$)/.exec(String(promptText));
     if (scenario === 'lsl-stream' || longStream) {
       const rounds = longStream ? Number(longStream[1]) : 5;
       const deltas = longStream ? Number(longStream[2]) : 20;
