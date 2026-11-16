@@ -785,6 +785,20 @@ exact target OS/architecture and `remoteHomeDir`. The existing selection project
 carries those facts for the selected image or host; absence supplies no preparation
 target. The guest CLI supplier consumes these facts without guessing from its host.
 
+Freestyle captures a fresh builder and retires it after capture; an unconfirmed
+capture retains recovery custody. Superserve retains its paused source until
+Delete so inspection remains read-only; the source still incurs storage charges.
+Agent37 publishes a private template revision: its native build cannot be
+canceled, and deleting the template removes its namespace while image copies
+used by existing instances can remain. Maritime's native sandbox snapshots use
+a separate sandbox contribution from its server offerings and request
+`forEndUser` to exclude account-secret injection. Upstash refuses preparation
+while account-level environment keys are present; it retains the paused source
+box for scoped snapshot recovery until Delete removes both snapshot and source.
+That retained source still incurs storage charges. These provider limits do not
+authorize automatic rebuilding, replaying an uncertain allocation, or deleting
+unrelated resources.
+
 The development `machineRecipes` and `machineSetupPresets` families use the
 existing Protocol contribution catalog, manifest admission, public SDK authoring
 and normalized projections. Both are data-only, with `activationDemand: 'none'`;
