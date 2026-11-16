@@ -51,20 +51,17 @@ export function createProjectSourceActionDeps(account: SourceAccountPort) {
             let payload: unknown;
             try { payload = await response.json(); output = schema.parse(payload); }
             catch (error) {
-                // The Home explicitly refused the exhausted transaction. An arbitrary
-                // failed mutation response still follows the outcome-unknown path below.
-                if (response.status === 503 && payload && typeof payload === 'object' && 'error' in payload
-                    && payload.error === 'database_transaction_conflict_exhausted') return { ok: false, error: 'source_backend_unavailable' };
                 const code = response.status === 404 || response.status === 405 ? 'unsupported_action'
                     : response.status === 401 ? 'action_home_signed_out' : response.status === 403 ? 'action_forbidden' : null;
                 if (code) return { ok: false, errorCode: code, error: code };
-                throw error;
+                if (method === 'GET') throw error;
+                return projectConfirmedActionHttpRefusal({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }, response.status, payload);
             }
             if (method === 'GET') {
                 context?.signal?.throwIfAborted();
                 account.assertCurrent();
             }
-            return projectConfirmedActionHttpRefusal(output, response.status);
+            return projectConfirmedActionHttpRefusal(output, response.status, payload);
         } catch (error) {
             const failure = scopeFailure(error);
             if (failure) return failure;

@@ -73,12 +73,14 @@ describe('authenticated Source Action transport', () => {
     });
 
     it.each([
-        [503, 'database_transaction_conflict_exhausted', { ok: false, error: 'source_backend_unavailable' }],
+        [503, 'database_transaction_conflict_exhausted', { ok: false, errorCode: 'database_transaction_conflict_exhausted',
+            effectAttempted: false, failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+                errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } }],
         [500, 'database_transaction_conflict_exhausted', { ok: false, errorCode: 'outcome_unknown' }],
         [503, 'unrecognized_failure', { ok: false, errorCode: 'outcome_unknown' }],
     ] as const)('distinguishes the known transaction refusal from uncertain mutation failures (%s %s)', async (status, error, expected) => {
         const deps = createProjectSourceActionDeps({ ...scope, assertCurrent() {}, workflowArtifacts: { read: async () => null },
-            request: async (_path, _init, options) => { options?.onIssued?.(); return Response.json({ error }, { status }); },
+            request: async (_path, _init, options) => { options?.onIssued?.(); return Response.json({ error, statusCode: status }, { status }); },
         });
         expect(await deps.projectSourcesUpdate({ serverId: scope.serverId, sourceId: 'source-a', expectedRevision: 1,
             patch: { name: 'Repository' } })).toMatchObject(expected);
