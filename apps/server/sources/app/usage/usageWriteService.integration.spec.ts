@@ -60,6 +60,7 @@ describe("usageWriteService", () => {
         await harness.resetDbTables([
             () => db.usageEvent.deleteMany(),
             () => db.usageReport.deleteMany(),
+            () => db.accessKey.deleteMany(),
             () => db.session.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
@@ -223,6 +224,29 @@ describe("usageWriteService", () => {
         expect(raw.totalTokens).toBe(7);
         expect(raw.metadata).toMatchObject({ diagnosticMarker, accountingSubject: subject,
             usageAccounting: { path: 'runtime', status: 'partial' } });
+    });
+
+    it('admits a hosted member Session native subject on the Machine its Session is bound to', async () => {
+        // MACH-PRINCIPAL-AUDIT-1116: a Can-use member's native Session runs on the
+        // owner's Machine and publishes its usage as the member.
+        const owner = await db.account.create({ data: { publicKey: 'hosted-usage-owner' } });
+        const member = await db.account.create({ data: { publicKey: 'hosted-usage-member' } });
+        await db.machine.create({ data: { id: 'hosted-usage-machine', accountId: owner.id, metadata: '{}' } });
+        const hosted = await db.session.create({ data: { accountId: member.id, tag: 'hosted-usage', encryptionMode: 'plain', metadata: '{}' } });
+        const unbound = await db.session.create({ data: { accountId: member.id, tag: 'unbound-usage', encryptionMode: 'plain', metadata: '{}' } });
+        await db.accessKey.create({ data: { accountId: member.id, machineId: 'hosted-usage-machine', sessionId: hosted.id, data: 'opaque' } });
+        const ingest = (sessionId: string, externalKey: string) => UsageEventIngestRequestSchema.parse({
+            sessionId, turnId: 'turn', externalKey, observedAt: 100, agentId: 'codex', modelId: 'model',
+            source: 'runtime', scope: 'turn_delta', isCumulative: false,
+            tokens: { input: 5, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 7 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+            metadata: { accountingSubject: { kind: 'native', machineId: 'hosted-usage-machine',
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceRootKey: 'root', nativeSessionKey: externalKey },
+            usageAccounting: { path: 'runtime', status: 'available' } },
+        });
+        expect(await recordUsageEvent(member.id, ingest(hosted.id, 'hosted'))).toMatchObject({ ok: true });
+        expect(await recordUsageEvent(member.id, ingest(unbound.id, 'unbound'))).toEqual({ ok: false, error: 'machine-not-found' });
+        expect(await db.usageEvent.count({ where: { accountId: owner.id } })).toBe(0);
     });
 
     it('retains request-bound switched account identity through ingest and query, ignoring metadata guesses', async () => {

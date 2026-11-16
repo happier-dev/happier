@@ -559,8 +559,15 @@ async function retainEarliestRuntimeOrderInTx(tx: Tx, existing: UsageEvent, requ
     return true;
 }
 
-async function ensureNativeSubjectOwnedInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
-    return Boolean(await tx.machine.findFirst({ where: { id: subject.machineId, accountId }, select: { id: true } }));
+/**
+ * The subject Machine is the Account's own, or the Machine its Session is bound to
+ * (a Can-use member's Session hosted on another person's Machine).
+ */
+async function ensureNativeSubjectOwnedInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject,
+    sessionId: string | undefined): Promise<boolean> {
+    if (await tx.machine.findFirst({ where: { id: subject.machineId, accountId }, select: { id: true } })) return true;
+    return sessionId !== undefined && Boolean(await tx.accessKey.findUnique({ where: { accountId_machineId_sessionId: {
+        accountId, machineId: subject.machineId, sessionId } }, select: { sessionId: true } }));
 }
 
 async function hasNativeSessionLinkWitnessInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
@@ -746,7 +753,7 @@ export async function recordUsageEvent(
         if (subject) {
             if (request.agentId !== subject.agent.localId && request.agentId !== `${subject.agent.pluginId}/${subject.agent.localId}`) return { ok: false, error: 'invalid-params' };
             if (request.machineId && request.machineId !== subject.machineId) return { ok: false, error: 'invalid-params' };
-            if (!(await ensureNativeSubjectOwnedInTx(tx, accountId, subject))) return { ok: false, error: 'machine-not-found' };
+            if (!(await ensureNativeSubjectOwnedInTx(tx, accountId, subject, request.sessionId ?? subject.linkedSessionId))) return { ok: false, error: 'machine-not-found' };
             if (request.subject && !(await hasNativeSessionLinkWitnessInTx(tx, accountId, subject))) return { ok: false, error: 'native-link-not-found' };
             if (request.sessionId && subject.linkedSessionId && subject.linkedSessionId !== request.sessionId) return { ok: false, error: 'invalid-params' };
         }
