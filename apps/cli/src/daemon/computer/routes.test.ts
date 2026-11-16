@@ -13,6 +13,7 @@ import { accountSettingsParse, ActionsSettingsV1Schema, ComputerCaptureResponseV
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createComputerCaptureSource } from './source';
 import { native, target as cuaTarget, captureResult, png } from './driver/nativeComputerBoundary.testkit';
+import { logger } from '@/ui/logger';
 
 const processBoundary = vi.hoisted(() => ({ spawn: vi.fn(), calls: [] as string[][] }));
 // Native processes are the system boundary; provider admission and both adapters stay real.
@@ -65,6 +66,31 @@ function selectUnsupportedTarget(registry: ReturnType<typeof createMachineLiveSt
 }
 
 describe('native computer route authority', () => {
+  it('retains a private diagnostic for an uncoded picker failure without disclosing native content', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    processBoundary.spawn.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough() });
+      queueMicrotask(() => {
+        // A malformed native response reaches the real adapter's schema parser.
+        child.stdout.end(JSON.stringify({ version: '2.5', ok: true, data: [{ title: 'PRIVATE_WINDOW_CONTENT', pid: null }] }));
+        child.emit('close', 0, null);
+      });
+      return child;
+    });
+    const routes = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry(),
+      executablePath: '/managed/agent-desktop', defaultDisplayId: ':73',
+      resolveProviderSettings: () => ({ v: 1, defaultProvider: 'agent-desktop', enabledProviders: ['agent-desktop'] }) });
+    try {
+      const result = await routes.dispatch('computer.targets.list', { machineId: 'machine', provider: 'agent-desktop' },
+        { ...agentContext, authority: 'present_user' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'action_failed',
+        failureCause: { phase: 'computer.targets.list' } });
+      expect(diagnostic).toHaveBeenCalledWith('[Computer] Native operation failed', expect.objectContaining({
+        phase: 'computer.targets.list', errorCode: 'action_failed',
+      }));
+      expect(JSON.stringify([result, diagnostic.mock.calls])).not.toContain('PRIVATE_WINDOW_CONTENT');
+    } finally { await routes.dispose(); diagnostic.mockRestore(); }
+  });
   it.each([false, true])('settles Stop sharing despite historical input uncertainty (capture already ended: %s)', async alreadyEnded => {
     native.call.mockImplementation(async ({ name }) => {
       if (name === 'list_windows') return { structuredContent: { windows: [{ pid: cuaTarget.pid, window_id: cuaTarget.windowId, title: 'Fixture' }] } };
@@ -467,7 +493,8 @@ describe('native computer route authority', () => {
       .toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
     expect(await unsupported.dispatch('computer.targets.list', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
-      .toEqual({ ok: false, errorCode: 'target_unsupported', error: 'target_unsupported' });
+      .toEqual({ ok: false, errorCode: 'target_unsupported', error: 'target_unsupported',
+        failureCause: { phase: 'computer.targets.list', errorClass: 'Error', errorCode: 'target_unsupported', httpStatus: null } });
     await unsupported.dispose();
   });
 

@@ -16,7 +16,7 @@ import { createComputerDesktop } from './desktop';
 import type { ComputerProviderIdV1, ComputerSourceIdentityV1, ComputerUseSettingsV1 } from '@happier-dev/protocol/computer/v1';
 import { ComputerProviderUnavailableError, resolveComputerProvider, resolveComputerProviderId } from './driver/provider';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { computerNativeFailure } from './failure';
 import { resolveComputerRequesterScope, type ComputerRequesterHost, type ComputerRequesterScope } from './requester';
 import { prepareMemberComputerRuntime, type MemberComputerRuntime } from './memberRuntime';
 import { ComputerClipboardWriteRequestV1Schema } from '@happier-dev/protocol/computer/v1';
@@ -48,13 +48,6 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
     return source.close();
   };
   const failure = (code: string, message = code) => ({ ok: false, errorCode: code, error: message } as const);
-  const nativeFailure = (error: unknown) => error instanceof ComputerProviderUnavailableError ? {
-    ...failure(error.code, error.message),
-    provider: error.provider, installableKey: error.installableKey, capabilityId: error.capabilityId,
-    installHint: { actionId: 'machines.capabilities.install', capabilityId: error.capabilityId },
-  } : error instanceof PluginError ? { ...failure(error.code, error.message), ...(error.details ? { details: error.details } : {}) }
-    : error instanceof ComputerDriverError ? failure(error.code, error.message)
-    : failure(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'native_capture_failed');
   const findSelected = (sourceIdentity: ComputerSourceIdentityV1, provider: ComputerProviderIdV1, desktopKey?: string) => input.registry.list()
     .find(entry => entry.computer && computerSourceIdentityKeyV1(entry.computer.sourceIdentity) === computerSourceIdentityKeyV1(sourceIdentity) && entry.computer.provider === provider
       && entry.computer.desktopKey === desktopKey)?.computer;
@@ -141,7 +134,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         return { ok: true, source: resolved.source, homeServerIdentityId };
       } catch (error) {
         context.signal?.throwIfAborted();
-        const code = nativeFailure(error).errorCode;
+        const code = computerNativeFailure(error, 'computer.source.view').errorCode;
         return { ok: false, reasonCode: code === 'access_denied' ? 'capture_source_denied' : code };
       }
     },
@@ -162,7 +155,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       context.signal?.throwIfAborted();
       let scope: ComputerRequesterScope;
       try { scope = await resolveComputerRequesterScope({ machineId: input.machineId, host: input.requesterHost, context }); }
-      catch (error) { return nativeFailure(error); }
+      catch (error) { return computerNativeFailure(error, actionId); }
       const desktopKey = scope.kind === 'personal' ? scope.key : undefined;
       const resolveConnection = async (requestedDisplayId?: string) => {
         if (scope.kind === 'owner') return resolveOwnerConnection(requestedDisplayId);
@@ -205,7 +198,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         } else {
           ({ provider, executablePath } = await resolveComputerProvider({ provider: requestedProvider, settings, executablePath: input.executablePath }));
         }
-      } catch (error) { return nativeFailure(error); }
+      } catch (error) { return computerNativeFailure(error, actionId); }
       const createDriver = async (connection: Awaited<ReturnType<typeof resolveConnection>>) => {
         if (scope.kind === 'owner') return createManagedComputerDriver({ ...connection, executablePath, provider });
         if (!executablePath) throw new ComputerProviderUnavailableError(provider);
@@ -223,7 +216,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           const currentSelection = selection(provider);
           if (!currentSelection.sourceId) await resolveConnection();
           return currentSelection;
-        } catch (error) { return nativeFailure(error); }
+        } catch (error) { return computerNativeFailure(error, actionId); }
       }
       if (list) {
         const request = ComputerTargetsListRequestV1Schema.parse(parsed.data);
@@ -232,7 +225,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           driver = await createDriver(await resolveConnection(request.displayId));
         } catch (error) {
           // An unsupported desktop or a missing driver is the picker's typed explanation, not a thrown RPC.
-          return nativeFailure(error);
+          return computerNativeFailure(error, actionId);
         }
         try {
           const targets = await driver.listTargets({ includeThumbnails: context.authority === 'present_user' });
@@ -243,7 +236,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
             displays: targets.some(entry => entry.target.kind === 'display') ? { status: 'available' }
               : { status: 'unavailable', code: 'display_enumeration_unsupported' },
             grants: { capture: grants.capture, input: grants.input } };
-        } catch (error) { return nativeFailure(error); }
+        } catch (error) { return computerNativeFailure(error, actionId); }
         finally { await driver.close(); }
       }
       if (actionId === 'computer.target.select') {
@@ -259,7 +252,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           connection = await resolveConnection(request.target?.displayId);
           driver = await createDriver(connection);
         }
-        catch (error) { return nativeFailure(error); }
+        catch (error) { return computerNativeFailure(error, actionId); }
         let target: ComputerTargetV1;
         let title: string | undefined;
         let appName: string | undefined;
@@ -275,7 +268,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           target = match.target;
           title = match.title;
           appName = match.appName;
-        } catch (error) { return nativeFailure(error); }
+        } catch (error) { return computerNativeFailure(error, actionId); }
         finally { await driver.close(); }
         context.signal?.throwIfAborted();
         if (conflictingSelection(sourceIdentity, provider, target)) return failure('computer_target_in_use');
@@ -283,7 +276,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         if (existing && !existing.isClosed() && !existing.status().uncertain
           && access === existing.access && computerTargetKey(target) === computerTargetKey(existing.target)) return selection(provider);
         if (existing) {
-          try { await closeSource(existing); } catch (error) { return nativeFailure(error); }
+          try { await closeSource(existing); } catch (error) { return computerNativeFailure(error, actionId); }
           if (selected(provider) !== existing) return failure('computer_target_selection_changed');
           input.registry.unregister(existing.sourceId);
         }
@@ -362,7 +355,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         }
         return failure('unsupported_action');
       } catch (error) {
-        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'native_capture_failed';
+        const code = computerNativeFailure(error, actionId).errorCode;
         if (code === 'target_not_found' || code === 'target_mismatch') {
           await closeSource(source);
           if (selected(provider) === source) input.registry.unregister(sourceId);
