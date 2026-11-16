@@ -63,6 +63,17 @@ describe('provider stable errors and compatibility envelopes', () => {
       createProviderErrorV1('provider_machine_unavailable', { machineId: 'machine-a' }),
     );
   });
+  it('offers transport recovery for a control socket connect timeout before Agent dispatch', () => {
+    const cause = { phase: 'dispatch', errorClass: 'Error', errorCode: 'socket_connect_timeout', httpStatus: null };
+    const caught = Object.assign(new Error('Socket connect timeout after 10000ms'), { code: cause.errorCode });
+    const context = { machineId: 'machine-a' };
+    for (const failure of [caught, { ok: false, errorCode: 'action_failed', error: 'unavailable', failureCause: cause }]) {
+      expect(providerErrorFromRpcFailure(failure, context)).toMatchObject({
+        code: 'provider_machine_unavailable', machineId: context.machineId, retryable: true, action: 'retry',
+        failureCause: { errorCode: cause.errorCode },
+      });
+    }
+  });
   it('keeps an explicit unsupported model option refusal non-retryable through the wire reader', () => {
     const error = { v: 1, code: 'provider_model_config_option_unsupported',
       retryable: false, action: 'choose_model', connectionId: 'pc_a' };

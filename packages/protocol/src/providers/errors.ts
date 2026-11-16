@@ -206,7 +206,7 @@ export function providerErrorFromRpcFailure(
   if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
     return createProviderErrorV1('agent_unavailable', errorContext);
   }
-  if (rpcErrorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) {
+  if (rpcErrorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE || transportCode === 'socket_connect_timeout') {
     return createProviderErrorV1('provider_machine_unavailable', errorContext);
   }
   if (rpcErrorCode === RPC_ERROR_CODES.FORBIDDEN) {
