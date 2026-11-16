@@ -74,8 +74,22 @@ function base32ToBytes(base32) {
 }
 
 export function normalizeDevAuthKeyInputToBytes(input) {
-  const raw = String(input ?? '').trim();
+  let raw = String(input ?? '').trim();
   if (!raw) return null;
+
+  // Accept the existing dev-key files and the CLI's legacy access.key directly
+  // on stdin. Token-only/data-key credentials contain no account recovery key.
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw);
+      const key = parsed?.secretKeyBase64Url ?? parsed?.secretKey ?? parsed?.key ?? parsed?.secret;
+      if (typeof key !== 'string') return null;
+      raw = key.trim();
+      if (!raw) return null;
+    } catch {
+      return null;
+    }
+  }
 
   // Match Happy UI behavior:
   // - backup format is base32 and is long (usually grouped with '-' / spaces)
@@ -122,9 +136,7 @@ export async function readDevAuthKey({ env = process.env } = {}) {
   try {
     if (!existsSync(path)) return { ok: true, source: `file:${path}`, secretKeyBase64Url: null, backup: null, path };
     const raw = await readFile(path, 'utf-8');
-    const parsed = JSON.parse(raw);
-    const input = parsed?.secretKeyBase64Url ?? parsed?.secretKey ?? parsed?.key ?? null;
-    const bytes = normalizeDevAuthKeyInputToBytes(input);
+    const bytes = normalizeDevAuthKeyInputToBytes(raw);
     if (!bytes) return { ok: false, error: 'invalid_file_key', source: `file:${path}`, secretKeyBase64Url: null, backup: null, path };
     const base64url = bytesToBase64Url(bytes);
     return { ok: true, source: `file:${path}`, secretKeyBase64Url: base64url, backup: formatDevAuthKeyBackup(base64url), path };
