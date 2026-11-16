@@ -1,3 +1,4 @@
+import { lendAccountEncryptionObservation } from '@/sync/http/accountEncryptionObservationBinding';
 import {
     isRpcMethodNotAvailableError,
     isRpcMethodNotFoundError,
@@ -399,13 +400,13 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
         }, async authority => {
             assertCurrent();
             return await readSessionSnapshotForAuthority({
-                authority: { ...authority, request: async (path, init, options) => {
+                authority: { ...authority, request: lendAccountEncryptionObservation(async (path: string, init?: RequestInit, options?: Parameters<typeof authority.request>[2]) => {
                     const cancellation = mergeAbortSignals([params.signal, init?.signal ?? undefined]);
                     try {
                         assertCurrent();
                         return await authority.request(path, { ...init, signal: cancellation.signal }, options);
                     } finally { cancellation.dispose(); }
-                } },
+                }, authority.request) },
                 sessionId: params.sessionId,
                 isCurrent: () => !params.signal?.aborted && (params.isCurrent?.() ?? true),
             });
