@@ -25,6 +25,7 @@ import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.js';
 import { execOrThrow, resolveBunCommand } from './commands.js';
 import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from './copyCliNodeRuntimePayload.js';
+import { PROCESS_CUSTODY_TARGET_ARCHES, resolveProcessCustodyTargetExecutableRelativePath } from './stageProcessCustodyRuntime.js';
 import {
   CLI_RUNTIME_EXTERNAL_PACKAGES,
   buildCliBinaryArtifactCodePayload,
@@ -1064,6 +1065,7 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
       payloadDir,
       supportArtifactFingerprint: identity.fingerprint,
       commandProbe: (command) => command === 'pnpm',
+      runCommand: fakeNativeToolchainRunCommand,
     });
 
     expect(built.entrypoint).toBe('.happier-daemon-support.json');
@@ -1090,7 +1092,7 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
     ).toBe(false);
   });
 
-  it('builds the bundled Iroh addon and every Session holder into support instead of copying checkout outputs', async () => {
+  it('builds the Iroh addon, every Session holder and target custody helper into support instead of copying checkout outputs', async () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
     const target = targetForHost();
@@ -1126,6 +1128,10 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
       'targets/happier-session-holder.linux-arm64-musl',
     ].filter((name) => existsSync(join(stagedNative, name)))).toHaveLength(4);
     expect(await readFile(join(stagedNative, holder), 'utf8')).toMatch(/^cargo-built /);
+    for (const arch of PROCESS_CUSTODY_TARGET_ARCHES) {
+      await expect(readFile(join(payloadDir, resolveProcessCustodyTargetExecutableRelativePath(arch)), 'utf8'))
+        .resolves.toBe('go-built helper');
+    }
 
     // Identity follows the Rust inputs, not whatever outputs the checkout holds.
     await writeFixtureFile(join(irohSource, `native/happier-session-holder.${platform}-${process.arch}${exe}`), 'another stale holder');

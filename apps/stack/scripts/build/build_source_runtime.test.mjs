@@ -3504,9 +3504,25 @@ test('source daemon stages current native custody source instead of borrowing st
   const name = `happier-process-custody${process.platform === 'win32' ? '.exe' : ''}`;
   const stale = join(cliDir, 'tools/unpacked', name);
   await writeFile(stale, 'stale helper lacking disk-measure');
-  const built = await buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('runtime'), component: 'daemon' });
+  const staleTargets = join(cliDir, 'tools/unpacked/targets');
+  await mkdir(staleTargets);
+  for (const arch of ['x64', 'arm64']) {
+    await writeFile(join(staleTargets, `happier-process-custody.linux-${arch}`), `stale ${arch}`);
+  }
+  // This fixture covers daemon custody staging; guest CLI compilation has its own payload suite.
+  const guestPayloadDir = fixture.path('manual-guest-payload');
+  await mkdir(guestPayloadDir);
+  await writeFile(join(guestPayloadDir, 'happier'), '#!/bin/sh\nexit 0\n');
+  const built = await buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('runtime'), component: 'daemon',
+    env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: guestPayloadDir } });
   const helper = join(built.runtimeDir, 'tools/unpacked', name);
   assert.notEqual(await realpath(helper), await realpath(stale));
+  for (const arch of ['x64', 'arm64']) {
+    const targetHelper = await readFile(join(built.runtimeDir, 'tools/unpacked/targets', `happier-process-custody.linux-${arch}`));
+    assert.equal(targetHelper.subarray(0, 4).toString('hex'), '7f454c46');
+    assert.equal(targetHelper.readUInt16LE(18), arch === 'x64' ? 62 : 183);
+    assert.equal(await readFile(join(staleTargets, `happier-process-custody.linux-${arch}`), 'utf8'), `stale ${arch}`);
+  }
   const stdout = await new Promise((resolve, reject) => {
     const child = execFile(helper, ['disk-measure'], (error, stdout) => error ? reject(error) : resolve(stdout));
     child.stdin.end(JSON.stringify({ paths: [] }));

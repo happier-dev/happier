@@ -61,7 +61,7 @@ import {
 import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from './copyCliNodeRuntimePayload.js';
 import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload.js';
 import { stageCliProxyApiManagedRuntime } from './stageCliProxyApiManagedRuntime.js';
-import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
+import { stageProcessCustodyRuntime, stageProcessCustodyTargetRuntimes } from './stageProcessCustodyRuntime.js';
 import { readValidatedWindowsServiceLauncher, WINDOWS_SERVICE_LAUNCHER_FILE_NAME } from '../service/windowsLauncher.js';
 import { writeCliBinaryArtifactRuntimeAssetBuildManifest } from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence.js';
@@ -992,6 +992,8 @@ async function stageCliBinaryArtifactSupportPayload({
     runCommand,
     prebuiltExecutablePath: processCustodyRuntimeExecutablePath,
   });
+  // Static Linux helpers the Session holder bootstrap places in container targets.
+  await stageProcessCustodyTargetRuntimes({ repoRoot, payloadDir, runCommand });
   if (target.os === 'windows' && target.arch === 'x64') {
     const launcher = join(repoRoot, 'packages', 'cli-common', 'native', 'windows', 'bin', 'windows-x64', WINDOWS_SERVICE_LAUNCHER_FILE_NAME);
     await writeFile(join(payloadDir, WINDOWS_SERVICE_LAUNCHER_FILE_NAME), await readValidatedWindowsServiceLauncher(launcher));

@@ -1721,7 +1721,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
         const destination = join(runtimeDir, 'tools/unpacked');
         await mkdir(destination, { recursive: true });
         for (const tool of await readdir(join(sourceTools, 'unpacked'), { withFileTypes: true })) {
-          if ((buildsProcessCustody && /^happier-process-custody(?:\.exe)?$/.test(tool.name))
+          if ((buildsProcessCustody && (/^happier-process-custody(?:\.exe)?$/.test(tool.name) || tool.name === 'targets'))
             || (buildsCliProxyApi && /^happier-cliproxyapi-managed(?:\.exe)?$/.test(tool.name))) continue;
           if (tool.isDirectory()) await linkInstalledDirectory(join(sourceTools, 'unpacked', tool.name), join(destination, tool.name));
           else await cp(join(sourceTools, 'unpacked', tool.name), join(destination, tool.name));
@@ -1745,9 +1745,11 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
           const ownerPath = join(preparationDir, 'custody.mjs');
           await build({ entryPoints: [join(repoDir, 'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts')],
             outfile: ownerPath, bundle: true, platform: 'node', format: 'esm', logLevel: 'silent' });
-          const { stageProcessCustodyRuntime } = await import(pathToFileURL(ownerPath).href);
+          const { stageProcessCustodyRuntime, stageProcessCustodyTargetRuntimes } = await import(pathToFileURL(ownerPath).href);
           const { executablePath } = await stageProcessCustodyRuntime({ repoRoot: preparationDir, payloadDir: runtimeDir, target, runCommand });
           retainedCodeFiles.push(executablePath);
+          // Container-target helpers (static Linux, both architectures) ship with every runtime.
+          retainedCodeFiles.push(...Object.values(await stageProcessCustodyTargetRuntimes({ repoRoot: preparationDir, payloadDir: runtimeDir, runCommand })));
         }
         if (buildsCliProxyApi) {
           const ownerPath = join(preparationDir, 'cliproxyapi.mjs');
