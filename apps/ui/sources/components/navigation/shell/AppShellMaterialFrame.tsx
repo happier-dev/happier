@@ -277,7 +277,7 @@ export function AppShellMaterialFrame(props: Readonly<{
             }]}>
                 {props.rail}
             </AppShellMaterialPlane> : null}
-            {props.column ? <AppShellMaterialPlane key="column" testID="navigation-sidebar" group="sidebar" color={appShellColumnPlaneColor(theme.colors)}
+            {props.column ? <AppShellMaterialPlane key="column" testID="navigation-sidebar" themeSurface={{ surface: 'sidebar', part: 'root', state: 'default' }} group="sidebar" color={appShellColumnPlaneColor(theme.colors)}
                 translucentColor={theme.colors.surface.selected} style={[appShellColumnSurface.column, {
                     // Past either bound the edge gives a little (rubber band), a pure function of the drag.
                     width: resolveColumnDrawnWidthPx(props.sidebarWidth, props.columnResizeState?.overshootPx ?? 0),

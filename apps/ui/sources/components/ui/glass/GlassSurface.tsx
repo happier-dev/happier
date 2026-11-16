@@ -1,3 +1,4 @@
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
 import * as React from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle, type ViewProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -96,6 +97,8 @@ export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibi
     ref?: React.Ref<React.ComponentRef<typeof View>>;
     children: React.ReactNode;
     style?: StyleProp<ViewStyle>;
+    /** Stable address of this painted surface. */
+    themeSurface?: SurfaceAddress;
     /** A structural host with no material of its own; preserves its children and the containing plane. */
     noCoat?: boolean;
     /**
@@ -182,7 +185,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         : authoredSolid ?? (group === 'floating' ? theme.colors.edge.floatingFill : theme.colors.surface.base);
     const viewProps = { ref: props.ref, testID: props.testID, accessibilityRole: props.accessibilityRole, accessibilityLabel: props.accessibilityLabel, role: props.role, 'aria-label': props['aria-label'], onLayout: props.onLayout,
         collapsable: props.collapsable, onPointerEnter: props.onPointerEnter, onPointerLeave: props.onPointerLeave,
-        onFocus: props.onFocus, onBlur: props.onBlur };
+        onFocus: props.onFocus, onBlur: props.onBlur,
+        ...(props.themeSurface ? { dataSet: { ...props.themeSurface, state: props.themeSurface.state ?? 'default' } } : null) };
     const effectiveEnvironment = {
         ...environment,
         reduceTransparency: reduceTransparency || environment.reduceTransparency === true,

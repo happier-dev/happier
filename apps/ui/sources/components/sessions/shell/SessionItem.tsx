@@ -1,3 +1,4 @@
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { useSessionManagedWakeStatus } from '@/components/sessions/pending/useSessionManagedWakeStatus';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -1761,6 +1762,7 @@ const SessionItemContent = React.memo(
                     })}>
                     <Pressable
                         ref={followEditor.triggerRef}
+                        {...{ dataSet: themeSurfaceDataSet('session-row', 'root', selected || rowSelection.isSelected ? 'selected' : 'default') }}
                         testID={`session-list-item-${occurrenceTestId}`}
                         accessibilityRole="button"
                         accessibilityLabel={rowAccessibilityLabel}

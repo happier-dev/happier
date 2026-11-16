@@ -1,3 +1,4 @@
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import * as React from 'react';
 import { View, type ViewProps, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -54,11 +55,12 @@ export function UserMessageBubble(props: Readonly<{
         maxWidth: '100%' as const,
         ...(props.discarded ? { opacity: 0.65 } : null),
     };
+    const dataSet = themeSurfaceDataSet('user-bubble', 'root', 'default');
     return props.attention
         ? (
-            <TranscriptJumpAttention {...props.attention} style={style} viewProps={{ onLayout: props.onLayout, testID: props.testID }}>
+            <TranscriptJumpAttention {...props.attention} style={style} viewProps={{ onLayout: props.onLayout, testID: props.testID, ...{ dataSet } }}>
                 {props.children}
             </TranscriptJumpAttention>
         )
-        : <View style={style} onLayout={props.onLayout} testID={props.testID}>{props.children}</View>;
+        : <View {...{ dataSet }} style={style} onLayout={props.onLayout} testID={props.testID}>{props.children}</View>;
 }

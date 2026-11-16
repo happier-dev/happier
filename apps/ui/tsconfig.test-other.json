@@ -2929,6 +2929,7 @@
     "sources/theme/css/nativeDeclarations.test.ts",
     "sources/theme/css/prepareThemeCss.test.ts",
     "sources/theme/css/themeStylesheet.network.web.test.ts",
+    "sources/theme/css/themeSurfaceEmission.rnw.real.integration.test.tsx",
     "sources/theme/parseThemeColor.test.ts",
     "sources/theme/profiles/builtInThemeProfiles.test.ts",
     "sources/theme/profiles/createThemeProfileDraft.test.ts",

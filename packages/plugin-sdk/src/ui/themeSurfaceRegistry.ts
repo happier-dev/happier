@@ -9,6 +9,7 @@ type Part = Readonly<{ kind: 'view' | 'text' }>;
 const view = { kind: 'view' } as const;
 
 export const THEME_SURFACE_REGISTRY = {
+  sidebar: { parts: { root: view }, states: ['default'] },
   'session-row': { parts: { root: view }, states: ['default', 'selected'] },
   'user-bubble': { parts: { root: view }, states: ['default'] },
   composer: { parts: { root: view, toolbar: view }, states: ['default', 'disabled'] },

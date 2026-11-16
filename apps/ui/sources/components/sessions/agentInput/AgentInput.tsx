@@ -1,3 +1,4 @@
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
@@ -4215,7 +4216,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             <TextSelectabilityScope selectable>
                 <View ref={overlayAnchorRef} testID="agent-input-composer" style={[styles.container, documentPanel ? styles.containerDocument : null, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
                     {instrumentStrip}
-                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel, embeddedPanel ? styles.embeddedPanel : null]}>
+                    <GlassSurface testID="agent-input-material-surface" themeSurface={{ surface: 'composer', part: 'root', state: props.disabled ? 'disabled' : 'default' }} {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel, embeddedPanel ? styles.embeddedPanel : null]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
                         <View style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null]}>
@@ -4279,6 +4280,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // One footer for the web and native panels.
     const actionFooter = (
             <View
+                {...{ dataSet: themeSurfaceDataSet('composer', 'toolbar', props.disabled ? 'disabled' : 'default') }}
                 style={styles.nativeKeyboardFooterSection}
                 onLayout={(event) => {
                     updateLayoutHeight(setActionFooterHeightPx, event.nativeEvent.layout.height);
@@ -4439,6 +4441,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 <GlassSurface
                     ref={composerCardRef}
                     testID="agent-input-material-surface"
+                    themeSurface={{ surface: 'composer', part: 'root', state: props.disabled ? 'disabled' : 'default' }}
                     {...panelMaterialProps}
                     style={[
                         styles.unifiedPanel,

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { GlassSurface, useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
+import { GlassSurface, useContainingGlassSurfaceGroup, type GlassSurfaceProps } from '@/components/ui/glass/GlassSurface';
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
 import { useAtmospherePictureShown } from '@/components/atmosphere/atmosphereStage';
 
@@ -22,6 +22,7 @@ export function AppShellMaterialPlane(
     translucentColor: string;
     style: StyleProp<ViewStyle>;
     testID?: string;
+    themeSurface?: GlassSurfaceProps['themeSurface'];
     pointerEvents?: 'none';
     nested?: boolean;
     children?: React.ReactNode;
@@ -42,6 +43,7 @@ export function AppShellMaterialPlane(
       >
         <GlassSurface
           plane
+          themeSurface={props.themeSurface}
           noCoat={inheritsContent}
           atmosphereCoat={atmosphereCoat}
           surfaceGroup={props.group}
@@ -58,6 +60,7 @@ export function AppShellMaterialPlane(
   return (
     <GlassSurface
       plane
+      themeSurface={props.themeSurface}
       noCoat={inheritsContent}
       atmosphereCoat={atmosphereCoat}
       testID={props.testID}
