@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DeploymentPrepareInputV1Schema, deriveDeploymentPrepareSessionSpawnInputV1, buildDeploymentPreparationBriefV1 } from './deploymentPreparationV1.js';
 import { SessionSpawnNewActionInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1 } from './deploymentValidationV1.js';
 
 const source = {
   projectSourceId: 'source', sourceRevision: 1,
@@ -19,6 +20,7 @@ describe('Prepare reviewed Session and import references', () => {
       modelSelection: { v: 1, ref: { agentTargetKey: 'codex', providerConnectionId: null, modelId: 'reviewed-model' }, updatedAt: 0 },
     } });
     const child = deriveDeploymentPrepareSessionSpawnInputV1(input);
+    expect(buildDeploymentPreparationBriefV1(input).split(DEPLOYMENT_VALIDATION_RULES_V1)).toHaveLength(2);
     expect(SessionSpawnNewActionInputV2Schema.parse(child)).toEqual({ ...input.sessionDraft,
       organizationPlacement: { sectionId: 'folder', tagIds: ['tag'] },
       initialInput: { text: buildDeploymentPreparationBriefV1(input) } });

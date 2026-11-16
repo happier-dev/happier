@@ -7,9 +7,13 @@ import { ScmWorkingSnapshotSchema } from '../../../scm/workingSnapshot.js';
 import { createScmCapabilities } from '../../../scm/capabilities.js';
 import { ProjectStarterCreateOutputV1Schema } from '../../../projects/starters/createV1.js';
 import { RegistryStarterV1Schema } from '../../../registries/registryStarterV1.js';
+import { renderDeployPlanBriefV1 } from '../../../deployments/suggestions/deploySuggestionsV1.js';
 
 const input = { serverId: 'home', machineId: 'machine', requestKey: 'starter-1', starterId: 'static-website',
-  description: '\nBuild a bakery website.\nKeep this first message unchanged.\n', destinationParentPath: '/projects', destinationDirectoryName: 'bakery',
+  description: renderDeployPlanBriefV1('\nBuild a bakery website.\nKeep this first message unchanged.\n', {
+    source: { kind: 'starter', starterId: 'static-website' }, targetId: 'own', whatToBuild: 'A bakery website',
+    stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [],
+  }), destinationParentPath: '/projects', destinationDirectoryName: 'bakery',
   repository: { owner: 'alice', name: 'bakery' } };
 const starter = RegistryStarterV1Schema.parse({ repository: 'https://github.com/mdn/beginner-html-site-styled', title: 'Static website', description: 'A small HTML and CSS website starter.', tags: ['website'], buildGoal: 'Build a website.' });
 const starterSelector = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -96,8 +100,9 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
       return publishFailure ? { success: false, errorCode: 'COMMAND_FAILED', error: 'Push failed', repository: hostedRepository }
         : { success: true, pushed: true, remote: { name: 'origin' }, repository: hostedRepository };
     },
-    projectSourcesCreate: async value => sourceFailure ? { ok: false, error: 'source_conflict' } : ({ ok: true, canManage: true, source: { name: value.name, repository: value.repository, defaultRef: value.defaultRef, id: 'source', revision: 1,
-      audience: [], createdByAccountId: 'alice' } }),
+    projectSourcesCreate: async value => { calls.push({ actionId: 'projects.sources.create', input: value });
+      return sourceFailure ? { ok: false, error: 'source_conflict' } : ({ ok: true, canManage: true, source: { name: value.name, repository: value.repository, defaultRef: value.defaultRef, id: 'source', revision: 1,
+      audience: [], createdByAccountId: 'alice' } }); },
     projectsOpen: async value => { calls.push({ actionId: 'projects.open', input: value }); return ({ kind: 'opened', workspace: { serverId: 'home', machineId: 'machine',
       workspaceId: 'workspace', rootPath: '/projects/bakery' }, directory: '/projects/bakery', setup: 'notRequired', facts: { projectKey: 'project' } }); },
   });
@@ -190,6 +195,12 @@ it.each(['source', 'project'] as const)('resumes the exact created repository an
   let shouldFail = true;
   const scmCalls: string[] = [];
   const sourceWrites: unknown[] = [];
+    // F6: one creation publishes one repository and one Source, then hands off;
+    // validation and Production are later effects, never part of create.
+    expect(calls.filter(call => call.actionId === 'scm.hostingRepository.publish')).toHaveLength(1);
+    expect(calls.filter(call => call.actionId === 'projects.sources.create')).toHaveLength(1);
+    expect(calls.filter(call => call.actionId === 'projects.open')).toHaveLength(2);
+    expect(calls.some(call => call.actionId.startsWith('deployments.'))).toBe(false);
   const sourceReads: unknown[] = [];
   const opened: unknown[] = [];
   const executor = createActionExecutor({

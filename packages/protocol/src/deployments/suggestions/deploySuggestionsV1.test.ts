@@ -1,5 +1,7 @@
 import { it, expect } from 'vitest';
 import { DeploySuggestionCatalogV1Schema, DeploySuggestionInputV1Schema, validateDeploySuggestionV1, renderDeployPlanBriefV1 } from './deploySuggestionsV1.js';
+import type { DeploySuggestionRecommendationV1 } from './deploySuggestionsV1.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../deploymentValidationV1.js';
 const catalog = DeploySuggestionCatalogV1Schema.parse({
     starters: [{ id: 'static', title: 'Static', deploy: { framework: 'html', output: 'static' } }],
     apps: [{ id: 'analytics', title: 'Analytics' }],
@@ -10,7 +12,7 @@ const catalog = DeploySuggestionCatalogV1Schema.parse({
     ], machines: [], stores: [],
 });
 const recommendation = { source: { kind: 'starter', starterId: 'static' }, targetId: 'pages',
-    whatToBuild: 'A bakery website', stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [] };
+    whatToBuild: 'A bakery website', stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [] } satisfies DeploySuggestionRecommendationV1;
 it('passes valid recommendations unchanged, drops unknown ids, incompatible pairs, price fields and missing fields', () => {
     const result = validateDeploySuggestionV1({ recommendations: [recommendation,
         { ...recommendation, targetId: 'invented' }, { ...recommendation, targetId: 'workers' },
@@ -33,8 +35,19 @@ it('rejects variable values before a description reaches a run', () => {
     expect(DeploySuggestionInputV1Schema.safeParse(input).success).toBe(true);
     expect(DeploySuggestionInputV1Schema.safeParse({ ...input, variables: [{ key: 'API_KEY', secret: true, value: 'secret' }] }).success).toBe(false);
 });
-it('renders the original description byte for byte in U1', () => {
-    expect(renderDeployPlanBriefV1('  Bakery\n\n', recommendation)).toBe('  Bakery\n\n');
+it.each(['starter', 'scratch'] as const)('preserves description bytes and carries the %s plan into the build Session', (kind) => {
+    const description = '  Bäckerei 🥐\r\n\n';
+    const plan = { ...recommendation, source: kind === 'starter' ? recommendation.source : { kind },
+        data: { kind: 'store', storeId: 'db', engine: 'postgres' }, variables: [{ key: 'DATABASE_URL', secret: true }] } satisfies DeploySuggestionRecommendationV1;
+    const brief = renderDeployPlanBriefV1(description, plan);
+    expect(brief.startsWith(description)).toBe(true);
+    expect(brief.slice(description.length)).toContain(JSON.stringify(plan));
+    expect(brief).toContain('projects.script.run');
+    expect(brief).toContain('deployments.health.current');
+    expect(brief).toContain('Do not provision, bind secrets, merge, or deploy Production.');
+    expect(brief.split(DEPLOYMENT_VALIDATION_RULES_V1)).toHaveLength(2);
+    const repository = { providerKind: 'github' as const, owner: 'alice', name: 'bakery', visibility: 'private' as const };
+    expect(renderDeployPlanBriefV1(description, plan, repository)).toContain(JSON.stringify(repository));
 });
 it('routes catalog apps only to a declared Compose host', () => {
     const app = { ...recommendation, source: { kind: 'catalogApp', appId: 'analytics' }, targetId: 'own' };

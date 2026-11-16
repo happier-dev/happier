@@ -5,10 +5,14 @@ import type { ReadOnlySkillProvenanceV1 } from './skillLibraryItemV1.js';
 import type { FeatureId } from '../../../features/catalog.js';
 import { resolveReachV1, type ReachContextV1, type ReachDecisionV1 } from '../../../reach/resolveReachV1.js';
 import type { ReachRulesV1 } from '../../../reach/reachRuleV1.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../../../deployments/deploymentValidationV1.js';
 const DEPLOY_GUIDE_V1 = `---
 name: deploy
 description: Prepare and publish deployments, verify receipts and health, or diagnose a failed deployment in Happier
 ---
+
+For a new app idea, read \`references/create-app.md\` on demand with \`skills_read\`.
+It covers setup suggestions and the build → preview → health loop in a Session.
 
 Use Happier's Action discovery tools to read the current input schema before
 executing an Action. Search results are choices, not a deployment recipe. Follow
@@ -83,6 +87,33 @@ Never read a secret just to paste it into an Action, transcript, diagnostic
 summary or command. Share only non-secret identifiers, statuses and redacted
 failure evidence. If a required secret reference is missing, ask the person to
 link it through the appropriate Happier control, then resume preparation.
+`;
+const CREATE_APP_GUIDE_V1 = `# Create an app in a Session
+
+Keep the person's description unchanged. Discover the current schemas, then call
+\`deployments.suggestions.catalog\` for the current Home. Use only its declared
+starters, scratch source, targets, plans, stores, Machines and publish-capable
+forges; never invent identifiers or prices. Ask necessary clarifying questions
+through the agent's native ask-user-question tool. Variable and secret names
+are enough: never put their values in the suggestion or conversation.
+
+Call \`deployments.suggestions.check\` with the proposed setup and the catalog
+snapshot. Its accepted typed result renders the same setup cards as the dialog.
+Let the person choose Use this setup. Starter and scratch setups create the
+repository, Project and Source through \`projects.starters.create\`, then open
+the ordinary Session with the person's description and reviewed plan. A catalog
+app is a pure deploy and continues to Where it runs without a build Session.
+
+In the build Session, inspect repository instructions and existing files, then
+build or customize the selected setup. Follow its target, data, named variables
+and selected forge. Keep credentials out of source, transcripts and logs.
+
+${DEPLOYMENT_VALIDATION_RULES_V1}
+
+Return the actual preview Environment id, target-link id, receipt/head and preview
+URL with observed health, including unavailable or failed checks. The person
+reviews the preview and performs Deploy Production through ordinary review.
+Never deploy Production on the person's behalf as part of this build loop.
 `;
 const WORKFLOWS_GUIDE_V1 = `---
 name: workflows
@@ -207,7 +238,10 @@ export const FIRST_PARTY_SKILLS_V1: readonly FirstPartySkillV1[] = [{
   skillId: 'happier:deploy', name: 'deploy', requiresFeature: 'deployments',
   description: 'Prepare and publish deployments, verify receipts and health, or diagnose a failed deployment in Happier',
   provenance: { kind: 'first_party' },
-  files: [{ path: 'SKILL.md', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode(DEPLOY_GUIDE_V1), 'base64') }],
+  files: [
+    { path: 'SKILL.md', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode(DEPLOY_GUIDE_V1), 'base64') },
+    { path: 'references/create-app.md', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode(CREATE_APP_GUIDE_V1), 'base64') },
+  ],
 }, {
   skillId: 'happier:workflows', name: 'workflows', requiresFeature: 'workflows',
   description: 'Create or edit user Workflows, run a one-off Workflow, configure triggers and placement, or diagnose and repair a failed Run in Happier',

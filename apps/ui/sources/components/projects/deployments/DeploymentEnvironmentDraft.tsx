@@ -123,6 +123,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     props: Readonly<{
       lifetime: ServerAccountScopeLifetime | null;
       sourceId: string | null;
+      /** The build preview explicitly selected by the entry point, for Review only. */
+      previewEnvironmentId?: string | null;
       projectChoice?: DeploymentProjectChoiceModel;
       phone: boolean;
       actions: Pick<Actions, 'prepareCreate' | 'inspectPlatformTarget' | 'link'> | null;

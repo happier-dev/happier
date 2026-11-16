@@ -122,6 +122,8 @@ export type NewAppScreenProps = Partial<
     machine?: QualifiedMachineV1 | null;
     /** A Project's Deploy an app: that Project's code starts chosen as Your code. */
     projectSourceId?: string | null;
+    /** Review the build preview named by a Deploy to Production entry point. */
+    previewEnvironmentId?: string | null;
     /** An empty state's "Describe your app": the dialog opens on the describe step (journey-deploy S1). */
     startOn?: 'describe' | null;
   }>;
@@ -842,6 +844,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     );
   } else if (step === 'auto') {
     const recommending = auto.view.kind === 'recommendations';
+          previewEnvironmentId={deploySource.kind === 'repository' && deploySource.projectSourceId === props.projectSourceId
+            ? props.previewEnvironmentId : null}
     body = (
       <>
         {recommending

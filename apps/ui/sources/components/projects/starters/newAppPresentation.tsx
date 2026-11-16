@@ -14,13 +14,13 @@ const LazyNewAppScreen = retryableLazy(async () => {
 });
 
 /** What the entrance already knows: a Project's Deploy an app opens with that Project's code chosen as Your code. */
-export type NewAppContext = Readonly<{ projectSourceId?: string | null; startOn?: 'describe' | null }>;
+export type NewAppContext = Readonly<{ projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null }>;
 
-function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null; machine?: QualifiedMachineV1 | null; projectSourceId?: string | null; startOn?: 'describe' | null }>) {
+function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null; machine?: QualifiedMachineV1 | null; projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null }>) {
   return (
     <React.Suspense fallback={<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivitySpinner /></View>}>
       <LazyNewAppScreen onClose={props.onClose} setChrome={props.setChrome} onClone={props.onClone} starterId={props.starterId} machine={props.machine}
-        projectSourceId={props.projectSourceId} startOn={props.startOn} />
+        projectSourceId={props.projectSourceId} previewEnvironmentId={props.previewEnvironmentId} startOn={props.startOn} />
     </React.Suspense>
   );
 }
@@ -34,7 +34,7 @@ export function useOpenNewApp(onClone?: (() => void) | null): (starterId?: strin
   return React.useCallback((starterId?: string | null, machine?: QualifiedMachineV1 | null, context?: NewAppContext) => {
     Modal.show({
       component: NewAppDialog,
-      props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, startOn: context?.startOn ?? null },
+      props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, previewEnvironmentId: context?.previewEnvironmentId ?? null, startOn: context?.startOn ?? null },
       // The draft is the person's writing: a stray click outside never throws it away.
       closeOnBackdrop: false,
       chrome: {
