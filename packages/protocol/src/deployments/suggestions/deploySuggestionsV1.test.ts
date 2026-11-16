@@ -19,6 +19,15 @@ it('passes valid recommendations unchanged, drops unknown ids, incompatible pair
     expect(result.recommendations).toEqual([recommendation]);
     expect(result.dropped.map(row => row.index)).toEqual([1, 2, 3, 4, 5]);
 });
+it('drops numeric CAD and dollar-word prices while preserving technical version text', () => {
+    const technical = { ...recommendation, whatToBuild: 'A CAD 3D viewer with CSS 3 and React 20' };
+    const result = validateDeploySuggestionV1({ recommendations: [technical,
+        { ...recommendation, whatToBuild: 'A bakery website for CAD 20 per month' },
+        { ...recommendation, whatToBuild: 'A bakery website for 20 dollars per month' }], questions: null }, catalog);
+    expect(result).toEqual({ recommendations: [technical], dropped: [
+        { index: 1, reason: 'invalid_recommendation' }, { index: 2, reason: 'invalid_recommendation' },
+    ], questions: null });
+});
 it('rejects variable values before a description reaches a run', () => {
     const input = { description: 'Bakery', catalog, variables: [{ key: 'API_KEY', secret: true }] };
     expect(DeploySuggestionInputV1Schema.safeParse(input).success).toBe(true);

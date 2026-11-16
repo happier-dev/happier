@@ -57,7 +57,7 @@ export type DeploySuggestionCheckResultV1 = z.infer<typeof DeploySuggestionCheck
 
 // Monetary amounts belong to declared provider facts, including when model prose embeds them.
 function containsPriceText(value: unknown): boolean {
-    if (typeof value === 'string') return /\p{Sc}\s*\d|\d\s*\p{Sc}|\b(?:USD|EUR|GBP)\s*\d|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP)\b/iu.test(value);
+    if (typeof value === 'string') return /\p{Sc}\s*\d|\d\s*\p{Sc}|\b(?:USD|EUR|GBP|CAD)\s*\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|CAD|dollars?)\b/iu.test(value);
     if (Array.isArray(value)) return value.some(containsPriceText);
     return value !== null && typeof value === 'object' && Object.values(value).some(containsPriceText);
 }
