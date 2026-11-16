@@ -34,8 +34,7 @@ import {
     PluginProjectionV2Schema,
     PluginProjectedActionV2Schema,
     type PluginProjectedActionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import {
-    isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import {
     normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
 import {
@@ -1271,7 +1270,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             listContributedActionDefinitions: () => [projectedActionToDefinition(
                 machineUiProjection.actionsById[`${identity.pluginId}/${identity.localId}`]!, machineUiProjection)],
-            isActionApprovalRequired: () => false,
+
             resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique',
                 address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } }),
             invokeContributedAction: request => {
@@ -3163,7 +3162,7 @@ describe('Account Action placement through the executable dispatcher', () => {
             deleteRecord: async () => { throw new Error('Unexpected Profile deletion'); },
         });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, actionsSettings, context),
+            readActionsSettings: () => actionsSettings,
             profileActionExecute: async (request, context) => {
                 contexts.push(context);
                 return createProfileActionExecuteV1({ operations })(request, context);
@@ -3832,7 +3831,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             listContributedActionDefinitions: () => createPort('plugin').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
-            isActionApprovalRequired: () => false,
+
             resolveSessionReference: async ({ sessionId }) => {
                 resolutions++;
                 return allowSession ? { kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } }
@@ -3972,7 +3971,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             listContributedActionDefinitions: () => createPort('plugin').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
-            isActionApprovalRequired: () => false,
+
             resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } }),
             invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
                 execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
@@ -4810,7 +4809,7 @@ describe('client Action declared SessionTarget admission', () => {
             sessionList: async ({ query }) => markSessionListQueryResultV1({ sessions: ['worker-a', 'worker-b'].map(id => ({ id,
                 active: false, presence: 'offline', updatedAt: 1, manager: { sessionId: query?.underSessionId } })),
                 nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }),
-            isActionApprovalRequired: () => false,
+
             invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
                 execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
             }),
@@ -4887,14 +4886,17 @@ describe('client Action declared SessionTarget admission', () => {
     it.each([{ ask: false, foreignHome: false, compose: false, health: false }, { ask: true, foreignHome: false, compose: false, health: false },
         { ask: false, foreignHome: true, compose: false, health: false }, { ask: false, foreignHome: false, compose: true, health: false },
         { ask: false, foreignHome: false, compose: true, health: true },
-        ...(['owner', 'participant', 'nonparticipant', 'otherAccount', 'unissued', 'wrongCaller', 'crossHomeConstrained', 'sameHomeConstrained'] as const).map(picked => ({
+        ...(['owner', 'participant', 'nonparticipant', 'otherAccount', 'unissued', 'wrongCaller', 'crossHomeConstrained', 'sameHomeConstrained',
+            'recent', 'recentFabricated', 'recentWrongCaller', 'recentOtherLifetime', 'recentUnqualified'] as const).map(picked => ({
             ask: false, foreignHome: false, compose: false, health: false, picked,
         }))])(
         'runs the actual configured handoff from an external plugin with Ask=$ask and foreign Home=$foreignHome and compose=$compose and health=$health and picked=$picked', async scenario => {
         const { ask, foreignHome, compose, health } = scenario;
         const picked = 'picked' in scenario ? scenario.picked : undefined;
-        const deniedSelection = picked === 'nonparticipant' || picked === 'otherAccount' || picked === 'unissued' || picked === 'wrongCaller' || picked === 'crossHomeConstrained';
-        const expectConfirmation = ask || Boolean(picked && !deniedSelection);
+        const recent = picked?.startsWith('recent') === true;
+        const deniedSelection = picked === 'nonparticipant' || picked === 'otherAccount' || picked === 'unissued' || picked === 'wrongCaller' || picked === 'crossHomeConstrained'
+            || picked === 'recentFabricated' || picked === 'recentWrongCaller' || picked === 'recentOtherLifetime' || picked === 'recentUnqualified';
+        const expectConfirmation = ask || Boolean(picked && !deniedSelection && !recent);
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { activate: activateTriageAccount } = await import('../../../../../../packages/plugins/triage/src/accountRuntime');
         const { resolveTriageActionInstructionV1 } = await import('../../../../../../packages/plugins/triage/src/sessions/actionResolution');
@@ -5032,6 +5034,9 @@ describe('client Action declared SessionTarget admission', () => {
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
             projectsList: args => listProjectsForActions(args, projectRows),
+            sessionList: async () => ({ sessions: [{ id: picked === 'recentFabricated' ? 'another-session' : 'reviewed-session',
+                ...(picked === 'recentUnqualified' ? {} : { serverId: targetHome }),
+                active: false, presence: null, updatedAt: 1 }], nextCursor: null, hasNext: false }),
             agentsBackendsList: async () => ({ items: [{ targetKey, label: 'Investigator', enabled: true, agentTarget }] }),
             spawnProfilesList: async () => ({ items: [{ id: 'profile-investigate', name: 'Investigate', preferredAgentTargetKey: targetKey }] }),
             artifactAction: async request => {
@@ -5055,7 +5060,7 @@ describe('client Action declared SessionTarget admission', () => {
             },
             readSessionManager: async () => { resolutions += 1; return { kind: 'manager',
                 address: { serverId: targetHome, sessionId: manager } }; },
-            isActionApprovalRequired: () => false,
+
             sessionSendMessage: async request => { sent.push(request); return { status: 'accepted', localId: 'configured-handoff-input' }; },
             invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
                 execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
@@ -5077,8 +5082,9 @@ describe('client Action declared SessionTarget admission', () => {
             const caller = mountedCallerBinding({ pluginId: 'happier.scm.forge.github', contributionLocalId: 'releases' });
             const surface = { ...surfaceContext(caller.pluginId), contributionId: caller.contributionLocalId,
                 surfaceId: `surfacePlacement:${caller.pluginId}:${caller.contributionLocalId}` };
-            const api = createPluginSurfaceActionHostApi({ surfaceContext: surface, callerBinding: caller,
-                callerSourceCustody: TARGET_SOURCE_CUSTODY, clientAction: {}, actionAccountLifetime: accountLifetime,
+            const createMountedApi = (binding = caller, lifetime = accountLifetime) => createPluginSurfaceActionHostApi({
+                surfaceContext: { ...surface, pluginId: binding.pluginId, contributionId: binding.contributionLocalId }, callerBinding: binding,
+                callerSourceCustody: TARGET_SOURCE_CUSTODY, clientAction: {}, actionAccountLifetime: lifetime,
                 resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
                 hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
                     serverId: picked === 'crossHomeConstrained' ? 'source-home' : accountLifetime.scope.serverId,
@@ -5087,7 +5093,17 @@ describe('client Action declared SessionTarget admission', () => {
                     authority: 'present_user', actionCaller: { kind: 'host' },
                 } },
             });
-            if (picked && picked !== 'unissued') {
+            const api = createMountedApi();
+            if (recent) {
+                // The recent menu receives these rows through the public host
+                // Action, then returns their tuple without opening a modal.
+                const listCaller = picked === 'recentWrongCaller' ? mountedCallerBinding() : caller;
+                const listApi = createMountedApi(listCaller, picked === 'recentOtherLifetime' ? { ...accountLifetime } : accountLifetime);
+                expect(await listApi.handleRequest(executeActionRequest({ action: 'session.list',
+                    input: { view: 'summary', resumableOnly: true } }))).toMatchObject({ sessions: [{
+                    id: picked === 'recentFabricated' ? 'another-session' : 'reviewed-session',
+                }] });
+            } else if (picked && picked !== 'unissued') {
                 const { createPluginActionInputSelector } = await import('./pluginActionInputSelectionHostApi');
                 const { Modal } = await import('@/modal');
                 const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
@@ -5127,6 +5143,7 @@ describe('client Action declared SessionTarget admission', () => {
             expect(confirmations).toBe(expectConfirmation ? 1 : 0);
             if (deniedSelection) {
                 expect(result).toMatchObject({ code: expect.stringMatching(/invalid_payload|unavailable/) });
+                if (recent) expect(result).toMatchObject({ code: 'invalid_payload', diagnostics: ['session_address_unsupported'] });
                 if (picked === 'crossHomeConstrained') expect(result).toMatchObject({ diagnostics: ['action_scope_restricted'] });
                 expect(sent).toEqual([]);
             } else if (compose) {
@@ -5153,6 +5170,7 @@ describe('client Action declared SessionTarget admission', () => {
                     result: { status: 'accepted', localId: 'configured-handoff-input' } } });
                 expect(sent).toHaveLength(1);
                 expect(sent[0]).toMatchObject({ serverId: targetHome, sessionId: 'reviewed-session' });
+                if (recent) expect(newSessionNavigation).not.toHaveBeenCalled();
             }
         } finally {
             nestedActionConfirmation.onShow = null; unregister(); withdrawProjection();
@@ -5202,7 +5220,7 @@ describe('client Action declared SessionTarget admission', () => {
                     manager: { sessionId: query?.underSessionId } })),
                 nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
             }),
-            isActionApprovalRequired: () => false,
+
             invokeContributedAction: request => {
                 invokingCallers.push(request.context.actionCaller);
                 return executeCurrentUiContextContributedAction(request, { execute: executor.execute, context: request.context });
@@ -5342,7 +5360,7 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
     // Only persistence and Home/daemon request boundaries are substituted. The
     // public dispatcher, policy, Artifact transitions and replay remain real.
     const deps = {
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+        readActionsSettings: () => settings,
         homeDomainAction: async (request) => {
             effects.push(request);
             return { status: 'removed', membershipId: 'membership-1' };
@@ -5481,7 +5499,7 @@ describe('plugin-surface action branch selection', () => {
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.() ?? [],
             resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } }),
-            isActionApprovalRequired: () => false,
+
             sessionSendMessage: async request => { sent.push(request); return { status: 'accepted', localId: 'child-input' }; },
             invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
                 execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
@@ -5536,7 +5554,7 @@ describe('plugin-surface action branch selection', () => {
             const effects: unknown[] = [];
             const approvals: ApprovalRequest[] = [];
             const deps = {
-                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+                readActionsSettings: () => settings,
                 // Home transport and Artifact persistence are the system boundaries.
                 homeDomainAction: async (request) => { effects.push(request); return { status: 'removed', membershipId: 'member-1' }; },
                 approvalsCreate: async ({ request }) => { approvals.push(ApprovalRequestV2Schema.parse(request)); return { artifactId: 'child-approval' }; },
@@ -8002,7 +8020,7 @@ describe('plugin-surface action branch selection', () => {
         const settings = normalizeActionsSettingsV1({ v: 1 });
         // Storage, mount currentness and the person's decision are external boundaries.
         const deps = {
-            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+            readActionsSettings: () => settings,
             approvalsCreate: async ({ request }) => {
                 stored = ApprovalRequestV2Schema.parse(request);
                 approvalRequests.push(stored);
@@ -10382,7 +10400,7 @@ describe('external author Doc collaboration through physical SDK carriers', () =
         } });
         const executor = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
             isActionEnabled: () => enabled,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, actionsSettings, context),
+            readActionsSettings: () => actionsSettings,
             artifactAction: createUiArtifactAction(account),
             discussionAction: args => executeDiscussionActionInAccountContext(account, 'available', args),
         })));

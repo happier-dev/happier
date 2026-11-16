@@ -1697,6 +1697,10 @@ retains its Home, visibility and input-access rules. It does not infer repositor
 eligibility from a displayed directory. Reference-only actions retain their
 existing workspace-independent contract. A later workspace change can still
 produce the admission owner's typed refusal; the picker does not authorize Send.
+Recent rows retain the exact Home/Session address returned by the host list.
+The host records those returned addresses through the same Account-lifetime and
+plugin-scoped address owner used by Find; selecting a recent row does not require
+a second picker or a different address form.
 
 An existing Session keeps its admitted Agent. A configured profile's preferred
 Agent applies to new-Session authoring; it does not silently switch or reject

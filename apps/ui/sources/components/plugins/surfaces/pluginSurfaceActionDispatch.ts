@@ -1,5 +1,5 @@
 import { fingerprintPluginAccountActionConfirmation, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
-import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -16,9 +16,9 @@ import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmit
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
-import { readActionSessionTargetField, readActionSessionTargetOperands, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionListActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -840,7 +840,7 @@ function createClientActionUi(
             if (!sessionReader || !hasSessionScope()) throw new PluginError({ code: 'plugin_action_session_read_unavailable' });
             const cancellation = mergeAbortSignals([signal, options?.signal]);
             try {
-                const result = await sessionReader.readSession(sessionId, { signal: cancellation.signal });
+                const result = await sessionReader.readSession(sessionId, { signal: cancellation.signal, includeActivity: options?.includeActivity });
                 const failure = readPluginSurfaceHostApiErrorPayload(result);
                 if (failure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(failure.code, failure.diagnostics, failure.message, failure));
                 assertCurrent();
@@ -2238,7 +2238,22 @@ async function executeHostAction(
         admittedReview: { action: actionId, role: 'actions.execute', surface: 'plugin' },
         execute: (operand, childContext, childActionId) => binding.execute(childActionId, operand, childContext),
     }) : await binding.execute(actionId, input.input, context);
-    if (result.ok) return { ok: true, result: projectNativeJsonValueForTransport(result.result) };
+    if (result.ok) {
+        if (isSessionListActionId(actionId) && input.actionAccountLifetime) {
+            // The host validated these rows before disclosure. Recent menus
+            // retain the same exact-address custody as the native picker.
+            const list = result.result as PublicActionResultById['session.list'];
+            if (!('view' in list)) {
+                for (const row of list.sessions) {
+                    if (typeof row.serverId === 'string' && row.serverId.length > 0) {
+                        registerHostSelectedActionSessionAddressV1(input.actionAccountLifetime, callerPluginId,
+                            { serverId: row.serverId, sessionId: row.id });
+                    }
+                }
+            }
+        }
+        return { ok: true, result: projectNativeJsonValueForTransport(result.result) };
+    }
     return projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error,
         details: result.details as PluginUiJsonValueV1 | undefined, requestId: result.requestId ?? input.actionRequestId });
 }
@@ -2273,7 +2288,7 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
         // Only the actual mounted UI may browse its Account's Sessions. This
         // read scope does not grant human authority or flow into autonomous
         // client Action continuations, Voice, or a stricter inherited corpus.
-        ...(actionId === 'session.list' && caller && !clientCaller && (input.invocationSurface ?? 'ui') === 'ui'
+        ...(isSessionListActionId(actionId) && caller && !clientCaller && (input.invocationSurface ?? 'ui') === 'ui'
             && inheritedSessionListAccess === undefined
             ? { sessionListAccess: 'mounted_ui' as const }
             : {}),
