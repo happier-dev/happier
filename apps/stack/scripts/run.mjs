@@ -578,6 +578,7 @@ async function main() {
   const startupDecision = decideDevStartupTopology({
     serverRequested,
     serverTopology,
+    serverTopologyReason: serverTopologyObservation.reason,
     daemonRequested: startDaemon,
     // Explicit source starts select new code. Transport recovery keeps the
     // selection and adopts only a ping-healthy daemon through its existing owner.

@@ -510,6 +510,7 @@ async function main() {
   const startupDecision = decideDevStartupTopology({
     serverRequested: startServer,
     serverTopology,
+    serverTopologyReason: serverTopologyObservation?.reason,
     daemonRequested: startDaemon,
     daemonRunning: daemonAlreadyRunning,
     expoRequested: startExpo,

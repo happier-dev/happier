@@ -216,3 +216,26 @@ for (const serverTopology of ['foreign', 'inconclusive']) {
     );
   });
 }
+
+test('an inconclusive startup topology names the observation that was inconclusive', async () => {
+  // RU2 #105 on nl3 (2026-11-16 17:19Z) refused with no way to tell which probe failed.
+  const portProbe = await observeDevServerStartupTopology({ serverRequested: true, stackMode: true, serverPort: 45678 }, {
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'inconclusive', reason: 'port-availability-deadline-exceeded' }),
+  });
+  const ownershipProbe = await observeDevServerStartupTopology({ serverRequested: true, stackMode: true, serverPort: 45678 }, {
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'occupied' }),
+    observeRuntimePortOwnedByStackDevProxyImpl: async () => { throw new Error('lsof exited 1'); },
+  });
+  const ambiguousListener = await observeDevServerStartupTopology({ serverRequested: true, stackMode: true, serverPort: 45678 }, {
+    observeTcpPortAvailabilityImpl: async () => ({ status: 'occupied' }),
+    observeRuntimePortOwnedByStackDevProxyImpl: async () => ({ owned: false, proxyPid: null, listenerPid: null }),
+    resolveStackOwnedServerListenPidImpl: async () => 4321,
+  });
+  assert.deepEqual([portProbe.reason, ownershipProbe.reason, ambiguousListener.reason],
+    ['port-availability-deadline-exceeded', 'ownership-observation-failed', 'listener-matches-no-single-role']);
+  assert.throws(
+    () => decideDevStartupTopology({ serverRequested: true, serverTopology: portProbe.topology, serverTopologyReason: portProbe.reason }),
+    (error) => error?.code === 'ESERVERTOPOLOGYINCONCLUSIVE' && error.reason === 'port-availability-deadline-exceeded'
+      && error.message.includes('port-availability-deadline-exceeded'),
+  );
+});

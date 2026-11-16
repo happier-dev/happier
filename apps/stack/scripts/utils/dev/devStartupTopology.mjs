@@ -53,13 +53,13 @@ export async function observeDevServerStartupTopology({
     timeoutMs: DEFAULT_STARTUP_PORT_OBSERVATION_TIMEOUT_MS,
   });
   if (availability?.status === 'free') return Object.freeze({ topology: 'absent', proxyOwned: false, listenerPid: null, availability });
-  if (availability?.status !== 'occupied') return Object.freeze({ topology: 'inconclusive', proxyOwned: false, listenerPid: null, availability });
+  if (availability?.status !== 'occupied') return Object.freeze({ topology: 'inconclusive', reason: availability?.reason ?? 'port-availability-unobserved', proxyOwned: false, listenerPid: null, availability });
   if (!stackMode) {
     if (serverHealthObservation?.ok === true) {
       return Object.freeze({ topology: 'healthy-unowned', proxyOwned: false, listenerPid: null, availability });
     }
     const topology = serverHealthObservation?.status == null ? 'inconclusive' : 'foreign';
-    return Object.freeze({ topology, proxyOwned: false, listenerPid: null, availability });
+    return Object.freeze({ topology, ...(topology === 'inconclusive' ? { reason: 'server-health-unobserved' } : {}), proxyOwned: false, listenerPid: null, availability });
   }
   try {
     const proxyObservation = await observeRuntimePortOwnedByStackDevProxyImpl(ownershipArgs);
@@ -90,9 +90,9 @@ export async function observeDevServerStartupTopology({
         availability,
       });
     }
-    return Object.freeze({ topology: 'inconclusive', proxyOwned: false, proxyPid, listenerPid, availability });
+    return Object.freeze({ topology: 'inconclusive', reason: 'listener-matches-no-single-role', proxyOwned: false, proxyPid, listenerPid, availability });
   } catch {
-    return Object.freeze({ topology: 'inconclusive', proxyOwned: false, listenerPid: null, availability });
+    return Object.freeze({ topology: 'inconclusive', reason: 'ownership-observation-failed', proxyOwned: false, listenerPid: null, availability });
   }
 }
 
@@ -127,6 +127,7 @@ export async function reclaimDevServerStartupOrphan({
 export function decideDevStartupTopology({
   serverRequested,
   serverTopology = 'absent',
+  serverTopologyReason = null,
   daemonRequested,
   daemonRunning,
   expoRequested,
@@ -151,10 +152,11 @@ export function decideDevStartupTopology({
       });
     }
     const error = new Error(
-      `[local] server startup topology is ${serverTopology}; refusing dependency, infrastructure, migration, ` +
-        'ownership-claim, kill, or spawn side effects.',
+      `[local] server startup topology is ${serverTopology}${serverTopologyReason ? ` (${serverTopologyReason})` : ''}; ` +
+        'refusing dependency, infrastructure, migration, ownership-claim, kill, or spawn side effects.',
     );
     error.code = serverTopology === 'foreign' ? 'ESERVERTOPOLOGYFOREIGN' : 'ESERVERTOPOLOGYINCONCLUSIVE';
+    if (serverTopologyReason) error.reason = serverTopologyReason;
     throw error;
   }
   const serverAlreadyOwned = serverTopology === 'exact-owned-direct' || serverTopology === 'exact-owned-proxy';
