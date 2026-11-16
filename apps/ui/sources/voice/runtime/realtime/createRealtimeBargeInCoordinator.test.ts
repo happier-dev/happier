@@ -435,7 +435,7 @@ describe('realtime barge-in through the actual OpenAI producer', () => {
 });
 
 describe('realtime speech through the actual xAI producer', () => {
-  it('never opens a client interruption candidate or creates a competing response for provider-immediate output', async () => {
+  it('stops provider-immediate output on speech without creating a competing client response', async () => {
     const environment = await createXaiVoiceRuntimeEnvironment();
     await environment.installSettings(false);
     const composed = await environment.createRuntime();
@@ -464,13 +464,13 @@ describe('realtime speech through the actual xAI producer', () => {
     emit({ type: 'input_audio_buffer.speech_started' });
     emit({ type: 'input_audio_buffer.speech_stopped' });
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(context.sources[0]!.stop).not.toHaveBeenCalled();
+    expect(context.sources[0]!.stop).toHaveBeenCalledOnce();
     expect(socket.sent.map(serialized => JSON.parse(serialized))).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'response.cancel' }),
     ]));
     expect(socket.sent.map(serialized => JSON.parse(serialized))).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'response.create' }),
     ]));
-    expect(createVoiceConversationRuntimeMachine().getSnapshot()).toMatchObject({ state: 'speaking' });
+    expect(createVoiceConversationRuntimeMachine().getSnapshot()).toMatchObject({ state: 'connected' });
   });
 });
