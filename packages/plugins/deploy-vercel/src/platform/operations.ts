@@ -6,6 +6,7 @@ import type {
   DeploymentTargetRoleFailureV1, DeploymentTargetRoleResultV1,
 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpResponse, HttpService } from '@happier-dev/plugin-sdk/http';
+import { readVercelBuiltInUrls, readVercelDeploymentUrl } from './addresses.js';
 
 const origin = 'https://api.vercel.com';
 export const githubAppGrantUrl = 'https://github.com/apps/vercel/installations/new';
@@ -251,14 +252,10 @@ function observation(response: HttpResponse, context: VercelPlatformContext, pha
     case 'CANCELED': state = 'cancelled'; break;
     default: state = 'outcome_unknown';
   }
-  let url: string | undefined;
-  if (text(value.url)) {
-    try {
-      const parsed = new URL(`https://${value.url}`);
-      if (!parsed.username && !parsed.password && parsed.pathname === '/' && !parsed.search && !parsed.hash) url = parsed.origin;
-    } catch { /* No URL is preferable to publishing malformed provider metadata. */ }
-  }
-  return { v: 1, state, providerDeploymentId: value.id, observedAtMs: context.now(), ...(url ? { urls: [url] } : {}) };
+  const url = readVercelDeploymentUrl(value.url);
+  const builtInUrls = readVercelBuiltInUrls(value);
+  return { v: 1, state, providerDeploymentId: value.id, observedAtMs: context.now(), ...(url ? { urls: [url] } : {}),
+    ...(builtInUrls === undefined ? {} : { builtInUrls }) };
 }
 
 /** One finite exact-id read; the host operation/demand owner decides when to observe. */

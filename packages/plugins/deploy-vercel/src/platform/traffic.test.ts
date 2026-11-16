@@ -87,7 +87,10 @@ it.each(['promote', 'rollback'] as const)('settles %s from the production target
     } });
     const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
     try {
-      await expect(kit.invokeAction(operation, input)).resolves.toMatchObject({ v: 1, state, providerDeploymentId: 'dpl_prior' });
+      const result = await kit.invokeAction(operation, input);
+      expect(result).toMatchObject({ v: 1, state, providerDeploymentId: 'dpl_prior' });
+      if (state === 'succeeded') expect(result).toHaveProperty('builtInUrls', ['https://cor4b-upload-1115.vercel.app']);
+      else expect(result).not.toHaveProperty('builtInUrls');
     } finally { await kit.dispose(); }
   }
 });

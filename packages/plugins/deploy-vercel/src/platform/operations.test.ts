@@ -35,6 +35,27 @@ function boundary(responses: readonly { status?: number; body?: unknown; failure
 }
 
 describe('Vercel internal platform producer', () => {
+  it('reports assigned built-in aliases without treating the unique deployment URL or custom domains as built-in domains', async () => {
+    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', url: 'app-exact.vercel.app',
+      aliasAssigned: true, aliasError: null, alias: ['app.vercel.app', 'app-exact.vercel.app', 'custom.example.test',
+        'app.vercel.app.evil.test', 'person@app.vercel.app', 'app.vercel.app/path'] } }]);
+    const result = await provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, h.context);
+    expect(DeploymentTargetRoleResultV1Schema.parse(result)).toMatchObject({
+      urls: ['https://app-exact.vercel.app'], builtInUrls: ['https://app.vercel.app'] });
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it.each([
+    { aliasAssigned: false, aliasError: null },
+    { aliasAssigned: true, aliasError: { code: 'assignment_failed' } },
+    {},
+  ])('does not claim unconfirmed aliases as built-in domains (%j)', async aliasState => {
+    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', url: 'app-exact.vercel.app',
+      alias: ['app.vercel.app'], ...aliasState } }]);
+    expect(await provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, h.context))
+      .not.toHaveProperty('builtInUrls');
+  });
+
   it.each([
     { status: 401, body: {}, code: 'deployment_access_denied' },
     { status: 200, body: {}, code: 'provider_response_invalid' },

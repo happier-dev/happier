@@ -59,7 +59,9 @@ it.each(['promote', 'rollback'] as const)('changes Worker traffic for %s to the 
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     const path = new URL(request.url).pathname;
-    const result = path.endsWith('/versions') ? { items: [{ id: 'native-version' }] }
+    const result = path.endsWith('/scripts/selected-worker/subdomain') ? { enabled: true }
+      : path.endsWith('/workers/subdomain') ? { subdomain: 'account-name' }
+      : path.endsWith('/versions') ? { items: [{ id: 'native-version' }] }
       : path.endsWith('/builds/builds') ? { builds: { association: { build_uuid: 'prior-native' } } }
         : { id: 'traffic-deployment', strategy: 'percentage', versions: [{ version_id: 'native-version', percentage: 100 }] };
     return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true, result })) };
@@ -67,11 +69,14 @@ it.each(['promote', 'rollback'] as const)('changes Worker traffic for %s to the 
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
   try {
     await expect(kit.invokeAction(`workers-${operation}`, { ...input, providerEnvironment: { kind: 'script', scriptName: 'selected-worker' } }))
-      .resolves.toMatchObject({ state: 'succeeded', providerDeploymentId: 'version:native-version' });
+      .resolves.toMatchObject({ state: 'succeeded', providerDeploymentId: 'version:native-version',
+        builtInUrls: ['https://selected-worker.account-name.workers.dev'] });
     expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([
       ['GET', '/client/v4/accounts/account/workers/scripts/selected-worker/versions'],
       ['GET', '/client/v4/accounts/account/builds/builds'],
       ['POST', '/client/v4/accounts/account/workers/scripts/selected-worker/deployments'],
+      ['GET', '/client/v4/accounts/account/workers/scripts/selected-worker/subdomain'],
+      ['GET', '/client/v4/accounts/account/workers/subdomain'],
     ]);
     expect(new URL(requests[0]!.url).searchParams.get('deployable')).toBe('true');
     expect(JSON.parse(new TextDecoder().decode(requests[2]!.body))).toEqual({ strategy: 'percentage', versions: [{ version_id: 'native-version', percentage: 100 }] });

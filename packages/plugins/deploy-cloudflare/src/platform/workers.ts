@@ -82,7 +82,7 @@ async function observation(value: unknown, input: WorkerObservation, context: Wo
  * https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/
  * https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/
  */
-async function withWorkerAddress(result: DeploymentTargetRoleResultV1, input: WorkerObservation, context: WorkerContext): Promise<DeploymentTargetRoleResultV1> {
+export async function withWorkerAddress(result: DeploymentTargetRoleResultV1, input: WorkerObservation, context: WorkerContext): Promise<DeploymentTargetRoleResultV1> {
   if (input.providerEnvironment.kind !== 'script') return result;
   try {
     const accountId = input.providerIdentity.providerAccountId;
@@ -90,10 +90,11 @@ async function withWorkerAddress(result: DeploymentTargetRoleResultV1, input: Wo
     const route = await request(context, accountId, `/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`, 'observe');
     // A failed address read must not turn proven activation into a failed deployment or claim no address exists.
     if ('code' in route || !isObject(route.value) || typeof route.value.enabled !== 'boolean') return result;
-    if (!route.value.enabled) return { ...result, urls: [] };
+    if (!route.value.enabled) return { ...result, urls: [], builtInUrls: [] };
     const account = await request(context, accountId, '/workers/subdomain', 'observe');
     if ('code' in account || !isObject(account.value) || !text(account.value.subdomain)) return result;
-    return { ...result, urls: [`https://${scriptName}.${account.value.subdomain}.workers.dev`] };
+    const urls = [`https://${scriptName}.${account.value.subdomain}.workers.dev`];
+    return { ...result, urls, builtInUrls: urls };
   } catch (error) {
     if (context.signal.aborted || isPluginError(error)) return result;
     throw error;

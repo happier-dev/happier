@@ -33,7 +33,9 @@ it.each([false, true])('reports only provider-enabled workers.dev addresses (ena
   const h = fixture([{ deployments: [{ versions: [{ version_id: 'exact', percentage: 100 }] }] },
     { enabled, previews_enabled: false }, ...(enabled ? [{ subdomain: 'my-account' }] : [])]);
   const outcome = await entry.observeUploadedWorker({ ...scope, providerDeploymentId: 'version:exact' }, h.context);
-  expect(outcome).toMatchObject({ state: 'succeeded', urls: enabled ? ['https://app.my-account.workers.dev'] : [] });
+  expect(DeploymentTargetRoleResultV1ProtocolSchema.parse(outcome)).toMatchObject({ state: 'succeeded',
+    urls: enabled ? ['https://app.my-account.workers.dev'] : [],
+    builtInUrls: enabled ? ['https://app.my-account.workers.dev'] : [] });
   expect(h.request.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
   expect(h.request).toHaveBeenCalledTimes(enabled ? 3 : 2);
 });

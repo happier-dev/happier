@@ -3,7 +3,7 @@ import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetR
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request, failure, type DeploymentContext } from './deploymentHttp.js';
-import { uploadedWorkerReference, uploadedWorkerVersion, workerVersionHasBuild } from './workers.js';
+import { uploadedWorkerReference, uploadedWorkerVersion, workerVersionHasBuild, withWorkerAddress } from './workers.js';
 import { isUploadedPreviewReference } from './previewDeploy.js';
 import { workersCommon, workersIo, workersResult } from './workersActions.js';
 
@@ -44,7 +44,9 @@ async function changeTraffic(input: DeploymentTargetRollbackInputV1, context: De
   const confirmed = isObject(value) && typeof value.id === 'string' && value.id.length > 0 && value.strategy === 'percentage'
     && Array.isArray(value.versions) && value.versions.length === 1 && isObject(value.versions[0])
     && value.versions[0].version_id === versionId && value.versions[0].percentage === 100;
-  return { v: 1, state: confirmed ? 'succeeded' : 'outcome_unknown', providerDeploymentId, observedAtMs: context.now() };
+  const result: DeploymentTargetRoleResultV1 = { v: 1, state: confirmed ? 'succeeded' : 'outcome_unknown',
+    providerDeploymentId, observedAtMs: context.now() };
+  return confirmed ? withWorkerAddress(result, input, context) : result;
 }
 
 export const workerTrafficActions = {

@@ -9004,6 +9004,16 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 deployment lifecycle results optionally retain `builtInUrls`,
+provider-observed built-in routing addresses separate from deployment-specific
+`urls`. The lifecycle result and receipt content remain closed V1 objects;
+absence means unobserved and an empty array means observed absent. Matching
+Protocol, SDK, plugin declarations, receipt readers and UI source reload together
+under the development direct cut; older strict development readers reject the
+new field. The scoped-clean `../0.2` frontier at
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no deployment target role contract.
+No request, authority, wire epoch, migration, capability or adapter is added.
+
 Unreleased 0.3 Agent Provider requirements add optional `reasoningEffortValues`
 to the closed executable declaration. Omission retains existing Provider-tier
 application; a declared list narrows picker controls and explicit launch

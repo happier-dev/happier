@@ -5081,6 +5081,16 @@ instructions stay in the private Domain Artifact. A controller-signed observatio
 settles the public Domain state without putting the hostname or DNS values in
 server-readable metadata or the root Domain Action result.
 
+Provider lifecycle observations separately retain optional `builtInUrls` in
+unreleased 0.3. Vercel contributes confirmed assigned `*.vercel.app` aliases,
+excluding the unique deployment URL and custom domains; Workers contributes its
+provider-enabled script `workers.dev` route. Preview deployment URLs remain only
+in `urls`. Missing built-in facts mean unobserved, while `[]` records observed
+absence. These read-only facts create no Domain artifact or removal operand.
+Domains consumes the already-opened serving receipt rather than making another
+provider request. Workers traffic changes reuse the same optional address reader
+after native activation; an unavailable address read preserves proven activation.
+
 Cloudflare Pages custom domains apply to Production. An initializing or pending
 provider result leaves the Domain in its warning state and retains the provider's
 CNAME and, when supplied, TXT instructions. Check again reads the provider's domain status without adding or

@@ -2,6 +2,7 @@ import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happi
 import { PluginError, isPluginError, type DeploymentTargetRoleFailureV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRollbackInputV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { vercelEndpoint, vercelRequest, type VercelPlatformContext } from './operations.js';
+import { readVercelBuiltInUrls } from './addresses.js';
 
 type Operation = 'promote' | 'rollback';
 type Selection = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerDeploymentId'>;
@@ -43,7 +44,10 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
   const production = object(project.targets) ? project.targets.production : undefined;
   if (state === 'outcome_unknown' && object(production) && production.id === input.providerDeploymentId
     && (typeof production.aliasAssigned === 'number' || production.aliasAssigned === true) && production.aliasError == null) state = 'succeeded';
-  return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now() };
+  const builtInUrls = state === 'succeeded' && object(production) && production.id === input.providerDeploymentId
+    ? readVercelBuiltInUrls(production) : undefined;
+  return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now(),
+    ...(builtInUrls === undefined ? {} : { builtInUrls }) };
 }
 
 export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
