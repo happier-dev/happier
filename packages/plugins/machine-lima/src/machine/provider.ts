@@ -283,7 +283,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
           if (await inspectLimaInstance({ executor, ...expected })) return { kind: 'rejected' as const, code: 'resource_mismatch' as const };
           // Lima 2.2.1 clone requires a stopped source and refuses an existing
           // destination. Only our clean build can supply this source identity.
-          const cloned = await runLimaCommand({ executor, store: launch.store, interactive: true,
+          const cloned = await runLimaCommand({ executor, store: launch.store, instance: expected.instance, interactive: true,
             args: ['clone', '--tty=false', '--start=false', '--set', `.mounts = ${JSON.stringify(launch.mounts)}`,
               source.resource.instance, expected.instance] });
           if (cloned.exitCode !== 0) throw Object.assign(new Error('native clone failed'), { code: 'lima_clone_failed' });
@@ -357,7 +357,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
         // Lima 2.1 edit.go edits only stopped guests. instance/start.go grows
         // the disk on the subsequent start. A stopped guest stays stopped.
         issued = true;
-        const result = await runLimaCommand({ executor, store: resource.store, interactive: true,
+        const result = await runLimaCommand({ executor, store: resource.store, instance: resource.instance, interactive: true,
           args: ['edit', '--tty=false', ...(size.cpuCores === undefined ? [] : ['--cpus', String(size.cpuCores)]),
             ...(size.memoryBytes === undefined ? [] : ['--memory', String(size.memoryBytes / gib)]),
             ...(size.diskBytes === undefined ? [] : ['--disk', String(size.diskBytes / gib)]), resource.instance] });

@@ -75,14 +75,21 @@ export function decodeLimaInstanceOutput(output, { instance: rawInstance, store 
   return record;
 }
 
-function limaStoreOptions(store) {
-  // Lima derives socket names from LIMA_HOME without expanding relative roots.
-  // Keep retained data in the selected store while native paths stay short.
-  return store === undefined ? {} : { cwd: validateLimaStore(store), env: { LIMA_HOME: '.' } };
+function limaStoreOptions(store, instance) {
+  if (store === undefined) return {};
+  const home = validateLimaStore(store);
+  // Lima 2.2.1 usernet/gvproxy.go parses this endpoint as unix://<endpoint>:
+  // a relative instance becomes the URL host and loses its directory. Keep
+  // absolute endpoints when they fit Lima's osutil UnixPathMax (including NUL),
+  // and retain relative paths for long stores supported by the QEMU driver.
+  const endpoint = instance === undefined ? undefined : path.posix.join(home, instance, 'default_ep.sock');
+  const unixPathMax = process.platform === 'linux' ? 108 : 104;
+  const nativeHome = endpoint !== undefined && Buffer.byteLength(endpoint) < unixPathMax ? home : '.';
+  return { cwd: home, env: { LIMA_HOME: nativeHome } };
 }
 
-export async function runLimaCommand({ executor, store, args, input, interactive = false }) {
-  const options = { ...limaStoreOptions(store), ...(input === undefined ? {} : { input }) };
+export async function runLimaCommand({ executor, store, instance, args, input, interactive = false }) {
+  const options = { ...limaStoreOptions(store, instance), ...(input === undefined ? {} : { input }) };
   const result = await executor[interactive ? 'run' : 'capture']('limactl', args, options);
   return result;
 }
@@ -106,7 +113,7 @@ export async function inspectLimaCapabilities({ executor }) {
 export async function inspectLimaInstance({ executor, instance: rawInstance, store }) {
   const instance = validateLimaInstanceName(rawInstance);
   let result;
-  try { result = await runLimaCommand({ executor, store, args: ['list', '--all-fields', '--format=json', instance] }); }
+  try { result = await runLimaCommand({ executor, store, instance, args: ['list', '--all-fields', '--format=json', instance] }); }
   catch (cause) { throw limaError('LIMA_INSPECT_UNAVAILABLE', `failed to inspect ${instance}`, cause); }
   if (result.exitCode !== 0) {
     // v2.1.0 listAction uses this precise pair only when the supplied name is unmatched.
@@ -136,7 +143,7 @@ export async function changeLimaPower({ executor, instance: rawInstance, store, 
   // deletion. v2.1.0 restartAction only inspects; StopGracefully(isRestart=true)
   // permits a stopped guest, then starts that existing instance without Create.
   const operation = intent === 'start' ? 'restart' : 'stop';
-  const result = await runLimaCommand({ executor, store, interactive: true,
+  const result = await runLimaCommand({ executor, store, instance, interactive: true,
     args: [operation, ...(intent === 'stop' && force ? ['--force'] : []), instance] });
   if (result.exitCode !== 0) throw limaError('LIMA_POWER_UNKNOWN', `native ${intent} did not confirm success`);
   const observed = await getLimaStatus(options);
@@ -155,7 +162,7 @@ export async function createLimaInstance({ executor, instance: rawInstance, stor
   let uncertain = false;
   let creationFailure;
   try {
-    const result = await runLimaCommand({ executor, store, args: createArgs, interactive: true });
+    const result = await runLimaCommand({ executor, store, instance, args: createArgs, interactive: true });
     uncertain = result.exitCode !== 0;
   } catch (cause) { uncertain = true; creationFailure = cause; }
   let observed;
@@ -170,7 +177,7 @@ export async function deleteLimaInstance({ executor, instance: rawInstance, stor
   const options = { executor, instance, store };
   if (!await inspectLimaInstance(options)) return { kind: 'absent' };
   try {
-    const result = await runLimaCommand({ executor, store, interactive: true, args: ['delete', '--force', instance] });
+    const result = await runLimaCommand({ executor, store, instance, interactive: true, args: ['delete', '--force', instance] });
     if (result.exitCode !== 0) return { kind: 'unknown' };
     return await inspectLimaInstance(options) ? { kind: 'unknown' } : { kind: 'absent' };
   } catch { return { kind: 'unknown' }; }
@@ -185,7 +192,7 @@ function limaGuestShellArgs({ instance: rawInstance, argv, workdir }) {
 }
 
 export async function runLimaGuestCommand({ executor, instance, store, argv, input, workdir, interactive = false }) {
-  return runLimaCommand({ executor, store, args: limaGuestShellArgs({ instance, argv, workdir }), input, interactive });
+  return runLimaCommand({ executor, store, instance, args: limaGuestShellArgs({ instance, argv, workdir }), input, interactive });
 }
 
 async function assertLimaGuestRunning({ executor, instance, store }) {
@@ -206,7 +213,7 @@ export async function openLimaGuestChannel({ executor, instance: rawInstance, st
   const instance = validateLimaInstanceName(rawInstance);
   if (typeof executor.channel !== 'function') throw limaError('LIMA_CHANNEL_UNSUPPORTED', 'this Lima executor carries no live channel');
   await assertLimaGuestRunning({ executor, instance, store });
-  return executor.channel('limactl', limaGuestShellArgs({ instance, argv, workdir: '/' }), limaStoreOptions(store));
+  return executor.channel('limactl', limaGuestShellArgs({ instance, argv, workdir: '/' }), limaStoreOptions(store, instance));
 }
 
 export async function putLimaGuestFile({ executor, instance, store, guestPath, bytes, mode = '0600' }) {

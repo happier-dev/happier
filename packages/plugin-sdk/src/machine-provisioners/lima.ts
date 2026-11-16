@@ -13,7 +13,7 @@ export const validateLimaStore: (value: unknown) => string = native.validateLima
 export const parseLimaVersion: (output: unknown) => number[] | null = native.parseLimaVersion;
 export const limaVersionAtLeast: (actual: readonly number[] | null, minimum?: readonly number[]) => boolean = native.limaVersionAtLeast;
 export const limaInstanceField: (instance: LimaInstance | null, lower: string, upper?: string) => unknown = native.limaInstanceField;
-export const runLimaCommand: (options: { executor: LimaExecutor; store?: string; args: readonly string[]; input?: string | Uint8Array; interactive?: boolean }) => Promise<LimaCommandResult> = native.runLimaCommand;
+export const runLimaCommand: typeof native.runLimaCommand = native.runLimaCommand;
 export const inspectLimaCapabilities: (options: { executor: LimaExecutor }) => Promise<{ hostOS: string; hostArch: string; vmTypes: readonly string[];
   limaHome?: string; defaultTemplate?: Readonly<Record<string, unknown>> }> = native.inspectLimaCapabilities;
 export const inspectLimaInstance: (options: LimaInstanceOptions) => Promise<LimaInstance | null> = native.inspectLimaInstance;

@@ -9,7 +9,7 @@ import { changeLimaPower, execLimaGuest, inspectLimaInstance, openLimaGuestChann
 import { createLimaSdkExecutor } from './nativeExecutor.js';
 
 const executable: ManagedExecutableRef = { kind: 'managedDependency', id: { pluginId: 'happier.machine.lima', localId: 'lima-cli' } };
-const testDirectory = mkdtempSync(join(tmpdir(), 'happier-lima-native-test-'));
+const testDirectory = mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'hpl-'));
 afterAll(() => rmSync(testDirectory, { recursive: true, force: true }));
 const identity = { instance: 'happier-test', store: join(testDirectory, 'store') };
 const native = { name: identity.instance, dir: `${identity.store}/${identity.instance}`, status: 'Running' };
@@ -21,6 +21,18 @@ function success(stdout = new Uint8Array()): PluginProcessResult {
 
 // The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
 describe.skipIf(process.platform === 'win32')('public Lima process transport', () => {
+  it('keeps the retained instance in the VZ usernet Unix URL for a short store', async () => {
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      // Lima 2.2.1 usernet passes this endpoint through transport.Listen's URL parser.
+      const endpoint = join(request.env!.LIMA_HOME!, identity.instance, 'default_ep.sock');
+      const socketPath = decodeURIComponent(new URL(`unix://${endpoint}`).pathname);
+      expect(socketPath).toBe(join(identity.store, identity.instance, 'default_ep.sock'));
+      return success(new TextEncoder().encode(JSON.stringify(native)));
+    } };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(inspectLimaInstance({ executor, ...identity })).resolves.toMatchObject(native);
+  });
+
   it('opens the stream channel as one interactive guest shell process carrying the invocation channel', async () => {
     const spawned: unknown[] = [];
     const handle = { kind: 'channel-handle' };
@@ -34,7 +46,7 @@ describe.skipIf(process.platform === 'win32')('public Lima process transport', (
     const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
     await expect(openLimaGuestChannel({ executor, ...identity, argv: ['hshim', 'attach', '--socket', '/s'] })).resolves.toBe(handle);
     expect(spawned).toEqual([{ args: ['shell', '--workdir=/', identity.instance, '--', 'hshim', 'attach', '--socket', '/s'],
-      cwd: identity.store, env: { LIMA_HOME: '.' }, outputDelivery: 'invocation' }]);
+      cwd: identity.store, env: { LIMA_HOME: identity.store }, outputDelivery: 'invocation' }]);
   });
 
   it('opens no channel to a guest that is not running', async () => {
@@ -61,6 +73,20 @@ describe.skipIf(process.platform === 'win32')('public Lima process transport', (
     const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
     await expect(inspectLimaInstance({ executor, ...identity, store }))
       .resolves.toMatchObject({ name: identity.instance, dir: `${store}/${identity.instance}` });
+  });
+
+  it.each([0, 1])('preserves the native byte limit including NUL (overflow=%s)', async overflow => {
+    const capacity = process.platform === 'linux' ? 108 : 104;
+    const targetBytes = capacity - 1 + overflow;
+    const baseBytes = Buffer.byteLength(join(testDirectory, identity.instance, 'default_ep.sock'));
+    const store = join(testDirectory, `é${'a'.repeat(targetBytes - baseBytes - 3)}`);
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      expect(Buffer.byteLength(join(store, identity.instance, 'default_ep.sock'))).toBe(targetBytes);
+      expect(request.env?.LIMA_HOME).toBe(overflow ? '.' : store);
+      return success(new TextEncoder().encode(JSON.stringify({ ...native, dir: join(store, identity.instance) })));
+    } };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(inspectLimaInstance({ executor, ...identity, store })).resolves.toMatchObject({ dir: join(store, identity.instance) });
   });
 
   it.each(['../other/happier-test', '/another-store/happier-test'])('refuses a relative observation escaping the selected store: %s', async dir => {
@@ -120,7 +146,7 @@ describe.skipIf(process.platform === 'win32')('public Lima process transport', (
     expect(await putLimaGuestFile({ executor, ...identity, guestPath: '/tmp/private-enrollment', bytes: payload })).toEqual({ kind: 'written' });
     const shell = requests.find((request) => request.args?.[0] === 'shell');
     expect(shell?.stdin).toEqual(payload);
-    expect(shell?.env).toEqual({ LIMA_HOME: '.' });
+    expect(shell?.env).toEqual({ LIMA_HOME: identity.store });
     expect(shell?.cwd).toBe(identity.store);
     expect(shell?.args?.slice(-2)).toEqual(['/tmp/private-enrollment', '0600']);
     expect(requests.filter((request) => request.stdin !== undefined)).toEqual([shell]);

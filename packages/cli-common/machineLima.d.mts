@@ -14,7 +14,7 @@ export function parseLimaVersion(output: unknown): number[] | null;
 export function limaVersionAtLeast(actual: readonly number[] | null, minimum?: readonly number[]): boolean;
 export function limaInstanceField(instance: LimaInstance | null, lower: string, upper?: string): unknown;
 export function decodeLimaInstanceOutput(output: unknown, identity: LimaIdentity): LimaInstance | null;
-export function runLimaCommand(options: { executor: LimaExecutor; store?: string; args: readonly string[]; input?: string | Uint8Array; interactive?: boolean }): Promise<LimaCommandResult>;
+export function runLimaCommand(options: { executor: LimaExecutor; store?: string; instance?: string; args: readonly string[]; input?: string | Uint8Array; interactive?: boolean }): Promise<LimaCommandResult>;
 export function inspectLimaCapabilities(options: { executor: LimaExecutor }): Promise<{ hostOS: string; hostArch: string; vmTypes: readonly string[];
   limaHome?: string; defaultTemplate?: Readonly<Record<string, unknown>> }>;
 export function inspectLimaInstance(options: LimaInstanceOptions): Promise<LimaInstance | null>;

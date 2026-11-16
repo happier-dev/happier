@@ -377,7 +377,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     const effects: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])];
-      expect(request.env).toEqual(args[0] === 'info' || args[0] === '--version' ? undefined : { LIMA_HOME: '.' });
+      expect(request.env).toEqual(args[0] === 'info' || args[0] === '--version' ? undefined : { LIMA_HOME: resource.store });
       expect(request.cwd).toBe(args[0] === 'info' || args[0] === '--version' ? undefined : resource.store);
       if (args[0] === '--version') return processResult(new TextEncoder().encode('limactl version 2.1.0'));
       if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })));
@@ -486,7 +486,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     const effects: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])];
-      expect(request.env).toEqual({ LIMA_HOME: '.' });
+      expect(request.env).toEqual({ LIMA_HOME: resource.store });
       expect(request.cwd).toBe(resource.store);
       if (args[0] !== 'list') effects.push(args);
       if (args[0] === 'stop') status = 'Stopped';
@@ -592,7 +592,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     });
     const shell = requests.find((request) => request.args?.[0] === 'shell');
     expect(shell?.stdin && Array.from(shell.stdin)).toEqual(Array.from(input));
-    expect(shell?.env).toEqual({ LIMA_HOME: '.' });
+    expect(shell?.env).toEqual({ LIMA_HOME: resource.store });
     expect(shell?.cwd).toBe(resource.store);
     expect(requests.filter((request) => request.stdin !== undefined)).toEqual([shell]);
   });
