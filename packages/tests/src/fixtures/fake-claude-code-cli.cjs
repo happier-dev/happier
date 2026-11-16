@@ -28,17 +28,20 @@ const {
 } = require('./fake-claude-code-cli.helpers.cjs');
 
 const argv = process.argv.slice(2);
-// Model the vendor's installed-but-signed-out native CLI independently of the
-// connected profile Happier selects for a particular launch.
-if (process.env.HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT === '1') {
-  if (argv.includes('--version')) {
-    process.stdout.write('2.1.292 (Claude Code)\n');
-    process.exit(0);
-  }
-  if (argv[0] === 'auth' && argv[1] === 'status') {
-    process.stdout.write(JSON.stringify({ loggedIn: false }));
-    process.exit(1);
-  }
+// Answer the native CLI's readiness probes the way Claude Code 2.1.292 does, so the host
+// detects an installed, signed-in Claude and never offers to install the real one:
+// `-v`/`--version` prints "<semver> (Claude Code)", and `auth status [--json]` prints
+// `{"loggedIn":…}` and exits 1 when signed out. HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT=1
+// models an installed-but-signed-out native CLI independently of the connected profile
+// Happier selects for a particular launch.
+if (argv.length === 1 && (argv[0] === '-v' || argv[0] === '--version')) {
+  process.stdout.write('2.1.292 (Claude Code)\n');
+  process.exit(0);
+}
+if (argv[0] === 'auth' && argv[1] === 'status') {
+  const loggedIn = process.env.HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT !== '1';
+  process.stdout.write(JSON.stringify({ loggedIn }));
+  process.exit(loggedIn ? 0 : 1);
 }
 if (argv.includes('--help') || argv.includes('-h')) {
   process.stdout.write([

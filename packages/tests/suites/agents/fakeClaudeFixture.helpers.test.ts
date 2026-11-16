@@ -3,7 +3,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it } from 'vitest';
+
+import { activate as activateClaudePlugin } from '../../../plugins/claude/src/activate';
+import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '../../../plugins/claude/src/manifest';
 
 import {
   mergeMcpServers,
@@ -344,6 +348,40 @@ describe('fake Claude fixture helpers', () => {
         { invocationId: 'inv-current', timeoutMs: 100, pollMs: 5 },
       )).resolves.toBe(currentText);
     });
+  });
+
+  it.each([
+    ['signed in', {}, { state: 'logged_in' }],
+    ['signed out', { HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT: '1' }, { state: 'logged_out', reason: 'missing_credentials' }],
+  ])('answers the host readiness probes like the real Claude CLI (%s)', async (_label, env, expected) => {
+    const runFixture = async (args: readonly string[]) => {
+      try {
+        const { stdout, stderr } = await execFileAsync(process.execPath, [fakeClaudeFixturePath(), ...args], {
+          env: { ...process.env, ...env }, timeout: 10_000,
+        });
+        return { ok: true, exitCode: 0, stdout, stderr };
+      } catch (error) {
+        const failure = error as { code?: unknown; stdout?: string; stderr?: string };
+        return { ok: false, exitCode: typeof failure.code === 'number' ? failure.code : null, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' };
+      }
+    };
+    // Claude Code 2.1.292 prints "<semver> (Claude Code)" for both version flags; the host reads the semver.
+    for (const flag of ['--version', '-v']) {
+      expect(await runFixture([flag])).toMatchObject({ exitCode: 0, stdout: expect.stringMatching(/^\d+\.\d+\.\d+ \(Claude Code\)\n$/) });
+    }
+    // The registered Claude detection reads `auth status --json` through the declared system tool.
+    const activation = await createPluginTestkit({ manifest: CLAUDE_PLUGIN_MANIFEST, module: { activate: activateClaudePlugin } });
+    try {
+      const auth = activation.registration('agents', 'claude')?.cliAuth;
+      if (!auth) throw new Error('Claude auth detection missing');
+      const status = await auth.detectAuthStatus({ runDeclaredSystemToolCommand: async (command) => {
+        expect(command.toolId).toBe('claude-cli');
+        return runFixture(command.args);
+      } });
+      expect(status).toEqual({ ...expected, source: 'command' });
+    } finally {
+      await activation.dispose();
+    }
   });
 
   it('returns the fake Claude JavaScript wrapper entrypoint path', () => {
