@@ -318,7 +318,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         }
     };
     const previewRoutes = createLocalServicePreviewRoutes({
-        machineId: params.machineId,
+        get machineId() { return params.machineId; },
         serverId: params.serverId,
         accountId: params.accountId,
         server: params.previewServer,

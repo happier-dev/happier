@@ -21,6 +21,9 @@ import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeReg
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { logger } from '@/ui/logger';
+import { createLocalServicesDaemonRuntime } from '../local/services/runtime';
+import { createLocalServiceEndpointEnricher } from '../local/services/inventory/endpoint';
+import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 // Only the private listener, Home HTTP and Socket.IO are replaced.
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44324, stop: async () => {} }) }));
@@ -75,6 +78,20 @@ it('dispatches sealed requester Actions after registration replaces the startup 
         machineId: originMachineId ?? binding.readMachineId() }),
     },
   });
+  const services = createLocalServicesDaemonRuntime({
+    get machineId() { return binding.params.machineId; },
+    accountId: 'owner', serverId, startLoop: false, inventoryEnabled: () => true,
+    scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, pid: 400, protocol: 'tcp' as const }],
+      processes: new Map([[400, { pid: 400, command: 'node vite' }]]), workspaces: [], diagnostics: [] }),
+    endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now, probe: async ({ scheme }) => scheme === 'http' }),
+    previewServer: { token, serverBaseUrl: serverHttpBaseUrl, http: {
+      async post(_url, body) {
+        const resource = LocalServicePreviewResourceV1Schema.parse(body);
+        return { data: { resource, accessUrl: 'https://preview.example.test/', expiresAt: 65_000 } };
+      },
+      async delete() { return { data: { ok: true } }; },
+    } },
+  });
   try {
     const registered = { id: 'after-registration', encryptionMode: 'e2ee' as const,
       encryptionKey: secret, encryptionVariant: 'legacy' as const,
@@ -90,6 +107,18 @@ it('dispatches sealed requester Actions after registration replaces the startup 
       resolvesWhenShutdownRequested: new Promise(() => {}), resolveMachineId: binding.readMachineId,
       setMachineId: binding.setMachineId, isShuttingDown: () => false, onMachineRegistered: async () => resolve(),
     }));
+    await services.refreshInventoryNow();
+    const launcher = await services.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' });
+    const previewTarget = launcher.targets.find(item => item.sourceClass?.kind === 'inventory_entry');
+    expect(previewTarget).toBeDefined();
+    expect(await services.launcherRoutes.leaves!.openPreview({ machineId: registered.id, targetId: previewTarget!.id }))
+      .toMatchObject({ status: 'opened', browserTarget: { machineId: registered.id } });
+    expect(await services.previewRoutes.getSnapshot()).toMatchObject({ machineId: registered.id,
+      resources: [{ machineId: registered.id }], previews: [{ resource: { machineId: registered.id } }] });
+    for (const wrongMachineId of ['before-registration', 'genuinely-different-machine']) {
+      expect(await services.previewRoutes.openOrCreate({ machineId: wrongMachineId, launchTargetId: 'registration-preview' }))
+        .toEqual({ ok: false, reasonCode: 'wrong_machine' });
+    }
     machine = new ApiMachineClient(token, registered, undefined, {
       resolveCurrentServerIdentityId: () => serverId,
     });
@@ -136,7 +165,7 @@ it('dispatches sealed requester Actions after registration replaces the startup 
     originMachineId = 'genuinely-different-machine';
     expect(await dispatch()).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope' });
   } finally {
-    machine?.shutdown(); await fixture.dispose(); await channel.close(); vi.restoreAllMocks();
+    machine?.shutdown(); await services.stop(); await fixture.dispose(); await channel.close(); vi.restoreAllMocks();
     await rm(directory, { recursive: true, force: true });
   }
 }, 120000);
