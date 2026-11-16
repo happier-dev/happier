@@ -56,7 +56,8 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
         const value = resource(input);
         const observed = await leaf.inspect(value, signal);
         return observeMachineProvisionerNativeRead(observedAt, { kind: observed.existence,
-            ...(observed.existence === 'present' ? { power: observed.power } : {}), billing,
+            // The leaf proves exact, non-ephemeral native presence, including parked resources.
+            ...(observed.existence === 'present' ? { power: observed.power, storage: 'retained' } : {}), billing,
             ...(observed.existence === 'unknown' ? { reason: 'cua_native_resource_unknown' } : {}) });
     }
     return {

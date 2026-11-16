@@ -176,6 +176,7 @@ export function createCuaByoc(native: CuaNativeClient) {
                 power: 'unknown', reason: 'native_resource_unknown' });
             if (current.existence === 'absent') return observeMachineProvisionerNativeRead(observedAt, { kind: 'absent', power: 'unknown' });
             return MachineProvisionerObservationV1Schema.parse(observeMachineProvisionerNativeRead(observedAt, { kind: 'present', power: current.power,
+                storage: 'retained',
                 billing: byocBilling(current.resource.cloud),
                 ...(current.nativeExpiryAt !== undefined && { nativeExpiry: current.nativeExpiryAt }),
             }));

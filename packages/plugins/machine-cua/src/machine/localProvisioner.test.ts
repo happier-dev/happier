@@ -35,7 +35,7 @@ function result(value: unknown): PluginProcessResult {
     return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
         stdout: new TextEncoder().encode(JSON.stringify(value)), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
-function harness(createReplyLost = false, observedRuntime: 'qemu' | 'gvisor' | 'runc' = 'qemu') {
+function harness(createReplyLost = false, observedRuntime: 'qemu' | 'gvisor' | 'runc' = 'qemu', observedPower = 'running') {
     const requests: PluginExecSpawnRequest[] = [];
     const copiedBytes: Buffer[] = [];
     let temporaryId = 0;
@@ -51,7 +51,7 @@ function harness(createReplyLost = false, observedRuntime: 'qemu' | 'gvisor' | '
                 image: launch.imageId, status: 'ready', state: 'running', ephemeral: false });
         }
         if (args.includes('info')) return result({ id: resource.sandboxId, name: 'owned', location: 'local', runtime: observedRuntime,
-            kind: observedRuntime === 'qemu' ? 'vm' : 'container', image: launch.imageId, status: 'ready', state: 'running', ephemeral: false });
+            kind: observedRuntime === 'qemu' ? 'vm' : 'container', image: launch.imageId, status: 'ready', state: observedPower, ephemeral: false });
         if (args.includes('cp')) {
             const content = await readFile(args[args.indexOf('cp') + 1]);
             copiedBytes.push(content);
@@ -377,10 +377,18 @@ describe('consumed Cua local provisioner roles', () => {
             contributionRef: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, schemaVersion: 1,
         } });
     });
+    it.each(['local-sandbox', 'local-space'] as const)('reports retained storage for suspended %s so Protocol can admit wake', async (localId) => {
+        const h = harness(false, 'qemu', 'suspended');
+        const provider = createCuaLocalProvisioner(createCuaNativeClient({ exec: { run: h.run },
+            executable: { kind: 'systemTool', id: 'cua' } }), localId, 10);
+        const target = localId === 'local-space' ? { kind: 'space', runtimeId: resource.runtimeId,
+            sandboxId: resource.sandboxId, spaceId: resource.sandboxId } : resource;
+        expect(await provider.inspect(target)).toMatchObject({ availability: 'present', power: 'suspended', storage: 'retained' });
+    });
     it('returns complete options only from reviewed size selectors and reopens stored additions through the SDK owner', async () => {
         const h = harness();
         expect(select(await h.provider.options({ size }))).toMatchObject({ kind: 'ready', launch });
-        expect(await h.provider.inspectStored({ ...resource, future: true })).toEqual({ observedAt: 10, availability: 'present', power: 'running',
+        expect(await h.provider.inspectStored({ ...resource, future: true })).toEqual({ observedAt: 10, availability: 'present', power: 'running', storage: 'retained',
             billing: { location: 'local', stoppedBilling: 'not-billed' } });
         await expect(h.provider.inspectStored({ ...resource, runtimeId: 'cloud' })).rejects.toThrow();
     });

@@ -114,10 +114,10 @@ describe('Cua BYOC native operations', () => {
         const denied = harness(new Error('private authorization details'));
         await expect(denied.byoc.options('aws', 1234)).rejects.toMatchObject({ code: 'native_options_unavailable' });
     });
-    it('binds real vendor observations to the family without treating failed reads as absence', async () => {
-        const h = harness(status, { ...info, expires_at: '2026-10-08T13:00:00Z' });
+    it.each(['running', 'suspended'])('binds %s vendor observations to the family without treating failed reads as absence', async (state) => {
+        const h = harness(status, { ...info, state, expires_at: '2026-10-08T13:00:00Z' });
         expect(await h.byoc.observe(resource, 1234)).toEqual({ observedAt: 1234, availability: 'present',
-            power: 'running', billing: { location: 'cloud', stoppedBilling: 'not-billed' },
+            power: state === 'suspended' ? 'stopped' : state, storage: 'retained', billing: { location: 'cloud', stoppedBilling: 'not-billed' },
             nativeExpiry: Date.parse('2026-10-08T13:00:00Z') });
         const denied = harness(status, new Error('native bearer private'));
         expect(await denied.byoc.observe(resource, 1234)).toEqual({ observedAt: 1234, availability: 'unavailable',
