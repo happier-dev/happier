@@ -19,7 +19,8 @@ import { delimiter, join } from 'node:path';
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TEARDOWN_STEPS_V1,
     DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentProviderTeardownContentV1Schema, DeploymentPlatformContentV1Schema,
@@ -86,7 +87,7 @@ import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secret
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
-    ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1,
+    ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1, projectExternalActionApprovalDecisionAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectDeploymentReadAdmissionV1,
     projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -726,6 +727,8 @@ describe('installed deployment storage and target composition', () => {
         });
         Object.defineProperty(logsAuthorization, 'requesterHttpProjection', { enumerable: false,
             value: authorization.requesterHttpProjection });
+        // The OS executable boundary is intentionally unavailable on every host.
+        vi.stubEnv('PATH', '');
         const logs = await deps.deploymentAction('deployments.logs.read', logsInput,
             { ...context, externalActionExecutionAuthorization: logsAuthorization });
         await expect(deps.deploymentAction('deployments.observation.get', {
@@ -756,7 +759,8 @@ describe('installed deployment storage and target composition', () => {
         expect(priorReceiptLists).toBe(0);
         expect(artifacts).not.toHaveBeenCalled();
         expect(logs, JSON.stringify({ logs, paths: requests.mock.calls.map(([request]) => new URL(request.url!).pathname) }))
-            .toMatchObject({ ok: false, errorCode: 'service_unavailable' });
+            .toMatchObject({ ok: false, errorCode: 'plugin_exec_system_tool_unavailable',
+                details: { kind: 'systemToolUnavailable', toolId: 'docker' } });
         } finally {
             Object.defineProperty(configuration, 'happyHomeDir', previousHome);
             Object.defineProperty(configuration, 'settingsFile', previousSettings);
@@ -828,8 +832,8 @@ describe('installed deployment storage and target composition', () => {
             return { status: 200, data: { ok: true, environment: detail.environment, secretScope: detail.secretScope,
                 targetLinks: detail.targetLinks.map(row => row.targetLink) } };
         });
-        const acquire = vi.fn(async () => { throw Object.assign(new Error('fork_acquisition_reached'), { code: 'fork_acquisition_reached' }); });
-        const acquireCandidate = vi.fn(async () => { throw Object.assign(new Error('fork_acquisition_reached'), { code: 'fork_acquisition_reached' }); });
+        const acquire = vi.fn(async () => { throw createActionExecuteFailureError({ ok: false, error: 'fork_acquisition_reached', errorCode: 'fork_acquisition_reached' }); });
+        const acquireCandidate = vi.fn(async () => { throw createActionExecuteFailureError({ ok: false, error: 'fork_acquisition_reached', errorCode: 'fork_acquisition_reached' }); });
         const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
             serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
             resolveRequesterIdentity: resolveOwnerRequesterIdentity, runtime: { acquire, acquireCandidate } });
@@ -1212,12 +1216,16 @@ describe('installed deployment storage and target composition', () => {
             return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
                 environment: environment.environment, secretScope: environment.secretScope, targetLinks: [link] }) };
         });
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
+        vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
             const path = new URL(url).pathname;
             if (path.startsWith('/v1/machines/')) {
                 const machineId = path.split('/').at(-1)!;
-                dispatchTrace.push(`machine:${machineId}`);
-                childLookups.push({ machineId, receiptReads: receiptReadsAfterTransition });
+                // Settlement notices also read display labels with the host bearer.
+                // Only the signed child transport owns the dispatch cost contract.
+                if (config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]) {
+                    dispatchTrace.push(`machine:${machineId}`);
+                    childLookups.push({ machineId, receiptReads: receiptReadsAfterTransition });
+                }
                 // The actual transport owner refuses this server row before native acquisition.
                 return { status: 200, data: { machine: { id: machineId, revokedAt: 1 } } };
             }
@@ -1885,6 +1893,7 @@ describe('installed deployment storage and target composition', () => {
                     const input = { serverId: 'home', environmentId: environment.environment.id,
                         expectedRevision: environment.environment.revision, targetLinkId: native.targetLink.id,
                         expectedTargetLinkRevision: native.targetLink.revision, requestKey: 'retire-provider-domain', reason: 'manual' as const,
+                        removeEnvironment: true as const,
                         contentArtifactId: 'teardown-artifact', contentHeaderVersion: 1, contentBodyVersion: 1 };
                     const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.teardown', input, context: ownerContext });
                     expect(plan, JSON.stringify(plan)).toMatchObject({ children: expect.arrayContaining([
@@ -2262,8 +2271,9 @@ describe('installed deployment storage and target composition', () => {
             };
             const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease });
             const rootApprovalStore = createCliApprovalsArtifactStore({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://platform.test' });
+            let operationSequence = 0;
             const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
-                generateOperationId: () => 'platform-operation' });
+                generateOperationId: () => operationSequence++ === 0 ? 'platform-operation' : `platform-operation-${operationSequence}` });
             let replayPreparer: ReturnType<typeof createDaemonApprovalExecutionAuthorizationPreparer> | undefined;
             const resolveTarget = createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: 'https://platform.test' });
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
@@ -2445,8 +2455,12 @@ describe('installed deployment storage and target composition', () => {
                         const decideInput = { artifactId: created.artifactId, decision: 'approve', serverIdentityId: 'home', originServerId: 'home' };
                         const decideEnvelope = { v: 1 as const, requestId: 'root-upload-decision', target, input: decideInput };
                         const decideAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'decision-proof', binding: {
-                            ...authorization.binding, actionId: 'approval.request.decide', requestId: decideEnvelope.requestId,
-                            deploymentCandidatePublication: undefined, environmentId: undefined, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(decideEnvelope) } });
+                            serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+                            custodianAccountId: authorization.binding.custodianAccountId, admittedMachineRole: authorization.binding.admittedMachineRole,
+                            machineId: 'machine-a', installationId: 'installation-a', accountEncryptionMode: 'plain', target,
+                            actionId: 'approval.request.decide', requestId: decideEnvelope.requestId,
+                            approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(decideInput),
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(decideEnvelope) } });
                         sourceRequesters.length = 0;
                         const decided = await executeExternalAction({ actionId: 'approval.request.decide', envelope: decideEnvelope,
                             executionAuthorization: decideAuthorization, surface: 'ui', principal: { accountId: 'owner',
@@ -2775,14 +2789,11 @@ describe('installed deployment storage and target composition', () => {
             }
             if (scenario === 'receipt source differs') {
                 // The Environment revision advanced on reservation. Re-execution
-                // would now be stale; same-request observation retains the first
-                // terminal conflict rather than lending the deploy grant to observe.
+                // is a fresh admission after a proven no-effect refusal, and now
+                // conflicts before any provider work.
                 expect(environment.environment.revision).not.toBe(candidate.input.expectedRevision);
-                // Retained operation snapshots expose the stable failure carrier,
-                // rather than replaying private executor details or its request id.
-                await expect(invokeRoot()).resolves.toEqual({ ok: false, errorCode: 'deployment_conflict',
-                    error: 'deployment_conflict', effectAttempted: false, failureCause: {
-                        phase: 'deployment.failure', errorClass: 'Error', errorCode: 'deployment_conflict', httpStatus: null } });
+                await expect(invokeRoot()).resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict',
+                    effectAttempted: false });
                 expect(childInvocations).toBe(0);
                 expect(providerSends).toBe(0);
             }
@@ -2935,7 +2946,7 @@ describe('installed deployment storage and target composition', () => {
         });
         let acquisitions = 0;
         const acquire = async (): Promise<never> => {
-            acquisitions++; throw Object.assign(new Error('native_acquisition_reached'), { code: 'native_acquisition_reached' });
+            acquisitions++; throw createActionExecuteFailureError({ ok: false, error: 'native_acquisition_reached', errorCode: 'native_acquisition_reached' });
         };
         const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
             serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',

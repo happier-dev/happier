@@ -7,7 +7,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema, DeploymentReceiptListResultV1Schema, DeploymentActionOutputSchemasV1,
@@ -333,8 +333,8 @@ it.each(['plain', 'e2ee'] as const)('keeps bindings behind their sole writer at 
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
         : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
     const key = await createResourceDataKey({ credentials, mode });
-    const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'TOKEN',
-        source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('resource'), resourceRevision: 1 } };
+    const binding = createDeploymentSecretVariableBindingV1({ phase: 'runtime', name: 'TOKEN',
+        resourceId: 'resource', resourceRevision: 1 });
     let previous = DeploymentEnvironmentContentV1Schema.parse({ ...detail.content, bindings: [] });
     let candidate = DeploymentEnvironmentContentV1Schema.parse({ ...previous, bindings: [binding] });
     const encode = (value: unknown) => key.mode === 'plain' ? encodePlainArtifactStoredContent(value)
