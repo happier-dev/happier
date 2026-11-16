@@ -9010,6 +9010,15 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 deployment lifecycle observations and repository receipt investigation
+summaries optionally carry `builtSha`, the provider-observed commit. The requested
+`sourceIntent.sha` stays unchanged; historical observations without `builtSha` remain
+readable. Pages Git builds branch HEAD and reports its observed commit rather than
+labelling the build with the reviewed SHA. Matching Protocol, SDK projections,
+deployment-protocol, Cloudflare plugin, CLI and UI reload together under the
+development direct cut; older strict development readers reject the added field.
+No migration, wire epoch or compatibility adapter is added.
+
 Unreleased 0.3 Vercel links extend the closed `preparedNative.gitSource` union
 with GitLab `{type, projectId}` and Bitbucket `{type, repoUuid, workspaceUuid}`.
 GitHub `{type, repoId}` is unchanged. These are non-secret native deployment

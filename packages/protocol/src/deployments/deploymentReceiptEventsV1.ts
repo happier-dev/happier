@@ -2,7 +2,8 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision,
   DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
-import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetRoleFailureV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetRoleFailureV1Schema, DeploymentTargetRoleResultV1Schema,
+  type DeploymentTargetRoleResultV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { readDeploymentArtifactJsonBodyV1, deploymentArtifactReadFailureV1, type DeploymentArtifactContentReferenceV1,
   type OpenedDeploymentArtifactV1, type DeploymentArtifactReadFailureV1 } from './deploymentArtifactContentReferenceV1.js';
@@ -69,7 +70,8 @@ export const DeploymentReceiptFailureSummaryV1Schema = lazyZodSchema(() => z.str
 /** Exact native receipt evidence without the private Compose document, selectors or logs. */
 export const DeploymentReceiptInvestigationV1Schema = lazyZodSchema(() => z.strictObject({
   source: z.optional(z.discriminatedUnion('kind', [
-    z.pick(DeploymentSourceIntentV1Schema.def.options[0], { kind: true, projectSourceId: true, sourceRevision: true, sha: true }),
+    z.extend(z.pick(DeploymentSourceIntentV1Schema.def.options[0], { kind: true, projectSourceId: true, sourceRevision: true, sha: true }),
+      z.pick(DeploymentTargetRoleResultV1Schema, { builtSha: true }).shape),
     z.pick(DeploymentSourceIntentV1Schema.def.options[1], { kind: true, contentRevision: true, composeDigest: true }),
   ])),
   failure: z.optional(DeploymentReceiptFailureV1Schema),
@@ -79,11 +81,13 @@ export type DeploymentReceiptInvestigationV1 = z.infer<typeof DeploymentReceiptI
 /** Only the Account-opened exact receipt owner supplies these private evidence facts. */
 export function projectDeploymentReceiptInvestigationV1(content: Readonly<{
   sourceIntent?: DeploymentSourceIntentV1; failure?: DeploymentReceiptFailureV1;
+  platform?: Readonly<{ observation: Pick<DeploymentTargetRoleResultV1, 'builtSha'> }>;
 }>): DeploymentReceiptInvestigationV1 {
   const source = content.sourceIntent;
   return {
     ...(source ? { source: source.kind === 'repository'
-      ? { kind: source.kind, projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha }
+      ? { kind: source.kind, projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha,
+          ...(content.platform?.observation.builtSha ? { builtSha: content.platform.observation.builtSha } : {}) }
       : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest } } : {}),
     ...(content.failure ? { failure: content.failure } : {}),
   };

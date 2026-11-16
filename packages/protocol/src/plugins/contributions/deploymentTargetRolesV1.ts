@@ -11,6 +11,7 @@ import { DeploymentStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOpera
 import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { ScmBranchSourceRefSchema } from '../../scm/remoteNormalization.js';
+import { ScmCommitOidSchema } from '../../scm/commitPublication.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../../local/services/serviceIdentityV1.js';
@@ -308,6 +309,8 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
 
 export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), state: DeploymentStateV1Schema, providerDeploymentId: z.optional(id), observedAtMs: timestamp,
+    /** The provider-observed commit, which may differ from the reviewed request for branch builds. */
+    builtSha: z.optional(ScmCommitOidSchema),
     /** Positive native absence observation, required by the host to settle provider deletion. */
     providerResourceAbsent: z.optional(z.literal(true)),
     urls: z.optional(z.array(publicUrl)), steps: z.optional(z.array(DeploymentStepV1Schema)),

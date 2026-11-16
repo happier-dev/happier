@@ -12590,6 +12590,7 @@ export type DeploymentsActionResultById = {
                 sourceRevision: number;
                 projectSourceId: string;
                 sha: string;
+                builtSha?: string | undefined;
             } | {
                 kind: 'stored';
                 contentRevision: number;
