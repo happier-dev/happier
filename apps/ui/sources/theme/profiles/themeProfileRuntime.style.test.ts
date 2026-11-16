@@ -32,6 +32,28 @@ function rootFontVariable(name: string): string {
 }
 
 describe('theme runtime style selection', () => {
+    it('replaces web CSS at the sheet boundary without updating Unistyles themes', () => {
+        const sheet = vi.spyOn(stylesheet, 'applyThemeStylesheet');
+        const runtime = createRegisteredThemes();
+        const profile = {
+            schemaVersion: 1 as const, id: 'css', name: 'CSS', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light' as const, dark: 'dark' as const }, overrides: { light: {}, dark: {} },
+            css: '[data-surface="composer"] { border-radius: 12px; }',
+        };
+        const themeProfiles = { activeProfileIds: { light: 'css', dark: null }, profiles: [profile] };
+        const input = { themePreference: 'light' as const, themeProfiles, platform: 'web',
+            unistylesRuntime: runtime.adapter, style: null, recordBreadcrumb: () => {} };
+        applyThemeRuntimeSelection(input);
+        runtime.updateTheme.mockClear();
+        sheet.mockClear();
+        const css = profile.css.replace('12px', '14px');
+        applyThemeRuntimeSelection({ ...input, themeProfiles: { ...themeProfiles, profiles: [{ ...profile, css }] } });
+        expect(sheet).toHaveBeenLastCalledWith({ source: css }, 'light');
+        expect(runtime.updateTheme).not.toHaveBeenCalled();
+        applyThemeRuntimeSelection({ ...input, themeProfiles: noProfiles });
+        expect(sheet).toHaveBeenLastCalledWith(null, 'light');
+        sheet.mockRestore();
+    });
     it('restores device finish at startup and preserves role overrides through both theme modes', () => {
         const startup = resolveThemeRuntimeStartupThemes({
             themePreference: 'adaptive', themeProfiles: noProfiles,

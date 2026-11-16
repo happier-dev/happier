@@ -31,6 +31,7 @@ import {
 } from './themeProfilePersistence';
 import { resolveThemeProfile } from './resolveThemeProfile';
 import { applyThemeFontFamilyVariables } from '../themeFontFamilyVariables';
+import { applyThemeStylesheet } from '../css/themeStylesheet';
 import { applyThemeStyleScales, resolveThemeStyleScales, themeStyleSelectionFromSurfaceFinish, type ThemeStyleSelection } from '../themeStyleScales';
 import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 
@@ -272,6 +273,12 @@ const applyThemesToUnistyles = (
     const platform = resolveRuntimePlatform(input);
     const systemTheme = input.systemTheme ?? readSystemTheme();
     const visualTheme = resolveThemeRuntimeVisualTheme(input.themePreference, systemTheme);
+
+    if (platform === 'web') {
+        const source = findActiveThemeProfileForMode(input.themeProfiles, visualTheme)?.css;
+        // The sheet owner parses before attachment and retains last-good on failure.
+        applyThemeStylesheet(source ? { source } : null, visualTheme);
+    }
 
     // updateTheme notifies every theme subscriber and rebuilds the web CSS sheet even when the
     // resolved tokens are identical. A mode-only flip needs just setTheme's one notification.
