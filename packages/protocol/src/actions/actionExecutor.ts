@@ -8,6 +8,7 @@ import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
+import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
 import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
@@ -2835,6 +2836,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: selectionChangedCode, error: selectionChangedCode };
         }
         if (ctx.bypassApprovals && !computerSelection.selectedTarget) {
+          if (actionId === COMPUTER_RECORDING_ACTION_IDS_V1.start) {
+            return { ok: false, errorCode: 'computer_target_not_open', error: 'computer_target_not_open' };
+          }
           return { ok: true, result: { status: 'target_selection_required', approvalDisplay: computerSelection.approvalDisplay } };
         }
         const requestedSourceId = readRecord(admittedInput).sourceId;

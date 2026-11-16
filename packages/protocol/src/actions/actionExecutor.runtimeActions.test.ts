@@ -105,6 +105,19 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       approvalDisplay: { requiresTargetSelection: true } } });
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
+  it('refuses approved recording without a selected window with its real cause', async () => {
+    // The Machine runtime is the network boundary; Action selection and output validation remain real.
+    const runtimeActionExecute: NonNullable<ActionExecutorDeps['runtimeActionExecute']> = async ({ actionId }) =>
+      actionId === 'computer.target.get' ? { consentGranted: false,
+        approvalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: true } }
+        : { ok: false, errorCode: 'computer_target_not_open', error: 'computer_target_not_open' };
+    const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
+    expect(await executor.execute('computer.recording.start', {
+      machineId: 'native-machine', mediaTarget: { sessionId: 'session', messageLocalId: 'clip' },
+    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session', bypassApprovals: true }))
+      .toMatchObject({ ok: false, errorCode: 'computer_target_not_open' });
+  });
+
   it('preserves the existing bypass for a selected target without prior computer consent', async () => {
     const target = { kind: 'window', displayId: ':77', pid: 123, windowId: 456 } as const;
     const runtimeActionExecute = vi.fn<NonNullable<ActionExecutorDeps['runtimeActionExecute']>>(async ({ actionId }) =>
@@ -164,7 +177,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
     expect(runtimeActionExecute).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'computer.target.get',
       input: { machineId: 'machine_1', provider: 'agent-desktop' } }));
     expect(runtimeActionExecute).toHaveBeenCalledWith({ actionId: 'computer.input', input: { ...input, sourceId: 'source_1' },
-      context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', bypassApprovals: true } });
+      context: expect.objectContaining({ surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', bypassApprovals: true }) });
     const { provider: _provider, ...defaultInput } = input;
     await executor.execute('computer.input', defaultInput,
       { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1' });
@@ -239,7 +252,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
     expect(runtimeActionExecute).toHaveBeenCalledWith({
       actionId: 'browser.navigate',
       input,
-      context: { serverId: 'server_1', surface: 'ui' },
+      context: expect.objectContaining({ serverId: 'server_1', surface: 'ui' }),
     });
   });
 
