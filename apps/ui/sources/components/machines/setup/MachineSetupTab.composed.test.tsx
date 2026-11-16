@@ -514,6 +514,55 @@ describe('Machine setup preparation', () => {
 });
 
 describe('Machine → Setup tab (P-M1)', () => {
+  it('reviews prerequisite recipe sources alongside the Machine sources before any Apply', async () => {
+    const home = await harness.addHome({ name: 'Build', serverUrl: 'https://prerequisite-setup.example',
+      serverIdentityId: 'srv_prerequisite_setup', accountId: 'owner', currentAccount: true });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    const retained = { kind: 'bundledPreset' as const, ref: { pluginId: 'example.setup', localId: 'existing', revision: '1' }, setup: {} };
+    const script = { body: 'echo user setup' };
+    const item = { kind: 'softwareRecipe' as const, selection: {
+      ref: { pluginId: 'example.setup', recipeId: 'runtime', revision: '1' }, inputs: {},
+    } };
+    const { PluginProjectedMachineRecipeEntryV1Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const recipe = PluginProjectedMachineRecipeEntryV1Schema.parse({ id: 'example.setup/runtime', pluginId: 'example.setup', pluginVersion: '1',
+      definition: { id: 'runtime', revision: '1', title: 'Runtime', software: true,
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        steps: [{ id: 'install', kind: 'command', executable: 'install', args: ['runtime'],
+          check: { executable: 'test', args: ['-e', 'runtime'], unsatisfiedExitCodes: [1] } }],
+      } });
+    const current = await getMachineSetupDesiredV1({
+      read: async () => ({ status: 'ready', metadataVersion: 4, metadata: {
+        setup: { version: 1, revision: 4, sources: [retained, { kind: 'direct', setup: { scripts: [script] } }], exclusions: [] },
+      } }),
+      compareAndSwap: async () => { throw new Error('Review cannot change desired Setup'); },
+    });
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
+        result: await prepareMachineSetupPlanV1({ input: request, current, readRecipes: async () => [recipe],
+          runNative: async command => {
+            if (command.executable !== 'test') throw new Error('Review attempted a native effect');
+            return { code: 1, stdout: '', stderr: '' };
+          } }),
+      } } };
+    } });
+    const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+    const { useMachineSetup } = await import('./useMachineSetup');
+    const hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
+    onTestFinished(() => hook.unmount());
+    await waitForHomeGovernance(() => expect(hook.getCurrent().plan?.desiredRevision).toBe(4));
+    await act(async () => { await hook.getCurrent().prepare({ kind: 'sources', sources: [{ kind: 'direct', setup: { items: [item] } }] }); });
+    expect(hook.getCurrent().failure).toBeNull();
+    expect(MachineSetupApplyInputV1Schema.parse(hook.getCurrent().review?.prepared?.input).targets[0]).toMatchObject({ desiredRevision: 4,
+      sources: [retained, { kind: 'direct', setup: { scripts: [script], items: [item] } }],
+      recipePlans: [{ sourceIndex: 1, itemIndex: 0, plan: { steps: [{ id: 'install' }] } }],
+    });
+    expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+    expect(hook.getCurrent().approvalId).toBeNull();
+  });
   it('uses a bundled Store preset through the existing enrolled-machine picker and review without applying during selection', async () => {
     const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
       serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });

@@ -186,7 +186,6 @@ export type WorkflowAuthoringActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
-            memoryEnabled?: boolean | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -194,6 +193,7 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -256,7 +256,7 @@ export type WorkflowAuthoringActionInputById = {
                 };
             })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            launchEnvironment?: unknown;
+            environmentVariables?: Record<string, string> | undefined;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -482,7 +482,6 @@ export type WorkflowAuthoringActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
-            memoryEnabled?: boolean | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -490,6 +489,7 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -552,7 +552,7 @@ export type WorkflowAuthoringActionInputById = {
                 };
             })[] | undefined;
             permissionModeUpdatedAt?: number | undefined;
-            launchEnvironment?: unknown;
+            environmentVariables?: Record<string, string> | undefined;
             providerSessionResume?: undefined | {
                 kind: 'provider_session.v1';
                 providerSessionId: string;
@@ -776,6 +776,27 @@ export type WorkflowAuthoringActionInputById = {
                 machineId: string;
                 directory: string;
                 workspaceRefId?: string | undefined;
+                sessionPlacement?: undefined | {
+                    kind: 'machine';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    configuredSandbox?: undefined | {
+                        kind: 'sandbox';
+                        configuredSandboxId: string;
+                        lifecycle: 'fresh' | 'shared-kept';
+                        provisioner: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        presetId: string;
+                    };
+                } | {
+                    kind: 'preset';
+                    homeId: string;
+                    presetId: string;
+                };
             };
             executionTarget?: 'detached_run' | 'session' | undefined;
             triggers?: undefined | {
@@ -974,6 +995,27 @@ export type WorkflowAuthoringActionInputById = {
                     machineId: string;
                     directory: string;
                     workspaceRefId?: string | undefined;
+                    sessionPlacement?: undefined | {
+                        kind: 'machine';
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        configuredSandbox?: undefined | {
+                            kind: 'sandbox';
+                            configuredSandboxId: string;
+                            lifecycle: 'fresh' | 'shared-kept';
+                            provisioner: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            presetId: string;
+                        };
+                    } | {
+                        kind: 'preset';
+                        homeId: string;
+                        presetId: string;
+                    };
                 };
                 inputs: Record<string, unknown>;
                 roleOverrides?: undefined | {
@@ -1094,6 +1136,27 @@ export type WorkflowAuthoringActionResultById = {
                     machineId: string;
                     directory: string;
                     workspaceRefId?: string | undefined;
+                    sessionPlacement?: undefined | {
+                        kind: 'machine';
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        configuredSandbox?: undefined | {
+                            kind: 'sandbox';
+                            configuredSandboxId: string;
+                            lifecycle: 'fresh' | 'shared-kept';
+                            provisioner: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            presetId: string;
+                        };
+                    } | {
+                        kind: 'preset';
+                        homeId: string;
+                        presetId: string;
+                    };
                 };
                 executionTarget: 'detached_run' | 'session';
                 triggers: {
@@ -1292,6 +1355,27 @@ export type WorkflowAuthoringActionResultById = {
                         machineId: string;
                         directory: string;
                         workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
                     };
                     inputs: Record<string, JsonValue>;
                     roleOverrides?: undefined | {

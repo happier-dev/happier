@@ -22,7 +22,8 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { DevcontainerEffectReviewV1Schema } from '../../machines/managed/devcontainerV1.js';
 import { ManagedGuestCliBuildInputV1Schema as managedGuestCliBuildInputSchema,
-  ManagedMachinePresetPreparationBuildInputV1Schema as managedPresetPreparationBuildInputSchema } from '../../machines/managed/managedMachinePresetPreparationBuildInputV1.js';
+  ManagedMachinePresetPreparationBuildInputV1Schema as managedPresetPreparationBuildInputSchema,
+  createManagedMachinePresetPreparationBuildInputV1Schema as createManagedPresetPreparationBuildInputSchema } from '../../machines/managed/managedMachinePresetPreparationBuildInputV1.js';
 export type { ManagedGuestCliBuildInputV1, ManagedMachinePresetPreparationBuildInputV1 } from '../../machines/managed/managedMachinePresetPreparationBuildInputV1.js';
 import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPriceV1Schema,
   ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
@@ -587,6 +588,10 @@ function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSch
 }
 export const ManagedGuestCliBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedGuestCliBuildInputSchema));
 export const ManagedMachinePresetPreparationBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedPresetPreparationBuildInputSchema));
+/** Specialize provider-owned choices through the canonical native-build envelope. */
+export function createManagedMachinePresetPreparationBuildInputV1Schema<I, O>(choices: ProtocolComposableSchema<I, O>) {
+  return projectZodProtocolSchema(lazyDefinition(() => createManagedPresetPreparationBuildInputSchema(asProtocolZod(choices))));
+}
 const preparationReferenceProtocolSchema = lazyDefinition(() => projectRoleSchema(ManagedNativeOperationReferenceV1Schema));
 
 function preparationContractFailure(path: readonly string[], message: string): Readonly<{ success: false; error: ProtocolValidationError }> {
@@ -759,6 +764,7 @@ function preparationRoleProjection(descriptor: MachineProvisionerContributionV1,
     return { ...node, properties: Object.fromEntries(Object.entries(node.properties).map(([key, property]) => {
       const propertyPath = [...path, 'properties', key];
       if (key === 'input') return [key, embed(declaration.inputSchema, propertyPath)];
+      if (key === 'launch') return [key, embed(descriptor.launchSchema, propertyPath)];
       const native = key === 'artifact' ? declaration.artifactSchema
         : key === 'nativeOperation' || key === 'nativeOperationRef' ? declaration.nativeOperationSchema : undefined;
       return [key, native ? { ...property, properties: { ...property.properties,

@@ -30,7 +30,7 @@ import { resolveMachineAccessInTx } from '@/app/machines/machineAccess';
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema, projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema, projectManagedEnrollmentCorrelationV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
 import { createLumeNativeClient } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
@@ -50,6 +50,122 @@ describe("managed acquisition durable authority", () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-managed-acquire-", initAuth: false, initEncrypt: true, env: { HAPPIER_SERVER_IDENTITY_ID: `srv_${"a".repeat(32)}` } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('retains the selected warm execution atomically before native spend and restores it after the submit window', async () => {
+        const { replaceManagedMachinePresetLaunchNameV1, openManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const { hydrateManagedOpaquePresetMachineV1 } = await import('@happier-dev/cli-common/machines/managed');
+        const { ManagedOpaquePresetMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const { readManagedOpaquePresetContent, projectManagedMachine } = await import('./managedRows');
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const host = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id, metadata: '{}', installationId: crypto.randomUUID() } });
+        const controller = { machineId: host.id, installationId: host.installationId! };
+        const launch = { provider: { pluginId: 'fixture.warm', localId: 'vm' }, schemaVersion: 1, name: 'Warm guest', choices: { image: 'authored-base' } };
+        const setup = { scripts: [{ body: 'echo authored setup' }] };
+        const content = { t: 'plain' as const, v: { v: 1 as const, name: 'Warm preset', launch, setup } };
+        const stored = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content, recipients: [] });
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id, name: '', launch: stored } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: host.id, controllerInstallationId: host.installationId!, admittedActionRequestId: crypto.randomUUID(),
+            admittedInput: { acquisitionMode: 'resource-bound' }, presetId: preset.id, presetRevision: 1, launch: stored,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, machineSetup: { state: 'pending' } } });
+        const preparationExecution = { launch: { ...launch, choices: { image: 'selected-artifact' } }, binaryPath: '/opt/happier/cli/current/happier' };
+        const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({ launch: preparationExecution.launch, controller, optionStatus: 'current',
+            prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' }, retentionCapabilities: { supportedIntents: ['delete'] },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const selected = replaceManagedMachinePresetLaunchNameV1({ presetId: preset.id, mode: 'plain', content,
+            launchName: launch.name, reviewedFacts, preparationExecution });
+        if (!selected) throw new Error('Expected the admitted warm selection to seal');
+        const correlation = { homeId, managedId: row.id, controller, requestId: row.admittedActionRequestId, expectedIntentRevision: 0 };
+        await expect(submitManagedAcquire({ ...correlation, presetContent: { t: 'encrypted', c: Buffer.alloc(64, 1).toString('base64') } }))
+            .rejects.toMatchObject({ code: 'account_mode_mismatch' });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('unsubmitted');
+        const submission = { ...correlation, presetContent: selected };
+        expect(await submitManagedAcquire(submission)).toMatchObject({ submitted: true, machine: { allocation: 'may-exist' } });
+        // Restart in the window before any provider call: only the durable row
+        // supplies the physical launch; no latest preset or options read participates.
+        const restarted = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+        const retained = readManagedOpaquePresetContent(restarted);
+        const opened = openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: retained.content });
+        expect(opened).toMatchObject({ launch, setup, preparationExecution });
+        expect(opened && hydrateManagedOpaquePresetMachineV1({ machine: ManagedOpaquePresetMachineV1Schema.parse(projectManagedMachine(restarted)), opened }))
+            .toMatchObject({ launch: preparationExecution.launch, machineSetup: { setup: {} } });
+        expect(await submitManagedAcquire({ ...correlation, presetContent: content })).toMatchObject({ submitted: false });
+        expect(readManagedOpaquePresetContent(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))).toEqual(retained);
+    });
+
+    it('recovers retained Workflow placement by creation request without disclosing it to another Account', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: crypto.randomUUID() } });
+        const creationRequestId = crypto.randomUUID();
+        const target = { kind: 'machine', machineId: controller.id, project: { machineId: controller.id,
+            directory: '/workspace', sessionPlacement: { kind: 'preset', homeId, presetId: 'original-preset' } } };
+        const retainedWorkflowRoot = {
+            binding: { serverIdentityId: homeId, accountId: owner.id, authentication: { kind: 'account', tokenEpoch: 1 },
+                actionId: 'workflow.run.start', requestId: 'original-workflow-request', target },
+            envelope: { v: 1, requestId: 'original-workflow-request', target,
+                input: { runId: 'retained-workflow-run', source: { kind: 'saved', definitionId: 'definition', revision: 1 } },
+                workflowPreparation: { acquisition: { selection: { kind: 'preset', homeId, id: 'original-preset', revision: 7 },
+                    controller: { machineId: controller.id, installationId: controller.installationId! } } } },
+        };
+        // Database boundary fixture represents Home's retained, not yet enrolled allocation.
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+            admittedActionRequestId: creationRequestId, admittedInput: { enrollmentAccountId: owner.id,
+                continuation: { requestEnvelopeDigest: 'original-root-digest', workflowRoot: retainedWorkflowRoot } },
+            launch: { provider: { pluginId: 'fixture.workflow', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'may-exist', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        let actorAccountId = owner.id;
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: actorAccountId, authTokenLegacy: false }),
+                { headers: request.headers, params: request.params, query: request.query });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const read = (requestId: string) => app.inject({ method: 'POST', url: managedMachineActionEndpointPathV1('machines.managed.get'),
+            payload: { homeId, creationRequestId: requestId } });
+        const found = await read(creationRequestId);
+        expect(found.statusCode).toBe(200);
+        expect(found.json()).toMatchObject({ id: row.id, controller: { machineId: controller.id }, retainedWorkflowRoot });
+        actorAccountId = other.id;
+        const foreign = await read(creationRequestId);
+        const absent = await read(crypto.randomUUID());
+        expect(foreign.statusCode).toBe(404);
+        expect(foreign.json()).toEqual(absent.json());
+        actorAccountId = owner.id;
+        await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
+        const wrongMode = await read(creationRequestId);
+        expect(wrongMode.statusCode).toBe(404);
+        expect(wrongMode.json()).toEqual(absent.json());
+
+        const { ExternalActionRetainedWorkflowRootV1Schema, sealExternalActionRequestV2, openExternalActionRequestV2 } =
+            await import('@happier-dev/protocol/actions/externalActionEncryption');
+        const { projectExternalActionMachineRuntimeDemandV1 } = await import('@happier-dev/protocol/actions/actionSpecs');
+        const original = ExternalActionRetainedWorkflowRootV1Schema.parse(retainedWorkflowRoot);
+        if (original.envelope.v !== 1) throw new Error('plain_original_root_required');
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) };
+        const encrypted = { binding: original.binding, envelope: sealExternalActionRequestV2({
+            binding: original.binding, input: original.envelope.input, workflowPreparation: original.envelope.workflowPreparation,
+            material, randomBytes: length => new Uint8Array(length).fill(7), projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        }) };
+        await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: { enrollmentAccountId: owner.id,
+            continuation: { requestEnvelopeDigest: 'encrypted-root-digest', workflowRoot: encrypted } } } });
+        const recovered = await read(creationRequestId);
+        expect(recovered.statusCode, recovered.body).toBe(200);
+        expect(recovered.body).not.toContain('definitionId');
+        const ciphertext = ExternalActionRetainedWorkflowRootV1Schema.parse(recovered.json().retainedWorkflowRoot);
+        if (ciphertext.envelope.v !== 2) throw new Error('encrypted_original_root_required');
+        const replay = { envelope: ciphertext.envelope, binding: ciphertext.binding, material,
+            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 };
+        expect(openExternalActionRequestV2(replay)).toMatchObject({ input: original.envelope.input,
+            workflowPreparation: original.envelope.workflowPreparation });
+        expect(openExternalActionRequestV2({ ...replay, binding: { ...ciphertext.binding, accountId: other.id } })).toBeNull();
+    });
 
     it('keeps archived managed resources discoverable by the custodian after controller revocation', async () => {
         const homeId = `srv_${'a'.repeat(32)}`;

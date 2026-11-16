@@ -1,5 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolObject, defineProtocolString, type ProtocolComposableSchema, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { classifyManagedMachineAllocationV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as machineProvisioners from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
@@ -78,12 +78,35 @@ export const machineProvisionerAuthorRefusedOptions = {
     code: 'native_guest_unavailable', status: { key: 'guest.unavailable', fallback: 'Choose another guest.' }, fieldPath: 'name',
   } },
 } satisfies MachineProvisionerOptionsResultV1;
-function createAuthorFixture(repairNeeded = false, includePreparation = false) {
+export const machineProvisionerAuthorSetupPrerequisite = {
+  requirement: { kind: 'managedDependency', id: { pluginId: 'examples.machine-provisioner', localId: 'fixture-tool' } },
+  status: 'unavailable',
+  setupSources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+    ref: { pluginId: 'examples.recipes', recipeId: 'fixture-tool', revision: '1' }, inputs: {},
+  } }] } }],
+} satisfies NonNullable<MachineProvisionerCheckResultV1['prerequisites']>[number];
+export const machineProvisionerAuthorSetupOptions = {
+  ...machineProvisionerAuthorOptions, base: { launch: {}, prerequisites: [machineProvisionerAuthorSetupPrerequisite] },
+} satisfies MachineProvisionerOptionsResultV1;
+export const machineProvisionerAuthorOpaqueSetupPrerequisite = {
+  ...machineProvisionerAuthorSetupPrerequisite,
+  setupSources: [{ kind: 'accountPresetOpaque', presetId: 'opened-preset', presetRevision: 1, contentEncryptionMode: 'plain',
+    presetContentOverride: { content: { t: 'plain', v: { recipeInputs: { executable: 'fixture-tool' } } } },
+  }],
+} satisfies NonNullable<MachineProvisionerCheckResultV1['prerequisites']>[number];
+function createAuthorFixture(repairNeeded = false, includePreparation = false, specializePreparationInput = false) {
   let repaired = !repairNeeded;
   const repairInput = defineProtocolObject({ machineName: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
   const preparationArtifact = defineProtocolObject({ launch: native }, { policy: 'closed' });
+  const specializedInput = machineProvisioners.createManagedMachinePresetPreparationBuildInputV1Schema(native);
+  const preparationInput: ProtocolComposableSchema<
+    ProtocolSchemaInput<typeof native> | ProtocolSchemaInput<typeof specializedInput>,
+    ProtocolSchemaOutput<typeof native> | ProtocolSchemaOutput<typeof specializedInput>
+  > = specializePreparationInput
+    ? specializedInput
+    : native;
   const preparation = machineProvisioners.defineMachineProvisionerPreparationSchemas({
-    input: native, artifact: preparationArtifact, nativeOperation,
+    input: preparationInput, launch: native, artifact: preparationArtifact, nativeOperation,
   });
   return definePlugin({
     id: 'examples.machine-provisioner', version: '1.0.0',
@@ -104,7 +127,7 @@ function createAuthorFixture(repairNeeded = false, includePreparation = false) {
       bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
       reconciliation: { nativeOperationSchema: nativeOperation.jsonSchema, action: 'reconcile' },
       ...(includePreparation ? { preparation: {
-        inputSchema: native.jsonSchema, artifactSchema: preparationArtifact.jsonSchema, nativeOperationSchema: nativeOperation.jsonSchema,
+        inputSchema: preparationInput.jsonSchema, artifactSchema: preparationArtifact.jsonSchema, nativeOperationSchema: nativeOperation.jsonSchema,
         artifactLaunchPath: 'launch',
         actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' },
       } } : {}),
@@ -189,3 +212,4 @@ function createAuthorFixture(repairNeeded = false, includePreparation = false) {
 export const machineProvisionerAuthorFixture = createAuthorFixture();
 export const createMachineProvisionerRepairAuthorFixture = () => createAuthorFixture(true);
 export const createMachineProvisionerPreparationAuthorFixture = () => createAuthorFixture(false, true);
+export const createMachineProvisionerSpecializedPreparationAuthorFixture = () => createAuthorFixture(false, true, true);

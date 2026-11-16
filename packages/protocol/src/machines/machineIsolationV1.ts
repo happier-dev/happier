@@ -21,16 +21,20 @@ export function readMachineIsolationV1(openedMetadata: unknown): MachineIsolatio
 }
 
 const policyId = () => z.string().check(z.trim(), z.minLength(1));
+export const MachineIsolationSandboxWorkChoiceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('sandbox'), configuredSandboxId: policyId(), lifecycle: z.enum(['fresh', 'shared-kept']),
+}));
+export const MachineIsolationConfiguredSandboxV1Schema = lazyZodSchema(() => z.strictObject({
+  provisioner: asProtocolZod(PluginContributionIdentityV1Schema), presetId: policyId(),
+}));
 export const MachineIsolationWorkChoiceV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('directly') }),
-  z.strictObject({ kind: z.literal('sandbox'), configuredSandboxId: policyId(), lifecycle: z.enum(['fresh', 'shared-kept']) }),
+  MachineIsolationSandboxWorkChoiceV1Schema,
 ]));
 export type MachineIsolationWorkChoiceV1 = z.infer<typeof MachineIsolationWorkChoiceV1Schema>;
 
 export const MachineIsolationPolicyV1Schema = lazyZodSchema(() => z.strictObject({
-  configuredSandboxes: z.record(policyId(), z.strictObject({
-    provisioner: asProtocolZod(PluginContributionIdentityV1Schema), presetId: policyId(),
-  })),
+  configuredSandboxes: z.record(policyId(), MachineIsolationConfiguredSandboxV1Schema),
   workKinds: z.strictObject({
     sessions: MachineIsolationWorkChoiceV1Schema,
     botsChannels: MachineIsolationWorkChoiceV1Schema,

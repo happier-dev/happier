@@ -4332,6 +4332,8 @@ Safe checks may return an optional prerequisite `repairAction` containing a qual
 
 In 0.3 development, a prerequisite may also carry `setupSources` using the canonical `MachineSetupSourceApplyV1` wire sources. Hosts pass these exact sources into the existing Setup Plan, review, approval and Apply flow so the person can review the recipe steps under one plan approval. Hosts do not derive Setup sources from opaque repair Action input.
 
+In 0.3 development, a prerequisite may also carry `setupSources` using the canonical `MachineSetupSourceApplyV1` wire sources. Hosts pass these exact sources into the existing Setup Plan, review, approval and Apply flow so the person can review the recipe steps under one plan approval. Hosts do not derive Setup sources from opaque repair Action input.
+
 In 0.3 development, an options result can also attach prerequisites to its
 selected `base` launch. When present, that complete snapshot replaces the check
 prerequisites in the existing receipt and repair flow; an empty list clears them.

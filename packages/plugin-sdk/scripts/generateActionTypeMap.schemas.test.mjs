@@ -5,7 +5,68 @@ import { tmpdir } from 'node:os';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
-import { captureActionSchemaInputs, deriveActionDtoBindings, deriveActionDtoSchemas } from './deriveActionDtos.mjs';
+import { captureActionSchemaInputs, deriveActionDtoBindings, deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
+
+test('Action DTO support retains every authored public support export and aliased source name', async () => {
+  const repoRoot = process.cwd();
+  const sdkRoot = resolve(repoRoot, 'packages/plugin-sdk/src');
+  const supportPath = resolve(sdkRoot, 'actions/dtos/pluginActionDtoSupport.generated.ts');
+  const snapshot = captureActionSchemaInputs(repoRoot);
+  const expected = new Set();
+  for (const path of ts.sys.readDirectory(sdkRoot, ['.ts'], undefined, ['**/index.public.ts'])) {
+    const text = readFileSync(path, 'utf8') + (path === resolve(sdkRoot, 'actions/index.public.ts')
+      ? "\nexport type { AccountOperand as AliasedPublicAccountOperand } from './dtos/pluginActionDtoSupport.generated.js';\n" : '');
+    snapshot.set(path, text);
+    const source = ts.createSourceFile(path, text, ts.ScriptTarget.ES2022, true);
+    for (const statement of source.statements) {
+      if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier
+        || !statement.exportClause || !ts.isNamedExports(statement.exportClause)
+        || resolve(dirname(path), statement.moduleSpecifier.text.replace(/\.js$/u, '.ts')) !== supportPath) continue;
+      for (const element of statement.exportClause.elements) expected.add((element.propertyName ?? element.name).text);
+    }
+  }
+  assert.ok(expected.size > 0);
+  const derived = await deriveActionDtoSchemas({ repoRoot, inputSnapshot: snapshot });
+  const projected = projectActionDtoDeclarations({ repoRoot, declarations: derived.outputs,
+    readSource: path => snapshot.get(resolve(path)) });
+  const text = projected.outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
+  assert.ok(text);
+  const support = ts.createSourceFile('support.ts', text, ts.ScriptTarget.ES2022, true);
+  const actual = new Set(support.statements.flatMap(statement => {
+    if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) return [statement.name.text];
+    if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      return statement.exportClause.elements.map(element => element.name.text);
+    }
+    return [];
+  }));
+  assert.deepEqual([...expected].filter(name => !actual.has(name)), [], 'authored SDK public exports remain canonical support roots');
+  assert.ok(!actual.has('AliasedPublicAccountOperand'), 'the canonical source name owns an aliased public export');
+});
+
+test('managed machine Action DTO maps retain every complete readonly result without aggregate printer truncation', () => {
+  const catalog = readActionCatalog(process.cwd());
+  const keys = catalog.families.managed_machines.filter(id => !Object.hasOwn(catalog.excluded, id));
+  const derived = deriveActionDtoBindings({ repoRoot: process.cwd(), keys, bindings: [
+    ['actions/actionSpecs.ts', 'PluginActionInputById', 'ManagedMachinesActionInputById', true],
+    ['actions/actionSpecs.ts', 'PluginActionResultById', 'ManagedMachinesActionResultById', false],
+  ] });
+  const dto = derived.declarations.find(([name]) => name === 'ManagedMachinesActionResultById')?.[1];
+  assert.ok(dto);
+  const source = ts.createSourceFile('managed.ts', dto, ts.ScriptTarget.ES2022, true);
+  assert.deepEqual(source.parseDiagnostics, []);
+  const rows = source.statements[0].type.members;
+  assert.deepEqual(rows.map(row => row.name.text).sort(), [...keys].sort());
+  assert.ok(rows.every(row => row.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword)));
+  const retire = rows.find(row => row.name.text === 'machines.managed.retire');
+  const retainedRoots = [];
+  const visit = node => {
+    if (ts.isPropertySignature(node) && node.name.getText(source) === 'retainedWorkflowRoot') retainedRoots.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(retire.type);
+  assert.ok(retainedRoots.length > 0, 'the complete retained Workflow result must survive projection');
+  assert.ok(retainedRoots.every(field => field.questionToken), 'retained transport remains optional');
+});
 
 test('real schema DTOs exclude authorization runtime attachments and retain deployment fields', () => {
   const derived = deriveActionDtoBindings({ repoRoot: process.cwd(), bindings: [
@@ -168,7 +229,7 @@ test('Action DTO derivation preserves the canonical catalog input projection', a
   assert.match(placement, /"inventory.open"/u);
   assert.doesNotMatch(placement, /"inventory.list"/u);
 });
-import { prepareActionTypeMap } from './generateActionTypeMap.mjs';
+import { prepareActionTypeMap, projectActionDtoDeclarations } from './generateActionTypeMap.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
 test('Session target inspection derives contributed Action ids from the canonical string schema', async () => {

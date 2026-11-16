@@ -30,6 +30,7 @@ export type ExternalActionMachineRpcEventV1 = typeof SOCKET_RPC_EVENTS.CALL
 import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema,
   ReviewedActionChildHttpProofV1Schema, type ReviewedActionChildHttpProofV1,
   projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
+  projectExternalActionPresetPreparationEnvelopeAdmissionV1,
   projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
   projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
@@ -130,6 +131,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && (metadataEnvironmentId === undefined || binding.environmentId === metadataEnvironmentId)
       && sameStrictJsonValue(binding.deploymentReadAdmission, projectExternalActionDeploymentReadEnvelopeAdmissionV1(input))
       && sameStrictJsonValue(binding.deploymentPreparationAdmission, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(input))
+      && sameStrictJsonValue(binding.presetPreparationAdmission, projectExternalActionPresetPreparationEnvelopeAdmissionV1(input))
       && (binding.deploymentLinkAdmission === undefined
         || binding.deploymentLinkAdmission.environmentId === projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input))
       && (binding.actionId === 'deployments.environments.update' && nativeAdmission !== undefined

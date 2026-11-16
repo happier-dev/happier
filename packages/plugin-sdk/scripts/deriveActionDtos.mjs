@@ -456,6 +456,10 @@ export function captureActionSchemaInputs(repoRoot) {
   for (const path of ['identity.ts', 'scm/projections.ts']) {
     host.readFile(resolve(repoRoot, 'packages/plugin-sdk/src', path));
   }
+  // Authored SDK imports and publication specs also own support roots. Their
+  // aliases must not disappear when schema printing inlines an Action operand.
+  for (const path of ts.sys.readDirectory(resolve(repoRoot, 'packages/plugin-sdk/src'), ['.ts'],
+    ['**/*.generated.ts', '**/*.test.ts', '**/*.spec.ts', '**/*.d.ts'])) host.readFile(path);
   return new Map([...inputs].filter(([, text]) => text !== undefined));
 }
 
@@ -744,7 +748,17 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
       declarations.set(outputName, `export interface ${outputName}${parameterText}${heritage.length ? ' extends ' + heritage.join(', ') : ''} ${body}\n`);
       return;
     }
-    const text = normalize(checker.typeToString(type, undefined, flags), input, parameters);
+    // Each Action is a real projection unit. Printing the aggregate family can
+    // exhaust the compiler's text budget even when every row prints completely.
+    const projection = keys ? `{ ${checker.getPropertiesOfType(type).map(property => {
+      const location = property.valueDeclaration ?? property.declarations?.[0] ?? program.getSourceFile(actionSpecs);
+      const value = checker.getTypeOfSymbolAtLocation(property, location);
+      const readonly = (ts.getCheckFlags(property) & ts.CheckFlags.Readonly) !== 0
+        || property.declarations?.some(declaration =>
+          declaration.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword));
+      return `${readonly ? 'readonly ' : ''}${JSON.stringify(property.name)}${property.flags & ts.SymbolFlags.Optional ? '?' : ''}: ${checker.typeToString(value, undefined, flags)};`;
+    }).join('\n')} }` : checker.typeToString(type, undefined, flags);
+    const text = normalize(projection, input, parameters);
     declarations.set(outputName, `export type ${outputName}${parameterText} = ${text};\n`);
   };
   for (const [path, name, outputName, input] of bindings) {
@@ -842,6 +856,30 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
   const imports = [];
   const dependencies = new Set();
   const inputDependencies = new Set();
+  const publicSupportNames = new Set();
+  if (!onlyFamilies) {
+    const sdkRoot = resolve(repoRoot, 'packages/plugin-sdk/src');
+    const sdkSupport = resolve(sdkRoot, 'actions/dtos/pluginActionDtoSupport.generated.ts');
+    for (const [path, text] of inputSnapshot) {
+      const local = relative(sdkRoot, path);
+      if (local.startsWith('..') || resolve(sdkRoot, local) !== path) continue;
+      recordInput(path, text);
+      if (!text.includes('pluginActionDtoSupport.generated')) continue;
+      const source = ts.createSourceFile(path, text, ts.ScriptTarget.ES2022, true);
+      for (const statement of source.statements) {
+        if ((!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement))
+          || !statement.moduleSpecifier || !ts.isStringLiteralLike(statement.moduleSpecifier)
+          || resolve(dirname(path), statement.moduleSpecifier.text.replace(/\.js$/u, '.ts')) !== sdkSupport) continue;
+        const clause = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : statement.exportClause;
+        if (!clause || (!ts.isNamedImports(clause) && !ts.isNamedExports(clause))) continue;
+        for (const element of clause.elements) {
+          const name = (element.propertyName ?? element.name).text;
+          publicSupportNames.add([...supportBindings, ...uiBindings].find(([, canonical, out]) => (out ?? canonical) === name)?.[1] ?? name);
+        }
+      }
+    }
+    for (const name of publicSupportNames) dependencies.add(name);
+  }
   const metrics = [];
   const consume = (label, result, elapsedMs) => {
     for (const [path, digest] of result.inputDigests) recordDigest(path, digest);
@@ -903,9 +941,12 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
     const indexPath = resolve(protocol, 'actions/pluginActionDtos.ts');
     const exportNames = [...supportBindings.map(([, name, out]) => out ?? name),
       ...['JSONType'].filter(name => support.declarations.some(([candidate]) => candidate === name))];
+    const supportExportNames = [...publicSupportNames].map(name =>
+      [...supportBindings, ...uiBindings].find(([, canonical]) => canonical === name)?.[2] ?? name).filter(name => !exportNames.includes(name));
     outputs.set(indexPath, GENERATED_HEADER + imports.join('\n') + '\n'
       + `import type { ${exportNames.map(name => `${name} as Dto${name}`).join(', ')} } from './pluginActionDtoSupport.js';\n`
       + exportNames.map(name => `export type ${name} = Dto${name};`).join('\n') + '\n'
+      + (supportExportNames.length ? `export type { ${supportExportNames.join(', ')} } from './pluginActionDtoSupport.js';\n` : '')
       + names.map((families, i) => `export type PluginAction${i ? 'Result' : 'Input'}ById = ${families.join(' & ')};`).join('\n')
       + '\nexport type PluginInvocableActionId = keyof PluginActionInputById;\n');
     // The former hand-authored UI grammar becomes a type-only re-export of

@@ -13,6 +13,8 @@ import { getActivePrismaRuntime } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { listSavedSecretReferenceCarrierPathsV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
+import { isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { listMachineCandidatesInTx, resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/machineAccess";
 import {
     ManagedMachineError, readManagedMachineInTx, projectManagedMachineInTx,
@@ -173,6 +175,25 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
     const input = ManagedGetInputV1Schema.parse(params.input);
     return await inTx(async tx => {
         await requireHome(tx, input.homeId);
+        if ('creationRequestId' in input) {
+            const row = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
+                homeId: input.homeId, admittedActionRequestId: input.creationRequestId,
+            } } });
+            const root = row && readManagedAdmissionState(row.admittedInput).continuation?.workflowRoot;
+            if (!row || !root || root.binding.accountId !== params.actorAccountId
+                || root.binding.serverIdentityId !== input.homeId) throw new ManagedMachineError('managed_not_found');
+            const account = await tx.account.findUnique({ where: { id: params.actorAccountId }, select: { encryptionMode: true } });
+            const mode = account && resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+            if (mode?.status !== 'ready' || !isExternalActionRequestVersionAllowedForAccountModeV1({
+                accountEncryptionMode: mode.mode, envelopeVersion: root.envelope.v,
+            })) throw new ManagedMachineError('managed_not_found');
+            try { await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false); }
+            catch (error) {
+                if (error instanceof ManagedMachineError && error.code === 'permission_denied') throw new ManagedMachineError('managed_not_found');
+                throw error;
+            }
+            return { ...await projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId), retainedWorkflowRoot: root };
+        }
         const row = await readManagedMachineInTx(tx, input);
         await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false);
         return projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId);

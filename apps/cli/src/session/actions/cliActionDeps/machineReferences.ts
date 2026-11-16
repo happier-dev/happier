@@ -6,7 +6,7 @@ import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@
 import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, type MachineReferenceCensusV1,
   type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1,
   type MachineReferencePoolListV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import { ManagedGetInputV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1,
+import { ManagedResourceTargetV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1,
   unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePoolListOutputV1Schema, type MachinePoolListOutputV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
@@ -87,7 +87,7 @@ export function createCliManagedMachineReferences(
       let machine: ReturnType<typeof unwrapManagedMachineReadV1>;
       try {
         const response = await axios.post(`${machineReferenceServerUrl}${managedMachineActionEndpointPathV1('machines.managed.get')}`,
-          ManagedGetInputV1Schema.parse({ homeId: input.homeId, managedId: input.managedId }), { headers, signal });
+          ManagedResourceTargetV1Schema.parse({ homeId: input.homeId, managedId: input.managedId }), { headers, signal });
         machine = unwrapManagedMachineReadV1(ManagedGetOutputV1Schema.parse(response.data));
         if (machine.homeId !== input.homeId || machine.id !== input.managedId) return unavailable('target');
       } catch { return unavailable('target'); }

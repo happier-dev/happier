@@ -117,8 +117,12 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
     return found;
   };
   const index = source(indexPath);
-  const rootNames = index.statements.filter((node) => ts.isTypeAliasDeclaration(node)
-    && node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)).map((node) => node.name.text);
+  const rootNames = index.statements.flatMap(node => {
+    if (ts.isTypeAliasDeclaration(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) return [node.name.text];
+    if (ts.isExportDeclaration(node) && node.isTypeOnly && node.moduleSpecifier
+      && node.exportClause && ts.isNamedExports(node.exportClause)) return node.exportClause.elements.map(element => element.name.text);
+    return [];
+  });
   for (const name of rootNames) select(indexPath, name);
   const uiPath = resolve(declarationRoot, virtual ? 'plugins/contributions/ui/actionDeclarativeNodeDto.ts' : 'dtos/actionDeclarativeNodeDto.generated.ts');
   if (declarations.has(uiPath) || ts.sys.fileExists(uiPath)) {

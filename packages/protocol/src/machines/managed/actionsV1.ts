@@ -24,7 +24,8 @@ import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } 
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js';
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachineReferenceCensusV1Schema } from '../machineReferenceCensusV1.js';
-import { MachineSetupNonAccountPresetSourceEntryV1Schema, machineSetupSourceOriginKeyV1, MachineSetupExclusionV1Schema,
+import { MachineSetupOpaquePresetSourceV1Schema, MachineSetupSourceApplyEntryV1Schema, MachineSetupSourceApplyV1Schema,
+  type MachineSetupSourceApplyEntryV1, MachineSetupNonAccountPresetSourceEntryV1Schema, machineSetupSourceOriginKeyV1, MachineSetupExclusionV1Schema,
   MachineSetupExclusionsV1Schema, MachineSetupSourceFactsMapV1Schema, MachineSetupAppOriginV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineSetupObservationStatusV1Schema, MachineSetupObservationReasonV1Schema, MachineSetupUpdatesObservationV1Schema } from '../setup/machineSetupObservationV1.js';
 import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
@@ -39,11 +40,11 @@ import * as deploymentTemplates from '../../deployments/deploymentTemplateInstan
 import { WorkflowCombinedActionHostReviewV1Schema } from '../../workflows/workflowStartPreparationV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { ExternalActionManagedContinuationV1Schema, ExternalActionRequestEnvelopeSchema } from '../../actions/externalActionApi.js';
+import { ExternalActionRetainedWorkflowRootV1Schema } from '../../actions/externalActionEncryption.js';
 import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema, ManagedNativeCredentialBindingV1Schema } from './credentialDeliveryV1.js';
 import { ManagedCreationScopeRetentionChoiceV1Schema } from './managedMachineV1.js';
 import { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
 import { ManagedMachinePresetLaunchNameOverrideV1Schema, ManagedMachinePresetRecipientProjectionV1Schema, ManagedMachinePresetStoredContentCarrierV1Schema, ManagedMachinePresetRecipientsV1Schema } from './managedMachinePresetContentV1.js';
-import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 export { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
 export * from './credentialDeliveryV1.js';
 export { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
@@ -65,33 +66,9 @@ export const MachineSetupPresetApplyInputV1Schema = lazyZodSchema(() => z.strict
 }));
 export type MachineSetupPresetApplyInputV1 = z.infer<typeof MachineSetupPresetApplyInputV1Schema>;
 
-/** A saved encrypted preset crosses Home by address only; its setup stays with the keyholding target. */
-export const MachineSetupOpaquePresetSourceV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('accountPresetOpaque'), presetId: id(), presetRevision: revision(),
-  /** Persisted author mode, verified by the server against the saved Preset. */
-  contentEncryptionMode: AccountEncryptionModeSchema,
-  /** Optional keyholder-sealed setup edit for this exact preset snapshot. */
-  presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
-}));
-export type MachineSetupOpaquePresetSourceV1 = z.infer<typeof MachineSetupOpaquePresetSourceV1Schema>;
-
-/** Input sources are carried through Actions. Only the daemon's local source model carries preset setup bytes. */
-export const MachineSetupSourceApplyEntryV1Schema = lazyZodSchema(() => z.union([
-  MachineSetupNonAccountPresetSourceEntryV1Schema,
-  MachineSetupOpaquePresetSourceV1Schema,
-]));
-export type MachineSetupSourceApplyEntryV1 = z.infer<typeof MachineSetupSourceApplyEntryV1Schema>;
-/** Canonical Action-wire identity for a setup source, including opaque saved presets. */
-export function machineSetupSourceApplyOriginKeyV1(source: MachineSetupSourceApplyEntryV1): string {
-  return source.kind === 'accountPresetOpaque' ? `account:${source.presetId}` : machineSetupSourceOriginKeyV1(source);
-}
-export const MachineSetupSourceApplyV1Schema = lazyZodSchema(() => z.array(MachineSetupSourceApplyEntryV1Schema).check(
-  z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
-    { message: 'Setup has exactly one implicit direct source.' }),
-  z.refine(sources => new Set(sources.map(machineSetupSourceApplyOriginKeyV1)).size === sources.length,
-    { message: 'Each setup source is attached once.' }),
-));
-export type MachineSetupSourceApplyV1 = z.infer<typeof MachineSetupSourceApplyV1Schema>;
+export { MachineSetupOpaquePresetSourceV1Schema, MachineSetupSourceApplyEntryV1Schema, MachineSetupSourceApplyV1Schema,
+  machineSetupSourceApplyOriginKeyV1, type MachineSetupOpaquePresetSourceV1, type MachineSetupSourceApplyEntryV1,
+  type MachineSetupSourceApplyV1 } from '../setup/machineSetupSourcesV1.js';
 
 /** Only the authenticated target receives its own envelope for an opaque preset source. */
 export const MachineSetupResolvedOpaquePresetSourceV1Schema = lazyZodSchema(() => z.extend(
@@ -434,8 +411,23 @@ export function isManagedOpaquePresetReadV1(value: unknown): value is ManagedOpa
   return ManagedOpaquePresetReadV1Schema.safeParse(value).success;
 }
 export const ManagedListOutputV1Schema = lazyZodSchema(() => z.strictObject({ machines: mini.array(ManagedMachineReadV1Schema) }));
-export const ManagedGetOutputV1Schema = lazyZodSchema(() => z.lazy(() => ManagedMachineReadV1Schema));
-export const ManagedGetInputV1Schema = lazyZodSchema(() => z.strictObject(target()));
+type ManagedReadWithRetainedWorkflowSchema<Schema extends z.ZodMiniObject> = ReturnType<typeof z.safeExtend<
+  Schema,
+  { retainedWorkflowRoot: z.ZodMiniOptional<typeof ExternalActionRetainedWorkflowRootV1Schema> }
+>>;
+// Preserve the named read contracts when several Action outputs share this extension.
+export const ManagedGetOutputV1Schema: z.ZodMiniUnion<[
+  ManagedReadWithRetainedWorkflowSchema<typeof ManagedMachinePublicFullV1Schema>,
+  ManagedReadWithRetainedWorkflowSchema<typeof ManagedOpaquePresetReadV1Schema>,
+]> = lazyZodSchema(() => z.union([
+  z.safeExtend(ManagedMachinePublicFullV1Schema, { retainedWorkflowRoot: z.optional(ExternalActionRetainedWorkflowRootV1Schema) }),
+  z.safeExtend(ManagedOpaquePresetReadV1Schema, { retainedWorkflowRoot: z.optional(ExternalActionRetainedWorkflowRootV1Schema) }),
+]));
+export const ManagedResourceTargetV1Schema = lazyZodSchema(() => z.strictObject(target()));
+export const ManagedGetInputV1Schema = lazyZodSchema(() => z.union([
+  ManagedResourceTargetV1Schema,
+  z.strictObject({ homeId: id(), creationRequestId: id() }),
+]));
 export const ManagedMutationInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision() }));
 export const ManagedRebuildInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), ...DevcontainerRebuildIntentV1Schema.def.shape }));
 /** A preset resize carries its private requested size in an existing sealed-content override. */
@@ -701,8 +693,8 @@ export const ManagedMachineActionInputSchemasV1 = {
   'machines.managed.credentials.install': lazyZodSchema(() => ManagedCredentialInstallInputV1Schema),
   'machines.managed.list': ManagedListInputV1Schema,
   'machines.managed.get': ManagedGetInputV1Schema,
-  'machines.managed.birth.get': ManagedGetInputV1Schema,
-  'machines.managed.references.get': ManagedGetInputV1Schema,
+  'machines.managed.birth.get': ManagedResourceTargetV1Schema,
+  'machines.managed.references.get': ManagedResourceTargetV1Schema,
   'machines.managed.inspect': ManagedInspectInputV1Schema,
   'machines.managed.bootstrap.retry': ManagedMutationInputV1Schema,
   'machines.managed.setup.skip': ManagedMutationInputV1Schema,

@@ -67,6 +67,7 @@ export {
   defineMachineProvisionerPreparationSchemas,
   ManagedGuestCliBuildInputV1Schema,
   ManagedMachinePresetPreparationBuildInputV1Schema,
+  createManagedMachinePresetPreparationBuildInputV1Schema,
   MachineProvisionerPreparationBuildInputV1Schema,
   MachineProvisionerPreparationBuildResultV1Schema,
   MachineProvisionerPreparationInspectInputV1Schema,

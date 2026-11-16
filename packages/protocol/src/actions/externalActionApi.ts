@@ -1,3 +1,5 @@
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
+import { ManagedMachinePresetPrepareInputV1Schema, type ManagedMachinePresetPrepareInputV1 } from '../machines/managed/managedMachinePresetRevisionV1.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema, ExternalActionTargetRefusalPhaseSchema } from './externalActionHttpError.js';
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
@@ -53,7 +55,7 @@ export { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdm
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema, ManagedGetInputV1Schema, ManagedInspectInputV1Schema, ManagedMutationInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedResizeInputV1Schema } from '../machines/managed/actionsV1.js';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema, ManagedResourceTargetV1Schema, ManagedInspectInputV1Schema, ManagedMutationInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedResizeInputV1Schema } from '../machines/managed/actionsV1.js';
 import { isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1, MANAGED_CREATION_MUTATION_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
@@ -739,7 +741,7 @@ const ExternalActionManagedAcquireAdmissionV1Schema = lazyZodSchema(() => z.stri
   continuationPresent: z.boolean(),
 }));
 const ExternalActionManagedInspectAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
-  actionId: z.literal('machines.managed.inspect'), input: ManagedGetInputV1Schema,
+  actionId: z.literal('machines.managed.inspect'), input: ManagedResourceTargetV1Schema,
 }));
 const ExternalActionManagedRetryAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.bootstrap.retry'), input: ManagedMutationInputV1Schema,
@@ -756,10 +758,10 @@ const ExternalActionManagedCredentialInstallAdmissionV1Schema = lazyZodSchema(()
   actionId: z.literal('machines.managed.credentials.install'), input: ManagedCredentialInstallInputV1Schema,
 }));
 const ExternalActionManagedOperationListAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
-  actionId: z.literal('action.operations.list'), input: ManagedGetInputV1Schema,
+  actionId: z.literal('action.operations.list'), input: ManagedResourceTargetV1Schema,
 }));
 const ExternalActionManagedOperationGetAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
-  actionId: z.literal('action.operations.get'), input: z.strictObject({ ...ManagedGetInputV1Schema.shape,
+  actionId: z.literal('action.operations.get'), input: z.strictObject({ ...ManagedResourceTargetV1Schema.shape,
     operationId: ActionOperationGetActionInputV1Schema.shape.operationId }),
 }));
 export const ExternalActionManagedControlAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
@@ -830,12 +832,21 @@ export const ExternalActionHandoffContinuationV1Schema = lazyZodSchema(() => z.s
   handoffId: ExternalActionTargetIdV1Schema,
 }));
 
+/** Bound once by the original Workflow caller and protected by the root envelope digest. */
+export const ExternalActionWorkflowPreparationV1Schema = lazyZodSchema(() => z.strictObject({
+  acquisition: z.extend(z.omit(ManagedAcquireInputV1Schema._zod.def.options[1], { agentStart: true }), {
+    controller: ManagedControllerV1Schema,
+  }),
+}));
+export type ExternalActionWorkflowPreparationV1 = z.infer<typeof ExternalActionWorkflowPreparationV1Schema>;
+
 export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   requestId: z.optional(ExternalActionRequestIdV1Schema),
   idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
   target: z.optional(ExternalActionTargetV1Schema),
   input: StrictJsonValueSchema,
+  workflowPreparation: z.optional(ExternalActionWorkflowPreparationV1Schema),
   resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
   pluginInvocation: z.optional(DaemonPluginMountedInvocationV1Schema),
@@ -942,6 +953,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentLinkEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   /** Exact non-content Environment operand for Home-authorized reads and binding preparation. */
   deploymentMetadataEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
+  presetPreparationAdmission: z.optional(ManagedMachinePresetPrepareInputV1Schema),
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
   registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
@@ -1012,6 +1024,18 @@ export function projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1(input:
   }
   return input.envelope.v === 1 ? projectRegistryAppUpdateAdmissionV1(input.actionId, input.envelope.input)
     : input.envelope.registryAppUpdateAdmission;
+}
+/** The exact non-content preset scope is authenticated with the original request envelope. */
+export function projectExternalActionPresetPreparationEnvelopeAdmissionV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>): ManagedMachinePresetPrepareInputV1 | undefined {
+  if (input.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+    if (input.envelope.v === 2 && input.envelope.presetPreparationAdmission !== undefined)
+      throw new TypeError('Unexpected preset preparation admission');
+    return undefined;
+  }
+  return ManagedMachinePresetPrepareInputV1Schema.parse(input.envelope.v === 1
+    ? input.envelope.input : input.envelope.presetPreparationAdmission);
 }
 export function projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
@@ -1289,6 +1313,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     pendingResetStartAdmission: z.optional(ExternalActionPendingResetStartAdmissionV1Schema),
     approvalDecisionAdmission: z.optional(ExternalActionApprovalDecisionAdmissionV1Schema),
     deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
+    presetPreparationAdmission: z.optional(ManagedMachinePresetPrepareInputV1Schema),
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
     deploymentChildRoot: z.optional(z.literal(true)),

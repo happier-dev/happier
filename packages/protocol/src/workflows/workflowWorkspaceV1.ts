@@ -5,6 +5,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { WorkflowAuthoredProducerRefSchema } from './workflowReferenceV1.js';
 import { MachinePoolSelectionOriginV1Schema } from '../machines/pools/v1.js';
+import { SessionPlacementSelectionV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 
 /**
  * Authored workspace **selection** for a workflow definition (SPACE §3.2).
@@ -66,8 +67,17 @@ export const WorkflowProjectTargetV1Schema = lazyZodSchema(() => z.strictObject(
   machineId: preservedBoundedNfcString(191, 'Workflow Machine ids'),
   directory: WorkflowWorkspacePathSchema,
   workspaceRefId: zMini.optional(preservedBoundedNfcString(191, 'Workspace ids')),
+  sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
 }));
 export type WorkflowProjectTargetV1 = z.infer<typeof WorkflowProjectTargetV1Schema>;
+
+/** Saved Machine placement chooses the Run host before its workspace is admitted. */
+export function resolveWorkflowProjectTargetMachineV1(project: WorkflowProjectTargetV1): WorkflowProjectTargetV1 {
+  const selected = project.sessionPlacement;
+  if (selected?.kind !== 'machine' || selected.target.machineId === project.machineId) return project;
+  const { workspaceRefId: _previousMachineWorkspace, ...intent } = project;
+  return { ...intent, machineId: selected.target.machineId };
+}
 
 /**
  * What a person picks for "Runs on": a Machine, or a Machine pool that the existing pool
@@ -101,6 +111,7 @@ export type WorkflowWorkspaceDescriptorV1 = z.infer<typeof WorkflowWorkspaceDesc
 /** Immutable machine-local workspace facts sealed into the accepted Run. */
 export const WorkflowAcceptedWorkspaceTargetV1Schema = lazyZodSchema(() => z.strictObject({
   project: WorkflowWorkspaceDescriptorV1Schema,
+  sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
   originalCommittedRevision: z.optional(WorkflowCommittedRevisionV1Schema),
 }));
 export type WorkflowAcceptedWorkspaceTargetV1 = z.infer<typeof WorkflowAcceptedWorkspaceTargetV1Schema>;

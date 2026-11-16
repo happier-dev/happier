@@ -21,6 +21,27 @@ import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from './catalog.js';
 
+it('specializes preparation build choices without widening the canonical closed build envelope', () => {
+  const choices = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+  const schema = provisioners.createManagedMachinePresetPreparationBuildInputV1Schema(choices);
+  const valid = { launch: { provider: { pluginId: 'test.preparation', localId: 'guest' }, schemaVersion: 1,
+    choices: { image: 'image-1' } },
+    cli: { identity: 'happier', versionId: 'version-1', binaryPath: '/usr/bin/happier', installScript: 'install', files: [] },
+    setupScript: 'setup' };
+  const validate = compilePluginJsonSchema(schema.jsonSchema);
+  expect(schema.parse(valid)).toEqual(valid);
+  expect(validate(valid)).toBe(true);
+  for (const invalid of [
+    { ...valid, launch: { ...valid.launch, choices: { image: 42 } } },
+    { ...valid, launch: { ...valid.launch, choices: { image: 'image-1', extra: true } } },
+    { ...valid, launch: { ...valid.launch, credentials: {} } },
+    { ...valid, credentialSelector: 'private' },
+  ]) {
+    expect(schema.safeParse(invalid).success).toBe(false);
+    expect(validate(invalid)).toBe(false);
+  }
+});
+
 it('admits optional preparation declarations and resolves their three same-plugin roles', () => {
   const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
   const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' }).jsonSchema;
@@ -38,18 +59,37 @@ it('admits optional preparation declarations and resolves their three same-plugi
     preparation: { ...preparation, inputSchema: { type: 'object' } } }).success).toBe(false);
 });
 
+it('recovers preparation from validated launch choices without rebuilding the CLI input', () => {
+  const input = defineProtocolObject({ archive: defineProtocolString() }, { policy: 'closed' });
+  const launch = defineProtocolObject({ snapshot: defineProtocolString() }, { policy: 'closed' });
+  const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input, launch, artifact: native, nativeOperation: native });
+  const recovery = { operationId: 'lost-build', launch: { snapshot: 'original-base' } };
+  expect(roles.inspectInput.parse(recovery)).toEqual(recovery);
+  const validate = compilePluginJsonSchema(roles.inspectInput.jsonSchema);
+  expect(validate(recovery)).toBe(true);
+  for (const invalid of [
+    { operationId: 'lost-build', input: { archive: 'do-not-rebuild' } },
+    { ...recovery, launch: { snapshot: 'original-base', credential: 'undeclared' } },
+    { ...recovery, launch: { archive: 'do-not-rebuild' } },
+  ]) {
+    expect(roles.inspectInput.safeParse(invalid).success).toBe(false);
+    expect(validate(invalid)).toBe(false);
+  }
+});
+
 it('validates preparation payloads and retains native identity for every uncertain result', () => {
   const input = defineProtocolObject({ dockerfileContent: defineProtocolString() }, { policy: 'closed' });
   const artifact = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
   const nativeOperation = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
-  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input, artifact, nativeOperation });
+  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input, launch: artifact, artifact, nativeOperation });
   const reference = { contributionRef: { pluginId: 'test.preparation', localId: 'guest' }, schemaVersion: 1 };
   const artifactRef = { ...reference, value: { id: 'snapshot-1' } };
   const nativeOperationRef = { ...reference, value: { name: 'build-1' } };
   const cases = [
     [roles.buildInput, [{ operationId: 'operation-1', input: { dockerfileContent: 'FROM scratch' } }]],
     [roles.inspectInput, [{ nativeOperation: nativeOperationRef },
-      { operationId: 'operation-1', input: { dockerfileContent: 'FROM scratch' } }]],
+      { operationId: 'operation-1', launch: { id: 'original-base' } }]],
     [roles.destroyInput, [{ artifact: artifactRef }, { nativeOperation: nativeOperationRef },
       { artifact: artifactRef, nativeOperation: nativeOperationRef }]],
     [roles.buildResult, [{ kind: 'ready', artifact: artifactRef }, { kind: 'pending', nativeOperationRef },
@@ -97,7 +137,7 @@ it('admits preparation Actions only with canonical schemas, existing local refer
     properties: { name: { $ref: '#/definitions/name' } }, required: ['name'], additionalProperties: false,
     definitions: { name: { type: 'string' } },
   }, value => nativeValue.safeParse(value));
-  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input: native, artifact: native, nativeOperation: native });
+  const roles = provisioners.defineMachineProvisionerPreparationSchemas({ input: native, launch: nativeDurationSchemas().launch, artifact: native, nativeOperation: native });
   const descriptor = manifest.contributes.machineProvisioners[0]!;
   const preparation = { inputSchema: native.jsonSchema, artifactSchema: native.jsonSchema, nativeOperationSchema: native.jsonSchema, artifactLaunchPath: 'name',
     actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } };
@@ -114,6 +154,7 @@ it('admits preparation Actions only with canonical schemas, existing local refer
     [roles.buildInput, { operationId: 'operation-1', input: { name: 'build-1' } }],
     [roles.buildResult, { kind: 'unknown', code: 'post_lost', nativeOperationRef: ref }],
     [roles.inspectInput, { nativeOperation: ref }],
+    [roles.inspectInput, { operationId: 'operation-1', launch: { timeoutMs: 1000 } }],
     [roles.inspectResult, { kind: 'ready', artifact: ref }],
     [roles.destroyInput, { artifact: ref }],
     [roles.destroyResult, { kind: 'pending', nativeOperationRef: ref }],
@@ -336,7 +377,7 @@ it('admits the native apply role only with its exact closed resource value schem
   expect(validate({ ...input, resource: { ...input.resource, value: { name: 'guest', policy: 'unadmitted' } } })).toBe(false);
 });
 
-function nativeDurationManifest() {
+function nativeDurationSchemas() {
   const timeout = defineProtocolNumber({
     integer: true,
     minimum: 1000,
@@ -347,6 +388,11 @@ function nativeDurationManifest() {
     { timeoutMs: timeout },
     { policy: 'closed' },
   );
+  return { timeout, launch };
+}
+
+function nativeDurationManifest() {
+  const { launch, timeout } = nativeDurationSchemas();
   const resource = defineProtocolObject(
     { name: defineProtocolString() },
     { policy: 'closed' },

@@ -7,12 +7,12 @@ import {
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import type { MachineSetupPresetReferenceV1, MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import type { MachineSetupPresetReferenceV1, MachineSetupSourceEntryV1, MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import { prepareMachineSetupPresetApplyInput } from '@/components/settings/machines/managed/machineSetupApply';
+import { prepareMachineSetupPresetApplyInput, prepareMachineSetupSourcesAdditionApplyInput } from '@/components/settings/machines/managed/machineSetupApply';
 import {
   prepareMachineSetupSourcesApplyInput,
   type MachineSetupPreparedApply,
@@ -63,6 +63,7 @@ export function readOpenedMachineSetupSources(
 export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'reapply' }>
   | Readonly<{ kind: 'preset'; preset: MachineSetupPresetChoice }>
+  | Readonly<{ kind: 'sources'; sources: MachineSetupSourceApplyV1 }>
   /** Stop using one attached preset (its source origin key); what it set up stays unless the review removes it. */
   | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>
   | Readonly<{
@@ -253,6 +254,11 @@ export function useMachineSetup(
             machineId,
             preset: intent.preset,
             isCurrent,
+            ...(removeItemKeys?.length ? { removeItemKeys } : {}),
+          });
+        } else if (intent.kind === 'sources') {
+          prepared = await prepareMachineSetupSourcesAdditionApplyInput({
+            executeAction: execute, context: ctx, homeId, machineId, sources: intent.sources, isCurrent,
             ...(removeItemKeys?.length ? { removeItemKeys } : {}),
           });
         } else if (intent.kind === 'remove') {

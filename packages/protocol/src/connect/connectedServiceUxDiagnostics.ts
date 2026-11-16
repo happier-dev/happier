@@ -24,6 +24,7 @@ export const ConnectedServicesDefaultUnavailableDetailsV1Schema = lazyZodSchema(
 export type ConnectedServicesDefaultUnavailableDetailsV1 = z.infer<typeof ConnectedServicesDefaultUnavailableDetailsV1Schema>;
 
 export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
+  continuityUnsupported: 'continuity_unsupported',
   providerSessionStateUnavailableForResume: 'provider_session_state_unavailable_for_resume',
   connectedServiceMaterializationIdentityMissing: 'connected_service_materialization_identity_missing',
   resumeReachabilityInputsMissing: 'resume_reachability_inputs_missing',
@@ -71,6 +72,7 @@ export function normalizeLegacyConnectedServiceUxDiagnosticCode(value: unknown):
 }
 
 const ConnectedServiceUxDiagnosticCurrentCodeV1Schema = lazyZodSchema(() => z.enum([
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.continuityUnsupported,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing,

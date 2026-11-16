@@ -1111,6 +1111,34 @@ test('generated Action DTO signatures use the canonical SDK public declarations'
   }
 });
 
+test('Action DTO projection retains named public support roots with canonical generic parameters', () => {
+  const repoRoot = resolve(tmpdir(), 'happier-named-support-fixture');
+  const protocolRoot = resolve(repoRoot, 'packages/protocol/src');
+  const sources = new Map([
+    [resolve(protocolRoot, 'actions/actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] };"],
+    [resolve(protocolRoot, 'actions/pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {};'],
+  ]);
+  const outputs = actionTypeMapGenerator.projectActionDtoDeclarations({ repoRoot,
+    declarations: new Map([
+      [resolve(protocolRoot, 'actions/pluginActionDtos.ts'),
+        'export type PluginActionInputById = { "fixture.read": {} };\n'
+          + 'export type PluginActionResultById = { "fixture.read": {} };\n'
+          + "export type { Operand as PublicOperand } from './pluginActionDtoSupport.js';\n"],
+      [resolve(protocolRoot, 'actions/pluginActionDtoSupport.ts'), 'export type Operand<T extends { value: string }> = { selected: T };\n'],
+    ]),
+    readSource: path => {
+      const source = sources.get(path);
+      assert.ok(source !== undefined, `Unexpected source read: ${path}`);
+      return source;
+    },
+  }).outputs;
+  const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
+  assert.ok(support, 'a named public root retains its canonical support module');
+  assert.match(support, /export type Operand<T extends \{/u);
+  assert.match(support, /selected: T/u);
+  assert.doesNotMatch(support, /type PublicOperand/u);
+});
+
 test('Action DTO projection scopes mapped keys without hiding external declarations', () => {
   const repoRoot = resolve(tmpdir(), 'happier-mapped-dto-fixture');
   const protocolRoot = resolve(repoRoot, 'packages/protocol/src');

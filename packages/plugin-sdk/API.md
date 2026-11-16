@@ -1947,6 +1947,7 @@
 | `./machine-provisioners` | `createMachineProvisionerApiKeyAccount` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerFetch` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerMaterializedFetch` | value | any |
+| `./machine-provisioners` | `createManagedMachinePresetPreparationBuildInputV1Schema` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerPreparationSchemas` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerReconciliationSchemas` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerSchemas` | value | any |

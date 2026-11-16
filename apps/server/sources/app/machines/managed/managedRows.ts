@@ -13,6 +13,7 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { ManagedCreationScopeRetentionV1Schema, createManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, isManagedPresetAcquireInputV1, type ManagedControllerCurrentnessV1, type ManagedAdmissionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetLaunchNameOverrideV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { ExternalActionRetainedWorkflowRootV1Schema } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -141,7 +142,8 @@ const StoredManagedAdmissionSchema = z.strictObject({
     /** First admitted opaque name override, retained only until the controller snapshots it into launch content. */
     presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
     computeInput: z.optional(StoredManagedComputeInputSchema),
-    continuation: z.optional(z.nullable(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) }))),
+    continuation: z.optional(z.nullable(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)),
+        workflowRoot: z.optional(ExternalActionRetainedWorkflowRootV1Schema) }))),
     machineSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
     currentAdmission: z.optional(z.discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("control"), request: ManagedControlAdmissionInputV1Schema,

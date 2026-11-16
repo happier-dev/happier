@@ -12,7 +12,7 @@ import { actionInputServerId } from './definition.js';
 import type { ActionInputFieldHint } from '../actionInputHintsRuntime.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
-import { ManagedGetInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { ManagedResourceTargetV1Schema } from '../../machines/managed/actionsV1.js';
 import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 export { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
 
@@ -21,7 +21,7 @@ export { ACTION_OPERATION_ACTION_IDS_V1, type ActionOperationActionIdV1 } from '
 export const ActionOperationActionIdV1Schema = lazyZodSchema(() => z.enum(ACTION_OPERATION_ACTION_IDS_V1));
 
 const homeMachine = { serverId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)) };
-const managedObservation = () => ({ ...homeMachine, managed: z.optional(ManagedGetInputV1Schema) });
+const managedObservation = () => ({ ...homeMachine, managed: z.optional(ManagedResourceTargetV1Schema) });
 export const ActionOperationAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionOperationAddressV1Schema));
 export const ActionOperationListActionInputV1Schema = lazyZodSchema(() =>
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationListV2RequestSchema, managedObservation())));

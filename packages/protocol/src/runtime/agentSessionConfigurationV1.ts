@@ -40,6 +40,7 @@ const AgentSessionConfigurationSnapshotCoreV1Schema = lazyZodSchema(() => z.stri
   permissionIntent: TimestampedAgentValueV1Schema(zMini.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
   /** Host role restriction; independent of the permission intent used as delegation ceiling. */
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
+  nativeSandbox: z.optional(z.enum(['on', 'off'])),
   options: z.record(
     exactString(LIMITS.hostIndexedIdMaxCodeUnits),
     TimestampedAgentValueV1Schema(AgentConfigurationScalarV1Schema),

@@ -3,6 +3,7 @@ import { projectExternalActionBrowserSessionIdV1 } from './executor/browser.js';
 import { projectWorkspaceSyncAdmissionInputV1 } from '../workspaces/workspaceSyncAdmissionV1.js';
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { z } from '../zodRuntimePolicy.js';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from './actionIds.js';
 
 import { AccountApiTokenCredentialV1Schema, AccountApiTokenEncryptionAccessV1Schema, AccountApiTokenSummaryV1Schema } from '../auth/accountApiTokens.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
@@ -16,10 +17,12 @@ import { projectDeploymentPreparationAdmissionV1 } from '../deployments/deployme
 import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { projectRegistryAppUpdateAdmissionV1 } from '../registries/registryAppUpdateAdmissionV1.js';
 import {
+  projectExternalActionPresetPreparationEnvelopeAdmissionV1,
   ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema,
   ExternalActionTargetV1Schema, ExternalActionApiTokenServerPrincipalV1Schema,
+  ExternalActionWorkflowPreparationV1Schema,
   ExternalActionAccountAuthenticationV1Schema, ExternalActionTerminalAuthenticationV1Schema,
-  ExternalActionExecutionResultV1Schema, ExternalActionRequestEnvelopeV2Schema,
+  ExternalActionExecutionResultV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema,
   ExternalActionResponseEnvelopeV2Schema, EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   EXTERNAL_ACTION_ENCRYPTED_REQUEST_PLAINTEXT_MAX_BYTES_V2,
   EXTERNAL_ACTION_ENCRYPTED_RESPONSE_PLAINTEXT_MAX_BYTES_V2,
@@ -63,6 +66,18 @@ const AccountBindingSchema = lazyZodSchema(() => z.strictObject({ ...BindingRout
 const BindingSchema = lazyZodSchema(() => z.union([ApiTokenBindingSchema, AccountBindingSchema]));
 export type ExternalActionEncryptionBindingV2 = Readonly<z.infer<typeof BindingSchema>>;
 
+/** Original transport and noncredential AAD; current execution still needs fresh authorization. */
+export const ExternalActionRetainedWorkflowRootV1Schema = lazyZodSchema(() => z.strictObject({
+  binding: BindingSchema,
+  envelope: z.union([ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema]),
+}).check(z.refine(value => value.binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
+  && value.envelope.requestId === value.binding.requestId
+  && value.envelope.target !== undefined
+  && externalActionTargetsEqualV1(value.envelope.target, value.binding.target), {
+  message: 'Retained Workflow transport must match its original binding',
+})));
+export type ExternalActionRetainedWorkflowRootV1 = z.infer<typeof ExternalActionRetainedWorkflowRootV1Schema>;
+
 /** Same-token encryption-only material; never a bearer or a Home-readable projection. */
 const ApiTokenContentAccessSchema = lazyZodSchema(() => z.strictObject({
   contentPublicKey: AccountApiTokenCredentialV1Schema.shape.contentPublicKey,
@@ -72,6 +87,7 @@ export type ExternalActionApiTokenContentAccessV2 = Readonly<z.infer<typeof ApiT
 
 const requestShape = () => ({
   v: z.literal(2), direction: z.literal('request'), input: StrictJsonValueSchema,
+  workflowPreparation: z.optional(ExternalActionWorkflowPreparationV1Schema),
   resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
 });
@@ -118,6 +134,7 @@ function open(ciphertext: string, material: Material, maximumPlaintextBytes: num
 
 export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   binding: ExternalActionEncryptionBindingV2; input: unknown;
+  workflowPreparation?: z.infer<typeof ExternalActionWorkflowPreparationV1Schema>;
   projectMachineRuntimeDemand: MachineRuntimeDemandProjector;
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
@@ -125,7 +142,8 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
   pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
 }>): ExternalActionRequestEnvelopeV2 {
-  const operands = { ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
+  const operands = { ...(params.workflowPreparation ? { workflowPreparation: params.workflowPreparation } : {}),
+    ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
     ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}) };
   const payload = RequestSchema.parse({ ...params.binding, v: 2, direction: 'request', input: params.input, ...operands,
     ...(params.apiTokenContentAccess ? { apiTokenContentAccess: params.apiTokenContentAccess } : {}) });
@@ -142,6 +160,8 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvironmentIdV1(payload.actionId, payload.input);
   const deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(payload.actionId, payload.input);
   const deploymentPreparationAdmission = projectDeploymentPreparationAdmissionV1(payload.actionId, payload.input);
+  const presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: payload.actionId,
+    envelope: { v: 1, requestId: payload.requestId, target: payload.target, input: payload.input } });
   const deploymentNativeAdmission = projectDeploymentNativeAdmissionV1(payload.actionId, payload.input);
   const registryAppUpdateAdmission = projectRegistryAppUpdateAdmissionV1(payload.actionId, payload.input);
   const discussionId = projectExternalActionDiscussionIdV1(payload.actionId, payload.input);
@@ -161,6 +181,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     ...(deploymentLinkEnvironmentId === undefined ? {} : { deploymentLinkEnvironmentId }),
     ...(deploymentMetadataEnvironmentId === undefined ? {} : { deploymentMetadataEnvironmentId }),
     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
+    ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
     ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
     ...(payload.actionId === 'approval.request.decide'
@@ -187,6 +208,7 @@ export function openExternalActionRequestV2(params: Readonly<{
     error?: unknown;
   }>) => void;
 }>): Readonly<{ input: z.infer<typeof StrictJsonValueSchema>;
+  workflowPreparation?: z.infer<typeof ExternalActionWorkflowPreparationV1Schema>;
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
   apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2 }> | null {
@@ -248,6 +270,9 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (projectExternalActionDeploymentMetadataEnvironmentIdV1(decoded.data.actionId, decoded.data.input)
       !== envelope.deploymentMetadataEnvironmentId) return refused();
     phase = 'deployment_preparation_admission';
+    if (!sameStrictJsonValue(projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: decoded.data.actionId,
+      envelope: { v: 1, requestId: decoded.data.requestId, target: decoded.data.target, input: decoded.data.input } }),
+      envelope.presetPreparationAdmission)) return refused();
     if (!sameStrictJsonValue(projectDeploymentPreparationAdmissionV1(decoded.data.actionId, decoded.data.input),
       envelope.deploymentPreparationAdmission)) return refused();
     phase = 'deployment_native_admission';
@@ -257,7 +282,8 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (!sameStrictJsonValue(projectRegistryAppUpdateAdmissionV1(decoded.data.actionId, decoded.data.input),
       envelope.registryAppUpdateAdmission)) return refused();
     phase = 'plaintext_limit';
-    const operands = { ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),
+    const operands = { ...(decoded.data.workflowPreparation ? { workflowPreparation: decoded.data.workflowPreparation } : {}),
+      ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),
       ...(decoded.data.machineServiceLogsGeneration ? { machineServiceLogsGeneration: decoded.data.machineServiceLogsGeneration } : {}) };
     return isExternalActionRequestWithinLimit({ v: 1, requestId: decoded.data.requestId,
       target: decoded.data.target, input: decoded.data.input, ...operands }) ? { input: decoded.data.input, ...operands,

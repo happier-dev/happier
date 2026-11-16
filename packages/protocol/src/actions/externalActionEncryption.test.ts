@@ -40,6 +40,24 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('authenticates the exact Prepare preset scope while keeping its payload encrypted', () => {
+    const prepareBinding = { ...binding, actionId: 'machines.presets.prepare' };
+    const input = { homeId: binding.serverIdentityId, id: 'private-preset', expectedRevision: 7, machineId: 'machine-1' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: prepareBinding, input, material, randomBytes });
+    expect(request).toMatchObject({ presetPreparationAdmission: input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: prepareBinding, material })).toEqual({ input });
+    for (const changed of [{ ...input, id: 'other' }, { ...input, homeId: 'other' },
+      { ...input, machineId: 'other' }, { ...input, expectedRevision: 8 }, undefined]) {
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: { ...request, presetPreparationAdmission: changed }, binding: prepareBinding, material })).toBeNull();
+    }
+    const ordinary = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding, input: { sessionId: 'session', text: 'message' }, material, randomBytes });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: { ...ordinary, presetPreparationAdmission: input }, binding, material })).toBeNull();
+  });
   it('carries a present person\'s review only inside the encrypted response and fails closed without its material', () => {
     // A receiving executor's own-UI refusal: its review is Account content (a Machine-discovered command).
     const execution = { ok: false as const, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',

@@ -381,6 +381,7 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
     'account_changed', 'refresh_failed', 'permission_denied', 'plan', 'unknown',
     'authentication_required', 'workspace_routing_unauthorized', 'context_window_exceeded',
     'auth_account_changed', 'unclassified_provider_error', 'model_selection_required',
+    'model_selection_invalid', 'session_configuration_invalid',
   ]),
   providerErrorCode: z.optional(z.union([
     // Native codes are presentation evidence, never an authority or retry decision.

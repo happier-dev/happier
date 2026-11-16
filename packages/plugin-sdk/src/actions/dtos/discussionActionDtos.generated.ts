@@ -576,6 +576,27 @@ export type DiscussionActionInputById = {
             machineId: string;
             directory: string;
             workspaceRefId?: string | undefined;
+            sessionPlacement?: undefined | {
+                kind: 'machine';
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+                configuredSandbox?: undefined | {
+                    kind: 'sandbox';
+                    configuredSandboxId: string;
+                    lifecycle: 'fresh' | 'shared-kept';
+                    provisioner: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    presetId: string;
+                };
+            } | {
+                kind: 'preset';
+                homeId: string;
+                presetId: string;
+            };
         };
     };
     readonly "discussion.list": {
@@ -2198,6 +2219,7 @@ export type DiscussionActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
+                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -2506,6 +2528,7 @@ export type DiscussionActionResultById = {
                                 updatedAtMs: number;
                             }>;
                             workspaceWrites?: 'allow' | 'deny' | undefined;
+                            nativeSandbox?: 'off' | 'on' | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -8732,6 +8755,7 @@ export type DiscussionActionResultById = {
                         updatedAtMs: number;
                     }>;
                     workspaceWrites?: 'allow' | 'deny' | undefined;
+                    nativeSandbox?: 'off' | 'on' | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -8995,6 +9019,7 @@ export type DiscussionActionResultById = {
                             updatedAtMs: number;
                         }>;
                         workspaceWrites?: 'allow' | 'deny' | undefined;
+                        nativeSandbox?: 'off' | 'on' | undefined;
                         providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
@@ -9497,6 +9522,7 @@ export type DiscussionActionResultById = {
                         updatedAtMs: number;
                     }>;
                     workspaceWrites?: 'allow' | 'deny' | undefined;
+                    nativeSandbox?: 'off' | 'on' | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -9722,7 +9748,7 @@ export type DiscussionActionResultById = {
                 };
                 failureCause?: undefined | {
                     phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
-                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                     actionCause?: ActionFailureCauseV1 | undefined;
                     code?: string | undefined;
                     retryable?: boolean | undefined;
@@ -9807,7 +9833,7 @@ export type DiscussionActionResultById = {
                     catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
                 };
                 uxDiagnostic?: undefined | {
-                    code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                    code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'continuity_unsupported' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
                     failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
                     source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                     retryable: boolean;

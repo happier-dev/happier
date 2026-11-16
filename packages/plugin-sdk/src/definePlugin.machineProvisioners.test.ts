@@ -4,8 +4,27 @@ import { parsePluginManifest } from './manifest.js';
 import { createPluginTestkit } from './testing/host.js';
 import { MachineProvisionerOptionsResultV1Schema } from './machineProvisioners.js';
 import type { JsonValue } from './identity.js';
+import { createMachineProvisionerSpecializedPreparationAuthorFixture } from '../fixtures/authoring-inference/machineProvisioners.js';
 
 describe('public machine provisioner authoring', () => {
+  it('admits preparation roles specialized to the provider choices and rejects undeclared choices', async () => {
+    const author = createMachineProvisionerSpecializedPreparationAuthorFixture();
+    const testkit = await createPluginTestkit({ manifest: author.manifest, module: author });
+    const launch = { provider: { pluginId: author.manifest.id, localId: 'guest' }, schemaVersion: 1, choices: { name: 'guest' } };
+    const cli = { identity: 'selected-cli', versionId: 'current', binaryPath: '/opt/happier/happier',
+      installScript: 'install selected payload', files: [] };
+    const input = { launch, cli, setupScript: 'prepare selected tools' };
+    try {
+      await expect(testkit.invokeAction('prepare-build', { operationId: 'specialized-build', input }))
+        .resolves.toMatchObject({ kind: 'unknown', nativeOperationRef: { value: { claimId: 'specialized-build' } } });
+      await expect(testkit.invokeAction('prepare-build', { operationId: 'specialized-build', input: {
+        ...input, launch: { ...launch, choices: { name: 'guest', credential: 'undeclared' } },
+      } })).rejects.toThrow();
+      await expect(testkit.invokeAction('prepare-build', { operationId: 'specialized-build', input: {
+        ...input, cli: { ...cli, files: [{ path: 'payload' }] },
+      } })).rejects.toThrow();
+    } finally { await testkit.dispose(); }
+  });
   it('passes the complete validated launch and supplier CLI input through the public builder contract', async () => {
     const author = createMachinePresetPreparationInputAuthorFixture();
     const testkit = await createPluginTestkit({ manifest: author.manifest, module: author });
@@ -30,8 +49,10 @@ describe('public machine provisioner authoring', () => {
         } });
       await expect(testkit.invokeAction('prepare-inspect', { nativeOperation: { contributionRef, schemaVersion: 1, value: { claimId: 'retained-build' } } }))
         .resolves.toEqual({ kind: 'ready', artifact: { contributionRef, schemaVersion: 1, value: { launch: { name: 'retained-build' } } } });
-      await expect(testkit.invokeAction('prepare-inspect', { operationId: 'retained-build', input: { name: 'guest' } }))
+      await expect(testkit.invokeAction('prepare-inspect', { operationId: 'retained-build', launch: { name: 'guest' } }))
         .resolves.toEqual({ kind: 'ready', artifact: { contributionRef, schemaVersion: 1, value: { launch: { name: 'retained-build' } } } });
+      await expect(testkit.invokeAction('prepare-inspect', { operationId: 'retained-build', input: { name: 'guest' } })).rejects.toThrow();
+      await expect(testkit.invokeAction('prepare-inspect', { operationId: 'retained-build', launch: { name: 'guest', credential: 'undeclared' } })).rejects.toThrow();
       await expect(testkit.invokeAction('prepare-destroy', { artifact: { contributionRef, schemaVersion: 1, value: { launch: { name: 'retained-build' } } } }))
         .resolves.toEqual({ kind: 'confirmed' });
       await expect(testkit.invokeAction('prepare-destroy', {})).rejects.toThrow();

@@ -28,8 +28,9 @@ function preparationReference<I, O>(valueSchema: ProtocolComposableSchema<I, O>)
 }
 
 /** Provider-native build contracts only; preset selection and operation custody belong to the host. */
-export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, NO>(schemas: Readonly<{
+export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, NO, LI, LO>(schemas: Readonly<{
   input: ProtocolComposableSchema<II, IO>;
+  launch: ProtocolComposableSchema<LI, LO>;
   artifact: ProtocolComposableSchema<AI, AO>;
   nativeOperation: ProtocolComposableSchema<NI, NO>;
 }>) {
@@ -47,7 +48,7 @@ export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, N
     buildResult: defineProtocolUnion([ready, pending, refused, unknown]),
     inspectInput: defineProtocolUnion([
       defineProtocolObject({ nativeOperation: nativeOperationRef }, closed),
-      defineProtocolObject({ operationId: code, input: schemas.input }, closed),
+      defineProtocolObject({ operationId: code, launch: schemas.launch }, closed),
     ]),
     inspectResult: defineProtocolUnion([ready, pending,
       defineProtocolObject({ kind: defineProtocolLiteral('failed'), code, nativeOperationRef }, closed),
@@ -63,7 +64,7 @@ export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, N
 }
 
 const preparationSchemas = defineMachineProvisionerPreparationSchemas({ input: defineProtocolJsonValue(),
-  artifact: defineProtocolJsonValue(), nativeOperation: defineProtocolJsonValue() });
+  launch: defineProtocolJsonValue(), artifact: defineProtocolJsonValue(), nativeOperation: defineProtocolJsonValue() });
 export const MachineProvisionerPreparationBuildInputV1Schema = preparationSchemas.buildInput;
 export const MachineProvisionerPreparationBuildResultV1Schema = preparationSchemas.buildResult;
 export const MachineProvisionerPreparationInspectInputV1Schema = preparationSchemas.inspectInput;
