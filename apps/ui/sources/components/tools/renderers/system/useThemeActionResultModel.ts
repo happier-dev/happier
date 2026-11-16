@@ -2,13 +2,14 @@ import * as React from 'react';
 import {
     THEME_ACTION_IDS, type ThemeActionOutput,
 } from '@happier-dev/protocol/actions/themeActionFamily';
-import { readRpcFailureCode } from '@/sync/ops/actions/rpcFailureCode';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
-import type { ThemeLibraryEntry } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeLibraryEntry, ThemeProfileDocument } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeUiActionExecute } from '@/components/settings/appearance/themeProfiles/useThemeActionExecution';
+import type { ThemeDevicePickerInput } from '@/components/settings/appearance/themeProfiles/useThemeDevicePicker';
 import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/components/sessions/transcript/references/transcriptThemeAction';
-import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase } from '@/components/tools/renderers/system/themeActionResultViewTypes';
+import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
 
 type Kept = ThemeActionOutput<typeof THEME_ACTION_IDS.keep>;
 type Applied = ThemeActionOutput<typeof THEME_ACTION_IDS.apply>;
@@ -17,13 +18,17 @@ type Outcome = Readonly<{ kind: 'preview'; output: Preview }>
     | Readonly<{ kind: 'kept'; output: Kept }>
     | Readonly<{ kind: 'applied'; output: Applied }>
     | Readonly<{ kind: 'undone'; previous: 'preview' | 'kept' | 'applied' }>;
+export type ThemeActionCardEdit = Readonly<{ kind: 'document'; document: ThemeProfileDocument }>
+    | Readonly<{ kind: 'entry'; entry: ThemeLibraryEntry }>;
 export type ThemeActionCardFacts = Readonly<{
     preview: ThemeTryOnOwner;
     entry: ThemeLibraryEntry | null;
+    /** Base selections have display facts from the miniature owner and no library entry. */
+    appliedTheme?: Pick<ThemeResultTheme, 'name' | 'mode' | 'miniature'>;
     created: boolean;
     here: string;
-    onEdit?: () => void;
-    onUseOtherDevices?: () => void;
+    onEdit?: (target: ThemeActionCardEdit) => void;
+    onUseOtherDevices?: (theme: ThemeDevicePickerInput['theme']) => void;
 }>;
 
 /** Card-local presentation and replay data; every effect goes through the existing Action front door. */
@@ -51,7 +56,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const perform = React.useCallback((operation: ThemeResultOperation, effect: () => Promise<void>) => {
         setBusy(operation); setFailure(null); retryOperation.current = effect;
         void effect().catch((error: unknown) => {
-            setFailure({ kind: 'failed', operation, code: readRpcFailureCode(error) ?? null });
+            setFailure({ kind: 'failed', operation, code: readActionErrorCodeV1(error) });
         }).finally(() => setBusy(null));
     }, []);
     const tryOption = React.useCallback(async (option: TranscriptThemeTry) => {
@@ -96,20 +101,29 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         } else if (failure && retryOperation.current) perform(failure.operation, retryOperation.current);
         else perform('try', replay);
     }, [failure, selected, perform, replay, tryOption, invoke]);
-    if (!entry) return null;
+    const display = entry ?? (call.actionId === THEME_ACTION_IDS.apply ? facts.appliedTheme : null);
+    if (!display) return null;
+    const editTarget: ThemeActionCardEdit | null = outcome.kind === 'preview' && selected
+        ? { kind: 'document', document: selected.input.document }
+        : outcome.kind === 'kept' ? { kind: 'entry', entry: outcome.output.entry }
+            : outcome.kind === 'applied' && facts.entry ? { kind: 'entry', entry: facts.entry } : null;
+    const deviceTarget: ThemeDevicePickerInput['theme'] | null = outcome.kind === 'kept'
+        ? { reference: outcome.output.entry.reference, mode: outcome.output.applied.mode, name: display.name }
+        : outcome.kind === 'applied' && call.actionId === THEME_ACTION_IDS.apply
+            ? { reference: call.input.ref, mode: outcome.output.applied.mode, name: display.name } : null;
     const phase: ThemeResultPhase = failure ?? (outcome.kind === 'preview'
         ? { kind: preview?.previewRef === outcome.output.previewRef ? 'trying' : 'replaced' }
         : outcome.kind === 'undone'
             ? outcome.previous === 'preview' ? { kind: 'reverted' } : { kind: 'undone', restoredName: null }
             : { kind: outcome.kind === 'kept' ? 'kept' : 'applied' });
     const coverage = outcome.kind === 'preview' ? outcome.output.coverage : null;
-    return { theme: { name: entry.name, mode: entry.mode, miniature: entry.miniature,
+    return { theme: { name: display.name, mode: display.mode, miniature: display.miniature,
         created: facts.created }, phase, busy, here: facts.here,
         options, currentOptionKey, coverage,
         reshapes: coverage?.affectedSurfaces.map(address => address.surface),
         hides: coverage?.hides.map(hidden => hidden.address.surface),
         onTryOption, onKeep, onUndo, onRedo, onRetry,
-        onEdit: facts.onEdit,
-        onUseOtherDevices: outcome.kind === 'kept' || outcome.kind === 'applied' ? facts.onUseOtherDevices : undefined,
+        onEdit: facts.onEdit && editTarget ? () => facts.onEdit!(editTarget) : undefined,
+        onUseOtherDevices: facts.onUseOtherDevices && deviceTarget ? () => facts.onUseOtherDevices!(deviceTarget) : undefined,
     };
 }
