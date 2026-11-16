@@ -107,6 +107,35 @@ describe('Windows self-update admission', () => {
     await expect(assertWindowsCliUpdateIsOutsideManagedProcessTree()).resolves.toBeUndefined();
   });
 
+  it('allows fresh-install and independent-update ancestry through system processes without command lines', async () => {
+    processQueryMock.mockReturnValue(JSON.stringify([
+      { ProcessId: process.ppid, ParentProcessId: 93101, Name: 'pwsh.exe', CommandLine: 'pwsh.exe -File install-dev.ps1' },
+      { ProcessId: 93101, ParentProcessId: 93102, Name: 'Runner.Listener.exe', CommandLine: null },
+      { ProcessId: 93102, ParentProcessId: 0, Name: 'services.exe', CommandLine: null },
+    ]));
+    const { assertWindowsCliUpdateIsOutsideManagedProcessTree } = await import('../runtime/update/quiesceInstalledCliWindowsPayloadOwners');
+    await expect(assertWindowsCliUpdateIsOutsideManagedProcessTree()).resolves.toBeUndefined();
+  });
+
+  it('continues past a non-Happier ancestor without a command line to refuse a managed session', async () => {
+    processQueryMock.mockReturnValue(JSON.stringify([
+      { ProcessId: process.ppid, ParentProcessId: 93102, Name: 'cmd.exe', CommandLine: null },
+      { ProcessId: 93102, ParentProcessId: 0, Name: 'hdev.exe', CommandLine: 'hdev.exe claude --started-by daemon' },
+    ]));
+    await expect(run(['update'])).rejects.toThrow('exit 1');
+    expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain('Cannot update Happier from inside');
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unreadable potential Happier host and identifies the missing evidence without command text', async () => {
+    processQueryMock.mockReturnValue(JSON.stringify([
+      { ProcessId: process.ppid, ParentProcessId: 0, Name: 'node.exe', CommandLine: null },
+    ]));
+    await expect(run(['update'])).rejects.toThrow('exit 1');
+    expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain(`Cannot inspect Windows ancestor PID ${process.ppid}`);
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
   it.each(['unavailable', 'incomplete'])('refuses when process ancestry is %s', async (kind) => {
     if (kind === 'unavailable') {
       processQueryMock.mockImplementation(() => { throw new Error('CIM unavailable'); });

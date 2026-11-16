@@ -23,7 +23,10 @@ export async function assertWindowsCliUpdateIsOutsideManagedProcessTree(): Promi
   try {
     ancestors = await findWindowsHappyProcessAncestors();
   } catch (error) {
-    throw new Error('Cannot verify Windows update process ancestry. Run the update from an independent terminal after resolving process inspection.', { cause: error });
+    // The inspection owner emits only fixed diagnostics and PIDs, never command lines
+    // or raw PowerShell output. Preserve that reason at the installer boundary.
+    const reason = error instanceof Error ? ` ${error.message}.` : '';
+    throw new Error(`Cannot verify Windows update process ancestry.${reason} Run the update from an independent terminal after resolving process inspection.`, { cause: error });
   }
   if (ancestors.some((ancestor) => TERMINATABLE_PROCESS_TYPES.has(ancestor.type))) {
     throw new Error('Cannot update Happier from inside a Happier daemon or daemon-started session on Windows. Save your work and run the update from an independent terminal outside Happier.');

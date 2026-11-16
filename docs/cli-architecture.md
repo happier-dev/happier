@@ -718,8 +718,11 @@ In current development source (not yet released), self-update and direct `self _
 invocations below a Happier daemon or daemon-started session before downloads, locks, launcher
 capture or service shutdown. The update owner uses the daemon's Windows process inspection and
 shared session-command classification to walk the calling process's ancestors. Run the update
-from an independent terminal after saving work. Failure to inspect ancestry also refuses the
-update without modifying the installation. `self update --help` and `-h` print help before update
+from an independent terminal after saving work. System/service ancestors without command lines
+are traversed using their parent PID; command lines are required only for potential Happier hosts.
+This also applies to fresh-install payload promotion. Failure to inspect ancestry still refuses the
+update without modifying the installation, with the inspection reason (no command text) in the error.
+`self update --help` and `-h` print help before update
 dispatch. This prevents self-termination during quiescing; the recovery limits above still apply.
 
 **Rolling back across a migration.** The previous version must read whatever the new one wrote

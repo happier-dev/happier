@@ -265,7 +265,9 @@ export async function findWindowsHappyProcessAncestors(): Promise<HappyProcessIn
     const proc = processes.get(pid);
     // A parent may already have exited; Windows retains its PID on surviving children.
     if (!proc) break;
-    if (proc.ppid === undefined || !proc.name || !proc.cmd) {
+    // Windows can omit command lines for system/service ancestors. Only a potential
+    // Happier host needs one for classification; still walk through every parent.
+    if (proc.ppid === undefined || !proc.name || (!proc.cmd && isWindowsHappyHostProcessCandidate(proc.name))) {
       throw new Error(`Cannot inspect Windows ancestor PID ${pid}`);
     }
     const classified = classifyHappyProcess(proc);
