@@ -47,6 +47,7 @@ export interface NewSessionData {
     sessionName?: string;
     initialSessionFacts?: SessionIdentityAdditions;
     memoryEnabled?: boolean;
+    isolationOverride?: 'directly';
     promptStack?: SessionPromptStackV1;
     instructionsDraft?: SessionInstructionsAuthoringDraft | null;
     prompt?: string;

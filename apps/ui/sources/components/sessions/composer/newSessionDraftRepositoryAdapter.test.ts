@@ -192,6 +192,30 @@ describe('newSessionDraftRepositoryAdapter', () => {
         writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: projected });
         expect(cataloguedNewSessionAuthoring(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }))?.agentTarget?.value).toBeNull();
     });
+    it('keeps one-Session Directly intent device-local when reopening the authoring draft', async () => {
+        const draftId = '00000000-0000-4000-8000-000000001125';
+        const address = { kind: 'newSession' as const, draftId };
+        writeNewSessionDraftToRepository({ scope, draftId,
+            draft: { ...authoringDraft({ input: 'Run one Session directly' }), ...{ isolationOverride: 'directly' as const } } });
+        await flushSessionDraft({ scope, address });
+        resetSessionDraftRepositoryForTests();
+        const reopened = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(reopened).toMatchObject({ isolationOverride: 'directly' });
+        if (!reopened) throw new Error('Expected retained Directly draft');
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(reopened), creationKey: 'reopened-directly',
+            permissionMode: 'default', configurationUpdatedAtMs: 1,
+        })).toMatchObject({ isolationOverride: 'directly' });
+        expect(NewSessionDraftDocumentV2Schema.parse(getSessionDraftSnapshot(scope, address)!.document).target.authoring)
+            .not.toHaveProperty('isolationOverride');
+        writeSessionDraftLocalSupplement({ scope, address, patch: { newSessionLocalState: null } });
+        await flushSessionDraft({ scope, address });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).not.toHaveProperty('isolationOverride');
+        const nextDraftId = '00000000-0000-4000-8000-000000001126';
+        writeNewSessionDraftToRepository({ scope, draftId: nextDraftId, draft: authoringDraft() });
+        expect(readNewSessionDraftFromRepository({ scope, draftId: nextDraftId })).not.toHaveProperty('isolationOverride');
+    });
     it('keeps an explicitly configured Agent on a seeded draft', () => {
         const draftId = '00000000-0000-4000-8000-000000000958';
         seedNewSessionDraftV1({ scope, createDraftId: () => draftId,
