@@ -1798,7 +1798,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 attempt.preparedSettlementAcknowledged = true;
                 return null;
             }
-        } catch {
+        } catch (error) {
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) {
                 await compensateLateDurableWrite(
@@ -1808,14 +1808,16 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 return ownershipFailure;
             }
             attempt.phase = 'outcomeUnknown';
+            const code = attempt.oauthTransaction
+                ? 'connected_account_oauth_settlement_persistence_unavailable'
+                : 'connected_account_device_settlement_persistence_unavailable';
             const response: AttemptResponse = {
                 status: 'outcomeUnknown',
                 attemptId: attempt.id,
-                diagnostic: {
-                    code: attempt.oauthTransaction
-                        ? 'connected_account_oauth_settlement_persistence_unavailable'
-                        : 'connected_account_device_settlement_persistence_unavailable',
-                },
+                diagnostic: projectConnectedAccountFailure(error, {
+                    code: { outcome: code },
+                    phase: 'connected_account.attempt.settlement',
+                }).diagnostic ?? { code },
             };
             attempt.lastResponse = response;
             return response;
@@ -1832,7 +1834,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     async function completeDecisiveSettlement(
         attempt: ActiveStoredAttempt,
         request: ConnectedAccountAttemptSettlementRequest,
-        outcomeUnknownResponse: AttemptResponse,
+        outcomeUnknownResponse: Extract<AttemptResponse, { status: 'outcomeUnknown' }>,
         reconciliationOnly: boolean,
     ): Promise<AttemptResponse> {
         const operation = reconciliationOnly
@@ -1855,12 +1857,18 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             settlement = await operation(attempt.completionObservation
                 ? { ...request, completionObservation: attempt.completionObservation }
                 : request);
-        } catch {
+        } catch (error) {
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
             attempt.phase = 'outcomeUnknown';
-            attempt.lastResponse = outcomeUnknownResponse;
-            return outcomeUnknownResponse;
+            const response: AttemptResponse = { ...outcomeUnknownResponse,
+                diagnostic: projectConnectedAccountFailure(error, {
+                    code: { outcome: 'connected_account_settlement_outcome_unknown' },
+                    phase: 'connected_account.attempt.settlement',
+                }).diagnostic ?? outcomeUnknownResponse.diagnostic,
+            };
+            attempt.lastResponse = response;
+            return response;
         }
         const afterSettlement = attemptOwnershipFailure(attempt);
         if (afterSettlement) return afterSettlement;
@@ -2173,7 +2181,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             attempt.authenticationProvenance = authenticationProvenance;
             try {
                 await acknowledgeOAuthTransaction(attempt, 'configurationRequired');
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) {
                     await compensateLateDurableWrite(attempt, 'oauth');
@@ -2181,7 +2189,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }
                 const unavailableResponse: AttemptResponse = {
                     status: 'unavailable', attemptId: attempt.id,
-                    code: 'connected_account_oauth_transaction_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_oauth_transaction_unavailable' },
+                        phase: 'connected_account.attempt.transaction',
+                    }),
                 };
                 await destroyAttempt(attempt, unavailableResponse);
                 return unavailableResponse;
@@ -2230,7 +2241,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             if (attempt.oauthTransaction) {
                 try {
                     await acknowledgeOAuthTransaction(attempt, 'outcomeUnknown');
-                } catch {
+                } catch (error) {
                     const ownershipFailure = attemptOwnershipFailure(attempt);
                     if (ownershipFailure) {
                         await compensateLateDurableWrite(attempt, 'oauth');
@@ -2239,9 +2250,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     const response: AttemptResponse = {
                         status: 'outcomeUnknown',
                         attemptId: attempt.id,
-                        diagnostic: {
-                            code: 'connected_account_oauth_transaction_persistence_unavailable',
-                        },
+                        diagnostic: projectConnectedAccountFailure(error, {
+                            code: { outcome: 'connected_account_oauth_transaction_persistence_unavailable' },
+                            phase: 'connected_account.attempt.transaction',
+                        }).diagnostic ?? { code: 'connected_account_oauth_transaction_persistence_unavailable' },
                     };
                     attempt.lastResponse = response;
                     return response;
@@ -2304,7 +2316,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             };
             try {
                 await acknowledgeOAuthTransaction(attempt, 'awaitingOAuth');
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) {
                     await compensateLateDurableWrite(attempt, 'oauth');
@@ -2313,7 +2325,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 const unavailableResponse: AttemptResponse = {
                     status: 'unavailable',
                     attemptId: attempt.id,
-                    code: 'connected_account_oauth_transaction_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_oauth_transaction_unavailable' },
+                        phase: 'connected_account.attempt.transaction',
+                    }),
                 };
                 attempt.lastResponse = unavailableResponse;
                 await destroyAttempt(attempt, unavailableResponse);
@@ -2354,7 +2369,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             };
             try {
                 await acknowledgeDeviceTransaction(attempt);
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) {
                     await compensateLateDurableWrite(attempt, 'device');
@@ -2363,7 +2378,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 const response: AttemptResponse = {
                     status: 'unavailable',
                     attemptId: attempt.id,
-                    code: 'connected_account_device_transaction_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_device_transaction_unavailable' },
+                        phase: 'connected_account.attempt.transaction',
+                    }),
                 };
                 await destroyAttempt(attempt, response);
                 return response;
@@ -2394,7 +2412,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             if (attempt.oauthTransaction) {
                 try {
                     await acknowledgeOAuthTransaction(attempt, 'outcomeUnknown');
-                } catch {
+                } catch (error) {
                     const ownershipFailure = attemptOwnershipFailure(attempt);
                     if (ownershipFailure) {
                         await compensateLateDurableWrite(attempt, 'oauth');
@@ -2403,9 +2421,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     const response: AttemptResponse = {
                         status: 'outcomeUnknown',
                         attemptId: attempt.id,
-                        diagnostic: {
-                            code: 'connected_account_oauth_transaction_persistence_unavailable',
-                        },
+                        diagnostic: projectConnectedAccountFailure(error, {
+                            code: { outcome: 'connected_account_oauth_transaction_persistence_unavailable' },
+                            phase: 'connected_account.attempt.transaction',
+                        }).diagnostic ?? { code: 'connected_account_oauth_transaction_persistence_unavailable' },
                     };
                     attempt.lastResponse = response;
                     return response;
@@ -2433,7 +2452,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 attempt.device.nextPollAtMs = params.now() + attempt.device.pollIntervalMs;
                 try {
                     await acknowledgeDeviceTransaction(attempt);
-                } catch {
+                } catch (error) {
                     const ownershipFailure = attemptOwnershipFailure(attempt);
                     if (ownershipFailure) {
                         await compensateLateDurableWrite(attempt, 'device');
@@ -2442,7 +2461,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     const response: AttemptResponse = {
                         status: 'unavailable',
                         attemptId: attempt.id,
-                        code: 'connected_account_device_transaction_unavailable',
+                        ...projectConnectedAccountFailure(error, {
+                            code: { outcome: 'connected_account_device_transaction_unavailable' },
+                            phase: 'connected_account.attempt.transaction',
+                        }),
                     };
                     attempt.lastResponse = response;
                     await destroyAttempt(attempt, response);
@@ -2549,11 +2571,14 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }
                 operation = { ...operation, fields: Object.freeze({ ...operation.fields, ...selectedFields }) };
                 attempt.selectedSecrets = Object.freeze({ ...manualSelections });
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) return ownershipFailure;
                 const response: AttemptResponse = { status: 'unavailable', attemptId: attempt.id,
-                    code: 'connected_account_credential_secret_unavailable' };
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_credential_secret_unavailable' },
+                        phase: 'connected_account.attempt.secrets',
+                    }) };
                 await destroyAttempt(attempt, response);
                 return response;
             }
@@ -2594,12 +2619,14 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     existingTransaction = await params.deviceTransactions.read(
                         attempt.id,
                     );
-                } catch {
+                } catch (error) {
                     const response: AttemptResponse = {
                         status: 'unavailable',
                         attemptId: attempt.id,
-                        code:
-                            'connected_account_device_transaction_unavailable',
+                        ...projectConnectedAccountFailure(error, {
+                            code: { outcome: 'connected_account_device_transaction_unavailable' },
+                            phase: 'connected_account.attempt.transaction',
+                        }),
                     };
                     attempt.lastResponse = response;
                     await destroyAttempt(attempt, response, {
@@ -2654,14 +2681,17 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     ...(homeWebappUrl ? { homeWebappUrl } : {}),
                 }),
             });
-        } catch {
+        } catch (error) {
             finishDurableOperation();
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
             const response: AttemptResponse = {
                 status: 'unavailable',
                 attemptId: attempt.id,
-                code: 'connected_account_oauth_transaction_unavailable',
+                ...projectConnectedAccountFailure(error, {
+                    code: { outcome: 'connected_account_oauth_transaction_unavailable' },
+                    phase: 'connected_account.attempt.transaction',
+                }),
             };
             await destroyAttempt(attempt, response);
             return response;
@@ -2773,7 +2803,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         const finishDurableOperation = beginDurableOperation(restoration);
         try {
             transaction = await params.oauth.read(attemptId, record);
-        } catch {
+        } catch (error) {
             finishDurableOperation();
             const ownershipFailure = attemptOwnershipFailure(restoration);
             if (ownershipFailure) {
@@ -2784,7 +2814,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 response: {
                     status: 'unavailable',
                     attemptId,
-                    code: 'connected_account_oauth_transaction_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_oauth_transaction_unavailable' },
+                        phase: 'connected_account.attempt.transaction',
+                    }),
                 },
             };
         }
@@ -2964,13 +2997,16 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     ...(snapshot.intent === 'connect' ? { attemptId: snapshot.attemptId } : {}),
                     expectedConfigurationRevision: snapshot.expectedConfigurationRevision,
                 });
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(restoration);
                 if (ownershipFailure) return { response: ownershipFailure };
                 return await cleanUpTerminal({
                     status: 'unavailable',
                     attemptId,
-                    code: 'connected_account_configuration_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_configuration_unavailable' },
+                        phase: 'connected_account.attempt.configuration',
+                    }),
                 });
             }
             const afterConfiguration = attemptOwnershipFailure(restoration);
@@ -3326,7 +3362,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 beginDurableOperation(restoration);
             try {
                 snapshot = await deviceTransactions.read(input.attemptId, input.record);
-            } catch {
+            } catch (error) {
                 finishDurableOperation();
                 const ownershipFailure = attemptOwnershipFailure(restoration);
                 if (ownershipFailure) return ownershipFailure;
@@ -3334,7 +3370,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 return {
                     status: 'unavailable',
                     attemptId: input.attemptId,
-                    code: 'connected_account_device_transaction_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_device_transaction_unavailable' },
+                        phase: 'connected_account.attempt.transaction',
+                    }),
                 };
             }
             const afterRead = attemptOwnershipFailure(restoration);
@@ -3506,14 +3545,17 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         ...(snapshot.intent === 'connect' ? { attemptId: snapshot.attemptId } : {}),
                         expectedConfigurationRevision: snapshot.expectedConfigurationRevision,
                     });
-                } catch {
+                } catch (error) {
                     const ownershipFailure =
                         attemptOwnershipFailure(restoration);
                     if (ownershipFailure) return ownershipFailure;
                     return await cleanUpTerminal({
                         status: 'unavailable',
                         attemptId: input.attemptId,
-                        code: 'connected_account_configuration_unavailable',
+                        ...projectConnectedAccountFailure(error, {
+                            code: { outcome: 'connected_account_configuration_unavailable' },
+                            phase: 'connected_account.attempt.configuration',
+                        }),
                     });
                 }
                 const afterConfiguration =
@@ -3667,14 +3709,17 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         ? { expectedConfigurationRevision: input.expectedConfigurationRevision }
                         : {}),
                 });
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) return ownershipFailure;
                 attempt.phase = 'configurationRequired';
                 return {
                     status: 'unavailable',
                     attemptId: input.attemptId,
-                    code: 'connected_account_configuration_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_configuration_unavailable' },
+                        phase: 'connected_account.attempt.configuration',
+                    }),
                 };
             }
             const afterConfiguration = attemptOwnershipFailure(attempt);
@@ -3850,13 +3895,16 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             let completion: PluginConnectedAccountOAuthCompletion;
             try {
                 completion = await attempt.oauthTransaction!.acceptCompletion(input.completion);
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) return ownershipFailure;
                 const response: AttemptResponse = {
                     status: 'rejected',
                     attemptId: attempt.id,
-                    code: 'connected_account_oauth_completion_invalid',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_oauth_completion_invalid' },
+                        phase: 'connected_account.attempt.completion',
+                    }),
                 };
                 await destroyAttempt(attempt, response);
                 return response;
@@ -3874,7 +3922,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             };
             try {
                 await acknowledgeOAuthTransaction(attempt, 'outcomeUnknown');
-            } catch {
+            } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) {
                     await compensateLateDurableWrite(attempt, 'oauth');
@@ -3883,7 +3931,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 const response: AttemptResponse = {
                     status: 'unavailable',
                     attemptId: attempt.id,
-                    code: 'connected_account_oauth_transaction_unavailable',
+                    ...projectConnectedAccountFailure(error, {
+                        code: { outcome: 'connected_account_oauth_transaction_unavailable' },
+                        phase: 'connected_account.attempt.transaction',
+                    }),
                 };
                 attempt.phase = 'rejected';
                 attempt.lastResponse = response;
@@ -4006,7 +4057,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         service: attempt.admission.service,
                         ...(attempt.account ? { account: attempt.account } : {}),
                     });
-                } catch {
+                } catch (error) {
                     const currentness = await checkAttemptActive(attempt);
                     if (currentness) {
                         return await resolveReconciliationCurrentness(
@@ -4018,7 +4069,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     const response: AttemptResponse = {
                         status: 'outcomeUnknown',
                         attemptId: attempt.id,
-                        diagnostic: { code: 'connected_account_late_evidence_unavailable' },
+                        diagnostic: projectConnectedAccountFailure(error, {
+                            code: { outcome: 'connected_account_late_evidence_unavailable' },
+                            phase: 'connected_account.attempt.reconciliation',
+                        }).diagnostic ?? { code: 'connected_account_late_evidence_unavailable' },
                     };
                     attempt.lastResponse = response;
                     return response;
