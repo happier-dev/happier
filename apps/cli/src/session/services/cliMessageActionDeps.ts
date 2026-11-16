@@ -733,7 +733,7 @@ export function createCliMessageActionDeps(
           account: { accountId, serverId: homeId, serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId },
           target: { kind: 'machine', machineId },
         }) : null;
-        if (!invocation) return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
+        if (!invocation) return { status: 'rejected' as const, code: 'session_input_unauthorized' as const };
         const execution = await dispatchOriginalAccountAction({ actionId: 'session.message.send',
           input: { sessionId: transport.sessionId, message: admittedMessageText, requestedAction,
             ...(recipient ? { recipient } : {}), ...(executionRunLocalId ? { localId: executionRunLocalId } : localId ? { localId } : {}),

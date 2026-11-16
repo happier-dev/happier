@@ -26,6 +26,40 @@ vi.mock('@/api/session/sockets', async importOriginal => {
 
 describe('CLI host Message admission', () => {
   beforeEach(() => vi.clearAllMocks());
+  it.each(['retained_alias', 'missing_machine'] as const)(
+    'preserves the approval-result admission failure for %s', async failure => {
+    const accountId = 'approval-owner';
+    const serverId = 'approval-profile';
+    const serverIdentityId = 'srv_approval_home';
+    const sessionId = 'cmv3approvalresultaaaaaaa';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture() };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, active: false, encryptionMode: 'plain',
+        machineId: failure === 'missing_machine' ? null : 'approval-machine',
+        metadata: JSON.stringify(failure === 'missing_machine' ? {} : { machineId: 'approval-machine' }),
+      }) } };
+      throw new Error(`Unexpected approval-result HTTP read: ${url}`);
+    });
+    const deps = createCliActionDeps({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+      serverId, serverIdentityId });
+    const result = await deps.sessionSendMessage!({ sessionId, message: 'Recorded Action result',
+      localId: 'approval-result:retained', requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none',
+      actionCaller: { kind: 'host' }, callerSurface: 'mcp',
+      context: { surface: 'mcp', authority: 'account_automation', runtimeAccountId: accountId, serverId,
+        serverIdentityId, actionCaller: { kind: 'host' }, actionRequestAttributionV1: {
+          requestRef: 'original-input', requester: { accountId, serverId },
+          persona: { serverId, sessionId }, origin: null,
+        } },
+    });
+    expect(result).toMatchObject({ status: 'rejected', code: failure === 'retained_alias'
+      ? 'session_input_unauthorized' : 'session_input_target_unavailable' });
+    expect(http.post).not.toHaveBeenCalled();
+  });
   it.each([
     { decision: 'reject', draft: true }, { decision: 'cancel', draft: true }, { decision: 'reject', draft: false },
   ] as const)('settles a Discussion $decision at its captured Home without a live publisher (draft: $draft)', async ({ decision, draft }) => {
