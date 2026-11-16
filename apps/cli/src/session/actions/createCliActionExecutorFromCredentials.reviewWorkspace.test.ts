@@ -1,13 +1,11 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import Fastify from 'fastify';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { ActionApprovalRequestCreatedResultSchema, buildWorktreeRelativePath, createActionExecutor,
+import { ActionApprovalRequestCreatedResultSchema, buildWorktreeRelativePath,
   readActionOperationTerminalResultV1 } from '@happier-dev/protocol';
 import { ActionExecuteResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { join } from 'node:path';
@@ -27,7 +25,6 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import { createCliActionDeps } from './createCliActionDeps';
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -41,13 +38,25 @@ import { encodeGithubTriageConfiguration } from '../../../../../packages/plugins
 import { createStubGithubTransport, GITHUB_TEST_ACCOUNT } from '../../../../../packages/plugins/scm-github/src/triage/testkit/githubTriage.test-support';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts';
 import { GITHUB_PULL_REQUEST_RESPONSE } from '../../../../../packages/plugins/scm-github/src/triage/__fixtures__/githubResponses';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
+import { invokeAccountMachineSourceAction } from '@/plugins/runtime/invocation/actions/accountMachineActionTransport';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => pluginReloadController.shutdown());
 
-it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
+it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-approval-verify', 'account-agent-approval-verify',
+  'plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
   'owner-unadmitted', 'owner-retarget', 'owner-home'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
-  const approvalShape = shape.startsWith('approval-');
+  const approvalShape = shape.includes('approval-');
+  const accountChild = shape.startsWith('account-');
+  const localPluginChild = shape === 'plugin-approval-verify';
+  const accountOrigin = shape === 'account-agent-approval-verify' ? 'agent' as const : 'cli' as const;
+  const verifyShape = shape.endsWith('verify');
   await withConfiguredDaemonTestHome({ prefix: 'review-workspace-child-',
     env: { HAPPIER_SERVER_URL: 'https://review-home.test', HAPPIER_WEBAPP_URL: 'https://review-home.test' } }, async ({ homeDir }) => {
     const machineId = 'review-machine';
@@ -72,6 +81,12 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
     const approvalHome = approvalShape ? Fastify() : null;
     const approvalChannel = approvalHome ? await createRequesterCurrentnessSocketHarness() : null;
     const approvalPaths: string[] = [];
+    const accountManifest = normalizePluginManifestV2(createPluginManifestV2Fixture({ id: 'example.account-review', entrypoints: {}, contributes: {
+      actions: [{ id: 'verify', title: 'Verify accepted workspace', scopes: ['global'], surfaces: ['cli', 'agent'], dangerLevel: 'safe',
+        execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } }],
+    } }));
+    const accountCustody = { kind: 'account_release' as const, pluginId: accountManifest.id, version: accountManifest.version,
+      archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
     let restoreHttp: (() => void) | undefined;
     if (approvalHome) {
       approvalHome.addHook('onRequest', async request => { approvalPaths.push(request.url); });
@@ -82,6 +97,13 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
       approvalHome.get('/v1/machines', async () => [machine]);
       approvalHome.get('/v1/machines/:id', async () => ({ machine }));
       approvalHome.post('/v1/machines/:id/admission/verify', async () => ({ v: 1, ok: true }));
+      if (accountChild) approvalHome.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () =>
+        PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
+          intent: { pluginId: accountManifest.id, desiredVersion: accountManifest.version, enabled: true,
+            offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+          release: normalizePluginReleaseFactsV1({ ref: { pluginId: accountManifest.id, version: accountManifest.version },
+            archiveDigestSha256: accountCustody.archiveDigestSha256, normalizedManifest: accountManifest, collectionContracts: [], uiSlots: [],
+            packageAssetArchive: { archiveDigestSha256: `sha256:${'d'.repeat(64)}`, resources: [] } }), uiArtifacts: [], packageAssets: [] }));
       restoreHttp = installAxiosFastifyAdapter({ app: approvalHome, origin: 'https://review-home.test' });
     }
     const originalPost = axios.post.bind(axios);
@@ -121,7 +143,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
       lastKnownLocator: { v: 1, routingToken: 'octo-org/example-app' },
       observed: { baseSha: sourceHeadSha, headSha: sourceHeadSha, nativeRevision: sourceHeadSha, observedAtMs: 1_700_000_000_000 },
       workspace: { serverId, machineId, rootPath: root },
-      ...(shape === 'approval-verify' ? { prepared: { kind: 'acceptedCheckout' as const, repositoryPath: root } } : {}) };
+      ...(verifyShape ? { prepared: { kind: 'acceptedCheckout' as const, repositoryPath: root } } : {}) };
     const github = createStubGithubTransport({ respond: request => request.url.endsWith('/pulls/1284')
       ? { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE,
         head: { ...(GITHUB_PULL_REQUEST_RESPONSE.head as Readonly<Record<string, unknown>>), ref: 'source', sha: sourceHeadSha,
@@ -130,22 +152,31 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
       } } : undefined });
     let sourceEntered = false;
     const source = definePlugin({ id: 'example.review-source', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
-      actions: { prepare: { title: 'Prepare review workspace', surfaces: ['ui'], dangerLevel: 'writesLocal',
+      actions: { prepare: { title: 'Prepare review workspace', surfaces: accountChild || localPluginChild ? ['ui', 'plugin'] : ['ui'],
+        dangerLevel: accountChild || localPluginChild ? 'safe' : 'writesLocal',
         ...(approvalShape ? { operation: ActionOperationDeclarationV1Schema.parse(GITHUB_MANIFEST.contributes.actions?.find(
-          action => action.id === (shape === 'approval-verify' ? GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace
+          action => action.id === (verifyShape ? GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace
             : GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace))?.operation) } : {}),
-        confirmation: { title: 'Prepare workspace', confirmLabel: 'Prepare' }, confirmationWhen: { presentUserUi: false },
+        ...(!accountChild && !localPluginChild ? { confirmation: { title: 'Prepare workspace', confirmLabel: 'Prepare' },
+          confirmationWhen: { presentUserUi: false } } : {}),
         inputSchema: { type: 'object', additionalProperties: approvalShape },
         run: async (_input, context) => {
           sourceEntered = true;
           if (approvalShape) expect(await createConnectedServiceCredentialApi(credentials)
             .getAccountEncryptionMode({ throwOnTransportError: true })).toBe('plain');
-          if (approvalShape) return (shape === 'approval-verify' ? verifyGithubTriageReviewWorkspace : prepareGithubTriageReviewWorkspace)(_input, { ...github.context,
+          if (approvalShape) return (verifyShape ? verifyGithubTriageReviewWorkspace : prepareGithubTriageReviewWorkspace)(_input, { ...github.context,
             signal: context.signal, services: { ...github.context.services, actions: context.services.actions } },
             { now: () => 1_700_000_000_000 });
           return context.services.actions.execute('scm.reviewWorkspace.materializePrepared', input);
         },
       } } });
+    const accountSettings = accountSettingsParse({
+      actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: {
+        'scm.reviewWorkspace.materializePrepared': approvalShape ? [] : ['ui', 'plugin'],
+      } },
+    });
+    const actionsSettingsProvider = createActionSettingsProvider({ getAccountSettings: () => accountSettings,
+      allowEnvironmentOverride: false });
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: homeDir, controller: pluginReloadController,
       plugins: [{ manifest: { ...source.manifest, contributes: { ...source.manifest.contributes,
         ui: { renderers: [{ id: 'panel', kind: 'declarative', root: { kind: 'text', text: 'Review' } }],
@@ -156,11 +187,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
           // Approval persistence has its own composed tests. This Account has
           // deliberately waived the plugin child's confirmation, so this
           // fixture exercises Machine custody and real Git materialization.
-          actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
-            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: {
-              'scm.reviewWorkspace.materializePrepared': approvalShape ? [] : ['plugin'],
-            } },
-          }) }) },
+          actionsSettingsProvider },
         resolveCurrentMachineId: () => machineId,
         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_review_home', machineId }),
         externalActionHomeBinding: { serverId, serverIdentityId: 'srv_review_home',
@@ -178,6 +205,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
       registerDaemonContributionRegistryProjectionHandler(rpc, {
         resolveRuntimeRegistry: async () => runtime.registry, resolveInstalledPackages: async () => [],
         resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_review_home', machineId }),
+        ...(accountChild ? { resolveAccountPluginExecutionSelection: (pluginId: string) => readCurrentAccountPluginExecutionSelection({
+          pluginId, credentials, serverUrl: 'https://review-home.test' }) } : {}),
         observePluginExecution: async request => {
           if (approvalShape) {
             // Observe the real mounted ingress before handing it unchanged to
@@ -209,8 +238,12 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
           actorAccountId: accountId, custodianAccountId: accountId, machineId, installationId: 'review-installation',
           role: 'manage' as const, encryptionMode: 'plain' as const, structuredMessageRouting,
         } };
+      const ownerHarness = createCliActionExecutorHarness({ token: credentials.token, credentials, actionsSettingsProvider,
+        serverId, serverIdentityId: 'srv_review_home', externalActionMachineInstallationId: 'review-installation',
+        serverHttpBaseUrl: 'https://review-home.test', sessionId: '', mode: 'plain', ctx: null });
       const service = createPluginInvocationActionsService({
         seed: { plugin: { id: source.manifest.id, version: source.manifest.version }, occurrenceId, sourceCustody,
+          contribution: { id: 'prepare', qualifiedId: `${source.manifest.id}/prepare` },
           resolveCurrentPluginMaterializationRef: () => materializationRef,
           surface: 'plugin', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
           approvalContext: { surface: 'ui', authority: 'present_user', runtimeAccountId: accountId,
@@ -223,10 +256,9 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
             }),
             externalActionTarget: { kind: 'machine', machineId: shape === 'owner-retarget' ? 'other-machine' : machineId },
           } satisfies RpcActionExecutorContext },
-        actionExecutor: createActionExecutor({
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.reviewWorkspace.materializePrepared": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createCliActionDeps({ token: credentials.token, credentials,
-          serverId, serverIdentityId: 'srv_review_home', externalActionMachineInstallationId: 'review-installation',
-          serverHttpBaseUrl: 'https://review-home.test', sessionId: '', mode: 'plain', ctx: null }) }),
+        // Exercise the finite owner with its admitted context, beneath the
+        // host executor's deliberate normalization to its captured Home.
+        actionExecutor: createActionExecutor(ownerHarness.deps),
         invokeContributedAction: async () => ({ status: 'unavailable', code: 'not_used', message: 'not_used' }),
       });
       const denial = shape === 'owner-foreign-use' || shape === 'owner-unadmitted' ? 'filesystem_identity_custody_unavailable'
@@ -238,18 +270,71 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
         expect(post.mock.calls).toHaveLength(0);
         return;
       }
-      let result: ActionExecuteResult = ActionExecuteResultSchema.parse(shape.startsWith('owner-')
+      let child: Promise<ActionExecuteResult> | undefined;
+      let childSettled = false;
+      let approvalReady!: (value: unknown) => void;
+      const approvalPublished = new Promise<unknown>(resolve => { approvalReady = resolve; });
+      const releaseApprovalObservation = operations.store.subscribe(() => {
+        const held = operations.store.findByRequestIdentity({ accountId, machineId }, request.qualifiedActionId, request.requestId);
+        if (held?.progress?.approval) approvalReady(held.progress.approval);
+      });
+      if (accountChild) {
+        vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async call => {
+          const routing = readStructuredMessageActionRoutingV1(call.method, call.request);
+          if (!routing) throw new Error('Expected Account child routing');
+          return rpc.handleRequest({ ...packet, callerAuthority: 'account_automation', params: call.request,
+            machineAdmission: { ...packet.machineAdmission, structuredMessageRouting: routing } });
+        });
+        child = invokeAccountMachineSourceAction({ credentials, serverUrl: 'https://review-home.test', machineId,
+          callerManifest: accountManifest, callerSourceCustody: accountCustody,
+          source: { manifest: normalizePluginManifestV2(source.manifest), occurrenceId, sourceCustody },
+          request: { action: { pluginId: source.manifest.id, localId: 'prepare' }, requestId: request.requestId, input: providerInput,
+            surface: 'plugin', originSurface: accountOrigin, caller: { kind: 'plugin', pluginId: accountManifest.id,
+              contribution: { id: 'verify', qualifiedId: `${accountManifest.id}/verify` }, occurrenceId: 'account-occurrence', sourceCustody: accountCustody },
+            signal: new AbortController().signal } }).then(value => {
+          childSettled = true;
+          return value.status === 'executed' ? { ok: true, result: value.value }
+            : { ok: false, errorCode: value.code, error: value.message };
+        });
+      }
+      if (localPluginChild) {
+        const approvalContext = { surface: 'plugin' as const, authority: 'account_automation' as const,
+          runtimeAccountId: accountId, serverId, serverIdentityId: 'srv_review_home', machineAdmission: packet.machineAdmission,
+          verifyMachineAdmissionCurrent: async () => { throw new Error('Finite children must not re-admit the parent'); } };
+        child = executeContributedAction({ runtimeRegistry: runtime.registry, actionId: request.qualifiedActionId,
+          input: providerInput, approvalContext, actionsSettings: { v: 1, actions: {} }, context: {
+            ...approvalContext, operationRequestId: request.requestId, operationRpcContext: approvalContext,
+            observePluginExecution: operations.observePluginExecution,
+          } }).then(attempt => {
+            childSettled = true;
+            if (!attempt.matched) throw new Error('Expected local SDK source child');
+            return attempt.result;
+          });
+      }
+      const initialResult = child
+        ? { ok: true, result: await Promise.race([approvalPublished, child!.then(value => value.ok ? value.result : value)]) }
+        : shape.startsWith('owner-')
         ? { ok: true, result: await service.execute('scm.reviewWorkspace.materializePrepared', input) }
-        : await rpc.handleRequest(packet));
+        : await rpc.handleRequest(packet);
+      const parsedInitialResult = ActionExecuteResultSchema.safeParse(initialResult);
+      expect(parsedInitialResult.success, JSON.stringify(initialResult)).toBe(true);
+      let result: ActionExecuteResult = ActionExecuteResultSchema.parse(initialResult);
+      releaseApprovalObservation();
       const targetPath = shape.endsWith('verify') ? root : join(root, buildWorktreeRelativePath('source'));
       if (approvalShape) {
         const receipt = ActionApprovalRequestCreatedResultSchema.parse(result.ok ? result.result : null);
+        if (child) {
+          // The persisted Ask is visible before consent, but the Account caller
+          // must consume the eventual verification, not this intermediate receipt.
+          await new Promise<void>(resolve => setImmediate(resolve));
+          expect(childSettled).toBe(false);
+        }
         const held = operations.store.findByRequestIdentity({ accountId, machineId }, request.qualifiedActionId, request.requestId);
         expect(held).toMatchObject({ state: 'running', progress: { phase: 'waiting_for_approval', approval: receipt } });
-        if (shape !== 'approval-verify') expect(runScmExecutable(root, 'git', ['worktree', 'list', '--porcelain'])).not.toContain(targetPath);
+        if (!verifyShape) expect(runScmExecutable(root, 'git', ['worktree', 'list', '--porcelain'])).not.toContain(targetPath);
         const decider = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
           serverId, serverIdentityId: 'srv_review_home', serverHttpBaseUrl: 'https://review-home.test' });
-        const decision = shape === 'approval-reject' ? 'reject' : shape === 'approval-cancel' ? 'cancel' : 'approve';
+        const decision = shape.endsWith('reject') ? 'reject' : shape.endsWith('cancel') ? 'cancel' : 'approve';
         const decided = await decider.executor.execute('approval.request.decide', { artifactId: receipt.artifactId, decision },
           { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
             serverId, serverIdentityId: 'srv_review_home', actionRequestId: 'approve-review-workspace' });
@@ -257,6 +342,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
         if (!held) throw new Error('Expected retained source operation');
         const terminal = await operations.handlers.getV2({ operationId: held.operationId, waitForTerminal: true });
         if (decision !== 'approve') {
+          if (child) expect(await child).toMatchObject({ ok: false,
+            errorCode: decision === 'reject' ? 'approval_rejected' : 'approval_canceled' });
           expect(terminal, JSON.stringify({ decided, terminal })).toMatchObject({ kind: 'found', operation: {
             state: 'failed',
             error: { errorCode: decision === 'reject' ? 'approval_rejected' : 'approval_canceled' },
@@ -270,11 +357,12 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
         const settled = readActionOperationTerminalResultV1(terminal.operation);
         if (!settled) throw new Error('Expected terminal source result');
         result = settled;
+        if (child) expect(await child).toMatchObject({ ok: true, result: { kind: 'verified' } });
       }
       expect(result, JSON.stringify({ result, sourceEntered, approvalPaths,
         getPaths: get.mock.calls.map(([url]) => new URL(String(url)).pathname),
         postPaths: post.mock.calls.map(([url]) => new URL(String(url)).pathname) })).toMatchObject(approvalShape
-          ? { ok: true, result: shape === 'approval-verify' ? { kind: 'verified' }
+          ? { ok: true, result: verifyShape ? { kind: 'verified' }
             : { kind: 'prepared', repositoryPath: targetPath, created: true } }
           : { ok: true, result: { success: true,
             ...(shape.endsWith('verify') ? { verification: { targetPath, sourceHeadSha } } : { targetPath, created: true }) } });

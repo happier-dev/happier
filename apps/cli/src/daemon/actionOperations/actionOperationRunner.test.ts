@@ -17,6 +17,33 @@ import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it('keeps a child terminal observer attached while another observer receives its approval', async () => {
+    const store = createActionOperationStore();
+    const runner = createActionOperationRunner({ store, resolveAction: actionId => ({ actionId,
+      title: 'Verify source workspace', operation: { version: 1, visibility: 'activity', progress: 'reported' } }) });
+    const approval = { kind: 'approval_request_created', artifactId: 'workspace-approval', actionId: 'action.invoke' };
+    let finish!: () => void;
+    const decision = new Promise<void>(resolve => { finish = resolve; });
+    let executions = 0;
+    const request = { actionId: 'example.review-source/prepare', scope, requestId: 'account-workspace-child', input: {},
+      execute: async (context: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) => {
+        executions++;
+        context.operationAcceptance?.accept(approval);
+        await decision;
+        return { ok: true as const, result: { kind: 'verified' } };
+      } };
+    let childSettled = false;
+    const child = runner.observe({ ...request, response: 'terminal' }).then(result => { childSettled = true; return result; });
+    try {
+      expect(await runner.observe(request)).toEqual({ ok: true, result: approval });
+      await Promise.resolve();
+      expect(childSettled).toBe(false);
+    } finally { finish(); }
+    expect(await child).toEqual({ ok: true, result: { kind: 'verified' } });
+    expect(executions).toBe(1);
+    expect(store.list(scope).items).toMatchObject([{ state: 'succeeded' }]);
+  });
+
   it.each(MACHINE_REACHABILITY_ACTION_IDS_V1)('retains closed native Network failures in Activity for %s', async actionId => {
     const store = createActionOperationStore();
     const spec = getActionSpec(actionId);

@@ -128,8 +128,8 @@ export function createActionOperationRunner(deps: Readonly<{
     restoredDeploymentOperationId?: string;
     /** Observation only: a prepared host callback may never create or restart. */
     existingDeploymentOperationId?: string;
-    /** Only the observing Agent/MCP request returns on admission; execution retains its owner. */
-    response?: 'admission';
+    /** Observation only: admission returns early; terminal waits for the handler result. */
+    response?: 'admission' | 'terminal';
     requestId?: string;
     /** Original carried confirmation retries observe an existing proposal, not its decision. */
     rejoinPendingApproval?: true;
@@ -191,7 +191,7 @@ export function createActionOperationRunner(deps: Readonly<{
         void invocation.result.catch(() => undefined);
         return { ok: true, result: { status: 'accepted', operationId, machineId: request.scope.machineId } };
       }
-      if (!approvedDeploymentObserver) return await (terminalSpawnObserver
+      if (!approvedDeploymentObserver) return await (terminalSpawnObserver || request.response === 'terminal'
         ? invocation.result : Promise.race([invocation.result, invocation.acceptance]));
       // Approval settlement consumes the existing operation's terminal evidence,
       // while ordinary callers can still return its earlier private acceptance.

@@ -1090,7 +1090,11 @@ export async function executeContributedAction(params: Readonly<{
       const rawTitle = action.definition.title;
       const observed = await observeOperation({ actionId, title: resolvePluginLocalizedStringV2Text(rawTitle),
         operation: trackedOperation, input: targetInvocation.input,
-        ...((invocationSurface === 'agent' || invocationSurface === 'mcp')
+        // An admitted SDK child consumes its handler result; its approval stays
+        // visible through the retained operation while the caller waits.
+        ...(actionSurface === 'plugin'
+          ? { response: 'terminal' as const }
+          : (invocationSurface === 'agent' || invocationSurface === 'mcp')
           && !params.approvalContext?.approvedActionReplay && !params.expectedApprovalReplayPlacement
           ? { response: 'admission' as const } : {}),
         failureResult: contributedActionFailureResult,

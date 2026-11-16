@@ -534,7 +534,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     title: string;
     operation: ActionOperationDeclarationV1;
     input: unknown;
-    response?: 'admission';
+    response?: 'admission' | 'terminal';
     failureResult?: Parameters<typeof runner.observe>[0]['failureResult'];
     requestId?: string;
     sessionId?: string;
