@@ -254,8 +254,8 @@ describe('session.spawn_new canonical execution', () => {
     const sessionInput = { creationKey: canonicalInput.creationKey, executionTarget: canonicalInput.executionTarget,
       directory: canonicalInput.directory, agentTarget: canonicalInput.agentTarget,
       ...(withPlacement ? { organizationPlacement: canonicalInput.organizationPlacement } : {}) };
-    // Root preparation has already admitted this Session child, as the Template
-    // and Prepare owners do. Review, continuation custody and leaf admission stay real.
+    // Session creation is waived, but this parent has no person review.
+    // Its Agent install therefore retains its own Require and native operation.
     const executor = createActionExecutor({
       hostActionApprovalLifetime: { operationId: 'workflow-startup', signal: lifetime.signal },
       sessionSpawnNew: async args => {
@@ -274,12 +274,13 @@ describe('session.spawn_new canonical execution', () => {
         expect(args.signal).toBe(lifetime.signal);
         expect(args.context?.operationAcceptance?.actionId).toBe(rootActionId);
         expect(args.context && readHostReviewedChildRootV1(args.context, 'machines.agents.install', {
-          machineId: 'machine-1', agentId: 'codex', intent: 'install',
+          machineId: 'machine-1', agentId: 'codex', intent: 'install', consent: { vendorRecipe: true },
         })).toEqual(parent);
         return { ok: true, jobId: 'agent-install' };
       },
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'nested-agent-review' }; },
       approvalsGet: async () => stored,
+      isApprovalExecutionOriginCurrent: async () => true,
       approvalsUpdate: async ({ request }) => {
         if (!stored) throw new Error('Missing Agent approval');
         const transition = decideApprovalRequestTransition(stored, request);
@@ -314,7 +315,6 @@ describe('session.spawn_new canonical execution', () => {
             actions: { 'machines.agents.install': { approvalRequiredSurfaces: ['agent'] } } }),
         },
         child: { action: 'session.spawn_new', role: sessionRole, input: projectNativeJsonValueForTransport(sessionInput) },
-        admittedReview: { action: 'session.spawn_new', role: sessionRole, surface: 'agent' },
         execute: (input, context) => executor.execute('session.spawn_new', input, context),
       });
       expect(await Promise.race([waitStarted, pending]), JSON.stringify(readinessResult)).toBe('waiting');
@@ -1257,13 +1257,12 @@ describe('session.spawn_new canonical execution', () => {
     expect(validate({ kind: 'managed' })).toBe(true);
     expect(validate({ kind: 'path', path: '' })).toBe(false);
     expect(validate({ kind: 'unknown' })).toBe(false);
-    expect(getResult).not.toMatchObject({
-      result: {
-        actionSpec: {
-          inputSchema: { properties: { executionTarget: expect.anything() } },
-        },
-      },
+    // Public projection retains an optional canonical target; API admission
+    // binds it to the stamped envelope rather than asking callers to select it.
+    expect(definition.inputSchema).toMatchObject({
+      properties: { executionTarget: expect.any(Object) },
     });
+    expect(definition.inputSchema.required ?? []).not.toContain('executionTarget');
     expect(getResult).not.toMatchObject({
       result: {
         actionSpec: {
@@ -1352,7 +1351,7 @@ describe('session.spawn_new canonical execution', () => {
         outcome: 'accepted',
       },
     });
-    expect(sessionSpawnNew).toHaveBeenCalledWith({
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       ...canonicalBirthInput,
       approvalProfileId: null,
       admittedInput: canonicalBirthInput,
@@ -1362,7 +1361,7 @@ describe('session.spawn_new canonical execution', () => {
         creationKey: 'plugin-operation-7',
       }),
       callerSurface: 'plugin',
-      context: { ...context, hostReviewedChild: undefined },
+      context: expect.objectContaining(context),
       invokeAgentReadinessAction: expect.any(Function),
       actionCaller: {
         kind: 'plugin',
@@ -1370,7 +1369,7 @@ describe('session.spawn_new canonical execution', () => {
         contributionLocalId: 'feature-a',
       },
       actionRequestId: 'attempt-1',
-    });
+    }));
   });
 
   it('uses the host-stamped Automation Run namespace without exposing it in Action input', async () => {

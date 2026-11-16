@@ -418,6 +418,8 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   /** Supplied only by the receiving custody/placement owner after ordinary admission. */
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
   admittedReview?: HostReviewedChildPolicyV1;
+  /** The parent executor's review decision; custody admission alone is not person approval. */
+  reviewAdmitted?: boolean;
   /** Live Run reader's retained person; private proof only, never accepted from Action JSON. */
   approvedBy?: WorkflowApprovedOperationV1['approvedBy'];
   environmentId?: string;
@@ -450,8 +452,8 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const parentProof = callerProof?.operation?.[deploymentRoleChild] === true
     && (!binding || binding.actionId === callerProof.rootActionId) ? callerProof : undefined;
   const admittedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
-  const reviewAdmitted = params.admittedReview !== undefined || parentProof !== undefined
-    || admittedParent?.actionId === parent.actionId && sameStrictJsonValue(admittedParent.input, parentInput);
+  const reviewAdmitted = params.reviewAdmitted ?? (params.admittedReview !== undefined || parentProof !== undefined
+    || admittedParent?.actionId === parent.actionId && sameStrictJsonValue(admittedParent.input, parentInput));
   const rootActionId = parentProof?.rootActionId ?? parent.actionId;
   const reviewedChild = reviewAdmitted && binding?.actionId === rootActionId
     ? createReviewedChildProof(qualifiedActionId, child.role, proofInput, rootActionId,

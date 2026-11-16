@@ -3195,7 +3195,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const executeAdmittedAction = preparedHostReviewedChildren?.executeAdmittedAction ?? executePreparedChildren;
     const prepareExecutionContext = preparedHostReviewedChildren?.prepareExecutionContext ?? childrenPreparation.prepareExecutionContext;
     let admittedReviewedChild = preparedChildAdmission;
-    const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null
+    const reviewAdmitted = existingAdmission ? existingAdmission.reviewAdmitted === true : nativeReview !== null
+      || preparedChildAdmission === true
       // The private replay owner already admitted and recorded this decision.
       // Consumers use that fact; they do not validate the witness a second time.
       || options?.approvalReplay === true;
@@ -6043,7 +6044,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               const normalized = getActionSpec(childId).inputSchema.parse(childInput);
               return invokeHostReviewedChildV1({
                 parent: { actionId, input: projectNativeJsonValueForTransport(parsed.data) as Record<string, JsonValue> },
-                context: ctx, child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
+                context: ctx, reviewAdmitted,
+                child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
                 execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput, childContext),
               });
             } };
