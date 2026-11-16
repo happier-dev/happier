@@ -672,6 +672,8 @@ export function TeamCredentialUsageSummary(props: Readonly<{
             const label = seriesBucketLabel(Number(point.x), period);
             return { ...point, x: label, label };
         }) })), [series, selectedMetric, metricName, theme, period]);
+    // A bucket with no figure draws hatched, keyed in the legend as on the account Daily chart.
+    const hasGapDay = chartSeries[0]?.points.some((point) => point.y === null) ?? false;
     const axisTicks = React.useMemo(() => usageAxisTicks(chartSeries[0]?.points.map((point) => point.label ?? '') ?? []), [chartSeries]);
     const shape = useUsageDailyChartShape();
     const charted = result !== null && series.length > 0 && chartMetrics.length > 0;
@@ -724,6 +726,8 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                             ...(selectedMetric === 'cost' ? {} : { minimumMaximum: 1 }),
                             showScaleValues: true,
                             showPeakValue: shape.peak,
+                            showLegend: hasGapDay,
+                            gapLabel: selectedMetric === 'cost' ? t('usage.board.page.factUnpriced') : t('usage.board.howYouWork.notRecorded'),
                             unknownLabel: t('common.unavailable'),
                             showReadout: false,
                             valuesLabel: t('usage.showAll'),
