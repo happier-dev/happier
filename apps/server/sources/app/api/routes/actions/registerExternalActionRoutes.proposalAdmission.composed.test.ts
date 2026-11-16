@@ -134,6 +134,85 @@ function verifyProposalCurrentness(authorization: ExternalActionExecutionAuthori
 }
 
 describe('installed Session proposal admission at the Home mint route', () => {
+    it('names the refusing envelope admission projection instead of a bare invalid_envelope (COR6R-163)', async () => {
+        // Live: a build-log read whose envelope the read-admission projection refused reached the person as a
+        // bare invalid_envelope. The refusal keeps its code-only cause; no input content is disclosed.
+        const { app, mint } = createApp('account');
+        try {
+            const input = projectNativeJsonValueForTransport({ serverId: storage.state.homeId, deploymentId: 'deployment',
+                kind: 'build', privateMarker: 'never-disclosed' });
+            const minted = await mint('deployments.logs.read', proposal('deployments.logs.read', input));
+            expect(minted.statusCode, minted.body).toBe(400);
+            expect(minted.json()).toMatchObject({ error: 'invalid_request', code: 'invalid_envelope',
+                failureCause: { phase: 'external_action.envelope_admission', errorClass: expect.any(String) } });
+            expect(minted.body).not.toContain('never-disclosed');
+        } finally { await app.close(); }
+    });
+
+    it('keeps encrypted Group intent within signed Team preparation and the sealed mutation grammar', async () => {
+        const previousMode = storage.account.encryptionMode;
+        storage.account.encryptionMode = 'e2ee';
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
+        Object.assign(storage.state, { metadata: 'encrypted-controller-metadata',
+            dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: material.machineKey,
+                recipientPublicKey: tweetnacl.box.keyPair().publicKey, randomBytes: tweetnacl.randomBytes }) });
+        const actionId = 'teams.groups.update';
+        const intent = { v: 1 as const, teamId: 'team', groupId: 'group', name: 'Private builders', description: 'Private purpose' };
+        const requested = proposal(actionId, intent);
+        const binding = { serverIdentityId: storage.state.homeId, accountId: 'account',
+            authentication: { kind: 'account' as const, tokenEpoch: 1 }, actionId,
+            requestId: requested.envelope.requestId, target: requested.envelope.target } satisfies Parameters<typeof sealExternalActionRequestV2>[0]['binding'];
+        const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding, material, input: intent, randomBytes: tweetnacl.randomBytes });
+        const installationProof = signMachineInstallationProof({ privateKey: installation.secretKey,
+            payload: { version: 1, accountId: 'account', ...requested.sessionActionSource, externalActionOrigin: {
+                homeId: storage.state.homeId, actionId, requestId: binding.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: requested.sessionActionOrigin } } });
+        const { app, mint } = createApp('account');
+        try {
+            expect(JSON.stringify(envelope)).not.toContain(intent.name);
+            expect(JSON.stringify(envelope)).not.toContain(intent.description);
+            const minted = await mint(actionId, { ...requested, envelope, installationProof });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const censusBody = { owner: { kind: 'team', teamId: intent.teamId } };
+            const censusProof = (body: unknown) => signedRequestProof(authorization, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, body);
+            expect(await verifyExternalActionDomainExecutionRequest(censusProof(censusBody))).not.toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(censusProof({ owner: { kind: 'account', accountId: 'other' } }))).toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                '/v1/account/encryption/currentness', undefined, actionId, 'GET'))).not.toBeNull();
+            const publicKey = tweetnacl.box.keyPair().publicKey;
+            let censuses = 0;
+            vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+                censuses++;
+                expect(JSON.parse(String(init?.body))).toEqual(censusBody);
+                return Response.json({ contentEncryptionMode: 'e2ee', recipients: [{
+                account: { kind: 'account', accountId: 'account', firstName: null, lastName: null, username: null, avatarUrl: null },
+                readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing',
+                }] });
+            });
+            // The network census is substituted; semantic preparation and the CLI cipher owner stay real.
+            const wire = await prepareTeamGroupUpdateActionInput(intent, async request => await prepareCliPrivateLabels({
+                endpoint: 'http://home.test', token: 'captured-account-token', accountMode: 'e2ee',
+                recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, owner: request.owner, labels: request.labels,
+            }), { surface: 'agent' });
+            const request = bindHomeDomainActionHttpRequestV1(actionId, wire);
+            expect(censuses, 'one Team audience read for the name and description patch').toBe(1);
+            expect(JSON.stringify(request.body)).not.toContain(intent.name);
+            expect(JSON.stringify(request.body)).not.toContain(intent.description);
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                request.path, request.body, actionId, request.method))).not.toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                request.path, intent, actionId, request.method))).toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                request.path, wire, 'teams.groups.create', request.method))).toBeNull();
+        } finally {
+            vi.unstubAllGlobals();
+            storage.account.encryptionMode = previousMode;
+            await app.close();
+        }
+    });
     it('carries a code-only daemon refusal through real admission and the protected HTTP route', async () => {
         const previousMode = storage.account.encryptionMode;
         storage.account.encryptionMode = 'e2ee';

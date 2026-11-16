@@ -18,7 +18,7 @@ import { timeWebLatencyPhase, withWebLatencyTrace } from '@/utils/webLatencyTrac
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { ExternalActionTargetRefusalPhase } from '@happier-dev/protocol/actions/externalActionApi';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HTTP_PATH_TEMPLATE_V1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionActionIdV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, externalActionExecutionAuthorizationRequestSchemaForActionV1, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, ExternalActionRequestEnvelopeSchema, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, type ExternalActionCredentialScopeDiagnosticV1, type ExternalActionServerPrincipalV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionRequestEnvelope, type PreparedExternalActionResponseEnvelope, projectExternalActionHttpError, projectExternalActionResponseEnvelopeV1, type ExternalActionHttpErrorCode, prepareExternalActionResponseEnvelopeV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -738,7 +738,12 @@ export function registerExternalActionRoutes(
                     actionId: actionId.data, envelope: body.data.envelope });
                 managedAdmission = readExternalActionManagedControlAdmission(actionId.data, body.data.envelope)
                     ?? readExternalActionManagedRecoveryAdmission(actionId.data, body.data.envelope);
-            } catch { return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId); }
+            } catch (error) {
+                // The admission projection that refused (e.g. a schema parse) names itself; never a bare relabel.
+                return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId,
+                    undefined, undefined, undefined, undefined,
+                    projectActionFailureCauseV1(error, 'external_action.envelope_admission'));
+            }
             let handoffAdmission: ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
             if (body.data.envelope.handoffAdmission) {
                 if (!isOriginalAccountHandoffAction(actionId.data) && !(actionId.data === 'session.spawn_new' && handoffContinuation)) {
