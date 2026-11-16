@@ -2,6 +2,7 @@ import { deploymentRecommendationTranslations } from './deploymentRecommendation
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
+import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
 import type { AgentIsolationLaunchMaterialFailureCode, AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
@@ -22336,6 +22337,7 @@ const enProjects = {
       defaultsEditor: deploymentDefaultsTranslations['en'],
       copy: deploymentCopyTranslations['en'],
                 move: deploymentMoveTranslations['en'],
+                monitoring: deploymentMonitoringTranslations['en'],
       overviewStatus: deploymentOverviewTranslations['en'],
       editors: deploymentEditorsTranslations['en'],
       preparation: deploymentPreparationTranslations['en'],

@@ -9,6 +9,10 @@ import {
   serviceCheckResultWord,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
+  serviceCheckRecentBars,
+  serviceCheckAverageLatency,
+  serviceCheckTodayUptime,
+  serviceCheckMonitorSummary,
 } from './serviceCheckPresentation';
 
 const DAY = 86_400_000;
@@ -262,7 +266,7 @@ describe('Services → Checks rows (lab svcChk: named by what they check, Every,
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
     const facts = serviceCheckListFacts({
       native: { name: 'Workflow triggers' },
-      definitionFacts: { kind: 'available', checks: [{ checkId: 'c1', name: 'HTTP check', targetLabel: 'shop.example/ready', periodMs: 300_000, domainId: null }] },
+      definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'c1', name: 'HTTP check', targetLabel: 'shop.example/ready', periodMs: 300_000, domainId: null }] },
       lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: { status: 'down', observedAt: today, latencyMs: 1200, evidence: { kind: 'none' } } as never }] },
     } as never);
     expect(facts.title).toBe('shop.example/ready');
@@ -272,6 +276,29 @@ describe('Services → Checks rows (lab svcChk: named by what they check, Every,
     expect(facts.lastTone).toBe('danger');
   });
 
+  it('a row draws the failing check among its targets: its recent bars, response, cause, failing time and usual response', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const at = (minute: number, status: 'up' | 'degraded', latencyMs: number) =>
+      ({ status, observedAt: today + minute * 60_000, latencyMs, evidence: { kind: 'none' } }) as never;
+    const facts = serviceCheckListFacts({
+      native: { name: 'Shop' },
+      definitionFacts: { kind: 'available', observerMachineId: 'm1', checks: [{ checkId: 'ok', name: 'HTTP', targetLabel: 'shop.example', periodMs: 60_000, domainId: null }] },
+      lastResults: { kind: 'available', checks: [
+        { checkId: 'ok', result: at(3, 'up', 90), history: { lastObservedAt: today, uptimePercent: 100, days: [] } },
+        { checkId: 'slow', result: at(3, 'degraded', 1800), recentResults: [at(1, 'up', 200), at(2, 'up', 200), at(3, 'degraded', 1800)],
+          recentResultsCoverage: 'complete', failingSince: today + 3 * 60_000, failureStreak: 1,
+          history: { lastObservedAt: today, uptimePercent: 97.2, days: [] } },
+      ] },
+    } as never, 4);
+    expect(facts.status).toBe('degraded');
+    expect(facts.recent.bars.map((bar) => bar.tone)).toEqual(['unobserved', 'up', 'up', 'degraded']);
+    expect(facts.latencyMs).toBe(1800);
+    expect(facts.usualMs).toBe(200);
+    expect(facts.failingSince).toBe(today + 3 * 60_000);
+    expect(facts.uptimePercent).toBe(97.2);
+    expect(facts.observerMachineId).toBe('m1');
+  });
+
   it('keeps the saved name and says nothing it cannot read while the definition is loading or unavailable', async () => {
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
     for (const kind of ['loading', 'unavailable'] as const) {
@@ -279,5 +306,55 @@ describe('Services → Checks rows (lab svcChk: named by what they check, Every,
         lastResults: { kind: 'neverObserved' } } as never);
       expect(facts).toMatchObject({ title: 'Workflow triggers', kind: null, every: null, lastResult: null, lastTone: null });
     }
+  });
+});
+
+describe('a Check’s recent results as bars (MONITOR-LAB-1115 Q1)', () => {
+  const at = (minute: number, status: 'up' | 'down' | 'degraded' | 'unknown', latencyMs?: number) =>
+    ({ status, observedAt: today + minute * 60_000, evidence: { kind: 'none' }, ...(latencyMs === undefined ? {} : { latencyMs }) }) as never;
+  const recentOf = (results: readonly unknown[], partial = false) =>
+    readServiceCheckRecent({ checkId: 'a', result: results[results.length - 1] as never, recentResults: results as never,
+      recentResultsCoverage: partial ? 'partial' : 'complete' } as never);
+
+  it('draws the last results oldest first, one bar each, in the result’s own tone', () => {
+    const bars = serviceCheckRecentBars(recentOf([at(1, 'up'), at(2, 'degraded'), at(3, 'down'), at(4, 'unknown')]), 3);
+    expect(bars.bars.map((bar) => bar.tone)).toEqual(['degraded', 'down', 'unknownOnly']);
+    expect(bars.partialLead).toBe(false);
+  });
+
+  it('a new check reserves its empty slots before the first results; nothing read yet is all empty slots', () => {
+    expect(serviceCheckRecentBars(recentOf([at(1, 'up')]), 3).bars.map((bar) => bar.tone)).toEqual(['unobserved', 'unobserved', 'up']);
+    expect(serviceCheckRecentBars(null, 2).bars.map((bar) => bar.tone)).toEqual(['unobserved', 'unobserved']);
+  });
+
+  it('leads with the partial mark only when trimmed results leave the bars short', () => {
+    expect(serviceCheckRecentBars(recentOf([at(1, 'up'), at(2, 'up')], true), 3).partialLead).toBe(true);
+    expect(serviceCheckRecentBars(recentOf([at(1, 'up'), at(2, 'up'), at(3, 'up')], true), 3).partialLead).toBe(false);
+  });
+
+  it('averages response over the last results that carry one and says how many it read', () => {
+    const recent = recentOf([at(1, 'up', 400), at(2, 'up', 100), at(3, 'up'), at(4, 'up', 200)]);
+    expect(serviceCheckAverageLatency(recent, 3)).toEqual({ averageMs: 150, count: 2 });
+    expect(serviceCheckAverageLatency(recentOf([at(1, 'up')]), 60)).toBeNull();
+  });
+
+  it('reads today’s uptime from today’s UTC bucket only', () => {
+    const history = { lastObservedAt: today, uptimePercent: 99, days: [day(0, { up: 9, down: 1 }, 90), day(1, { up: 1 }, 100)] };
+    expect(serviceCheckTodayUptime(history as never, today + 3_600_000)).toBe(90);
+    expect(serviceCheckTodayUptime({ ...history, days: [day(1, { up: 1 }, 100)] } as never, today + 3_600_000)).toBeNull();
+  });
+});
+
+describe('Monitoring: what needs the person, and the counts that say it', () => {
+  const row = (key: string, status: 'up' | 'down' | 'degraded' | 'unknown' | null, enabled = true) => ({
+    key, native: { enabled },
+    lastResults: status === null ? { kind: 'neverObserved' } : { kind: 'available', checks: [{ checkId: key, result: result(status) }] },
+  }) as never;
+
+  it('counts down, slow and passing among running checks; a paused or unread check counts in none', () => {
+    const summary = serviceCheckMonitorSummary([row('a', 'down'), row('b', 'degraded'), row('c', 'up'), row('d', 'up'),
+      row('e', 'down', false), row('f', null), row('g', 'unknown')]);
+    expect(summary).toMatchObject({ down: 1, degraded: 1, passing: 2 });
+    expect([...summary.needsYou]).toEqual(['a', 'b']);
   });
 });

@@ -65,7 +65,7 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'deployments', 'boards', 'artifacts']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'deployments', 'monitoring', 'boards', 'artifacts']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);
@@ -91,7 +91,7 @@ describe('app rail model', () => {
         const fresh = resolveNavigationPlacements(items);
         expect(ids(fresh.pinned)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows',
             'app-rail-updates', 'settings', 'app-rail-account']);
-        expect(ids(fresh.overflow)).toEqual(expect.arrayContaining(['bots', 'deployments', 'boards', 'artifacts', 'plugins',
+        expect(ids(fresh.overflow)).toEqual(expect.arrayContaining(['bots', 'deployments', 'monitoring', 'boards', 'artifacts', 'plugins',
             'plugin:acme.board:board', 'app-rail-usage', 'app-rail-machines']));
         // Only defaults change: the person's own choice still wins.
         const customized = resolveNavigationPlacements(items, { orderedIds: [], placements: { bots: 'pinned', deployments: 'pinned', inbox: 'overflow' } });
@@ -263,4 +263,12 @@ it('offers the existing deployments destination in overflow and preserves a deli
         { orderedIds: [], placements: { deployments: 'pinned' } });
     expect(ids(pinned.pinned)).toContain('deployments');
     expect(destinations.find(destination => destination.id === 'projects')).toMatchObject({ signal: 'deploymentAttentionCount' });
+});
+
+it('offers Monitoring in the Library band right after Services, opening its own page', () => {
+    const destinations = catalog([]);
+    const rail = buildAppRailEntries(destinations);
+    const order = ids(rail.app);
+    expect(order.indexOf('monitoring')).toBe(order.indexOf('deployments') + 1);
+    expect(rail.app.find(entry => entry.id === 'monitoring')).toMatchObject({ routePath: '/monitoring', activation: 'navigate' });
 });

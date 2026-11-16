@@ -293,6 +293,97 @@ export function readServiceCheckRecent(check: RetainedCheck): ServiceCheckRecent
   };
 }
 
+export type ServiceCheckBar = Readonly<{
+  /** The result's observedAt, or the empty slot's position. */
+  key: string;
+  tone: ServiceCheckDay['tone'];
+  observedAt: number | null;
+  status: ServiceCheckStatus | null;
+}>;
+export type ServiceCheckBars = Readonly<{
+  bars: readonly ServiceCheckBar[];
+  /** Older results were trimmed and the kept ones do not fill the bars: the row says so with its lead mark. */
+  partialLead: boolean;
+}>;
+
+const RESULT_TONE = { up: 'up', down: 'down', degraded: 'degraded', unknown: 'unknownOnly' } as const;
+
+/**
+ * The last `slots` retained results as bars (lab CheckHistoryBars), oldest first, each in its own result's tone. Slots
+ * before the first kept result stay empty, so a new check reserves its bars and nothing moves when results arrive.
+ */
+export function serviceCheckRecentBars(recent: ServiceCheckRecent | null, slots: number): ServiceCheckBars {
+  const kept = recent ? recent.results.slice(0, slots).reverse() : [];
+  const empty = slots - kept.length;
+  return {
+    bars: [
+      ...Array.from({ length: empty }, (_, index): ServiceCheckBar => ({ key: `empty:${index}`, tone: 'unobserved', observedAt: null, status: null })),
+      ...kept.map((result): ServiceCheckBar => ({ key: String(result.observedAt), tone: RESULT_TONE[result.status], observedAt: result.observedAt,
+        status: result.status })),
+    ],
+    partialLead: recent?.partial === true && empty > 0,
+  };
+}
+
+/** The average response over the last `count` retained results that carry one ("last N checks"); null when none do. */
+export function serviceCheckAverageLatency(recent: ServiceCheckRecent, count: number): Readonly<{ averageMs: number; count: number }> | null {
+  const latencies = recent.results.slice(0, count).flatMap((result) => (result.latencyMs === undefined ? [] : [result.latencyMs]));
+  return latencies.length === 0 ? null
+    : { averageMs: latencies.reduce((sum, value) => sum + value, 0) / latencies.length, count: latencies.length };
+}
+
+/** Today's uptime from today's UTC bucket as the owner keeps it (not a rolling 24 h); null before today's first sample. */
+export function serviceCheckTodayUptime(history: History, nowMs: number): number | null {
+  const todayStart = Math.floor(nowMs / DAY_MS) * DAY_MS;
+  return history.days.find((day) => day.dayStartAt === todayStart)?.uptimePercent ?? null;
+}
+
+type MonitoredCheck = Readonly<{ key: string; native: Readonly<{ enabled: boolean }>; lastResults: ConfiguredHealthResultsState }>;
+export type ServiceCheckMonitorSummary = Readonly<{
+  down: number;
+  degraded: number;
+  passing: number;
+  /** Running checks whose state needs the person (down, degraded), in list order. */
+  needsYou: ReadonlySet<string>;
+}>;
+
+/**
+ * Monitoring's glance line and its Needs-you section, from each check's reported state (readServiceCheckFacts). Only
+ * running checks count: a paused check, one not read yet or one whose state is unknown counts in none.
+ */
+export function serviceCheckMonitorSummary(rows: readonly MonitoredCheck[]): ServiceCheckMonitorSummary {
+  let down = 0;
+  let degraded = 0;
+  let passing = 0;
+  const needsYou = new Set<string>();
+  for (const row of rows) {
+    if (!row.native.enabled) continue;
+    const status = readServiceCheckFacts(row.lastResults).status;
+    if (status === 'down') down += 1;
+    else if (status === 'degraded') degraded += 1;
+    else if (status === 'up') passing += 1;
+    if (serviceCheckStatusTone(status) !== null) needsYou.add(row.key);
+  }
+  return { down, degraded, passing, needsYou };
+}
+
+/**
+ * Why a result failed, in the words every Check surface uses (detail banner, list row): the answered status against
+ * the expected one, a missing keyword, the observer's own reason, and where it was checked from.
+ */
+export function serviceCheckCauseText(cause: RetainedCheck['result']['cause'] | null | undefined): string | null {
+  if (!cause) return null;
+  const k = 'projects.deployments.services' as const;
+  return [
+    cause.httpStatus !== undefined && cause.expectStatus !== undefined && cause.httpStatus !== cause.expectStatus
+      ? t(`${k}.causeAnswered`, { status: String(cause.httpStatus), expected: String(cause.expectStatus) })
+      : null,
+    cause.keywordMatched === false ? t(`${k}.causeKeywordMissing`) : null,
+    cause.reason ?? null,
+    t(cause.vantage === 'outside' ? `${k}.causeFromOutside` : `${k}.causeFromSameMachine`),
+  ].filter((part): part is string => Boolean(part)).join(' · ');
+}
+
 type ShownDefinition = Extract<ConfiguredCheckDefinitionFacts, { kind: 'available' }>['checks'][number];
 
 /**
@@ -306,6 +397,11 @@ export function serviceCheckShownDefinition(
   if (facts.kind !== 'available') return { kind: facts.kind };
   const definition = facts.checks.find((check) => check.checkId === checkId) ?? facts.checks[0];
   return definition ? { kind: 'available', definition } : { kind: 'unavailable' };
+}
+
+/** An uptime figure alone ("99.98%"), to two decimals, under a heading or detail that already names its span. */
+export function serviceCheckUptimeText(percent: number | null): string | null {
+  return percent === null ? null : `${Math.round(percent * 100) / 100}%`;
 }
 
 /** A Check figure in the reader's units ("5 min", "1.2 s"), shared by the Check detail and the Checks list. */
@@ -327,22 +423,43 @@ type ListedCheck = Readonly<{
   lastResults: ConfiguredHealthResultsState;
 }>;
 
-/**
- * One Checks list row (lab svcChk): named by what it checks (its definition's target, else the saved name), its kind,
- * how often it runs and its latest result with the result's tone. Loading and unavailable definitions say nothing.
- */
-export function serviceCheckListFacts(row: ListedCheck): Readonly<{
+/** A row's recent results: the lab's "Last 30 checks" (MONITOR-LAB-1115 Q1, row size). */
+export const SERVICE_CHECK_ROW_BARS = 30;
+
+export type ServiceCheckListFacts = Readonly<{
   title: string;
   kind: string | null;
   every: string | null;
   lastResult: string | null;
   lastTone: 'danger' | 'warning' | null;
-}> {
+  /** The worst current state across the row's targets (readServiceCheckFacts). */
+  status: ServiceCheckStatus;
+  /** The shown target's last results as bars. */
+  recent: ServiceCheckBars;
+  latencyMs: number | null;
+  /** The shown target's usual response: the average over its passing results in the bars' window. */
+  usualMs: number | null;
+  uptimePercent: number | null;
+  failingSince: number | null;
+  causeText: string | null;
+  observerMachineId: string | null;
+}>;
+
+/**
+ * One Checks row (lab svcChk, MONITOR-LAB-1115 A1): named by what it checks (its definition's target, else the saved
+ * name), its kind, how often it runs, and the shown target's results: a failing target first, else the definition's,
+ * else the first. Its bars, response, cause and failing time are that target's; the uptime is the row's lowest.
+ */
+export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_CHECK_ROW_BARS): ServiceCheckListFacts {
   const head = serviceCheckShownDefinition(row.definitionFacts, null);
   const definition = head.kind === 'available' ? head.definition : null;
-  const checks = readServiceCheckFacts(row.lastResults).checks;
-  const shown = checks.find((check) => check.checkId === definition?.checkId) ?? checks[0] ?? null;
+  const facts = readServiceCheckFacts(row.lastResults);
+  const shown = facts.checks.find((check) => serviceCheckStatusTone(check.result.status) !== null)
+    ?? facts.checks.find((check) => check.checkId === definition?.checkId) ?? facts.checks[0] ?? null;
   const word = shown ? serviceCheckResultWord(shown.result.status) : null;
+  const recent = shown ? readServiceCheckRecent(shown) : null;
+  const window = recent?.results.slice(0, slots) ?? [];
+  const usual = window.flatMap((result) => (result.status === 'up' && result.latencyMs !== undefined ? [result.latencyMs] : []));
   return {
     title: definition?.targetLabel ?? row.native.name,
     kind: definition?.name ?? null,
@@ -350,5 +467,13 @@ export function serviceCheckListFacts(row: ListedCheck): Readonly<{
     lastResult: word ? [word, shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs)]
       .filter(Boolean).join(' · ') : null,
     lastTone: shown ? serviceCheckStatusTone(shown.result.status) : null,
+    status: facts.status,
+    recent: serviceCheckRecentBars(recent, slots),
+    latencyMs: shown?.result.latencyMs ?? null,
+    usualMs: usual.length === 0 ? null : usual.reduce((sum, value) => sum + value, 0) / usual.length,
+    uptimePercent: facts.uptimePercent,
+    failingSince: recent?.failingSince ?? null,
+    causeText: shown && serviceCheckStatusTone(shown.result.status) !== null ? serviceCheckCauseText(shown.result.cause) : null,
+    observerMachineId: row.definitionFacts.kind === 'available' ? row.definitionFacts.observerMachineId : null,
   };
 }

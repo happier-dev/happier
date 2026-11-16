@@ -366,14 +366,15 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
             serverIdentityId: row.serverIdentityId, machineId: row.machineId, materializations: [row] })) } }));
     // No observer has been assigned yet; another Machine's descriptor cannot name this source.
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
-        definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', name: 'Shop availability' }] },
+        definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'readiness', name: 'Shop availability' }] },
     }));
     await act(async () => storage.setState({ automations: { a: createAutomationDefinitionFromDetail({ ...detail,
         triggers: detail.triggers.map(trigger => trigger.kind === 'pluginEvent' ? { ...trigger,
             observation: { kind: 'checkpointedPull', watcher: { machineId: 'observer', machineInstallationId: 'observer-installation',
                 pluginId: plugin.manifest.id, materializationId: 'health-installation' } } } : trigger) }) } }));
+    // The Machine that runs the check is named once it is assigned (Monitoring says when it stops checking).
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
-        definitionFacts: { kind: 'available', checks: [{ checkId: 'readiness', name: 'HTTP' }] },
+        definitionFacts: { kind: 'available', observerMachineId: 'observer', checks: [{ checkId: 'readiness', name: 'HTTP' }] },
     }));
     const lifetime = captureActiveServerAccountScopeLifetime();
     expect(readAutomationDefinitionDetailsDemand(lifetime)).toBe(true);

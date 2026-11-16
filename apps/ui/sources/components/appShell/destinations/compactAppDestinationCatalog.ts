@@ -343,6 +343,13 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         placement: { kind: 'rail', region: 'app' }, band: 'library', column: 'services', activation: 'navigate',
         routePath: SERVICES_ROUTE, currentRoutePatterns: ['/deployments/[projectSourceId]'], signal: 'deploymentAttentionCount',
     },
+    // Monitoring (MONITOR-LAB-1115 B): whether everything the Account runs is up, beside Services. Its rows are the
+    // saved Checks; a Check's page stays a Services page.
+    {
+        id: 'monitoring', titleKey: 'projects.deployments.monitoring.title', icon: 'pulse',
+        placement: { kind: 'rail', region: 'app' }, band: 'library', activation: 'navigate',
+        routePath: '/monitoring', currentRoutePatterns: ['/monitoring/[...rest]'],
+    },
     // Library: what the person keeps.
     {
         // Live sessions, runs, workflows and machines, arranged by the user (INT §5.1).

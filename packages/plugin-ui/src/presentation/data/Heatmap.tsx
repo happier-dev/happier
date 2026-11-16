@@ -22,7 +22,13 @@ export type HappierGridFrame = Readonly<{
 export type HeatmapProps = Readonly<{
   theme: HappierUiTheme; label: string; cells: readonly HappierGridCell[];
   rows: readonly HappierGridAxis[]; columns: readonly HappierGridAxis[];
-  size?: 'inline' | 'tile' | 'full'; layout?: 'grid' | 'strip';
+  size?: 'inline' | 'tile' | 'full';
+  /**
+   * `strip` is one row of day cells under a date axis; `bars` is one row of status bars with no axis (a check's
+   * recent results, an uptime history). Inline bars keep their own width so rows of them line up in a column;
+   * tile and full bars share the width they are given.
+   */
+  layout?: 'grid' | 'strip' | 'bars';
   /** Reading order follows the caller's semantic axes, independently of size. */
   order?: 'rows' | 'columns';
   unknownLabel?: string; annotation?: string; showReadout?: boolean;
@@ -95,7 +101,11 @@ export function HappierDataGrid(props: HeatmapProps & { variant: 'heatmap' | 'do
   const visibleValue = (cell: HappierGridCell) => cell.value === null || !Number.isFinite(cell.value) ? unknown : cell.valueLabel ?? rawValue(cell);
   const exact = (cell: HappierGridCell) => `${cell.label}: ${rawValue(cell)}${visibleValue(cell) !== rawValue(cell) ? ` (${visibleValue(cell)})` : ''}`;
   const select = (cell: HappierGridCell) => { setSelectedId(cell.id); props.onSelect?.(cell.id); };
-  const strip = props.layout === 'strip';
+  const bars = props.layout === 'bars';
+  const strip = props.layout === 'strip' || bars;
+  // Bar geometry by size: a row cell's 30 thin bars, a page's day history, a page's hero of recent checks.
+  const bar = !bars ? null : props.size === 'inline' ? { width: 3, gap: 2, height: 16, radius: 1.5 }
+    : props.size === 'tile' ? { width: null, gap: 3, height: 24, radius: 2 } : { width: null, gap: 3, height: 32, radius: 3 };
   const dots = props.variant === 'dots';
   const circles = dots && props.dotAppearance === 'dots';
   const rowMajor = dots || strip || props.order === 'rows';
@@ -104,7 +114,7 @@ export function HappierDataGrid(props: HeatmapProps & { variant: 'heatmap' | 'do
   const rowLabelWidth = props.rows.some((row) => row.label.length > 1) ? 28 : 16;
   // Incumbent contribution grid, recap tiles and dense dot matrix metrics.
   const cellSize = props.size === 'inline' ? 7.5 : props.size === 'tile' ? 16 : 11;
-  const gap = strip ? 4 : props.size === 'tile' && !dots ? 7 : 3;
+  const gap = bar ? bar.gap : strip ? 4 : props.size === 'tile' && !dots ? 7 : 3;
   // Every pointer keeps the drawn grid: a cell's touch target is its hit area, reaching half the gap to
   // its neighbours, never a larger slot or stride (DESIGN.md → touch targets are hit areas). The exact
   // values stay reachable through focus, the arrow keys and the readout.
@@ -120,14 +130,14 @@ export function HappierDataGrid(props: HeatmapProps & { variant: 'heatmap' | 'do
   const renderCell = (row: HappierGridAxis, column: HappierGridAxis) => {
     const cell = positions.get(`${row.id}\u0000${column.id}`);
     const flexible = strip || dots;
-    const slot = flexible ? { flex: 1, minWidth: 0 } : { width: cellSize, height: cellSize };
+    const slot = bar?.width ? { width: bar.width } : flexible ? { flex: 1, minWidth: 0 } : { width: cellSize, height: cellSize };
     if (!cell) return <View key={`${row.id}:${column.id}`} style={slot} />;
     const missing = cell.value === null || !Number.isFinite(cell.value);
     const share = missing ? 0 : Math.max(0, cell.value ?? 0) / maximum;
     // screens-kit.js punch('dot'): r=.9 at zero, otherwise 1.3+4.4*share in a 12.4-wide slot.
     const diameterPercent = (missing || share === 0 ? 1.8 : 2.6 + 8.8 * share) / 12.4 * 100;
-    const mark = <View style={{ width: circles ? `${diameterPercent}%` : '100%', ...(strip ? { height: props.columns.length > 14 ? 16 : 28 } : dots ? { aspectRatio: 1 } : { height: cellSize }),
-      borderRadius: circles ? 999 : strip || props.size === 'tile' ? 4 : dots ? 2 : 2.5,
+    const mark = <View style={{ width: circles ? `${diameterPercent}%` : '100%', ...(bar ? { height: bar.height } : strip ? { height: props.columns.length > 14 ? 16 : 28 } : dots ? { aspectRatio: 1 } : { height: cellSize }),
+      borderRadius: circles ? 999 : bar ? bar.radius : strip || props.size === 'tile' ? 4 : dots ? 2 : 2.5,
       backgroundColor: cell.color ?? (missing || cell.value === 0 ? props.theme.colors.surface : props.theme.colors.info),
       opacity: circles || cell.color || missing || cell.value === 0 ? 1 : 0.16 + 0.84 * share,
       borderWidth: cell.emphasized || missing ? 1 : 0, borderColor: cell.emphasized ? props.theme.colors.info : props.theme.colors.divider }} />;
@@ -163,9 +173,10 @@ export function HappierDataGrid(props: HeatmapProps & { variant: 'heatmap' | 'do
     </View> : null}
     {rowMajor ? props.rows.map((row) => <View key={row.id} style={{ flexDirection: 'row', gap: dots ? 8 : 0, alignItems: 'center' }}>
       {dots ? <HappierText style={{ ...text.caption, width: rowLabelWidth, fontSize: 11, lineHeight: 14 }} numberOfLines={1}>{row.label}</HappierText> : null}
-      <View style={{ flex: dots || strip ? 1 : undefined, flexDirection: 'row', gap }}>{props.columns.map((column) => renderCell(row, column))}</View>
+      <View testID={bars && props.testID ? `${props.testID}-bars` : undefined}
+        style={{ flex: bar?.width ? undefined : dots || strip ? 1 : undefined, flexDirection: 'row', gap }}>{props.columns.map((column) => renderCell(row, column))}</View>
     </View>) : <View style={{ flexDirection: 'row', gap }}>{props.columns.map((column) => <View key={column.id} style={{ gap }}>{props.rows.map((row) => renderCell(row, column))}</View>)}</View>}
-    {(dots || strip) && props.columns.some((column) => column.label) ? <View style={{ flexDirection: 'row', gap: dots ? 8 : 0 }}>
+    {(dots || strip) && !bars && props.columns.some((column) => column.label) ? <View style={{ flexDirection: 'row', gap: dots ? 8 : 0 }}>
       {dots ? <View style={{ width: rowLabelWidth }} /> : null}
       <View style={{ flex: 1, flexDirection: 'row', gap }}
         onLayout={(event: HappierLayoutChangeEvent) => setAxisWidth(event.nativeEvent.layout.width)}>

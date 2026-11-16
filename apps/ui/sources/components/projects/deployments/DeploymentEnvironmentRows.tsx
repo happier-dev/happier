@@ -348,6 +348,8 @@ export function ServicesPageList<Item>(props: Readonly<{
   groupAction?: (groupKey: string) => CollectionGroupAction | null;
   /** A row's ⋯ (Collection `useRowActions`: one stable module-level hook). */
   useRowActions?: (item: Item) => CollectionRowActions;
+  /** Rows by default; Monitoring can show its checks as the Collection's cards. */
+  presentation?: 'list' | 'grid';
 }>) {
   // Inside a page section's body (an Environment's Domains under "1 domain") the section already stands its content on
   // the sheet edge, so the list's sheet takes that edge instead of adding its own inset; on the Services page it insets.
@@ -363,7 +365,7 @@ export function ServicesPageList<Item>(props: Readonly<{
             model={props.model}
             anatomy={props.anatomy}
             accessibilityLabel={props.accessibilityLabel}
-            presentation="list"
+            presentation={props.presentation ?? 'list'}
             detail="none"
             scroll="page"
             minListWidth={0}

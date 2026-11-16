@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Heatmap, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
@@ -37,20 +37,25 @@ import {
   readServiceCheckRecent,
   readServiceCheckSettings,
   serviceCheckShownDefinition,
+  serviceCheckCauseText,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
+  serviceCheckRecentBars,
+  serviceCheckAverageLatency,
+  serviceCheckTodayUptime,
+  serviceCheckUptimeText,
   serviceCheckResultWord,
   serviceCheckStatusTone,
   serviceCheckStatusWord,
-  type ServiceCheckDay,
   type ServiceCheckSettings,
   formatServiceCheckLatency,
   formatServiceCheckPeriod,
   formatServiceCheckUnit,
 } from './serviceCheckPresentation';
+import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
 
 const k = 'projects.deployments.services' as const;
-const STRIP_ROWS = [{ id: 'days', label: '' }] as const;
+const m = 'projects.deployments.monitoring' as const;
 
 const unit = formatServiceCheckUnit;
 const formatLatency = formatServiceCheckLatency;
@@ -67,10 +72,13 @@ const formatSpan = (ms: number) => {
 };
 /** One page of retained results at a time; Older shows the next. */
 const RESULTS_PAGE = 10;
-/** The Response sparkline reads the last results the lab names ("last 20 results"). */
-const SPARK_RESULTS = 20;
-const percentText = (percent: number | null) =>
-  percent === null ? '—' : `${Math.round(percent * 10) / 10}%`;
+/** The page's recent checks (MONITOR-LAB-1115 A3): its bars, the response chart and the average read the last 60. */
+const PAGE_RESULTS = 60;
+/** The narrowest column a fact reads in at title size on one line ("34 hr 22 min", "99.98%"). */
+const FACT_MIN_WIDTH_PX = 128;
+const percentText = (percent: number | null) => serviceCheckUptimeText(percent) ?? '—';
+const formatDay = (ms: number) =>
+  formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
 type SeedRead = Readonly<{
   key: string;
@@ -106,24 +114,6 @@ function useCheckSeed(row: ManagedConfiguredCheckRow) {
   }, []);
   const settled = read?.key === key ? read : null;
   return { seed: settled?.seed ?? null, unavailable: settled !== null && settled.seed === null, retry };
-}
-
-function dayColor(
-  day: ServiceCheckDay,
-  colors: Readonly<{
-    up: string;
-    down: string;
-    degraded: string;
-    empty: string;
-  }>,
-) {
-  return day.tone === 'down'
-    ? colors.down
-    : day.tone === 'degraded'
-      ? colors.degraded
-      : day.tone === 'up'
-        ? colors.up
-        : colors.empty;
 }
 
 /**
@@ -186,12 +176,6 @@ export function ServiceCheckDetail(
   const failing =
     row.native.enabled &&
     serviceCheckStatusTone(facts.status) !== null;
-  const colors = {
-    up: theme.colors.state.success.foreground,
-    down: theme.colors.state.danger.foreground,
-    degraded: theme.colors.state.warning.foreground,
-    empty: theme.colors.surface.inset,
-  };
   const statusText = row.native.enabled
     ? serviceCheckStatusWord(facts.status)
     : t(`${k}.paused`);
@@ -212,46 +196,31 @@ export function ServiceCheckDetail(
   ].filter((part): part is string => Boolean(part));
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
   const recent = shown ? readServiceCheckRecent(shown) : null;
-  const cause = shown?.result.cause ?? null;
-  const causeText = cause
-    ? [
-        cause.httpStatus !== undefined && cause.expectStatus !== undefined && cause.httpStatus !== cause.expectStatus
-          ? t(`${k}.causeAnswered`, { status: String(cause.httpStatus), expected: String(cause.expectStatus) })
-          : null,
-        cause.keywordMatched === false ? t(`${k}.causeKeywordMissing`) : null,
-        cause.reason ?? null,
-        t(cause.vantage === 'outside' ? `${k}.causeFromOutside` : `${k}.causeFromSameMachine`),
-      ].filter((part): part is string => Boolean(part)).join(' · ')
-    : null;
+  const causeText = serviceCheckCauseText(shown?.result.cause);
   const latencies = recent
-    ? recent.results.slice(0, SPARK_RESULTS).flatMap((result) => (result.latencyMs === undefined ? [] : [result])).reverse()
+    ? recent.results.slice(0, PAGE_RESULTS).flatMap((result) => (result.latencyMs === undefined ? [] : [result])).reverse()
     : [];
+  const average = recent ? serviceCheckAverageLatency(recent, PAGE_RESULTS) : null;
+  const today = shown?.history ? serviceCheckTodayUptime(shown.history, nowMs) : null;
+  const heroBars = serviceCheckRecentBars(recent, PAGE_RESULTS);
+  const heroCells = heroBars.bars.map((bar): ServiceCheckBarCell => ({
+    key: bar.key, tone: bar.tone,
+    label: bar.observedAt === null ? t('projects.deployments.healthNotChecked') : formatClock(bar.observedAt),
+    ...(bar.status ? { valueLabel: serviceCheckStatusWord(bar.status) } : {}),
+  }));
+  const heroKept = heroBars.bars.filter((bar) => bar.observedAt !== null).length;
   const [resultsShown, setResultsShown] = React.useState(RESULTS_PAGE);
+  // The facts go two to a row where their columns would squeeze a value onto two lines (a details pane, a phone).
+  const [factsWidth, setFactsWidth] = React.useState<number | null>(null);
+  // Response, its average, today's and the 30-day uptime (lab A3); the state and when it was checked stand under the bars.
   const stripFacts: FactStripFact[] = [
-    {
-      key: 'last',
-      label: t(`${k}.lastResult`),
-      value: (shown ? serviceCheckResultWord(shown.result.status) : null) ?? '—',
-      ...(lastTone === 'danger' ? { tone: 'danger' as const } : lastTone === 'warning' ? { tone: 'attention' as const } : {}),
-      ...(shown
-        ? {
-            detail: [
-              shown.result.latencyMs === undefined
-                ? null
-                : formatLatency(shown.result.latencyMs),
-              formatClock(shown.result.observedAt),
-            ]
-              .filter(Boolean)
-              .join(' · '),
-          }
-        : {}),
-    },
     ...(recent?.failingSince !== null && recent?.failingSince !== undefined
       ? [
           {
             key: 'failingFor',
             label: t(`${k}.failingFor`),
             value: formatSpan(nowMs - recent.failingSince),
+            tone: lastTone === 'danger' ? 'danger' as const : 'attention' as const,
             ...(recent.failureStreak !== null ? { detail: t(`${k}.failureStreak`, { count: recent.failureStreak }) } : {}),
           },
         ]
@@ -259,41 +228,26 @@ export function ServiceCheckDetail(
     {
       key: 'response',
       label: t(`${k}.response`),
-      value:
-        shown?.result.latencyMs === undefined || !shown
-          ? '—'
-          : formatLatency(shown.result.latencyMs),
-      ...(latencies.length >= 2
-        ? {
-            detail: (
-          <StackedSeriesChart
-            theme={pluginTheme}
-            label=""
-            series={[
-              {
-                id: 'latency',
-                label: t(`${k}.response`),
-                color: theme.colors.text.secondary,
-                points: latencies.map((result) => ({ id: String(result.observedAt), x: result.observedAt, y: result.latencyMs ?? null })),
-              },
-            ]}
-            variant="line"
-            size="inline"
-            fitLine
-            showAxis={false}
-            showLegend={false}
-            showGrid={false}
-            showReadout={false}
-            decorative
-          />
-        ),
-          }
-        : {}),
+      value: shown?.result.latencyMs === undefined || !shown ? '—' : formatLatency(shown.result.latencyMs),
+      ...(shown?.result.latencyMs === undefined ? {} : { detail: t(`${m}.latest`) }),
+    },
+    {
+      key: 'average',
+      label: t(`${m}.average`),
+      value: average ? formatLatency(average.averageMs) : '—',
+      ...(average ? { detail: t(`${m}.averageDetail`, { count: average.count }) } : {}),
+    },
+    {
+      key: 'today',
+      label: t(`${m}.uptimeToday`),
+      value: percentText(today),
+      detail: t(`${m}.uptimeTodayDetail`),
     },
     {
       key: 'uptime',
-      label: t(`${k}.lastDays`),
+      label: t(`${m}.uptime`),
       value: percentText(facts.uptimePercent),
+      detail: t(`${m}.uptimeDays`),
     },
   ];
   const expect = settings?.expectStatus
@@ -333,49 +287,72 @@ export function ServiceCheckDetail(
           {...(causeText ? { description: causeText } : {})}
         />
       ) : null}
+      {shown ? (
+        <ItemGroup surface="none" testID="services.check.recent">
+          <View style={styles.hero}>
+            <ServiceCheckBars cells={heroCells} slots={PAGE_RESULTS} size="full" label={t(`${m}.columnRecent`, { count: PAGE_RESULTS })}
+              partialLead={heroBars.partialLead} decorative={false} testID="services.check.recent.bars" />
+            <View style={styles.caption}>
+              <Text variant="meta" style={styles.captionText}>{heroKept > 0 ? t(`${m}.heroOldest`, { count: heroKept }) : ''}</Text>
+              <Text variant="meta" style={styles.captionText}>
+                {[statusText, t(`${m}.checkedAt`, { time: formatClock(shown.result.observedAt) })].join(' · ')}
+              </Text>
+            </View>
+          </View>
+        </ItemGroup>
+      ) : null}
       <ItemGroup surface="none" testID="services.check.facts">
-        <FactStrip facts={stripFacts} layout="columns" divided />
+        <View onLayout={(event) => setFactsWidth(Math.round(event.nativeEvent.layout.width))}>
+          <FactStrip facts={stripFacts} layout="columns" divided
+            narrow={factsWidth !== null && factsWidth < stripFacts.length * FACT_MIN_WIDTH_PX} />
+        </View>
       </ItemGroup>
+      {latencies.length >= 2 ? (
+        <ItemGroup title={t(`${m}.responseTime`)} action={<Text variant="meta" style={styles.captionText}>
+          {t(`${m}.responseSpan`, { count: latencies.length })}</Text>} surface="none" testID="services.check.response">
+          <StackedSeriesChart
+            theme={pluginTheme}
+            label={t(`${m}.responseTime`)}
+            series={[{
+              id: 'latency',
+              label: t(`${k}.response`),
+              color: theme.colors.text.secondary,
+              points: latencies.map((result) => ({ id: String(result.observedAt), x: result.observedAt, y: result.latencyMs ?? null,
+                label: formatClock(result.observedAt) })),
+            }]}
+            variant="area"
+            size="full"
+            showLegend={false}
+            showReadout={false}
+          />
+        </ItemGroup>
+      ) : null}
       {facts.checks.map((check) => {
-        const strip = check.history
-          ? serviceCheckHistoryStrip(check.history, nowMs)
-          : null;
-        return strip ? (
-          <ItemGroup
-            key={check.checkId}
-            testID={`services.check.history.${check.checkId}`}
-            surface="none"
-          >
-            <View style={styles.strip}>
-              <Heatmap
-                theme={pluginTheme}
+        const strip = check.history ? serviceCheckHistoryStrip(check.history, nowMs) : null;
+        if (!strip) return null;
+        const firstObserved = strip.find((day) => day.tone !== 'unobserved') ?? null;
+        return (
+          <ItemGroup key={check.checkId} title={t(`${k}.lastDays`)} surface="none" testID={`services.check.history.${check.checkId}`}>
+            <View style={styles.hero}>
+              <ServiceCheckBars
+                size="tile"
+                slots={strip.length}
                 label={t(`${k}.lastDays`)}
-                layout="strip"
-                size="full"
-                rows={STRIP_ROWS}
-                columns={strip.map((day) => ({
-                  id: String(day.dayStartAt),
-                  label: '',
-                }))}
-                cells={strip.map((day) => ({
-                  id: String(day.dayStartAt),
-                  row: 'days',
-                  column: String(day.dayStartAt),
-                  label: new Date(day.dayStartAt).toLocaleDateString(
-                    undefined,
-                    { month: 'short', day: 'numeric', timeZone: 'UTC' },
-                  ),
-                  value: day.uptimePercent,
-                  valueLabel:
-                    day.uptimePercent === null
-                      ? t('projects.deployments.healthNotChecked')
-                      : `${day.uptimePercent}%`,
-                  color: dayColor(day, colors),
+                decorative={false}
+                cells={strip.map((day): ServiceCheckBarCell => ({
+                  key: String(day.dayStartAt),
+                  tone: day.tone,
+                  label: formatDay(day.dayStartAt),
+                  valueLabel: day.uptimePercent === null ? t('projects.deployments.healthNotChecked') : `${day.uptimePercent}%`,
                 }))}
               />
+              <View style={styles.caption}>
+                <Text variant="meta" style={styles.captionText}>{formatDay((firstObserved ?? strip[0]!).dayStartAt)}</Text>
+                <Text variant="meta" style={styles.captionText}>{t(`${m}.today`)}</Text>
+              </View>
             </View>
           </ItemGroup>
-        ) : null;
+        );
       })}
       {recent ? (
         <ItemGroup
@@ -586,6 +563,8 @@ const styles = StyleSheet.create((theme) => ({
   checkNow: { gap: theme.space.s4, alignItems: 'flex-start' },
   investigate: { gap: theme.space.s8, alignItems: 'flex-start' },
   actions: { paddingTop: theme.space.s12, flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'flex-start' },
-  strip: { paddingHorizontal: theme.space.s16 },
+  hero: { gap: theme.space.s8 },
+  caption: { flexDirection: 'row', justifyContent: 'space-between', gap: theme.space.s12 },
+  captionText: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   mono: { ...Typography.mono(), color: theme.colors.text.secondary },
 }));

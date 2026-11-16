@@ -2,6 +2,7 @@ import { deploymentRecommendationTranslations } from './deploymentRecommendation
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
+import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
@@ -13680,6 +13681,7 @@ settingsSession: {
       defaultsEditor: deploymentDefaultsTranslations['zh-Hant'],
             copy: deploymentCopyTranslations['zh-Hant'],
             move: deploymentMoveTranslations['zh-Hant'],
+            monitoring: deploymentMonitoringTranslations['zh-Hant'],
             overviewStatus: deploymentOverviewTranslations['zh-Hant'],
             editors: deploymentEditorsTranslations['zh-Hant'],
       preparation: deploymentPreparationTranslations['zh-Hant'],

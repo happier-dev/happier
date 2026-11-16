@@ -89,6 +89,39 @@ describe('neutral public grids', () => {
   });
 });
 
+describe('check history bars', () => {
+  const bars = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `b${index}`, label: '' }));
+  const barCells = (columns: readonly { id: string }[]) => columns.map((column, index) => ({ id: column.id, row: 'checks', column: column.id,
+    label: column.id, value: index % 5 === 0 ? null : 1 }));
+
+  it('inline bars keep their own width, so every row of 30 checks lines up whatever its column is', () => {
+    const columns = bars(30);
+    const mount = mountThroughReactNativeWeb(createElement('div', { style: { width: 600 } }, createElement(Presentation.Heatmap, { ...props,
+      layout: 'bars', size: 'inline', decorative: true, rows: [{ id: 'checks', label: '' }], columns, cells: barCells(columns) })));
+    try {
+      const row = mount.container.querySelector<HTMLElement>('[data-testid="samples-bars"]')!;
+      expect(row.children).toHaveLength(30);
+      const style = getComputedStyle(row);
+      expect(style.flexGrow).not.toBe('1');
+      expect(getComputedStyle(row.children[1] as HTMLElement).width).toBe('3px');
+      expect(style.columnGap || style.gap).toContain('2px');
+    } finally { mount.unmount(); }
+  });
+
+  it('page bars share the width they are given and stay one row without an axis', () => {
+    const columns = bars(60);
+    const mount = mountThroughReactNativeWeb(createElement(Presentation.Heatmap, { ...props, layout: 'bars', size: 'full',
+      rows: [{ id: 'checks', label: '' }], columns, cells: barCells(columns) }));
+    try {
+      const row = mount.container.querySelector<HTMLElement>('[data-testid="samples-bars"]')!;
+      expect(row.children).toHaveLength(60);
+      expect(getComputedStyle(row.children[1] as HTMLElement).flexGrow).toBe('1');
+      expect(mount.container.querySelector('[data-testid="samples-axis-b0"]')).toBeNull();
+      expect(mount.container.querySelectorAll('[role="button"]')).toHaveLength(60);
+    } finally { mount.unmount(); }
+  });
+});
+
 describe('the month axis of a contribution grid', () => {
   const axis = (labels: readonly string[]) => labels.map((label, index) => ({ id: String(index), label }));
   const grid = (labels: readonly string[]) => ({ ...props, rows: [{ id: 'r', label: '' }], columns: axis(labels), cells: [], testID: 'calendar' });

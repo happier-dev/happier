@@ -3,6 +3,7 @@ import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
+import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
@@ -17694,6 +17695,7 @@ La meva pregunta: `,
       defaultsEditor: deploymentDefaultsTranslations['ca'],
       copy: deploymentCopyTranslations['ca'],
                 move: deploymentMoveTranslations['ca'],
+                monitoring: deploymentMonitoringTranslations['ca'],
       overviewStatus: deploymentOverviewTranslations['ca'],
       editors: deploymentEditorsTranslations['ca'],
       preparation: deploymentPreparationTranslations['ca'],

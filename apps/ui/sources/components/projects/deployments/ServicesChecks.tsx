@@ -3,12 +3,11 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
 import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
-import { RowMark } from '@/components/store/inventory/ManagedInventoryDirectory';
 import type { ManagedInventorySectionsState } from '@/components/store/inventory/ManagedInventorySections';
 import { isConfiguredCheckResultsPartial, type ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { partialInventoryCoverageState } from '@/components/store/inventory/inventoryCoverage';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machineServiceByline, machineServiceBylineLead, machineServiceColumnFields, machineServiceStateField, renderMachineServicePort } from '@/components/machines/services/machineServiceColumns';
 import { machineServiceDisplayName, machineServiceExpectedStop, machineServiceIcon, machineServiceStateSpeaks } from '@/components/machines/services/machineServicesPresentation';
@@ -25,13 +24,8 @@ import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import {
-  readServiceCheckFacts,
-  serviceCheckListFacts,
-  serviceCheckStatusTone,
-  serviceCheckStatusWord,
-  type ServiceCheckStatus,
-} from './serviceCheckPresentation';
+import { serviceCheckMonitorSummary } from './serviceCheckPresentation';
+import { ServiceCheckList, type ServiceCheckSelection } from './ServiceCheckList';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { watchedServiceBands, watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
 import { ServicesPaging, useReportViewCount, type ServicesViewCount } from './ServicesViews';
@@ -39,11 +33,6 @@ import { ServicesPaging, useReportViewCount, type ServicesViewCount } from './Se
 const NO_OPEN = () => {};
 const CHECK_KINDS = ['configuredCheck'] as const;
 const WATCHED_KINDS = ['watchedService'] as const;
-
-/** The uptime figure alone, under the Last 30 days column that already says the span. */
-function uptimePercentText(percent: number | null): string | null {
-  return percent === null ? null : `${Math.round(percent * 10) / 10}%`;
-}
 
 type ServicesFamily = ManagedInventorySectionsState['families'][number];
 
@@ -53,7 +42,7 @@ type ServicesFamily = ManagedInventorySectionsState['families'][number];
  * R2). A page that continues in place is offered under the rows instead (servicesFamilyMore); `rowFacts` names partial
  * reads about the listed rows' own facts, which their cells already say.
  */
-function servicesFamilyCoverage(family: ServicesFamily | undefined, listed: boolean, testID: string,
+export function servicesFamilyCoverage(family: ServicesFamily | undefined, listed: boolean, testID: string,
   rowFacts?: (reason: unknown) => boolean): React.ReactNode | null {
   const coverage = family?.result.coverage;
   if (!family || coverage === undefined || coverage === 'available') return null;
@@ -69,7 +58,7 @@ function servicesFamilyCoverage(family: ServicesFamily | undefined, listed: bool
 }
 
 /** The family's next page, followed in place on intent (ServicesPaging Show more); none for a read that settled short. */
-function servicesFamilyMore(family: ServicesFamily | undefined, rowFacts?: (reason: unknown) => boolean): (() => unknown) | null {
+export function servicesFamilyMore(family: ServicesFamily | undefined, rowFacts?: (reason: unknown) => boolean): (() => unknown) | null {
   const coverage = family?.result.coverage;
   if (!family || typeof coverage !== 'object' || 'unavailable' in coverage || rowFacts?.(coverage.partial) === true) return null;
   if (partialInventoryCoverageState(coverage.partial) !== 'paged') return null;
@@ -101,10 +90,9 @@ export function ServicesChecksView(
     }),
     [props.presented, props.scope],
   );
-  const input = React.useMemo(
-    () => ({ scope: props.scope, machine: null, projectKey: null }),
-    [props.scope],
-  );
+  const { selectedKey, onSelect, onSelectedRow } = props;
+  const selection = React.useMemo<ServiceCheckSelection>(() => ({ selectedKey, onSelect, onSelectedRow }),
+    [onSelect, onSelectedRow, selectedKey]);
   return (
     <MachineManagedInventorySection
       query={query}
@@ -135,9 +123,7 @@ export function ServicesChecksView(
         return (
           <>
             {pending}
-            <SelectedRowReport rows={rows} selectedKey={props.selectedKey} onSelectedRow={props.onSelectedRow} />
-            <ChecksList rows={rows} input={input} selectedKey={props.selectedKey} onSelect={props.onSelect}
-              onCount={props.onCount} />
+            <ChecksList rows={rows} scope={props.scope} selection={selection} onCount={props.onCount} />
             <ServicesPaging testID="services.checks.paging" more={servicesFamilyMore(family, isConfiguredCheckResultsPartial)} />
           </>
         );
@@ -147,90 +133,22 @@ export function ServicesChecksView(
 }
 
 
-/** Publishes the selected row whenever its identity changes (a new result), so the pane shows current facts. */
-function SelectedRowReport(props: Readonly<{ rows: readonly ManagedConfiguredCheckRow[]; selectedKey: string | null;
-  onSelectedRow: (row: ManagedConfiguredCheckRow | null) => void }>) {
-  const row = props.selectedKey ? props.rows.find((candidate) => candidate.key === props.selectedKey) ?? null : null;
-  const { onSelectedRow } = props;
-  React.useEffect(() => { onSelectedRow(row); }, [onSelectedRow, row]);
-  return null;
-}
-
-/**
- * The Checks list (lab svcChk): one row per saved Check with its description, the lowest 30-day uptime its results
- * report and its state word, on the Services list's one sheet; the open Check is the selected row.
- */
+/** Services → Checks: the shared Checks collection, and the view's count with how many fail. */
 function ChecksList(props: Readonly<{
   rows: readonly ManagedConfiguredCheckRow[];
-  input: Readonly<{ scope: ServerAccountScope | null; machine: null; projectKey: null }>;
-  selectedKey: string | null;
-  onSelect: (row: ManagedConfiguredCheckRow) => void;
+  scope: ServerAccountScope | null;
+  selection: ServiceCheckSelection;
   onCount: (count: ServicesViewCount) => void;
 }>) {
-  const { rows, onSelect } = props;
-  const facts = React.useMemo(() => new Map(rows.map((row) => [row.key, readServiceCheckFacts(row.lastResults)])), [rows]);
-  // Each row named by what it checks, with its kind, cadence and latest result (the Check presentation owner).
-  const listFacts = React.useMemo(() => new Map(rows.map((row) => [row.key, serviceCheckListFacts(row)])), [rows]);
-  const open = React.useCallback((key: string | number | null) => {
-    const row = key === null ? undefined : rows.find((candidate) => candidate.key === String(key));
-    if (row) onSelect(row);
-  }, [onSelect, rows]);
-  const model = useHappierCollection<ManagedConfiguredCheckRow>({ items: rows, keyOf: keyOfCheck,
-    openKey: props.selectedKey, onOpenChange: open });
-  const anatomy = React.useMemo<CollectionAnatomy<ManagedConfiguredCheckRow>>(() => {
-    const stateWord = (row: ManagedConfiguredCheckRow) => <CheckStateWord row={row} status={facts.get(row.key)?.status ?? 'unknown'} />;
-    return {
-      glyph: (row) => <RowMark row={row} title={row.native.name} input={props.input} />,
-      title: (row) => listFacts.get(row.key)?.title ?? row.native.name,
-      // Line 2 says what kind of check it is and its saved name; a phone also says its cadence and latest result.
-      byline: (row, layout) => {
-        const row2 = listFacts.get(row.key);
-        const columns = layout?.fieldColumns === true;
-        const named = row2 && row2.title !== row.native.name ? row.native.name : null;
-        return [row2?.kind, named, columns ? null : row2?.every, columns ? null : row2?.lastResult]
-          .filter(Boolean).join(' · ') || null;
-      },
-      // A phone row (no columns) leads line 2 with the state when it speaks (failing, degraded, switched off).
-      bylineLead: (row, layout) => layout?.fieldColumns !== true
-        && (!row.native.enabled || serviceCheckStatusTone(facts.get(row.key)?.status ?? 'unknown') !== null) ? stateWord(row) : null,
-      fields: [
-        { key: 'every', title: t('projects.deployments.services.columnEvery'), minWidth: 72, priority: 2,
-          listColumn: true, render: (row) => listFacts.get(row.key)?.every ?? null },
-        { key: 'lastResult', title: t('projects.deployments.services.lastResult'), minWidth: 160, priority: 3,
-          listColumn: true, render: (row) => listFacts.get(row.key)?.lastResult ? <CheckLastResult facts={listFacts.get(row.key)!} /> : null },
-        { key: 'uptime', title: t('projects.deployments.services.columnUptime'), minWidth: 112, priority: 1, align: 'end',
-          listColumn: true, render: (row) => uptimePercentText(facts.get(row.key)?.uptimePercent ?? null) },
-        { key: 'state', title: t('projects.deployments.services.columnState'), minWidth: 128, priority: 4, align: 'end',
-          listColumn: true, render: stateWord },
-      ],
-      accessibilityLabel: (row) => [listFacts.get(row.key)?.title ?? row.native.name, serviceCheckStatusWord(facts.get(row.key)?.status ?? 'unknown')].join(', '),
-      testID: (row) => `services.checks.row.${row.automationId}.${row.triggerId}`,
-      columnTitles: { title: t('projects.deployments.services.columnCheck') },
-    };
-  }, [facts, listFacts, props.input]);
-  const failing = rows.filter((row) => row.native.enabled && facts.get(row.key)?.status === 'down').length;
+  const { rows } = props;
+  const failing = React.useMemo(() => serviceCheckMonitorSummary(rows).down, [rows]);
   const count = React.useMemo(() => [t('projects.deployments.services.countChecks', { count: rows.length }),
     failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, rows.length]);
   useReportViewCount('checks', count, props.onCount, failing);
   return (
-    <ServicesPageList<ManagedConfiguredCheckRow> testID="services.checks" model={model} anatomy={anatomy}
+    <ServiceCheckList testID="services.checks" rows={rows} scope={props.scope} selection={props.selection}
       accessibilityLabel={t('projects.deployments.services.checks')} />
   );
-}
-const keyOfCheck = (row: ManagedConfiguredCheckRow) => row.key;
-
-/** A Check's latest result in its tone (lab "502 · 1.2 s" rose); nothing yet draws the column's dash. */
-function CheckLastResult(props: Readonly<{ facts: ReturnType<typeof serviceCheckListFacts> }>) {
-  if (!props.facts.lastResult) return null;
-  return props.facts.lastTone
-    ? <Status tone={props.facts.lastTone} label={props.facts.lastResult} presentation="inline" />
-    : <Text style={{ ...Typography.variant('meta') }} numberOfLines={1}>{props.facts.lastResult}</Text>;
-}
-
-/** A Check's state word from its results: failing and degraded speak, a switched-off Check says so quietly. */
-function CheckStateWord(props: Readonly<{ row: ManagedConfiguredCheckRow; status: ServiceCheckStatus }>) {
-  if (!props.row.native.enabled) return <Status tone="muted" label={t('projects.deployments.healthNotChecked')} presentation="inline" />;
-  return <Status tone={serviceCheckStatusTone(props.status) ?? 'secondary'} label={serviceCheckStatusWord(props.status)} presentation="inline" />;
 }
 
 /**

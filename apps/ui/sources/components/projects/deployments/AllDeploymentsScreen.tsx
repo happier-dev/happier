@@ -34,14 +34,10 @@ import { useDeploymentInventory } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
 import { deploymentRailState } from './deploymentPresentation';
-import { buildServiceCheckHref } from './deploymentNavigation';
-import { ServiceCheckDetail } from './ServiceCheckDetail';
 import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
+import { useServiceCheckSelection } from './ServiceCheckList';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
-import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
-import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import { DetailsPaneOpenAsPageButton } from '@happier-dev/plugin-ui/components';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 
@@ -81,34 +77,8 @@ export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const selectView = React.useCallback((next: ServicesView) => {
     router.setParams({ view: next === 'apps' ? undefined : next });
   }, [router]);
-  // A Check opens beside the page where a pane fits (the Store's pattern: one body for pane and page), otherwise as
-  // its own page, which is also the pane's Open as page.
-  const besidePage = useDetailsPaneAvailable();
-  const [checkKey, setCheckKey] = React.useState<string | null>(null);
-  const [checkRow, setCheckRow] = React.useState<ManagedConfiguredCheckRow | null>(null);
-  const openCheckPage = React.useCallback((row: ManagedConfiguredCheckRow) => {
-    router.push(buildServiceCheckHref({ automationId: row.automationId, triggerId: row.triggerId }) as never);
-  }, [router]);
-  const selectCheck = React.useCallback((row: ManagedConfiguredCheckRow) => {
-    if (besidePage) setCheckKey(row.key);
-    else openCheckPage(row);
-  }, [besidePage, openCheckPage]);
-  const closeCheck = React.useCallback(() => setCheckKey(null), []);
-  const checks = React.useMemo(() => ({ selectedKey: checkKey, onSelect: selectCheck, onSelectedRow: setCheckRow }),
-    [checkKey, selectCheck]);
-  const shown = view === 'checks' && checkKey !== null && checkRow !== null && besidePage ? checkRow : null;
-  const details = React.useMemo(() => shown ? {
-    header: {
-      title: shown.native.name,
-      actions: (
-        <CorePluginUiPresentationScope>
-          <DetailsPaneOpenAsPageButton testID="services.checks.detailPane.openAsPage"
-            accessibilityLabel={t('capabilities.store.openAsPage')} onPress={() => openCheckPage(shown)} />
-        </CorePluginUiPresentationScope>
-      ),
-    },
-    content: <ItemList testID="services.checks.detail"><ServiceCheckDetail row={shown} /></ItemList>,
-  } : null, [openCheckPage, shown]);
+  // A Check opens beside the page where a pane fits, otherwise as its own page (the one selection owner).
+  const { selection: checks, details, closeCheck } = useServiceCheckSelection(view === 'checks');
   const title = t('projects.deployments.services.title');
   const mainColumn = React.useMemo(() => ({
     hideLabel: t('panes.mainColumn.hidePage', { title }),

@@ -28,6 +28,14 @@ describe('workspace loading through the canonical Expo context', () => {
         expect(workspaceRouteBodies['deployments/[projectSourceId]']).toBeTypeOf('function');
         await expect(workspaceRouteBodies['deployments/[projectSourceId]']!()).resolves.toEqual({ default: Body });
     });
+    it('hosts the Monitoring destination through its registered body', async () => {
+        context.load.mockImplementation(key => {
+            if (key !== './(app)/monitoring/index.tsx') throw new Error('wrong Monitoring entry');
+            return { WorkspaceRouteBody: Body };
+        });
+        expect(workspaceRouteBodies.monitoring).toBeTypeOf('function');
+        await expect(workspaceRouteBodies.monitoring!()).resolves.toEqual({ default: Body });
+    });
     it('retains the Project host loader when a plugin page moves from root to a nested local location', () => {
         expect(workspaceRouteBodies['projects/[workspaceRefId]/plugins/[pluginId]/[localId]'])
             .toBe(workspaceRouteBodies['projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath]']);
