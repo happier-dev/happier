@@ -403,6 +403,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 // Installed tool identity/version are provenance; its target-local installation path is not the effect.
                 reviewedCommands.push({ source: provenance, ...(projectExecutable !== resolved.command ? { executable: projectExecutable } : {}), args: resolved.reviewInvocation.args.map(arg => reviewPath(root, arg)),
                     cwd: reviewPath(root, resolved.cwd), toolchain: resolved.toolchain,
+                    ...(resolved.executedFiles ? { files: resolved.executedFiles } : {}),
                     ...(resolved.nativeCommandToolchain ? { nativeCommandToolchain: resolved.nativeCommandToolchain } : {}),
                     ...(resolved.reviewInvocation.environmentOverlay ? { environmentOverlay: Object.fromEntries(Object.entries(resolved.reviewInvocation.environmentOverlay).map(([key, value]) => [key, reviewPath(root, value)])) } : {}),
                 });

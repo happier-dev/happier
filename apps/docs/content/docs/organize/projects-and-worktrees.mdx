@@ -247,7 +247,12 @@ names (`main`, or `index.js`), not what that file imports. Happier does not foll
 inline `-c` code or what a script sources or reads. Commands such as
 `npm run setup` or `make setup` read their own definition files, so declare them
 with the native source kinds (`package_script`, `make` and so on) or list those
-files in `workspace.setupInputs` to make their changes ask again too:
+files in `workspace.setupInputs` to make their changes ask again too. A native
+source covers its definition file and, for `package_script`, `make` and `just`,
+the checkout files that the selected target's lines run the same way: the script
+itself, its `pre`/`post` scripts and the package scripts it runs by name, or the
+recipe and the recipes it depends on. Other native kinds cover their definition
+file only:
 
 ```json
 {

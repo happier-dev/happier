@@ -56,7 +56,8 @@ export function listLiteralCommandExecutedFiles(root: string, cwd: string, comma
     return [...scanLiteralCommand(root, cwd, command).files];
 }
 
-function scanLiteralCommand(root: string, cwd: string, command: string) {
+/** Each separate command line (a package script, a recipe line) starts in `cwd`. */
+function scanLiteralCommand(root: string, cwd: string, command: string | readonly string[]) {
     const files = new Set<string>();
     const packageOperands = new Set<string>();
     const within = (path: string) => {
@@ -72,48 +73,51 @@ function scanLiteralCommand(root: string, cwd: string, command: string) {
         files.add(file);
         return file;
     };
-    for (const segment of command.split(/&&|\|\||[;&|\n]/)) {
-        const tokens = [...segment.matchAll(TOKEN)].map(match => match[1] ?? match[2] ?? match[3] ?? '');
-        // `cd <dir>` moves later segments when it stays in the checkout; `cd`, `cd -` and `~` keep the cwd.
-        if (tokens[0] === 'cd') {
-            const target = tokens[1];
-            if (target !== undefined && target !== '-' && !target.startsWith('~') && within(resolve(segmentCwd, target)) !== undefined) segmentCwd = resolve(segmentCwd, target);
-            continue;
-        }
-        let index = 0;
-        for (;;) {
-            while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]!)) index += 1;
-            const word = tokens[index]?.toLowerCase();
-            if (word === 'cmd' || word === 'cmd.exe') {
-                const run = tokens.findIndex((token, at) => at > index && /^\/[ck]$/i.test(token));
-                index = run < 0 ? tokens.length : run + 1;
+    for (const line of typeof command === 'string' ? [command] : command) {
+        segmentCwd = cwd;
+        for (const segment of line.split(/&&|\|\||[;&|\n]/)) {
+            const tokens = [...segment.matchAll(TOKEN)].map(match => match[1] ?? match[2] ?? match[3] ?? '');
+            // `cd <dir>` moves later segments when it stays in the checkout; `cd`, `cd -` and `~` keep the cwd.
+            if (tokens[0] === 'cd') {
+                const target = tokens[1];
+                if (target !== undefined && target !== '-' && !target.startsWith('~') && within(resolve(segmentCwd, target)) !== undefined) segmentCwd = resolve(segmentCwd, target);
                 continue;
             }
-            if (word === undefined || !WRAPPERS.has(word)) break;
-            const wrapper = word;
-            index += 1;
-            while (index < tokens.length && tokens[index]!.startsWith('-')) index += wrapper === 'sudo' && SUDO_VALUED.has(tokens[index]!) ? 2 : 1;
-        }
-        const program = tokens[index];
-        if (program === undefined) continue;
-        if (/[\\/]/.test(program) || /\.(?:cmd|bat|ps1)$/i.test(program)) add(program);
-        const family = familyOf(program);
-        if (!family) continue;
-        const normalize = (flag: string) => family.caseInsensitive ? flag.toLowerCase() : flag;
-        let operand = index + 1;
-        if (family.subcommand !== undefined && tokens[operand] === family.subcommand) operand += 1;
-        while (operand < tokens.length) {
-            const token = tokens[operand]!;
-            const flag = normalize(token);
-            if (family.inline.includes(flag)) break;
-            if (family.script?.includes(flag)) { if (tokens[operand + 1] !== undefined) add(tokens[operand + 1]!); break; }
-            if (token.startsWith('-') || token.startsWith('+') && family === SHELL) {
-                operand += family.valued?.includes(flag) ? 2 : 1;
-                continue;
+            let index = 0;
+            for (;;) {
+                while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]!)) index += 1;
+                const word = tokens[index]?.toLowerCase();
+                if (word === 'cmd' || word === 'cmd.exe') {
+                    const run = tokens.findIndex((token, at) => at > index && /^\/[ck]$/i.test(token));
+                    index = run < 0 ? tokens.length : run + 1;
+                    continue;
+                }
+                if (word === undefined || !WRAPPERS.has(word)) break;
+                const wrapper = word;
+                index += 1;
+                while (index < tokens.length && tokens[index]!.startsWith('-')) index += wrapper === 'sudo' && SUDO_VALUED.has(tokens[index]!) ? 2 : 1;
             }
-            const file = add(token);
-            if (file && family.packageEntry) packageOperands.add(file);
-            break;
+            const program = tokens[index];
+            if (program === undefined) continue;
+            if (/[\\/]/.test(program) || /\.(?:cmd|bat|ps1)$/i.test(program)) add(program);
+            const family = familyOf(program);
+            if (!family) continue;
+            const normalize = (flag: string) => family.caseInsensitive ? flag.toLowerCase() : flag;
+            let operand = index + 1;
+            if (family.subcommand !== undefined && tokens[operand] === family.subcommand) operand += 1;
+            while (operand < tokens.length) {
+                const token = tokens[operand]!;
+                const flag = normalize(token);
+                if (family.inline.includes(flag)) break;
+                if (family.script?.includes(flag)) { if (tokens[operand + 1] !== undefined) add(tokens[operand + 1]!); break; }
+                if (token.startsWith('-') || token.startsWith('+') && family === SHELL) {
+                    operand += family.valued?.includes(flag) ? 2 : 1;
+                    continue;
+                }
+                const file = add(token);
+                if (file && family.packageEntry) packageOperands.add(file);
+                break;
+            }
         }
     }
     return { files, packageOperands };
@@ -127,7 +131,7 @@ export type LiteralCommandFileFactV1 = Readonly<{ file: string; digest: string }
  * `bin/python`) contributes its target path, because outside bytes are not Project inputs.
  * A directory operand (`node server`) is recorded without reading what it loads.
  */
-export async function readLiteralCommandExecutedFiles(root: string, cwd: string, command: string)
+export async function readLiteralCommandExecutedFiles(root: string, cwd: string, command: string | readonly string[])
     : Promise<Readonly<{ kind: 'read'; files: LiteralCommandFileFactV1[] }> | Readonly<{ kind: 'refused'; code: string }>> {
     const scan = scanLiteralCommand(root, cwd, command);
     const facts = new Map<string, LiteralCommandFileFactV1>();

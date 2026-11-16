@@ -543,6 +543,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (executable !== resolved.command) await addFile(relative(association.workspace.rootPath, resolved.command));
                 return { source, ...(executable !== resolved.command ? { executable } : {}), args: resolved.reviewInvocation.args.map(reviewPath),
                     cwd: reviewPath(resolved.cwd), toolchain: resolved.toolchain,
+                    ...(resolved.executedFiles ? { executedFiles: resolved.executedFiles } : {}),
                     nativeCommandToolchain: resolved.nativeCommandToolchain,
                     environmentOverlay: resolved.reviewInvocation.environmentOverlay && Object.fromEntries(Object.entries(resolved.reviewInvocation.environmentOverlay)
                         .map(([key, value]) => [key, reviewPath(value)])) };
@@ -690,7 +691,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     : command?.kind === 'pluginNative' ? command.resolution.executable : undefined,
                     args: (command?.kind === 'native' ? command.resolution.reviewInvocation.args : native.args).map(reviewPath), cwd: reviewPath(native.cwd),
                     files: [...reviewedFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest })),
-                    ...(command?.kind === 'native' ? { toolchain: command.resolution.toolchain, environmentOverlay: command.resolution.reviewInvocation.environmentOverlay && Object.fromEntries(Object.entries(command.resolution.reviewInvocation.environmentOverlay).map(([key, value]) => [key, reviewPath(value)])),
+                    ...(command?.kind === 'native' ? { toolchain: command.resolution.toolchain,
+                        ...(command.resolution.executedFiles ? { executedFiles: command.resolution.executedFiles } : {}), environmentOverlay: command.resolution.reviewInvocation.environmentOverlay && Object.fromEntries(Object.entries(command.resolution.reviewInvocation.environmentOverlay).map(([key, value]) => [key, reviewPath(value)])),
                         nativeCommandToolchain: command.resolution.nativeCommandToolchain } : {}),
                     ...(command?.kind === 'pluginNative' ? { adapterVersion,
                         nativeCommandToolchain: command.resolution.toolchainApplied } : {}),

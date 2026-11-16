@@ -4,6 +4,7 @@ import type { ProjectDefinitionDetectionV1, ProjectDevcontainerSelectionV1, Proj
 import type { PluginProjectNativeCommandResultV1 } from '@happier-dev/plugin-sdk';
 import { preserveUnconfirmedNativeProcess, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
+import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { inspectProjectDefinitionFacts } from './nativeDefinitionInspection';
 import { parseNativePackage, resolveNativePackageManager, type NativePackage, type NativePackageManagerSelection } from './nativePackageScripts';
@@ -19,6 +20,8 @@ export type ProjectNativeCommandIo = Readonly<{
 export type ProjectNativeCommandResult = ProjectNativeRefusal | Readonly<{
     kind: 'resolved'; command: string; args: readonly string[]; cwd: string;
     reviewInputs: readonly ProjectNativeFileFact[];
+    /** Checkout files the selected package script or recipe lines run; part of every reviewed effect. */
+    executedFiles?: readonly LiteralCommandFileFactV1[];
     toolchain: Readonly<{ tool: string; version?: string }>;
     /** Semantic invocation before installed runtime prefixes and target-local launch environment. */
     reviewInvocation: Readonly<{ args: readonly string[]; environmentOverlay?: Readonly<Record<string, string>> }>;
@@ -38,6 +41,59 @@ async function selectedFile(root: string, file: string, readBytes = readProjectD
 type PackageScriptBasis = Readonly<{
     kind: 'selected'; cwd: string; pkg: NativePackage; packageManager: NativePackageManagerSelection; reviewInputs: readonly ProjectNativeFileFact[];
 }>;
+
+const PACKAGE_SCRIPT_RUN = /(?:^|[\s;&|(])(?:npm|pnpm|yarn|bun)(?:\s+-{1,2}[\w-]+)*\s+(?:run(?:-script)?\s+)?([^\s;&|()'"]+)/gu;
+/** `run <target>` executes its pre/post scripts and the package scripts its lines run by name. */
+function packageScriptCommandLines(scripts: Readonly<Record<string, string>>, target: string): string[] {
+    const lines: string[] = [];
+    const seen = new Set<string>();
+    const queue = [target];
+    for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
+        for (const script of [`pre${name}`, name, `post${name}`]) {
+            if (seen.has(script) || !Object.hasOwn(scripts, script)) continue;
+            seen.add(script);
+            lines.push(scripts[script]!);
+            for (const match of scripts[script]!.matchAll(PACKAGE_SCRIPT_RUN)) if (Object.hasOwn(scripts, match[1]!)) queue.push(match[1]!);
+        }
+    }
+    return lines;
+}
+
+/** Recipe lines of a make/just target and the targets it depends on in the same file (lexical). */
+function recipeCommandLines(content: string, tool: 'make' | 'just', target: string): string[] {
+    const recipes = new Map<string, { deps: string[]; lines: string[] }>();
+    let current: { deps: string[]; lines: string[] }[] = [];
+    for (const raw of content.split(/\r?\n/u)) {
+        if (/^\s/u.test(raw)) {
+            const line = raw.trim().replace(/^[@+-]+/u, '');
+            if (line && !line.startsWith('#')) for (const recipe of current) recipe.lines.push(line);
+            continue;
+        }
+        current = [];
+        const header = tool === 'make' ? /^([^:#=\s][^:#=]*?)\s*::?(?!=)\s*([^;#]*)(?:;(.*))?$/u.exec(raw)
+            : /^@?([A-Za-z_][\w-]*)\b[^:=]*:(?!=)\s*([^#]*)$/u.exec(raw);
+        if (!header) continue;
+        const deps = header[2]!.split(/\s+/u).map(dep => dep.replace(/^\(|\)$/gu, '')).filter(Boolean);
+        for (const name of tool === 'make' ? header[1]!.split(/\s+/u) : [header[1]!]) {
+            const recipe = recipes.get(name) ?? { deps: [], lines: [] };
+            recipe.deps.push(...deps);
+            if (header[3]?.trim()) recipe.lines.push(header[3].trim());
+            recipes.set(name, recipe);
+            current.push(recipe);
+        }
+    }
+    const lines: string[] = [];
+    const seen = new Set<string>();
+    const queue = [target];
+    for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
+        const recipe = recipes.get(name);
+        if (seen.has(name) || !recipe) continue;
+        seen.add(name);
+        lines.push(...recipe.lines);
+        queue.push(...recipe.deps);
+    }
+    return lines;
+}
 
 async function readPackageScriptBasis(params: Readonly<{ root: string; file: string; inheritAncestors?: boolean }>,
     readBytes = readProjectDefinitionFileBytes): Promise<PackageScriptBasis | ProjectNativeRefusal> {
@@ -69,13 +125,14 @@ function selectPackageScript(basis: PackageScriptBasis | ProjectNativeRefusal, t
     if (basis.kind === 'refused') return basis;
     if (!Object.hasOwn(basis.pkg.scripts, target)) return refuse('missing', 'native_target_missing');
     if (!target || /^-|[\0\r\n]/u.test(target)) return refuse('invalid', 'native_target_invalid');
-    const { pkg: _pkg, ...selected } = basis;
-    return { ...selected, args: ['run', target] };
+    const { pkg, ...selected } = basis;
+    return { ...selected, args: ['run', target], commandLines: packageScriptCommandLines(pkg.scripts, target) };
 }
 
 /** Single package-script intent producer, shared by Services and native command previews. */
 export async function resolveNativePackageScript(params: Readonly<{ root: string; file: string; target: string; inheritAncestors?: boolean }>): Promise<ProjectNativeRefusal | Readonly<{
     kind: 'selected'; cwd: string; args: readonly string[]; packageManager: NativePackageManagerSelection; reviewInputs: readonly ProjectNativeFileFact[];
+    commandLines: readonly string[];
 }>> {
     return selectPackageScript(await readPackageScriptBasis(params), params.target);
 }
@@ -115,6 +172,8 @@ export async function resolveProjectDevcontainerSelection(params: Readonly<{ roo
 
 type NativeCommandIntent = Readonly<{
     kind: 'selected'; tool: string; args: readonly string[]; cwd: string; reviewInputs: readonly ProjectNativeFileFact[];
+    /** Shell lines the target runs; the files they name join the reviewed effect. */
+    commandLines?: readonly string[];
     packageManager?: NativePackageManagerSelection;
     nativeCommandToolchain?: ProjectToolchainSelectionV1;
     environmentOverlay?: Readonly<Record<string, string>>;
@@ -152,12 +211,13 @@ async function selectNativeCommand(input: Readonly<{
     let nativeCommandToolchain: ProjectToolchainSelectionV1 | undefined;
     let environmentOverlay: Readonly<Record<string, string>> | undefined;
     let reviewInputs: readonly ProjectNativeFileFact[] = [fact];
+    let commandLines: readonly string[] | undefined;
     if (source.tool === 'package_script') {
         const selected = observation
             ? selectPackageScript(await observation.packageScript(source.file), source.target)
             : await resolveNativePackageScript({ root: input.root, file: source.file, target: source.target });
         if (selected.kind === 'refused') return selected;
-        ({ cwd, args, packageManager, reviewInputs } = selected);
+        ({ cwd, args, packageManager, reviewInputs, commandLines } = selected);
         tool = packageManager.manager;
     } else if (source.tool === 'compose' && input.environment) {
         // Deployment review is authoritative only after native rendering. The
@@ -181,8 +241,8 @@ async function selectNativeCommand(input: Readonly<{
         // mise run + explicit MISE_OVERRIDE_CONFIG_FILENAMES; Docker compose --file up;
         // Devbox run --config (directory); Flox build or owned service activation.
         switch (source.tool) {
-            case 'make': args = ['-f', absoluteFile, source.target]; break;
-            case 'just': args = ['--justfile', absoluteFile, source.target]; break;
+            case 'make': args = ['-f', absoluteFile, source.target]; commandLines = recipeCommandLines(fact.content, 'make', source.target); break;
+            case 'just': args = ['--justfile', absoluteFile, source.target]; commandLines = recipeCommandLines(fact.content, 'just', source.target); break;
             case 'taskfile': tool = 'task'; args = ['--taskfile', absoluteFile, source.target]; break;
             case 'mise':
                 cwd = resolve(input.root);
@@ -217,7 +277,7 @@ async function selectNativeCommand(input: Readonly<{
                 nativeCommandToolchain = { kind: 'toolchain', tool: 'devenv', configPath: fact.file }; break;
         }
     }
-    return { kind: 'selected', tool, args, cwd, reviewInputs, ...(packageManager ? { packageManager } : {}),
+    return { kind: 'selected', tool, args, cwd, reviewInputs, ...(commandLines?.length ? { commandLines } : {}), ...(packageManager ? { packageManager } : {}),
         ...(nativeCommandToolchain ? { nativeCommandToolchain } : {}), ...(environmentOverlay ? { environmentOverlay } : {}) };
 }
 
@@ -255,7 +315,14 @@ export async function inspectProjectNativeCommand(input: Readonly<{
 }>): Promise<ProjectNativeRefusal | Extract<ProjectNativeCommandResult, { kind: 'resolved' }>> {
     if (input.signal?.aborted) return refuse('cancelled', 'native_resolution_cancelled');
     const intent = await selectNativeCommand(input);
-    return intent.kind === 'refused' ? intent : resolveSelectedNativeCommand(intent, input.io, input.signal);
+    if (intent.kind === 'refused') return intent;
+    const resolved = await resolveSelectedNativeCommand(intent, input.io, input.signal);
+    if (resolved.kind !== 'resolved' || !intent.commandLines) return resolved;
+    // The definition file is a review input; the scripts its selected lines run are too.
+    const executed = await readLiteralCommandExecutedFiles(input.root, intent.cwd, intent.commandLines);
+    if (input.signal?.aborted) return refuse('cancelled', 'native_resolution_cancelled');
+    if (executed.kind === 'refused') return refuse('invalid', executed.code);
+    return executed.files.length ? { ...resolved, executedFiles: executed.files } : resolved;
 }
 
 /** Plugin resolution may execute native effects and belongs to admitted execution. */

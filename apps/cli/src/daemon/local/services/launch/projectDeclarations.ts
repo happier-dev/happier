@@ -564,6 +564,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             : { source: command.source, executable: portablePath(command.resolution.command),
                 args: command.resolution.args.map(portablePath), cwd: portablePath(command.resolution.cwd),
                 toolchain: command.resolution.toolchain, environmentOverlay: command.resolution.environmentOverlay,
+                ...(command.resolution.executedFiles ? { executedFiles: command.resolution.executedFiles } : {}),
                 nativeCommandToolchain: command.resolution.nativeCommandToolchain };
         const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: 'service', declaration: request.declaration,
             service, command: resolvedCommand, files: files.sort((a, b) => a.file.localeCompare(b.file)), setupEffectDigest: plan.reviewedEffectDigest,
