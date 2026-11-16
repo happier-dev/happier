@@ -4131,6 +4131,13 @@ describe('WorkflowRunScreen', () => {
             detailActions.listRuns.mockResolvedValue({ runs: [], metadataByRunId: {} });
             await act(async () => wake());
             await vi.waitFor(() => expect(readContentProps()).toBeNull());
+            // The same mounted destination must observe a returned grant even
+            // though revocation removed its cached private content and summary.
+            detailActions.listRuns.mockResolvedValue({ runs: [run], metadataByRunId: {} });
+            detailActions.getRun.mockResolvedValue({ ...priorDetail, callerAccess: { canEdit: true } });
+            await act(async () => wake());
+            await vi.waitFor(() => expect(readContentProps()?.run.id).toBe(run.id));
+            expect(readContentProps()?.onPause).toBeTypeOf('function');
         });
         it.each(['terminal', 'invocation-only', 'unbound-invalidation'] as const)('consumes a held Account catch-up Run refresh once for detail and rail (%s)', async change => {
             const run = createWorkflowRunSummaryFixture({ state: 'running', revision: 1, origin: { kind: 'direct' } });

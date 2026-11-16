@@ -433,6 +433,13 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
             ? observedSource.definitionId ?? null
             : null
     );
+    // Revocation clears private content, but this mounted Run still demands
+    // its admitted source's grant changes. Retain only that routing identity.
+    const demandedSourceRef = React.useRef({ contentIdentity, sourceArtifactId: observedSourceArtifactId });
+    if (demandedSourceRef.current.contentIdentity !== contentIdentity || observedSourceArtifactId !== null) {
+        demandedSourceRef.current = { contentIdentity, sourceArtifactId: observedSourceArtifactId };
+    }
+    const demandedSourceArtifactId = demandedSourceRef.current.sourceArtifactId;
     const definition = detail?.definition ?? null;
     const acceptedContext = detail?.acceptedContext ?? null;
     const result = detail?.result;
@@ -643,7 +650,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
         const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
             runId,
-            sourceArtifactId: observedSourceArtifactId,
+            sourceArtifactId: demandedSourceArtifactId,
             // Detail is demanded even while its first read is in flight. A
             // row wake must retire that read rather than publish stale facts.
             isVisibleWindowLoaded: () => true,
@@ -653,7 +660,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
             },
         });
         return () => { summaryInvalidationRef.current = null; unsubscribe(); };
-    }, [accountLifetime, activeLifetime, accountScopeKey, activelyViewed, runId, observedSourceArtifactId]);
+    }, [accountLifetime, activeLifetime, accountScopeKey, activelyViewed, runId, demandedSourceArtifactId]);
 
     React.useEffect(() => {
         if (!activelyViewed || runId === null) return;
