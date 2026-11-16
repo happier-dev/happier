@@ -158,6 +158,38 @@ describe('ActivityLocalNotificationRuntime settings subscriptions', () => {
         expect(updateCount).toBe(0);
     });
 
+    it('does not rerender while a remote turn moves Session rows but no audience', async () => {
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const session = createSessionFixture({ id: 'session-remote-turn', active: true, seq: 1 });
+        getStorage().getState().applySessions([session]);
+        let updateCount = 0;
+
+        await renderScreen(
+            <React.Profiler
+                id="activity-local-notification-runtime"
+                onRender={(_, phase) => {
+                    if (phase === 'update') updateCount += 1;
+                }}
+            >
+                <ActivityLocalNotificationRuntime />
+            </React.Profiler>,
+        );
+
+        // A turn sent from another device: the row starts thinking, commits messages and settles.
+        const turn = [
+            { seq: 2, thinking: true, thinkingAt: 2_000, latestTurnStatus: 'in_progress' as const },
+            { seq: 3, thinking: true, thinkingAt: 2_000, latestTurnStatus: 'in_progress' as const, meaningfulActivityAt: 3_000 },
+            { seq: 4, thinking: false, latestTurnStatus: 'completed' as const, meaningfulActivityAt: 4_000 },
+        ];
+        for (const patch of turn) {
+            await act(async () => {
+                getStorage().getState().applySessions([{ ...getStorage().getState().sessions[session.id]!, ...patch }]);
+            });
+        }
+
+        expect(updateCount).toBe(0);
+    });
+
     // The closed-app `session_changed` wake exists to hydrate the woken Home so
     // this runtime can present its Activity notification, and this runtime
     // mounts on every platform. Reconciling the registration from here — with

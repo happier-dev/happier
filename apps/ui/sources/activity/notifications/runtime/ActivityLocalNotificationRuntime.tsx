@@ -1,5 +1,7 @@
 import { usePresentedAgentRequestSettlement } from './usePresentedAgentRequestSettlement';
-import { useActivityAttentionSummarySource } from '@/activity/source/useActivityAttentionSource';
+import { useActivityStoreSourceDetail } from '@/activity/source/useActivityAttentionSource';
+import { useActivityPersonalSessionMembership } from '@/activity/source/activityPersonalSessionMembership';
+import { buildSessionListHomeObservations } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import * as React from 'react';
 
 import { Platform } from 'react-native';
@@ -176,9 +178,11 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     useSessionRecordingVisibility();
     const reconcilePresentedRequests = usePresentedAgentRequestSettlement();
     const localSettings = useActivityLocalNotificationLocalSettings();
-    // Always mounted: it reads audiences and Home currentness, never transcripts (an alert reads its one
-    // committed message from the store when it fires), so a streamed reply does not render it.
-    const audienceSource = useActivityAttentionSummarySource();
+    // Always mounted: it subscribes only to Session audiences and Home profiles, and reads Session rows,
+    // Home currentness and its one committed message from the store when an alert fires, so neither a
+    // streamed reply nor a Session row write renders it.
+    const audienceSource = useActivityStoreSourceDetail();
+    const personalMembership = useActivityPersonalSessionMembership();
     const reminderServerIds = React.useMemo(() => [...audienceSource.audienceScopes.keys()], [audienceSource.audienceScopes]);
     const resolveAccountSettings = useExactHomeAccountSettings(audienceSource.audienceScopes);
     // A clicked browser notification opens its Session through the shared Home switch.
@@ -367,7 +371,10 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                     homeDir: readSessionOwnerMetadataView(session)?.homeDir ?? null,
                     // Same exact-Home currentness the row and Activity show: an alert from a Home
                     // Happier can no longer reach says so instead of implying it is current.
-                    homeObservation: audienceSource.sessionListHomeObservationByServerId?.[event.address.serverId] ?? null,
+                    homeObservation: buildSessionListHomeObservations({
+                        concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+                        queryStatesByServerId: personalMembership.statesByServerId,
+                    })[event.address.serverId] ?? null,
                     nowMs,
                 })).contextLine,
                 previewBehavior: mayShowPrivateContent ? deliveryPlan.previewBehavior : 'status_only',
@@ -435,7 +442,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
         resolveAccountSettings,
         audienceSource.audienceScopes,
         audienceSource.audiencePresentationsBySessionKey,
-        audienceSource.sessionListHomeObservationByServerId,
+        personalMembership.statesByServerId,
     ]);
 
     // Phones get the guard's stop warning as a push; a desktop host announces it locally.
