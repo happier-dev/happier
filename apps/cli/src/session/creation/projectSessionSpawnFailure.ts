@@ -88,7 +88,7 @@ export function projectSessionSpawnFailure(input: Readonly<{
   }
   const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
   const retryable = (detail.success ? detail.data.failureCause?.retryable : undefined) ?? (modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
-    || code === 'agent_isolation_unavailable' || code === 'plugin_code_unreadable'
+    || code === 'agent_isolation_unavailable' || code === 'plugin_code_unreadable' || code === 'SOURCE_RUNTIME_RELOAD_REQUIRED'
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true);
   return { type: 'error', code: 'spawn_failed', retryable,

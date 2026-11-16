@@ -168,6 +168,28 @@ describe('Session launch cause transport', () => {
     }))).toMatchObject({ type: 'error', launchError: legacyCause });
     expect(response.errorDetail).not.toHaveProperty('subtype');
   });
+  it.each(['no_closure', 'closure_changed', 'writer_active', 'check_failed'] as const)(
+    'requires manual runtime repair for a retained %s spawn refusal', async (subtype) => {
+      const launchError = { kind: 'launch_error' as const, code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype,
+        message: 'Source runtime dependencies changed or are unavailable. Reload the Stack from current source.' };
+      const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse({
+        errorCode: 'SPAWN_FAILED', errorMessage: launchError.message, errorDetail: launchError,
+      }));
+      const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+        errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+      }));
+      const operations = createHostActionOperationRuntime({ machineId: 'source-worker',
+        resolveAccountId: async () => 'source-owner', generateOperationId: () => 'source-refusal' });
+      await operations.observeExecution({ actionId: 'session.spawn_new',
+        input: { creationKey: 'source-refusal', executionTarget: { serverId: 'fixture-home', machineId: 'source-worker' },
+          directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+        execute: async () => ({ ok: true, result }),
+      });
+      expect(await operations.handlers.getV2({ operationId: 'source-refusal', waitForTerminal: true }))
+        .toMatchObject({ kind: 'found', operation: { state: 'failed', result: {
+          type: 'error', code: 'spawn_failed', retryable: false, launchError,
+        } } });
+    });
   it.each(['broker_unavailable', 'team_credential_provider_binding_unavailable',
     'team_credential_model_selection_required', 'provider_catalog_unavailable',
     'provider_compatibility_unverified', 'resource_forbidden', 'update_required', 'connected_service_credential_reconnect_required'])(
