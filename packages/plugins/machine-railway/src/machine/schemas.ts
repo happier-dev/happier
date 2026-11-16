@@ -3,7 +3,7 @@ import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliation
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '\\S' });
-export const RailwayLaunchSchema = defineProtocolObject({ environmentId: text }, closed);
+export const RailwayLaunchSchema = defineProtocolObject({ environmentId: text, checkpoint: text.optional() }, closed);
 export const RailwayOptionsSchema = defineProtocolObject({ environmentId: text.optional() }, closed);
 export const RailwayResourceSchema = defineProtocolObject({ sandboxId: text, environmentId: text, managedId: text }, closed);
 export const RailwayOperationSchema = defineProtocolUnion([

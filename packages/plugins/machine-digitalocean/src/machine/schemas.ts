@@ -1,6 +1,9 @@
 import * as z from 'zod/mini';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 
+export const CONTRIBUTION = { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean' } as const;
+export function reference<T>(value: T) { return { contributionRef: CONTRIBUTION, schemaVersion: 1, value }; }
+
 const nativeId = z.int().check(z.gt(0));
 const text = z.string().check(z.trim(), z.minLength(1));
 const closed = { policy: 'closed' } as const;
@@ -27,6 +30,7 @@ export type DropletResourceV1 = ProtocolSchemaOutput<typeof dropletResourceSchem
 const network = z.object({ type: text, ip_address: text });
 export const nativeDropletSchema = z.object({
   id: nativeId, name: text, status: text, tags: z._default(z.array(text), []), volume_ids: z._default(z.array(text), []),
+  vcpus: z.optional(nativeId), memory: z.optional(z.number().check(z.gt(0))), disk: z.optional(z.number().check(z.gte(0))),
   networks: z.optional(z.object({ v4: z._default(z.array(network), []), v6: z._default(z.array(network), []) })),
 });
 export const nativeActionSchema = z.object({

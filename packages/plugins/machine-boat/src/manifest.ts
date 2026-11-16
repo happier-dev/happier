@@ -33,6 +33,7 @@ import {
   type BoatAcquireOperationV1,
   type BoatLaunchV1,
 } from './machine/schemas.js';
+import { BOAT_PREPARATION_HOME, BoatPreparationInputSchema, BoatPreparedArtifactSchema, BoatPreparationOperationSchema, PREPARATION_SCHEMAS, createBoatPreparationClient, supportsBoatPreparationSource } from './machine/preparation.js';
 import { boatCheckPresentation, boatPresentationLabel } from './ui/translations.js';
 
 export const PLUGIN_ID = 'happier.machine.boat';
@@ -57,6 +58,8 @@ const defaults = { placementBindings: [], surfaces: ['ui', 'cli', 'plugin'], hos
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const runtime = (context: Parameters<typeof nativeFetch>[0]) => createBoatNativeClient({ fetch: nativeFetch(context), signal: context.signal });
+const preparationRuntime = (context: Parameters<typeof nativeFetch>[0]) => createBoatPreparationClient(nativeFetch(context), context.signal,
+  () => context.services.machineProvisioners.waitForNativeObservation());
 const PRICE_SOURCE = 'https://docs.boat.dev/pricing';
 // Static rates verified against https://docs.boat.dev/pricing.md on 2026-10-30.
 // /limits supplies current entitlement, not a fresh observation of these rates.
@@ -82,7 +85,8 @@ function sourceOption(source: BoatLaunchV1['source'], title: string) {
   // These are filesystem starting sources; the existing image/source control
   // carries their exact native selector, including a fork's source sandbox id.
   // Boat's Linux sandbox contract also covers saved disks and forks: https://docs.boat.dev/concepts.
-  return { id, title, guestPlatform: 'linux' as const, assignments: [{ path: 'source', value: source }], nativeFacts: { image: { id, title } } };
+  return { id, title, guestPlatform: 'linux' as const, assignments: [{ path: 'source', value: source }], nativeFacts: { image: { id, title },
+    ...(supportsBoatPreparationSource(source) ? { preparationGuest: { target: { os: 'linux' as const, arch: 'x64' as const }, remoteHomeDir: BOAT_PREPARATION_HOME } } : {}) } };
 }
 
 export const MACHINE_PROVISIONER = {
@@ -95,10 +99,16 @@ export const MACHINE_PROVISIONER = {
   billing, retention, bootstrapCredential: { kind: 'ssh' },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', renew: 'renew' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: BoatNativeOperationV1Schema.jsonSchema },
+  preparation: { inputSchema: BoatPreparationInputSchema.jsonSchema, artifactSchema: BoatPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: BoatPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 /** Named schema references retain exact Action payloads in portable declarations. */
 type BoatActionSchemas = {
+  readonly 'prepare-build': readonly [typeof PREPARATION_SCHEMAS.buildInput, typeof PREPARATION_SCHEMAS.buildResult];
+  readonly 'prepare-inspect': readonly [typeof PREPARATION_SCHEMAS.inspectInput, typeof PREPARATION_SCHEMAS.inspectResult];
+  readonly 'prepare-destroy': readonly [typeof PREPARATION_SCHEMAS.destroyInput, typeof PREPARATION_SCHEMAS.destroyResult];
   readonly reconcile: readonly [typeof reconciliation.input, typeof reconciliation.result];
   readonly check: readonly [typeof ROLE_SCHEMAS.checkInput, typeof MachineProvisionerCheckResultV1Schema];
   readonly options: readonly [typeof ROLE_SCHEMAS.checkInput, typeof MachineProvisionerOptionsResultV1Schema];
@@ -147,7 +157,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
         // https://docs.boat.dev/api-keys/scopes does not enumerate ci's
         // account.read membership; old ci keys do not acquire newer permissions.
         checklist: ['Select the account or organization that should own the sandboxes in the [Boat dashboard].',
-          'Create an API key with sandbox.create, sandbox.read, sandbox.update, sandbox.stop, sandbox.resume, sandbox.fork, sandbox.delete (or sandbox.delete-own for sandboxes created by this key), ssh, snapshot.read, and account.read.',
+          'Create an API key with sandbox.create, sandbox.read, sandbox.update, sandbox.stop, sandbox.resume, sandbox.fork, sandbox.delete (or sandbox.delete-own for sandboxes created by this key), ssh, exec, file.write, snapshot.read, snapshot.write, and account.read.',
           'Ensure the key can access the selected source sandboxes and snapshots. Older ci keys may lack resume or ssh; verify account.read explicitly. Copy and paste the key here.'],
         shapeHint: 'New Boat API keys start with boat_. Existing box_ keys are also supported.' },
       credentialFieldKeys: { token: 'token' },
@@ -159,6 +169,21 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
+    'prepare-build': { ...defaults, title: 'Build Boat prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Boat snapshot?', body: 'Boat charges for the build guest and retained snapshot. See https://docs.boat.dev/pricing for current pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Boat prepared snapshot', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Boat prepared snapshot', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Boat snapshot?', body: 'Deleting the snapshot permanently removes the prepared image and its temporary build guest.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     reconcile: { ...defaults, title: 'Recover exact Boat sandbox', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {

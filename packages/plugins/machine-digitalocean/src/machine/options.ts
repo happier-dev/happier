@@ -2,6 +2,7 @@ import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/
 import { DIGITALOCEAN_NETWORK_LABELS } from '../ui/translations.js';
 import type { createDigitalOceanNativeClient } from './nativeClient.js';
 import type { NativeImage } from './schemas.js';
+import { DIGITALOCEAN_PREPARATION_HOME } from './preparation.js';
 
 type NativeOptions = Awaited<ReturnType<ReturnType<typeof createDigitalOceanNativeClient>['options']>>;
 
@@ -18,7 +19,11 @@ export function projectDigitalOceanOptions(facts: NativeOptions): MachineProvisi
     code: 'provider_unavailable', ...(facts.nativeCause ? { nativeCause: facts.nativeCause } : {}) };
   const images = facts.images.filter(supportsBootstrap);
   const regionIds = new Set(facts.regions.map(region => region.slug));
-  return { base: { launch: {}, guestPlatform: 'linux' }, dimensions: {
+  // DigitalOcean identifies Droplets as amd64 hosts in its native platform contract:
+  // https://docs.digitalocean.com/products/container-registry/how-to/pull-mirror-images/
+  return { base: { launch: {}, guestPlatform: 'linux', nativeFacts: { preparationGuest: {
+    target: { os: 'linux', arch: 'x64' }, remoteHomeDir: DIGITALOCEAN_PREPARATION_HOME,
+  } } }, dimensions: {
     size: facts.sizes.map(size => ({
       id: size.slug, title: `${size.slug} · ${size.vcpus} CPU · ${size.memory} MB · ${size.disk} GB`,
       assignments: [{ path: 'sizeSlug', value: size.slug }], available: size.available, prices: size.prices,

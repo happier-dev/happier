@@ -10,8 +10,12 @@ export function railwayVendor() {
   const sockets: { url: string; protocols: string[]; closed: boolean }[] = [];
   const writes: { path: string; parentMode: number }[] = [];
   let present = false, foreignPresent = true, failure = false, loseCreate = false, status = 'RUNNING', badFile = false, timedOut = false;
+  let creates = 0, sandboxId = 'sandbox-one', loseCheckpoint = false, deferCheckpointDelete = false, checkpointMismatch = false, deferGuestDelete = false;
+  const checkpoints = new Map<string, { id: string; key: string; environmentId: string; createdAt: string }>([
+    ['shared-recipe-hash', { id: 'foreign-checkpoint', key: 'shared-recipe-hash', environmentId: 'environment-one', createdAt: '2026-11-01T00:00:00Z' }],
+  ]);
   let abortFile: (() => void) | undefined;
-  const dto = () => ({ id: 'sandbox-one', environmentId: 'environment-one', status: present ? status : 'DESTROYED', idleTimeoutMinutes: 0, region: 'us-west2', networkIsolation: 'ISOLATED', domains: [], createdAt: '2026-11-01T00:00:00Z' });
+  const dto = () => ({ id: sandboxId, environmentId: 'environment-one', status: present ? status : 'DESTROYED', idleTimeoutMinutes: 0, region: 'us-west2', networkIsolation: 'ISOLATED', domains: [], createdAt: '2026-11-01T00:00:00Z' });
   const request: typeof fetch = async (_url, init) => {
     init?.signal?.throwIfAborted();
     const body = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
@@ -19,10 +23,19 @@ export function railwayVendor() {
     const { query, variables } = body;
     let data: unknown;
     if (failure) return Response.json({ errors: [{ message: 'private-token', extensions: { code: 'INTERNAL_SERVER_ERROR' } }] });
-    if (query.includes('sandboxCreate(')) { present = true; data = { sandboxCreate: dto() }; if (loseCreate) throw new Error('lost create'); }
+    if (query.includes('sandboxCheckpointCreate(')) {
+      const checkpoint = { id: 'checkpoint-one', key: String(variables.name), environmentId: String(variables.environmentId), createdAt: '2026-11-16T00:00:00Z' };
+      checkpoints.set(checkpoint.key, checkpoint);
+      if (loseCheckpoint) throw new Error('private-lost-checkpoint');
+      data = { sandboxCheckpointCreate: checkpointMismatch ? { ...checkpoint, key: 'foreign-key' } : checkpoint };
+    } else if (query.includes('sandboxCheckpointDelete(')) {
+      if (!deferCheckpointDelete) for (const [key, checkpoint] of checkpoints) if (checkpoint.id === variables.id) checkpoints.delete(key);
+      data = { sandboxCheckpointDelete: true };
+    } else if (query.includes('sandboxCheckpoints(')) data = { sandboxCheckpoints: [...checkpoints.values()] };
+    else if (query.includes('sandboxCreate(')) { creates++; sandboxId = creates === 1 ? 'sandbox-one' : 'sandbox-' + creates; present = true; data = { sandboxCreate: dto() }; if (loseCreate) throw new Error('lost create'); }
     else if (query.includes('sandboxDestroy(')) {
       if (variables.id === 'sandbox-foreign') { foreignPresent = false; data = { sandboxDestroy: { ...dto(), id: 'sandbox-foreign', status: 'DESTROYED' } }; }
-      else if (variables.id === 'sandbox-one') { present = false; data = { sandboxDestroy: dto() }; }
+      else if (variables.id === sandboxId) { if (deferGuestDelete) status = 'DESTROYING'; else present = false; data = { sandboxDestroy: dto() }; }
       else data = { sandboxDestroy: null };
     }
     else if (query.includes('sandboxExec(')) {
@@ -34,7 +47,7 @@ export function railwayVendor() {
     } else if (query.includes('generateShellToken(')) data = { generateShellToken: 'scoped-files-token' };
     else if (query.includes('sandbox(')) data = { sandbox: variables.id === 'sandbox-foreign'
       ? foreignPresent ? { ...dto(), id: 'sandbox-foreign', status: 'RUNNING' } : null
-      : variables.id === 'sandbox-one' && present ? dto() : null };
+      : variables.id === sandboxId && present ? dto() : null };
     else if (query.includes('me')) data = { me: { id: 'account-one', name: 'Railway account', email: 'owner@example.test' } };
     else throw new Error('Unrecognized GraphQL boundary');
     return Response.json({ data });
@@ -93,7 +106,9 @@ export function railwayVendor() {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
   Object.defineProperty(globalThis, 'WebSocket', { configurable: true, writable: true, value: Socket });
   return { home, request, calls, sockets, writes, dto,
-    get present() { return present; }, get foreignPresent() { return foreignPresent; }, setFailure(v: boolean) { failure = v; }, loseCreate() { loseCreate = true; },
+    get present() { return present; }, get foreignPresent() { return foreignPresent; }, checkpoints, setFailure(v: boolean) { failure = v; }, loseCreate() { loseCreate = true; },
+    loseCheckpoint() { loseCheckpoint = true; }, deferCheckpointDelete(v: boolean) { deferCheckpointDelete = v; }, checkpointMismatch(v: boolean) { checkpointMismatch = v; },
+    deferGuestDelete(v: boolean) { deferGuestDelete = v; }, disappearGuest() { present = false; },
     abortFiles(callback: () => void) { abortFile = callback; }, setStatus(v: string) { status = v; }, badFile(v: boolean) { badFile = v; }, timeout(v: boolean) { timedOut = v; },
     cleanup() { if (original) Object.defineProperty(globalThis, 'WebSocket', original); else Reflect.deleteProperty(globalThis, 'WebSocket'); rmSync(home, { recursive: true, force: true }); } };
 }

@@ -1,6 +1,7 @@
 import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { HETZNER_NETWORK_LABELS, HETZNER_PRICE_LABELS } from '../ui/translations.js';
 import type { createHetznerNativeClient } from './nativeClient.js';
+import { HETZNER_PREPARATION_HOME } from './preparation.js';
 
 type HetznerOptions = Awaited<ReturnType<ReturnType<typeof createHetznerNativeClient>['options']>>;
 // REST v1 Image.os_flavor (hcloud-python v2.11.0, images/domain.py).
@@ -42,7 +43,9 @@ export function projectHetznerOptions(facts: HetznerOptions): MachineProvisioner
       return {
         id: String(image.id), title, assignments: [{ path: 'imageId', value: String(image.id) }],
         ...(image.os_flavor && LINUX_IMAGE_FLAVORS.has(image.os_flavor) ? { guestPlatform: 'linux' as const } : {}),
-        nativeFacts: { image: { id: String(image.id), title,
+        nativeFacts: { ...(image.os_flavor && LINUX_IMAGE_FLAVORS.has(image.os_flavor) ? {
+          preparationGuest: { target: { os: 'linux' as const, arch: image.architecture === 'arm' ? 'arm64' as const : 'x64' as const }, remoteHomeDir: HETZNER_PREPARATION_HOME },
+        } : {}), image: { id: String(image.id), title,
           ...(image.description ? { description: image.description } : {}) } },
       };
     }),

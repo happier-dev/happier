@@ -10,29 +10,36 @@ import { observeMachineProvisionerNativeRead, buildMachineProvisionerPinnedSshBo
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createDigitalOceanProvider } from './machine/provider.js';
 import { DIGITALOCEAN_SNAPSHOT_FACTS } from './machine/nativeClient.js';
-import { dropletLaunchSchema, dropletResourceSchema, dropletNativeOperationSchema } from './machine/schemas.js';
+import { CONTRIBUTION, reference as resourceRef, dropletLaunchSchema, dropletResourceSchema, dropletNativeOperationSchema } from './machine/schemas.js';
+import { createDigitalOceanPreparationClient, DigitalOceanPreparationInputSchema, DigitalOceanPreparedArtifactSchema, DigitalOceanPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
 
-export const PLUGIN_ID = 'happier.machine.digitalocean';
-export const PROVISIONER_ID = 'digitalocean';
+export const PLUGIN_ID = CONTRIBUTION.pluginId;
+export const PROVISIONER_ID = CONTRIBUTION.localId;
 const nativeSchemas = { launch: dropletLaunchSchema, resource: dropletResourceSchema, nativeOperation: dropletNativeOperationSchema };
 const reconciliation = defineMachineProvisionerReconciliationSchemas(nativeSchemas);
 export const ROLE_SCHEMAS = { ...defineMachineProvisionerSchemas(nativeSchemas), acquireResult: reconciliation.result };
 export const prepareStoredSchemas = () => prepareMachineProvisionerStoredSchemas(nativeSchemas);
-function resourceRef<T>(value: T) { return { contributionRef: { pluginId: PLUGIN_ID, localId: PROVISIONER_ID }, schemaVersion: 1, value }; }
 function pending(recoveryTag: string) { return { kind: 'pending' as const, nativeOperationRef: resourceRef({ recoveryTag }) }; }
 const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
 const accountDefaults = { ...defaults, scopes: ['global'],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
-async function accountRuntime(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+async function accountOptions(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
   const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
     { kind: 'httpHeaders', origin: 'https://api.digitalocean.com', headerNames: ['authorization'] }, { signal: context.signal });
   context.signal.throwIfAborted();
   if (material.kind !== 'httpHeaders') throw new PluginError({ code: 'credential_unavailable' });
-  return createDigitalOceanProvider({ token: 'host-bound', fetch: nativeFetch(context, material.headers),
-    signal: context.signal, now: () => new Date(context.invokedAtMs), ...(guestHostKey ? { guestHostKey } : {}) });
+  return { token: 'host-bound', fetch: nativeFetch(context, material.headers),
+    signal: context.signal, now: () => new Date(context.invokedAtMs), ...(guestHostKey ? { guestHostKey } : {}) };
+}
+async function accountRuntime(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+  return createDigitalOceanProvider(await accountOptions(context, guestHostKey));
+}
+async function preparationRuntime(context: PluginAccountActionContext | PluginInvocationContext) {
+  return createDigitalOceanPreparationClient({ ...await accountOptions(context),
+    waitForObservation: () => context.services.machineProvisioners.waitForNativeObservation() });
 }
 
 export const MACHINE_PROVISIONER = {
@@ -47,6 +54,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', snapshot: 'snapshot' },
   snapshot: DIGITALOCEAN_SNAPSHOT_FACTS,
   reconciliation: { action: 'reconcile', nativeOperationSchema: dropletNativeOperationSchema.jsonSchema },
+  preparation: { inputSchema: DigitalOceanPreparationInputSchema.jsonSchema, artifactSchema: DigitalOceanPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: DigitalOceanPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -78,7 +88,7 @@ export const PLUGIN = definePlugin({
     declaration: { title: 'DigitalOcean cloud account', ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
       setup: { url: 'https://cloud.digitalocean.com/account/api/tokens', createKeyTitle: 'Open DigitalOcean API tokens',
-        checklist: ['In the DigitalOcean Control Panel, open [Account → API → Tokens] and choose Generate New Token.', 'Choose a name, expiration and permissions for managing Droplets, SSH keys and tags, and reading sizes, images and regions.', 'Generate the personal access token, then copy and paste it here.'] },
+        checklist: ['In the DigitalOcean Control Panel, open [Account → API → Tokens] and choose Generate New Token.', 'Choose a name, expiration and permissions for managing Droplets, SSH keys, images, snapshots and tags, and reading sizes and regions.', 'Generate the personal access token, then copy and paste it here.'] },
       credentialFieldKeys: { token: 'token' },
       credentialOrigin: 'authentication',
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
@@ -104,6 +114,21 @@ export const PLUGIN = definePlugin({
   ] },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
+    'prepare-build': { ...accountDefaults, title: 'Build DigitalOcean prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this DigitalOcean snapshot?', body: 'This creates a billable temporary Droplet and retains a billable snapshot. See https://www.digitalocean.com/pricing for pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return (await preparationRuntime(context)).build(input); } },
+    'prepare-inspect': { ...accountDefaults, title: 'Inspect DigitalOcean prepared snapshot', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return (await preparationRuntime(context)).inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...accountDefaults, title: 'Delete DigitalOcean prepared resources', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete these DigitalOcean prepared resources?', body: 'This permanently deletes the owned temporary Droplet and prepared snapshot.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return (await preparationRuntime(context)).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     snapshot: { ...defaults, surfaces: ['ui', 'cli', 'plugin'], title: 'Snapshot exact DigitalOcean Droplet', dangerLevel: 'externalSideEffect',
       confirmation: { title: 'Snapshot this DigitalOcean Droplet?', body: 'This creates a billable snapshot of the exact managed Droplet’s root disk. Attached volumes are not included.' },
       inputSchema: ROLE_SCHEMAS.snapshotInput, resultSchema: MachineProvisionerSnapshotResultV1Schema,

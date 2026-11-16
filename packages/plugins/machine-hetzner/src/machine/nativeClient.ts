@@ -70,7 +70,7 @@ function powerFact(status: string) {
 }
 function codeOf(error: unknown) { return error instanceof HetznerNativeError ? error.code : 'native_transport_unavailable'; }
 
-export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
+export function createHetznerNativeTransport(options: HetznerNativeClientOptions) {
   const transport = options.fetch ?? globalThis.fetch;
   if (!options.token.trim() || /[\r\n]/.test(options.token)) throw new HetznerNativeError('native_credential_invalid');
   async function request(path: string, method = 'GET', body?: unknown, exactAbsence = false): Promise<NativeReply> {
@@ -139,6 +139,20 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
     }
     return values;
   }
+  async function waitForAction(serverId: number, initial: mini.infer<typeof actionSchema>, waitForObservation: () => Promise<void>) {
+    let action = initial;
+    while (action.status === 'running') {
+      await waitForObservation();
+      action = decode(mini.object({ action: actionSchema }), await request(`/servers/${serverId}/actions/${initial.id}`)).action;
+      if (action.id !== initial.id) throw new HetznerNativeError('native_identity_mismatch');
+    }
+    return action;
+  }
+  return { request, decode, list, waitForAction };
+}
+
+export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
+  const { request, decode, list, waitForAction } = createHetznerNativeTransport(options);
   function ownedAttachments(resource: HetznerResourceV1): CleanupResource[] {
     return [
       ...resource.owned.volumeIds.map(id => ({ kind: 'volume' as const, id })),
@@ -215,12 +229,7 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
         const reply = await request(`/servers/${resource.serverId}/actions/create_image`, 'POST', { type: 'snapshot', description: label });
         acknowledged = true;
         const created = decode(mini.object({ action: actionSchema, image: mini.object({ id: nativeId() }) }), reply);
-        let action = created.action;
-        while (action.status === 'running') {
-          await waitForObservation();
-          action = decode(mini.object({ action: actionSchema }), await request(`/servers/${resource.serverId}/actions/${created.action.id}`)).action;
-          if (action.id !== created.action.id) return { kind: 'unknown', code: 'native_identity_mismatch' };
-        }
+        const action = await waitForAction(resource.serverId, created.action, waitForObservation);
         if (action.status === 'error') return { kind: 'failed', code: 'native_snapshot_failed' };
         return { kind: 'confirmed', snapshotId: String(created.image.id), ...HETZNER_SNAPSHOT_FACTS,
           consistency: observed.power === 'running' || observed.power === 'stopped' ? observed.power : 'unknown' };

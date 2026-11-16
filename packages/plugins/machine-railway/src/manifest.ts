@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, ORIGINS, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
 import { createRailwayNativeClient } from './machine/nativeClient.js';
+import { createRailwayPreparationClient, RAILWAY_PREPARATION_HOME, RailwayPreparationInputSchema, RailwayPreparedArtifactSchema, RailwayPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOptionsSchema, RailwayResourceSchema, RailwayOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
@@ -19,6 +20,7 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 const confirmation = { title: 'Manage this Railway sandbox?', body: 'Railway charges for sandbox resources. This sandbox stays running until you delete it; deleting permanently removes its filesystem.' };
 const retention = { supportedIntents: ['delete'] } as const;
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createRailwayNativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createRailwayPreparationClient(nativeFetch(context), context.signal);
 
 export const MACHINE_PROVISIONER = {
   title: 'Railway', icon: 'cloud', resourceKind: 'railway-sandbox', schemaVersion: 1,
@@ -29,6 +31,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: RailwayOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup' },
+  preparation: { inputSchema: RailwayPreparationInputSchema.jsonSchema, artifactSchema: RailwayPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: RailwayPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -64,7 +69,12 @@ export const PLUGIN = definePlugin({
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
         if (!check.available) return { dimensions, code: 'provider_unavailable' };
         if (input.environmentId === undefined) return { dimensions };
-        return { base: { launch: { environmentId: input.environmentId }, guestPlatform: 'linux', retention }, dimensions };
+        return { base: { launch: { environmentId: input.environmentId }, guestPlatform: 'linux', retention }, dimensions: { ...dimensions,
+          image: [{ id: 'railway-default', title: 'Railway Ubuntu sandbox', guestPlatform: 'linux', assignments: [], nativeFacts: {
+            preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: RAILWAY_PREPARATION_HOME },
+            image: { id: 'railway-default', title: 'Railway Ubuntu sandbox' },
+          } }],
+        } };
       } },
     acquire: { ...defaults, title: 'Create Railway sandbox', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: RECONCILIATION.result,
       async run(input, context) { return input.managedId ? runtime(context).acquire(input.launch, input.managedId) : { kind: 'rejected' as const, code: 'invalid_request' as const }; } },
@@ -80,6 +90,20 @@ export const PLUGIN = definePlugin({
       async run(input, context) { return runtime(context).destroy(input); } },
     'observe-cleanup': { ...defaults, title: 'Observe Railway deletion', dangerLevel: 'safe', inputSchema: RECONCILIATION.cleanupInput, resultSchema: RECONCILIATION.cleanupResult,
       async run(input, context) { return runtime(context).cleanup(input.nativeOperation); } },
+    'prepare-build': { ...defaults, title: 'Build Railway prepared checkpoint', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Railway checkpoint?', body: 'This creates a paid temporary sandbox and a stored checkpoint. The checkpoint remains until deleted. See https://docs.railway.com/sandboxes#pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input, () => context.services.machineProvisioners.waitForNativeObservation()); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Railway prepared checkpoint', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Railway prepared checkpoint', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Railway checkpoint?', body: 'This permanently deletes the owned checkpoint and any retained temporary build sandbox.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     exec: { ...defaults, title: 'Run in Railway guest', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write Railway guest file', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,

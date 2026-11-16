@@ -378,8 +378,10 @@ describe('public hetzner machine provisioner', () => {
     expect(options.dimensions.image.map(image => image.id)).toEqual(['1', '2', '4', '3']);
     expect(options.base).not.toHaveProperty('guestPlatform');
     expect(options.dimensions.image[0]).toMatchObject({ guestPlatform: 'linux' });
+    expect(options.dimensions.image[0]?.nativeFacts?.preparationGuest).toEqual({ target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' });
     expect(options.dimensions.image[1]).not.toHaveProperty('guestPlatform');
     expect(options.dimensions.image[2]).toMatchObject({ guestPlatform: 'linux' });
+    expect(options.dimensions.image[2]?.nativeFacts?.preparationGuest).toEqual({ target: { os: 'linux', arch: 'arm64' }, remoteHomeDir: '/opt/happier' });
     expect(options.dimensions.image[3]).not.toHaveProperty('guestPlatform');
     expect(runtime.requests).toHaveLength(4);
   });

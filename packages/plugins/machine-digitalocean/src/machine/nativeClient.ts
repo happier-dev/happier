@@ -1,6 +1,7 @@
 import * as z from 'zod/mini';
+import { createDigitalOceanTransport, type Unavailable } from './transport.js';
 import type { MachineProvisionerNativeCauseV1, MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   dropletAcquireInputSchema, dropletPowerIntentSchema, dropletResourceSchema,
   nativeDropletSchema, nativeActionSchema, nativeSizeSchema, nativeRegionSchema, nativeImageSchema,
@@ -17,22 +18,6 @@ export function readDigitalOceanAccountAccess(value: unknown): Readonly<{ kind: 
   const parsed = accountResponseSchema.safeParse(value);
   return parsed.success ? { kind: parsed.data.account.status === 'active' ? 'active' : 'inactive' } : undefined;
 }
-// REST v2 official shared/responses/{bad_request,unauthorized,forbidden,
-// not_found,conflict,unprocessable_entity,too_many_requests,server_error}.yml,
-// https://github.com/digitalocean/openapi/tree/main/specification/shared/responses
-// verified 2026-10-25. Never project vendor messages, request ids or unknown ids.
-const nativeErrorCodeSchema = z.enum(['bad_request', 'unauthorized', 'forbidden', 'not_found', 'conflict', 'unprocessable_entity', 'too_many_requests', 'server_error']);
-async function readNativeCause(reply: Response): Promise<MachineProvisionerNativeCauseV1> {
-  const httpStatusClass = reply.status >= 300 && reply.status < 400 ? '3xx' : reply.status >= 400 && reply.status < 500 ? '4xx'
-    : reply.status >= 500 && reply.status < 600 ? '5xx' : 'other';
-  let body: unknown;
-  try { body = await reply.json(); } catch { return { httpStatusClass }; }
-  const parsed = z.object({ id: nativeErrorCodeSchema }).safeParse(body);
-  return { httpStatusClass, ...(parsed.success ? { code: parsed.data.id } : {}) };
-}
-type NativeFailureReason = 'authorization' | 'transport' | 'native-error' | 'invalid-response' | 'invalid-pagination' | 'resource-mismatch' | 'cleanup-unconfirmed';
-type Unavailable = Readonly<{ kind: 'unavailable'; reason: NativeFailureReason; status?: number; nativeCause?: MachineProvisionerNativeCauseV1 }>;
-type HttpResult = Readonly<{ kind: 'response'; status: number; body: unknown }> | Unavailable;
 type ResourceUnavailable = Unavailable & Readonly<{ resource: DropletResourceV1 }>;
 type SshAddress = Readonly<{ address: string; user: typeof MACHINE_PROVISIONER_CLOUD_SSH_USER }>;
 type Inspection = ResourceUnavailable | Readonly<{ kind: 'absent'; resource: DropletResourceV1 }> | Readonly<{
@@ -41,7 +26,6 @@ type Inspection = ResourceUnavailable | Readonly<{ kind: 'absent'; resource: Dro
 }>;
 type Binding = Readonly<{ kind: 'bound'; resource: DropletResourceV1 }>;
 type NativePrice = Readonly<{ amount: string; currency: 'USD'; unit: 'hour' | 'month'; source: string; observedAt: number }>;
-const pageLinksSchema = z.optional(z.object({ pages: z.optional(z.object({ next: z.optional(z.string()) })) }));
 // Paid identity survives unavailable readiness facts; inspect keeps the full schema.
 const createReplySchema = z.object({ droplet: z.pick(nativeDropletSchema, { id: true }) });
 const snapshotDropletSchema = z.object({ droplet: z.extend(z.pick(nativeDropletSchema, { id: true, status: true }), {
@@ -54,48 +38,8 @@ export const DIGITALOCEAN_SNAPSHOT_FACTS = { coverage: { rootDisk: true, attache
   cost: { kind: 'billed', source: 'https://docs.digitalocean.com/products/snapshots/details/pricing/' } } as const;
 
 export function createDigitalOceanNativeClient(options: { token: string; fetch?: typeof fetch; signal?: AbortSignal; now?: () => Date; guestHostKey?: MachineProvisionerCloudHostKeyV1 }) {
-  const network = options.fetch ?? fetch;
+  const { request, collection, recoverTaggedDroplet } = createDigitalOceanTransport(options);
   const now = options.now ?? (() => new Date());
-  async function request(path: string, method = 'GET', body?: unknown, acceptNotFound = false): Promise<HttpResult> {
-    try {
-      const reply = await network(`${base}${path}`, {
-        method, headers: { Authorization: `Bearer ${options.token}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: options.signal, redirect: 'error',
-      });
-      if (!reply.ok && !(reply.status === 404 && acceptNotFound)) return { kind: 'unavailable', reason: reply.status === 401 || reply.status === 403 ? 'authorization' : 'native-error',
-        status: reply.status, nativeCause: await readNativeCause(reply) };
-      if (reply.status === 204 || reply.status === 404) return { kind: 'response', status: reply.status, body: null };
-      try { return { kind: 'response', status: reply.status, body: await reply.json() as unknown }; }
-      catch { return { kind: 'unavailable', reason: 'invalid-response', status: reply.status }; }
-    } catch (error) {
-      const transportFailure = (): HttpResult => ({ kind: 'unavailable', reason: 'transport' });
-      return projectMachineProvisionerActionFailure(error, transportFailure);
-    }
-  }
-  async function collection<T>(path: string, key: string, schema: z.ZodMiniType<T>): Promise<{ kind: 'available'; values: T[] } | Unavailable> {
-    const values: T[] = [];
-    const pageSchema = z.object({ values: z.array(schema), links: pageLinksSchema });
-    const firstPage = new URL(`${base}${path}`);
-    // REST v2's documented maximum, not a result limit: follow every next link.
-    // https://github.com/digitalocean/openapi/blob/main/specification/shared/parameters.yml
-    // Verified 2026-10-26: default 20, maximum 200 items per page.
-    firstPage.searchParams.set('per_page', '200');
-    let next: string | undefined = firstPage.href;
-    while (next) {
-      let url: URL;
-      try { url = new URL(next); } catch { return { kind: 'unavailable', reason: 'invalid-pagination' }; }
-      if (url.origin !== origin || url.username || url.password || url.hash || url.pathname !== new URL(`${base}${path}`).pathname) return { kind: 'unavailable', reason: 'invalid-pagination' };
-      const result = await request(url.pathname.slice('/v2'.length) + url.search);
-      if (result.kind === 'unavailable') return result;
-      if (!result.body || typeof result.body !== 'object') return { kind: 'unavailable', reason: 'invalid-response' };
-      const body = result.body as Record<string, unknown>;
-      const page = pageSchema.safeParse({ values: body[key], links: body.links });
-      if (!page.success) return { kind: 'unavailable', reason: 'invalid-response' };
-      values.push(...page.data.values);
-      next = page.data.links?.pages?.next;
-    }
-    return { kind: 'available', values };
-  }
   async function inspectDroplet(input: DropletResourceV1): Promise<Inspection> {
     const resource = dropletResourceSchema.parse(input);
     const result = await request(`/droplets/${resource.dropletId}`, 'GET', undefined, true);
@@ -226,16 +170,10 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
       return { kind: 'bound', resource: { dropletId: parsed.data.droplet.id, ownedVolumeIds: [] } };
     },
     async recover(recoveryTag: string): Promise<Binding | Unavailable | { kind: 'unknown'; recoveryTag: string; reason: 'ambiguous' | 'not-found' }> {
-      const result = await collection(`/droplets?tag_name=${encodeURIComponent(recoveryTag)}`, 'droplets', nativeDropletSchema);
-      if (result.kind !== 'available') return result;
-      // REST v2 droplets_list.yml excludes GPUs by default; parameters.yml
-      // (verified 2026-10-29) forbids combining type with tag_name. Read all GPU
-      // pages and qualify exact tags locally before deciding CPU/GPU uniqueness.
-      const gpu = await collection('/droplets?type=gpus', 'droplets', nativeDropletSchema);
-      if (gpu.kind !== 'available') return gpu;
-      const matches = [...new Map([...result.values, ...gpu.values].filter(droplet => droplet.tags.includes(recoveryTag)).map(droplet => [droplet.id, droplet])).values()];
-      if (matches.length !== 1) return { kind: 'unknown', recoveryTag, reason: matches.length > 1 ? 'ambiguous' : 'not-found' };
-      return { kind: 'bound', resource: { dropletId: matches[0].id, ownedVolumeIds: [] } };
+      const result = await recoverTaggedDroplet(recoveryTag, nativeDropletSchema);
+      if (result.kind === 'unavailable') return result;
+      if (result.kind === 'unknown') return { ...result, recoveryTag };
+      return { kind: 'bound', resource: { dropletId: result.droplet.id, ownedVolumeIds: [] } };
     },
     async observeResourceActions(input: DropletResourceV1) {
       const resource = dropletResourceSchema.parse(input);

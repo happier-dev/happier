@@ -1,4 +1,4 @@
-import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, encodeBase64, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOperationSchema, RailwayResourceSchema, ROLE_SCHEMAS, reference, type RailwayLaunch, type RailwayOperation, type RailwayResource } from './schemas.js';
 import { readRailwayFile, writeRailwayFile } from './files.js';
@@ -9,6 +9,7 @@ const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
 const nativeSchema = defineProtocolObject({ id: text, environmentId: text, status: text, idleTimeoutMinutes: defineProtocolNumber() }, open);
+const checkpointSchema = defineProtocolObject({ id: text, key: text, environmentId: text, createdAt: text }, open);
 const outputSchema = defineProtocolObject({ exitCode: defineProtocolNumber({ integer: true }), stdout: defineProtocolString(), stderr: defineProtocolString(),
   truncated: boolean, timedOut: boolean }, open);
 type Native = ProtocolSchemaOutput<typeof nativeSchema>;
@@ -20,7 +21,7 @@ const readQuery = `query($environmentId:String!,$id:String!){sandbox(environment
 const destroyQuery = `mutation($environmentId:String!,$id:String!){sandboxDestroy(environmentId:$environmentId,id:$id){${fields}}}`;
 const execQuery = 'mutation($environmentId:String!,$id:String!,$command:String!,$timeoutSec:Int){sandboxExec(environmentId:$environmentId,id:$id,command:$command,timeoutSec:$timeoutSec){exitCode stdout stderr truncated timedOut}}';
 const tokenQuery = 'mutation($input:ShellTokenInput!){generateShellToken(input:$input)}';
-class NativeError extends Error {
+export class NativeError extends Error {
   constructor(readonly code: string, readonly status?: number) { super(code); }
 }
 const code = (error: unknown) => error instanceof NativeError ? error.code
@@ -72,12 +73,15 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       return user.success ? { available: true } : { available: false, code: 'credential_unavailable' };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
-  async function acquire(input: RailwayLaunch, managedId: string): Promise<Acquisition> {
+  async function acquire(input: RailwayLaunch, managedId: string, onAllocated?: (resource: RailwayResource) => void): Promise<Acquisition> {
     const launch = RailwayLaunchSchema.safeParse(input);
     if (!launch.success || !managedId.trim()) return { kind: 'rejected', code: 'invalid_request' };
     try {
-      const data = await graphql(createQuery, { input: { environmentId: launch.data.environmentId, idleTimeoutMinutes: 0 } });
-      return acquired(identity(data.sandboxCreate, launch.data), managedId);
+      const data = await graphql(createQuery, { input: { environmentId: launch.data.environmentId, idleTimeoutMinutes: 0,
+        ...(launch.data.checkpoint === undefined ? {} : { template: { name: launch.data.checkpoint } }) } });
+      const allocated = identity(data.sandboxCreate, launch.data);
+      onAllocated?.({ sandboxId: allocated.id, environmentId: allocated.environmentId, managedId });
+      return acquired(allocated, managedId);
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // Railway has no create idempotency key or correlation lookup: never replay an uncertain paid create.
@@ -215,5 +219,28 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       return { kind: 'accepted', nativeOperationRef: reference({ kind: 'delete', resource } as const) };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
-  return { check, acquire, recover, recoverCorrelation, inspect, bootstrap, exec, putFile, power, destroy, cleanup };
+  // Railway SDK 3.17.0 sandbox.graphql. Checkpoint.key is the restore name;
+  // checkpoint.id is the mutation identity. Hash-keyed template cache entries
+  // are listed here too; preparation selects only its owned names.
+  async function listCheckpoints(environmentId: string) {
+    const data = await graphql('query($environmentId:String!){sandboxCheckpoints(environmentId:$environmentId){id key environmentId createdAt}}', { environmentId });
+    const parsed = defineProtocolArray(checkpointSchema).safeParse(data.sandboxCheckpoints);
+    if (!parsed.success) throw new NativeError('railway_invalid_response');
+    if (parsed.data.some(checkpoint => checkpoint.environmentId !== environmentId)) throw new NativeError('railway_checkpoint_identity_mismatch');
+    return parsed.data;
+  }
+  async function createCheckpoint(resource: RailwayResource, name: string) {
+    const data = await graphql('mutation($environmentId:String!,$sandboxId:String!,$name:String!){sandboxCheckpointCreate(environmentId:$environmentId,sandboxId:$sandboxId,name:$name){id key environmentId createdAt}}',
+      { environmentId: resource.environmentId, sandboxId: resource.sandboxId, name });
+    const parsed = checkpointSchema.safeParse(data.sandboxCheckpointCreate);
+    if (!parsed.success) throw new NativeError('railway_invalid_response');
+    if (parsed.data.environmentId !== resource.environmentId || parsed.data.key !== name) throw new NativeError('railway_checkpoint_identity_mismatch');
+    return parsed.data;
+  }
+  async function deleteCheckpoint(environmentId: string, id: string) {
+    const data = await graphql('mutation($environmentId:String!,$id:ID!){sandboxCheckpointDelete(environmentId:$environmentId,id:$id)}', { environmentId, id });
+    if (data.sandboxCheckpointDelete !== true) throw new NativeError('railway_checkpoint_delete_unconfirmed');
+  }
+  return { check, acquire, recover, recoverCorrelation, inspect, bootstrap, exec, putFile, power, destroy, cleanup,
+    listCheckpoints, createCheckpoint, deleteCheckpoint };
 }

@@ -240,6 +240,16 @@ describe('Boat machine provisioner contract', () => {
     expect(result.dimensions.location).toEqual([expect.objectContaining({ nativeFacts: { location: { id: 'eu', title: 'EU only' } } })]);
   });
 
+  it('offers preparation for base images while a live fork remains a cold source', async () => {
+    const runtime = await activated(false, 1);
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    const images = result.dimensions.image;
+    expect(images.find(image => image.id === 'blank')?.nativeFacts?.preparationGuest).toMatchObject({ target: { os: 'linux', arch: 'x64' } });
+    expect(images.find(image => image.id === 'snapshot/ready-0')?.nativeFacts?.preparationGuest).toMatchObject({ target: { os: 'linux', arch: 'x64' } });
+    expect(images.find(image => image.id === 'fork/bx_23456789')).toMatchObject({ assignments: [{ path: 'source', value: { kind: 'fork', sandboxId: 'bx_23456789' } }] });
+    expect(images.find(image => image.id === 'fork/bx_23456789')?.nativeFacts?.preparationGuest).toBeUndefined();
+  });
+
   it('keeps static price provenance at the source review date across invocations', async () => {
     const runtime = await activated();
     const read = (invokedAtMs: number) => runtime.handlers.get('options')!({}, { ...runtime.context, invokedAtMs });

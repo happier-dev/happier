@@ -799,6 +799,20 @@ That retained source still incurs storage charges. These provider limits do not
 authorize automatic rebuilding, replaying an uncertain allocation, or deleting
 unrelated resources.
 
+Hetzner and DigitalOcean capture credential-free builders into native snapshots;
+their cloud-init inputs remain subject to the vendors' 32 KiB and 64 KiB limits.
+Boat uploads files through its native signed upload URLs and saves a named
+snapshot. Preparation excludes Boat's live fork source because it can copy a
+signed-in guest; blank and named base snapshots remain eligible. Railway uploads
+files into a fresh sandbox and saves a named
+checkpoint; a lost create response before the sandbox identity is known remains
+an explicit unknown outcome because the native API supplies no create correlation.
+These four providers remove their builders before returning a ready image.
+Inspection is read-only: an image whose builder still exists returns a failed
+result with cleanup identity. A new explicit Prepare uses the existing Retry
+flow to destroy that leftover and rebuild; an image whose builder is already
+absent can be adopted. These are unreleased 0.3 development contracts.
+
 The development `machineRecipes` and `machineSetupPresets` families use the
 existing Protocol contribution catalog, manifest admission, public SDK authoring
 and normalized projections. Both are data-only, with `activationDemand: 'none'`;

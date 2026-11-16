@@ -10,6 +10,7 @@ import { projectMachineProvisionerActionFailure, observeMachineProvisionerNative
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createHetznerProvider } from './machine/provider.js';
 import { HETZNER_SNAPSHOT_FACTS } from './machine/nativeClient.js';
+import { createHetznerPreparationClient, HETZNER_PREPARATION_HOME, HetznerPreparationInputSchema, HetznerPreparedArtifactSchema, HetznerPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { projectHetznerOptions } from './machine/options.js';
 import { HetznerLaunchV1Schema, HetznerResourceV1Schema, HetznerNativeOperationV1Schema, HetznerNativeError } from './machine/schemas.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
@@ -27,12 +28,18 @@ const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
 const defaults = { scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
-async function runtime(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+async function nativeOptions(context: PluginAccountActionContext | PluginInvocationContext) {
   const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
     { kind: 'httpHeaders', origin: 'https://api.hetzner.cloud', headerNames: ['authorization'] }, { signal: context.signal });
   context.signal.throwIfAborted();
   if (material.kind !== 'httpHeaders') throw new PluginError({ code: 'credential_unavailable' });
-  return createHetznerProvider({ token: 'host-bound', fetch: nativeFetch(context, material.headers), signal: context.signal, guestHostKey });
+  return { token: 'host-bound', fetch: nativeFetch(context, material.headers), signal: context.signal };
+}
+async function runtime(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+  return createHetznerProvider({ ...await nativeOptions(context), guestHostKey });
+}
+async function preparationRuntime(context: PluginAccountActionContext | PluginInvocationContext) {
+  return createHetznerPreparationClient(await nativeOptions(context));
 }
 
 export const MACHINE_PROVISIONER = {
@@ -46,6 +53,9 @@ export const MACHINE_PROVISIONER = {
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'], guestLocalStop: 'poweroff' },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', snapshot: 'snapshot' },
   snapshot: HETZNER_SNAPSHOT_FACTS,
+  preparation: { inputSchema: HetznerPreparationInputSchema.jsonSchema, artifactSchema: HetznerPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: HetznerPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
   reconciliation: { action: 'reconcile', nativeOperationSchema: HetznerNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -92,6 +102,20 @@ export const PLUGIN = definePlugin({
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
+    'prepare-build': { ...defaults, title: 'Build Hetzner prepared image', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Hetzner image?', body: 'This creates a temporary paid Server and a Snapshot billed by compressed storage size. The Snapshot remains until deleted. See https://docs.hetzner.com/cloud/billing/faq/.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return (await preparationRuntime(context)).build(input, () => context.services.machineProvisioners.waitForNativeObservation()); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Hetzner prepared image', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return (await preparationRuntime(context)).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Hetzner prepared image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Hetzner prepared image?', body: 'This permanently deletes the owned Snapshot and temporary build Server.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return (await preparationRuntime(context)).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     snapshot: { ...defaults, scopes: ['machine'], execution: { target: 'daemon' },
       title: 'Snapshot Hetzner server disk', dangerLevel: 'externalSideEffect',
       confirmation: { title: 'Snapshot this Hetzner Server?', body: 'This creates a billable snapshot of the exact managed Server’s root disk. Attached volumes are not included.' },

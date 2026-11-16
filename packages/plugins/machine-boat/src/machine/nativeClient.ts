@@ -26,10 +26,11 @@ const sandbox = mini.object({ id: sandboxId, name: mini.optional(text()), state:
   ttlSeconds: mini.optional(mini.nullable(mini.number().check(mini.int(), mini.positive()))),
   archiveAfter: nativeDate(), dataExpiredAt: nativeDate(), stoppedAt: nativeDate() });
 export const BoatLimitsResponseSchema = mini.object({ ...base, sandboxPlanKey: mini.optional(text()), sandboxPlanDollars: mini.optional(mini.number().check(mini.nonnegative())) });
-const snapshotsResponse = mini.object({ ...base, snapshots: mini.array(mini.object({
+export const BoatSavedSnapshotSchema = mini.object({
   name: mini.string().check(mini.regex(/^[a-z0-9][a-z0-9-]{0,62}$/)),
-  status: mini.enum(['saving', 'ready', 'failed']), sourceSandboxId: sandboxId, createdAt: text(),
-})) });
+  status: mini.enum(['saving', 'ready', 'failed']), sourceSandboxId: sandboxId, createdAt: text(), snapshotId: mini.optional(text()),
+});
+const snapshotsResponse = mini.object({ ...base, snapshots: mini.array(BoatSavedSnapshotSchema) });
 const pageInfo = mini.optional(mini.object({ hasMore: mini.boolean(), nextCursor: mini.nullable(text()) }));
 const sandboxesResponse = mini.object({ ...base, sandboxes: mini.array(sandbox), pageInfo });
 const recoveryResponse = mini.object({ ...base, sandboxes: mini.array(mini.object({ id: sandboxId })), pageInfo });
@@ -80,7 +81,7 @@ function endpoint(launch: BoatLaunchV1, managedId: string, ttlSeconds: number | 
   return { path: `/sandboxes/${encodeURIComponent(launch.source.sandboxId)}/fork`, body: common };
 }
 
-export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
+export function createBoatNativeRequest(options: BoatNativeClientOptions = {}) {
   const transport = options.fetch ?? globalThis.fetch;
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -123,6 +124,11 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
     return value;
   }
 
+  return request;
+}
+
+export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
+  const request = createBoatNativeRequest(options);
   async function accountTtlSeconds() {
     const limits = parseBoatValue(BoatLimitsResponseSchema, await request('/limits'));
     if (limits.sandboxPlanKey === undefined) throw new BoatNativeError('native_response_invalid');
