@@ -37,7 +37,10 @@ import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAcce
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import { db, getDbProviderFromEnv } from '@/storage/db';
-import { readAccountChangesPage } from '@/app/changes/readAccountChangesPage';
+import {
+    isAccountChangeRowVisibleToCompatibility, projectAccountChangesPage, readAccountChangeRowsPendingRunIds,
+    readAccountChangeRowsSessionAccess, withAccountChangesReads, type AccountChangeRowFacts,
+} from '@/app/changes/readAccountChangesPage';
 import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, type PushedAccountChangesPageV1 } from '@happier-dev/protocol/changes';
 
 export const LEGACY_MACHINE_HEARTBEAT_EVENT = 'happier:legacy-machine-heartbeat:v1';
@@ -87,7 +90,19 @@ function shouldSampleEventFanoutPayloadBytes(): boolean {
     return Math.random() < EVENT_FANOUT_PAYLOAD_BYTES_SAMPLE_RATE;
 }
 
+/** A row-demand socket on this node and how to reach it. */
+type AccountChangeRowsRecipient = Readonly<{ socket: Pick<Socket, 'data'>; clientType: unknown; emit: (payload: UpdatePayload) => void }>;
+
+/** Row-demand sockets that see the same page: equal demand, compatibility and credential facts. */
+type AccountChangeRowsGroup = {
+    recipients: AccountChangeRowsRecipient[];
+    socket: Pick<Socket, 'data'>;
+    compatibility: ReturnType<typeof readAccountStoredContentCompatibilityForSocket>;
+    visibleRows: AccountChangeRowFacts[];
+};
+
 class EventRouter {
+    private accountChangeRowsTails = new Map<string, Promise<void>>();
     private userConnections = new Map<string, Set<ClientConnection>>();
     private legacyMachinePresenceConnections = new Set<ClientConnection>();
     private io: SocketRoomEmitter | null = null;
@@ -307,10 +322,12 @@ class EventRouter {
         skipSenderConnection?: ClientConnection;
         /** An Account wake: the first cursor its transaction committed (row-demand sockets get their page). */
         accountChangeFromCursor?: number;
+        /** The rows that transaction stored for the Account; row-demand sockets receive them authorized. */
+        accountChangeRows?: readonly AccountChangeRowFacts[];
     }): void | Promise<void> {
         if (params.accountChangeFromCursor !== undefined && params.recipientFilter?.type === 'account-stored-content-v3') {
             return this.emitAccountChangeWake({ userId: params.userId, fromCursor: params.accountChangeFromCursor,
-                payload: params.payload, recipientFilter: params.recipientFilter });
+                rows: params.accountChangeRows, payload: params.payload, recipientFilter: params.recipientFilter });
         }
         return this.emit({
             userId: params.userId,
@@ -512,25 +529,29 @@ class EventRouter {
     }
 
     /**
-     * The committed Account wake. The server is the authority for what each recipient may see,
-     * so a socket that declared change-row demand receives the page the feed owner reads for that
-     * socket's own credential, once, here at fan-out; every other socket keeps the bare wake.
+     * The committed Account wake. The server is the authority for what each recipient may see, so a
+     * socket that declared change-row demand receives the rows this wake's transaction stored,
+     * authorized for that socket's own credential here at fan-out; every other socket keeps the bare
+     * wake. The rows come from the write itself: nothing re-reads the feed per wake.
      */
     private emitAccountChangeWake(params: {
         userId: string;
         /** First cursor the wake's transaction committed. */
         fromCursor: number;
+        rows: readonly AccountChangeRowFacts[] | undefined;
         payload: UpdatePayload;
         recipientFilter: Extract<RecipientFilter, { type: 'account-stored-content-v3' }>;
     }): void {
         this.emit({ userId: params.userId, eventName: 'update', payload: params.payload,
             recipientFilter: params.recipientFilter, exceptAccountChangeRowsSockets: true });
         const delivery: AccountChangeRowsDeliveryV1 = {
-            v: 1, accountId: params.userId, fromCursor: params.fromCursor, payload: params.payload,
+            v: 1, accountId: params.userId, fromCursor: params.fromCursor, toCursor: params.payload.seq,
+            ...(params.rows ? { rows: params.rows.map(row => ({ ...row, changedAt: row.changedAt.getTime() })) } : {}),
+            payload: params.payload,
             recipientFilter: params.recipientFilter as AccountChangeRowsDeliveryV1['recipientFilter'],
         };
         if (this.io?.sessionDeliveryMode === "forward_only") {
-            // A headless publisher holds no sockets: every API node reads for its own.
+            // A headless publisher holds no sockets: every API node delivers to its own.
             void Promise.resolve(this.broadcastServerSideEvent?.(ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, delivery)).catch((error: unknown) => {
                 log({ module: "websocket", level: "warn", error }, "Account change-row forwarding unavailable");
             });
@@ -545,81 +566,138 @@ class EventRouter {
             }
             return;
         }
-        for (const connection of this.userConnections.get(params.userId) ?? []) {
-            if (connection.socket.data?.accountChangeRows) {
-                this.deliverAccountChangeRows(delivery, connection.socket, connection.connectionType,
-                    (payload) => connection.socket.emit('update', payload));
-            }
-        }
+        void this.enqueueAccountChangeRowsDelivery(delivery, async () => [...this.userConnections.get(params.userId) ?? []]
+            .filter(connection => connection.socket.data?.accountChangeRows)
+            .map(connection => ({ socket: connection.socket, clientType: connection.connectionType,
+                emit: (payload: UpdatePayload) => { connection.socket.emit('update', payload); } })));
     }
 
-    /** Each receiving node reads pages for its own row-demand sockets with their own credentials. */
+    /** Each receiving node authorizes the wake's rows for its own row-demand sockets. */
     async receiveAccountChangeRowsDelivery(localIo: LocalSocketRoomEmitter, rawDelivery: unknown): Promise<void> {
         const delivery = parseAccountChangeRowsDelivery(rawDelivery);
         if (!delivery) {
             recordEventFanoutDrop({ eventName: "update", reason: "no_matching_connections" });
             return;
         }
-        try {
+        await this.enqueueAccountChangeRowsDelivery(delivery, async () => {
             const sockets = await localIo.in(getAccountChangeRowsSocketRoom(delivery.accountId)).fetchSockets();
-            for (const socket of sockets) {
-                if (socket.data.userId !== delivery.accountId || !socket.data.accountChangeRows) continue;
-                this.deliverAccountChangeRows(delivery, socket, socket.data.clientType,
-                    (payload) => localIo.to(socket.id).emit('update', payload));
-            }
-        } catch (error) {
-            recordEventFanoutDrop({ eventName: "update", reason: "no_matching_connections" });
-            log({ module: "websocket", level: "warn", error }, "Account change-row delivery unavailable");
-        }
+            return sockets.filter(socket => socket.data.userId === delivery.accountId && socket.data.accountChangeRows)
+                .map(socket => ({ socket, clientType: socket.data.clientType,
+                    emit: (payload: UpdatePayload) => { localIo.to(socket.id).emit('update', payload); } }));
+        });
     }
 
     /**
-     * One socket's page, ordered after its previous page so each page starts where the last one
-     * this socket received ended. Wakes this socket was excluded from (its own Machine write) are
-     * covered by its next page. At most one read is in flight and one pending per socket: wakes
-     * arriving before the pending read starts join it, and every joined wake is delivered with
-     * that one page (the consumer applies it once; the rest are covered). A failed read sends the
-     * bare wakes: the consumer reads the feed, whose own refusal stays the feed's.
+     * Per Account on this node, wakes are delivered in arrival order, recipients resolved in turn,
+     * so each socket's pages stay contiguous.
      */
-    private deliverAccountChangeRows(
-        delivery: AccountChangeRowsDeliveryV1,
-        socket: Pick<Socket, 'data'>,
-        clientType: unknown,
-        emit: (payload: UpdatePayload) => void,
-    ): void {
-        const state = socket.data.accountChangeRows;
-        if (!state) return;
-        // The canonical recipient filter decides exclusions; it reads only these connection facts.
-        const connection = { connectionType: clientType, machineId: socket.data.machineId,
-            sessionId: socket.data.sessionId, socket } as unknown as ClientConnection;
-        if (!this.shouldSendToConnection(connection, delivery.recipientFilter as RecipientFilter)) return;
-        const payload = delivery.payload as UpdatePayload;
-        if (state.pending) {
-            state.pending.fromCursor = Math.min(state.pending.fromCursor, delivery.fromCursor);
-            state.pending.payloads.push(payload);
-            return;
-        }
-        state.pending = { fromCursor: delivery.fromCursor, payloads: [payload] };
-        state.tail = (state.tail ?? Promise.resolve()).then(async () => {
-            const job = state.pending!;
-            state.pending = undefined;
-            const after = state.cursor ?? job.fromCursor - 1;
-            let rows: PushedAccountChangesPageV1 | undefined;
-            try {
-                const read = await readAccountChangesPage({
-                    accountId: delivery.accountId, after, limit: ACCOUNT_CHANGES_PAGE_LIMIT_V1, kinds: state.kinds,
-                    compatibility: readAccountStoredContentCompatibilityForSocket(socket),
-                    readAuthentication: () => readSessionAccessAuthenticationFromSocket(socket),
-                });
-                if (read.status === 'ok') rows = { v: 1, after, page: read.page };
-            } catch (error) {
-                log({ module: "websocket", level: "warn", error }, "Account change-row page read failed; sending the bare wake");
-            }
-            state.cursor = rows?.page.nextCursor;
-            for (const wake of job.payloads) emit(rows ? { ...wake, body: { ...wake.body, rows } } : wake);
-        }).catch((error: unknown) => {
+    private enqueueAccountChangeRowsDelivery(delivery: AccountChangeRowsDeliveryV1,
+        resolveRecipients: () => Promise<readonly AccountChangeRowsRecipient[]>): Promise<void> {
+        const previous = this.accountChangeRowsTails.get(delivery.accountId) ?? Promise.resolve();
+        const tail = previous.then(async () => this.deliverAccountChangeRows(delivery, await resolveRecipients())).catch((error: unknown) => {
+            recordEventFanoutDrop({ eventName: "update", reason: "no_matching_connections" });
             log({ module: "websocket", level: "warn", error }, "Account change-row delivery failed");
         });
+        this.accountChangeRowsTails.set(delivery.accountId, tail);
+        void tail.then(() => {
+            if (this.accountChangeRowsTails.get(delivery.accountId) === tail) this.accountChangeRowsTails.delete(delivery.accountId);
+        });
+        return tail;
+    }
+
+    /**
+     * One wake for this node's row-demand sockets. The Account-wide facts of the rows (queued run ids)
+     * are read once per wake, and each distinct credential's Session access once per wake, through
+     * the feed's own owner; sockets sharing a credential share its page. A socket the wake's filter
+     * excludes (another push carries its facts) stays contiguous without a page. A page starts at the
+     * last page pushed to its socket when every cursor in between was covered; otherwise at the wake's
+     * first cursor, and a consumer behind it reads the feed. A failed authorization sends the bare
+     * wake: the consumer reads the feed, whose own refusal stays the feed's.
+     */
+    private async deliverAccountChangeRows(
+        delivery: AccountChangeRowsDeliveryV1, recipients: readonly AccountChangeRowsRecipient[],
+    ): Promise<void> {
+        const included: AccountChangeRowsRecipient[] = [];
+        for (const recipient of recipients) {
+            const state = recipient.socket.data.accountChangeRows;
+            if (!state) continue;
+            // The canonical recipient filter decides exclusions; it reads only these connection facts.
+            const connection = { connectionType: recipient.clientType, machineId: recipient.socket.data.machineId,
+                sessionId: recipient.socket.data.sessionId, socket: recipient.socket } as unknown as ClientConnection;
+            if (this.shouldSendToConnection(connection, delivery.recipientFilter as RecipientFilter)) included.push(recipient);
+            else if (state.through === delivery.fromCursor - 1) state.through = delivery.toCursor;
+        }
+        if (included.length === 0) return;
+        const payload = delivery.payload as UpdatePayload;
+        const sendBare = (targets: readonly AccountChangeRowsRecipient[]) => {
+            for (const target of targets) {
+                const state = target.socket.data.accountChangeRows!;
+                state.delivered = undefined;
+                state.through = undefined;
+                target.emit(payload);
+            }
+        };
+        if (!delivery.rows) return sendBare(included);
+
+        // The feed's order and page bound: more rows than a page carries is a full page (read on).
+        const sorted = delivery.rows.map(row => ({ ...row, changedAt: new Date(row.changedAt) }))
+            .sort((left, right) => left.cursor - right.cursor || (left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0)
+                || (left.entityId < right.entityId ? -1 : left.entityId > right.entityId ? 1 : 0));
+        const full = sorted.length > ACCOUNT_CHANGES_PAGE_LIMIT_V1;
+        const rows = full ? sorted.slice(0, ACCOUNT_CHANGES_PAGE_LIMIT_V1) : sorted;
+        const nextCursor = full ? rows[rows.length - 1]!.cursor : delivery.toCursor;
+
+        const groups = new Map<string, AccountChangeRowsGroup>();
+        for (const recipient of included) {
+            const compatibility = readAccountStoredContentCompatibilityForSocket(recipient.socket);
+            const { env: _env, ...credential } = readSessionAccessAuthenticationFromSocket(recipient.socket);
+            const kinds = recipient.socket.data.accountChangeRows!.kinds;
+            // Equal facts decide equal pages; a key miss only costs one more read, never a wrong page.
+            const key = JSON.stringify([[...kinds].sort(), compatibility, credential]);
+            const group = groups.get(key);
+            if (group) group.recipients.push(recipient);
+            else groups.set(key, { recipients: [recipient], compatibility, socket: recipient.socket,
+                visibleRows: rows.filter(row => (kinds as readonly string[]).includes(row.kind) && isAccountChangeRowVisibleToCompatibility(row, compatibility)) });
+        }
+        const needsReads = [...groups.values()].some(group => group.visibleRows.some(row => row.kind === 'session'));
+        const pages = new Map<AccountChangeRowsGroup, ReturnType<typeof projectAccountChangesPage>>();
+        try {
+            const project = async (read?: <R>(operation: (tx: Tx) => Promise<R>, singleStatement?: boolean) => Promise<R>) => {
+                const pendingRunIdsBySessionId = read
+                    ? await read(tx => readAccountChangeRowsPendingRunIds(tx, delivery.accountId,
+                        [...groups.values()].flatMap(group => group.visibleRows)), true)
+                    : new Map<string, string[]>();
+                for (const group of groups.values()) {
+                    const sessionAccessResolutions = !group.compatibility.supportsSessionAccessWitnessProtocol ? undefined
+                        : read && group.visibleRows.some(row => row.kind === 'session')
+                            ? await read(tx => readAccountChangeRowsSessionAccess(tx, delivery.accountId, group.visibleRows,
+                                () => readSessionAccessAuthenticationFromSocket(group.socket)))
+                            : [];
+                    pages.set(group, projectAccountChangesPage({ visibleRows: group.visibleRows, nextCursor, full,
+                        pendingRunIdsBySessionId, sessionAccessResolutions }));
+                }
+            };
+            if (needsReads) await withAccountChangesReads(project);
+            else await project();
+        } catch (error) {
+            log({ module: "websocket", level: "warn", error }, "Account change-row authorization failed; sending the bare wake");
+            return sendBare(included);
+        }
+        for (const [group, page] of pages) {
+            if (page.status !== 'ok') {
+                sendBare(group.recipients);
+                continue;
+            }
+            for (const recipient of group.recipients) {
+                const state = recipient.socket.data.accountChangeRows!;
+                const after = state.delivered !== undefined && state.through === delivery.fromCursor - 1
+                    ? state.delivered : delivery.fromCursor - 1;
+                const pushed: PushedAccountChangesPageV1 = { v: 1, after, page: page.page };
+                state.delivered = nextCursor;
+                state.through = nextCursor;
+                recipient.emit({ ...payload, body: { ...payload.body, rows: pushed } });
+            }
+        }
     }
 
     /**

@@ -4,19 +4,22 @@ import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
+import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { readAccountChangesPage } from '@/app/changes/readAccountChangesPage';
+import { readSessionAccessAuthenticationFromSocket } from '@/app/session/access/sessionAccessAuthentication';
 import { getAccountChangeRowsSocketRoom, getAccountStoredContentV3SocketRoom } from '@/app/api/socketRooms';
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { eventRouter } from './connectionEventRouter';
 
 type Wake = Readonly<{ seq: number; body: Readonly<{ t: string; rows?: Readonly<{ after: number; page: Readonly<{
-    changes: readonly Readonly<{ cursor: number; entityId: string; hint?: unknown }>[]; nextCursor: number;
+    changes: readonly Readonly<{ cursor: number; entityId: string; hint?: unknown }>[]; nextCursor: number; full?: boolean;
     sessionAccessWitness?: Readonly<{ entries: readonly Readonly<{ sessionId: string; status: string }>[] }> }> }> }> }>;
 
 // The Account wake is the authority's fan-out: each row-demand socket receives the page the feed
@@ -125,14 +128,15 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
         }
     });
 
-    it('reads at most one page in flight and one pending per socket, and still delivers every wake', async () => {
-        const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `burst-${crypto.randomUUID()}` } });
-        const session = await db.session.create({ data: { accountId: account.id, tag: 'burst', encryptionMode: 'plain', metadata: '{}' } });
+    it('pushes the rows the write produced: no page read per wake, one access read per credential per wake', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `push-${crypto.randomUUID()}` } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'push', encryptionMode: 'plain', metadata: '{}' } });
         const http = createServer();
         const io = new Server(http, { path: '/v1/updates' });
         io.on('connection', socket => {
-            Object.assign(socket.data, { userId: account.id, clientType: 'machine-scoped', machineId: 'burst-machine',
-                authAuthority: 'present_user', authTokenAuthenticationEvidence: [] });
+            const auth = socket.handshake.auth as { test: { machineId: string; evidence: unknown[] } };
+            Object.assign(socket.data, { userId: account.id, clientType: 'machine-scoped', machineId: auth.test.machineId,
+                authAuthority: 'present_user', authTokenAuthenticationEvidence: auth.test.evidence });
             writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(socket.handshake.auth));
             socket.data.accountChangeRows = { kinds: readAccountChangeRowsDemandV1(socket.handshake.auth)!.kinds };
             void socket.join([getAccountStoredContentV3SocketRoom(account.id), getAccountChangeRowsSocketRoom(account.id)]);
@@ -142,38 +146,82 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
         const address = http.address();
         if (!address || typeof address === 'string') throw new Error('Missing test address');
         eventRouter.setIo(io);
-        const client = connect(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'], reconnection: false,
-            auth: { accountStoredContentCompatibility: { v: 1, protocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION },
-                accountChangeRows: { v: 1, kinds: ['session'] } } });
-        const wakes: Wake[] = [];
-        client.on('update', (wake: Wake) => wakes.push(wake));
-        // The database is the boundary: hold the first page read until the whole burst has committed.
-        let pageReads = 0;
-        let release!: () => void;
-        const released = new Promise<void>(resolve => { release = resolve; });
-        const stop = observeSqliteRequests({ before: async (request) => {
-            const where = (request.args as { where?: { accountId?: string; cursor?: unknown } } | undefined)?.where;
-            if (request.model !== 'AccountChange' || request.action !== 'findMany' || where?.accountId !== account.id || !where.cursor) return;
-            pageReads += 1;
-            if (pageReads === 1) await released;
+        const open = (machineId: string, evidence: unknown[]) => connect(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false,
+            auth: { test: { machineId, evidence },
+                accountStoredContentCompatibility: { v: 1, protocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION },
+                accountChangeRows: { v: 1, kinds: ['session', 'share', 'account'] } },
+        });
+        // Two sockets share one credential; the third holds another.
+        const keyChallenge = [{ kind: 'home_method', methodId: 'key_challenge' }];
+        const clients = [open('m1', []), open('m2', []), open('m3', keyChallenge)];
+        const received = new Map<ClientSocket, Wake[]>(clients.map(client => [client, []]));
+        for (const client of clients) client.on('update', (wake: Wake) => received.get(client)!.push(wake));
+        // The database is the boundary: count the post-commit reads the fan-out issues.
+        const counts = { pageReads: 0, floorReads: 0, pendingReads: 0, accessReads: 0 };
+        let observing = false;
+        const stop = observeSqliteRequests({ before: (request) => {
+            if (!observing) return;
+            const args = request.args as { where?: Record<string, unknown>; select?: Record<string, unknown> } | undefined;
+            if (request.model === 'AccountChange' && request.action === 'findMany' && args?.where?.cursor) counts.pageReads += 1;
+            if (request.model === 'Account' && request.action === 'findUnique' && args?.select?.changesFloor) counts.floorReads += 1;
+            if (request.model === 'SessionPendingMessage' && request.action === 'findMany') counts.pendingReads += 1;
+            if (request.model === 'Session' && request.action === 'findMany') counts.accessReads += 1;
         } });
+        const WAKES = 3;
         try {
-            await new Promise<void>((resolve, reject) => { client.once('joined', () => resolve()); client.once('connect_error', reject); });
-            for (let index = 0; index < 5; index += 1) {
-                await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id }));
+            await Promise.all(clients.map(client => new Promise<void>((resolve, reject) => {
+                client.once('joined', () => resolve()); client.once('connect_error', reject);
+            })));
+            observing = true;
+            for (let index = 0; index < WAKES; index += 1) {
+                await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+                    hint: { pendingCount: index, pendingVersion: index + 1 } }));
+                await vi.waitFor(() => clients.forEach(client => expect(received.get(client)).toHaveLength(index + 1)));
             }
-            await vi.waitFor(() => expect(pageReads).toBe(1));
-            release();
-            await vi.waitFor(() => expect(wakes).toHaveLength(5));
+            observing = false;
+            expect(counts).toEqual({ pageReads: 0, floorReads: 0, pendingReads: WAKES, accessReads: WAKES * 2 });
+
             const seq = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
-            expect(wakes.every(wake => wake.body.rows !== undefined)).toBe(true);
-            expect(Math.max(...wakes.map(wake => wake.body.rows!.page.nextCursor))).toBe(seq);
-            expect(pageReads).toBe(2);
+            const serverSockets = await io.fetchSockets();
+            for (const client of clients) {
+                const pages = received.get(client)!.map(wake => wake.body.rows!);
+                // Contiguous: each page starts where this socket's previous page ended, through the Account seq.
+                expect(pages.slice(1).map(page => page.after)).toEqual(pages.slice(0, -1).map(page => page.page.nextCursor));
+                expect(pages.at(-1)!.page.nextCursor).toBe(seq);
+                // Each pushed page is exactly the page the feed owner reads for this credential.
+                const serverSocket = serverSockets.find(socket => socket.id === client.id)!;
+                for (const pushed of pages) {
+                    const read = await readAccountChangesPage({ accountId: account.id, after: pushed.after, limit: 200,
+                        kinds: ['session', 'share', 'account'], compatibility: { ...serverSocket.data.accountStoredContentCompatibility },
+                        readAuthentication: () => readSessionAccessAuthenticationFromSocket(serverSocket) });
+                    if (pushed === pages.at(-1)) expect(read).toEqual({ status: 'ok', page: pushed.page });
+                    else expect(pushed.page.changes).toEqual([expect.objectContaining({ cursor: pushed.page.nextCursor, entityId: session.id })]);
+                }
+            }
         } finally {
             stop();
-            client.close();
+            clients.forEach(client => client.close());
             eventRouter.clearIo();
             await io.close();
         }
+    });
+
+    it('judges a filtered feed page full on the stored rows, so its reader reads on', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `full-${crypto.randomUUID()}` } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'full', encryptionMode: 'plain', metadata: '{}' } });
+        for (const pluginId of ['test.alpha', 'test.beta']) {
+            const hint = { pluginDomain: 'availability', pluginId };
+            await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'pluginDomain',
+                entityId: buildPluginDomainAccountChangeEntityId(hint), hint }));
+        }
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id }));
+        const kinds = (await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' } })).map(row => row.kind);
+        expect(kinds.slice(0, 2)).toEqual(['pluginDomain', 'pluginDomain']);
+        const read = await readAccountChangesPage({ accountId: account.id, after: 0, limit: 2,
+            compatibility: { supportsPluginDataProtocol: false, supportsMachinePoolChangeProtocol: true,
+                supportsSavedSecretResourceChangeProtocol: true, supportsSessionAccessWitnessProtocol: false } as never,
+            readAuthentication: () => { throw new Error('unused'); } });
+        expect(read.status === 'ok' && read.page).toEqual(expect.objectContaining({ changes: [], full: true }));
     });
 });

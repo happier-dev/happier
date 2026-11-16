@@ -12,6 +12,7 @@ import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/session
 import { coalesceSessionProjectionChangeHintInTx, retainSessionSourceChangeHint, sessionChangeHint,
     mergeSessionCoalescedHint, sessionCoalescedHintSql } from './sessionProjectionChangeHint';
 import { acquireAccountSessionOwnerMetadataFencesInTx, acquireAccountSessionOwnerMetadataPublicationFencesInTx, type AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
+import type { AccountChangeRowFacts } from './readAccountChangesPage';
 
 /** An allocation intent, resolved only by the transaction's publication phase. */
 export interface AccountChangePublication {
@@ -30,6 +31,12 @@ interface AccountChangeWake {
     entityIds: Set<string>;
     artifactKinds?: Set<string> | null;
     sessionSystemRecords?: Map<string, SessionSystemRecordInvalidationV1> | null;
+    /**
+     * The rows this transaction committed for the Account, as stored, keyed by kind and entity
+     * (a later write of the same entity replaces its row, as the coalesced table does). The wake
+     * fan-out pushes them; it never re-reads them.
+     */
+    rows?: Map<string, AccountChangeRowFacts>;
 }
 
 interface AccountPublicationPhase {
@@ -250,6 +257,7 @@ function scheduleAccountChangeWake(
         eventRouter.emitUpdate({
             userId: accountId,
             accountChangeFromCursor: wake.fromCursor,
+            ...(wake.rows ? { accountChangeRows: [...wake.rows.values()] } : {}),
             payload: buildAccountChangeWakeUpdate(wake.cursor, randomKeyNaked(12), {
                 changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
                 ...(wake.artifactKinds ? { artifactKinds: [...wake.artifactKinds] } : {}),
@@ -259,6 +267,14 @@ function scheduleAccountChangeWake(
                 ...(wake.currentViewSessionId ? { exceptSessionCurrentView: wake.currentViewSessionId } : {}) },
         });
     });
+}
+
+/** Records the rows a publisher's statement returned on the Account's scheduled wake. */
+function recordAccountChangeRows(tx: Tx, accountId: string, rows: readonly AccountChangeRowFacts[]): void {
+    const wake = publicationPhase(tx).wakes?.get(accountId);
+    if (!wake) throw new Error('Account change rows require their scheduled wake');
+    const recorded = wake.rows ??= new Map();
+    for (const row of rows) recorded.set(JSON.stringify([row.kind, row.entityId]), row);
 }
 
 function artifactPublicationKinds(hint: unknown, storedKind: unknown): readonly string[] | null {
@@ -470,7 +486,7 @@ async function publishAccountProjectionChanges(
         // Account writer fence; allocation must not acquire it again.
         // Existing Account batches advanced updatedAt through Prisma; Session
         // and Machine invalidation retain the PostgreSQL point writer's seq-only mutation.
-        const rows = await tx.$queryRawUnsafe<Array<{ accountId: string; cursor: number | bigint }>>(
+        const rows = await tx.$queryRawUnsafe<Array<{ accountId: string; cursor: number | bigint; entityId: string; hint: unknown }>>(
             `WITH requested AS (
                 SELECT * FROM jsonb_to_recordset($1::jsonb) AS r("accountId" text, "entityId" text)
             ), totals AS (
@@ -505,7 +521,7 @@ async function publishAccountProjectionChanges(
                 "machineId" = EXCLUDED."machineId",
                 "artifactId" = NULL,
                 "accountPetPackageId" = NULL
-            RETURNING "accountId", "cursor"`,
+            RETURNING "accountId", "cursor", "entityId", "hint"`,
             JSON.stringify(requests), kind, changedAt, kind === 'session' ? JSON.stringify(sessionChangeHint(hint))
                 : hint === undefined ? null : JSON.stringify(hint),
         );
@@ -521,6 +537,8 @@ async function publishAccountProjectionChanges(
         }).sort((left, right) => left.accountId < right.accountId ? -1
             : left.accountId > right.accountId ? 1 : left.cursor - right.cursor);
         scheduleAccountProjectionWakes(tx, kind, requests, cursors, hint);
+        for (const row of rows) recordAccountChangeRows(tx, row.accountId, [{ cursor: Number(row.cursor), kind,
+            entityId: row.entityId, changedAt, hint: row.hint ?? null }]);
         return cursors;
     }
 
@@ -587,6 +605,8 @@ async function publishAccountProjectionChanges(
         .sort((left, right) => left.accountId < right.accountId ? -1
             : left.accountId > right.accountId ? 1 : left.cursor - right.cursor);
     scheduleAccountProjectionWakes(tx, kind, requests, cursors, hint);
+    for (const change of changes) recordAccountChangeRows(tx, change.accountId, [{ cursor: change.cursor, kind,
+        entityId: change.entityId, changedAt, hint: change.hint ?? null }]);
     return cursors;
 }
 
@@ -691,7 +711,7 @@ async function publishAccountChanged(
             : hint;
         const rows = await (tx as {
             $queryRawUnsafe: <TRow>(query: string, ...values: unknown[]) => Promise<TRow[]>;
-        }).$queryRawUnsafe<{ cursor: number | bigint; activationCount?: number; artifactKind?: unknown }>(
+        }).$queryRawUnsafe<{ cursor: number | bigint; hint?: unknown; activationCount?: number; artifactKind?: unknown }>(
             `WITH next AS (
                 UPDATE "Account"
                 SET "seq" = "seq" + 1
@@ -780,7 +800,7 @@ async function publishAccountChanged(
                 "machineId" = EXCLUDED."machineId",
                 "artifactId" = EXCLUDED."artifactId",
                 "accountPetPackageId" = EXCLUDED."accountPetPackageId"
-            RETURNING "cursor"
+            RETURNING "cursor", "hint"
             )
             ${params.accountEncryptionTransitionActivation ? `, activation AS (
                 UPDATE "AccountEncryptionTransition" SET
@@ -795,9 +815,9 @@ async function publishAccountChanged(
                     AND "AccountEncryptionTransition"."accountId" = $1
                     AND "AccountEncryptionTransition"."status" = 'authorized'
                 RETURNING "AccountEncryptionTransition"."id"
-            ) SELECT published."cursor", (SELECT "kind" FROM artifact_row) AS "artifactKind",
+            ) SELECT published."cursor", published."hint", (SELECT "kind" FROM artifact_row) AS "artifactKind",
                 (SELECT count(*)::int FROM activation) AS "activationCount" FROM published`
-                : 'SELECT "cursor", (SELECT "kind" FROM artifact_row) AS "artifactKind" FROM published'}`,
+                : 'SELECT "cursor", "hint", (SELECT "kind" FROM artifact_row) AS "artifactKind" FROM published'}`,
             accountId,
             kind,
             entityId,
@@ -823,6 +843,7 @@ async function publishAccountChanged(
         }
         scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId,
             kind === 'artifact' ? artifactPublicationKinds(hint, rows[0]?.artifactKind) : undefined);
+        recordAccountChangeRows(tx, accountId, [{ cursor, kind, entityId, changedAt: now, hint: rows[0]?.hint ?? null }]);
         return cursor;
     }
 
@@ -886,7 +907,7 @@ async function publishAccountChanged(
         : kind === 'session' ? await coalesceSessionProjectionChangeHintInTx(tx, accountId, entityId, hint, cursor)
         : preciseCollectionHint ?? (current ? preserveCollectionFullHint(current.hint, hint) : hint);
 
-    await tx.accountChange.upsert({
+    const stored = await tx.accountChange.upsert({
         where: {
             accountId_kind_entityId: {
                 accountId,
@@ -894,6 +915,7 @@ async function publishAccountChanged(
                 entityId,
             },
         },
+        select: { hint: true },
         create: {
             accountId,
             kind,
@@ -925,5 +947,6 @@ async function publishAccountChanged(
     }
 
     scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId, artifactKinds);
+    recordAccountChangeRows(tx, accountId, [{ cursor, kind, entityId, changedAt: now, hint: stored.hint ?? null }]);
     return cursor;
 }

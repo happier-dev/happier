@@ -65,29 +65,56 @@ export function parseCredentialQualifiedSessionDelivery(
 export const ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT =
     "happier:account-change-rows-delivery:v1";
 
+/** One committed AccountChange row as the writing transaction stored it (`changedAt` in epoch ms). */
+export type AccountChangeRowsDeliveryRowV1 = Readonly<{ cursor: number; kind: string; entityId: string; changedAt: number; hint: unknown }>;
+
 /**
- * Routing intent for one committed Account wake. Each receiving node reads the
- * page for its own row-demand sockets with their own credentials; the envelope
- * carries no rows, credential or access decision.
+ * One committed Account wake for the row-demand sockets of each node. It carries the rows the
+ * writing transaction stored for the Account, unprojected: each receiving node authorizes them for
+ * its own sockets through the feed's access owner. It carries no credential or access decision, and
+ * no recipient's projected page (any `rows` on the wake payload is dropped).
  */
 export type AccountChangeRowsDeliveryV1 = Readonly<{
     v: 1;
     accountId: string;
-    /** First cursor this wake committed; a socket with no pushed page yet starts from it. */
+    /** First cursor this wake committed. */
     fromCursor: number;
+    /** Last cursor this wake committed: a pushed page covers `(fromCursor - 1, toCursor]`. */
+    toCursor: number;
+    /** Absent when the write's rows are unknown: row-demand sockets then receive the bare wake. */
+    rows?: readonly AccountChangeRowsDeliveryRowV1[];
     payload: Readonly<{ id: string; seq: number; body: Readonly<Record<string, unknown>>; createdAt: number }>;
     /** The wake's `account-stored-content-v3` filter; its exclusions apply to row-demand sockets too. */
     recipientFilter: Readonly<{ type: "account-stored-content-v3" } & Record<string, string>>;
 }>;
 
+function parseDeliveryRows(value: unknown, fromCursor: number, toCursor: number): AccountChangeRowsDeliveryRowV1[] | null {
+    if (!Array.isArray(value)) return null;
+    const rows: AccountChangeRowsDeliveryRowV1[] = [];
+    for (const entry of value) {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return null;
+        const row = entry as Readonly<Record<string, unknown>>;
+        if (Object.keys(row).some((key) => !["cursor", "kind", "entityId", "changedAt", "hint"].includes(key))) return null;
+        if (typeof row.cursor !== "number" || !Number.isSafeInteger(row.cursor) || row.cursor < fromCursor || row.cursor > toCursor
+            || typeof row.kind !== "string" || row.kind.length === 0
+            || typeof row.entityId !== "string" || row.entityId.length === 0
+            || typeof row.changedAt !== "number" || !Number.isSafeInteger(row.changedAt)) return null;
+        rows.push({ cursor: row.cursor, kind: row.kind, entityId: row.entityId, changedAt: row.changedAt, hint: row.hint ?? null });
+    }
+    return rows;
+}
+
 export function parseAccountChangeRowsDelivery(value: unknown): AccountChangeRowsDeliveryV1 | null {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
     const record = value as Readonly<Record<string, unknown>>;
-    const allowedKeys = new Set(["v", "accountId", "fromCursor", "payload", "recipientFilter"]);
+    const allowedKeys = new Set(["v", "accountId", "fromCursor", "toCursor", "rows", "payload", "recipientFilter"]);
     if (Object.keys(record).some((key) => !allowedKeys.has(key))) return null;
     if (record.v !== 1) return null;
     if (typeof record.accountId !== "string" || record.accountId.length === 0) return null;
     if (typeof record.fromCursor !== "number" || !Number.isSafeInteger(record.fromCursor) || record.fromCursor < 1) return null;
+    if (typeof record.toCursor !== "number" || !Number.isSafeInteger(record.toCursor) || record.toCursor < record.fromCursor) return null;
+    const rows = record.rows === undefined ? undefined : parseDeliveryRows(record.rows, record.fromCursor, record.toCursor);
+    if (rows === null) return null;
     const payload = record.payload;
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
     const update = payload as Readonly<Record<string, unknown>>;
@@ -102,7 +129,9 @@ export function parseAccountChangeRowsDelivery(value: unknown): AccountChangeRow
         v: 1,
         accountId: record.accountId,
         fromCursor: record.fromCursor,
-        // Rows are read by the receiving node for its own sockets, never carried in the envelope.
+        toCursor: record.toCursor,
+        ...(rows ? { rows } : {}),
+        // Each socket's page is projected by the receiving node, never carried on the payload.
         payload: { id: update.id, seq: update.seq, createdAt: update.createdAt,
             body: Object.fromEntries(Object.entries(update.body as Readonly<Record<string, unknown>>).filter(([key]) => key !== "rows")) },
         recipientFilter: filter as AccountChangeRowsDeliveryV1["recipientFilter"],

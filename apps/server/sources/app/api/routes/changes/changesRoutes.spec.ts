@@ -189,6 +189,7 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
                 { cursor: 12, kind: "machine", entityId: "m1", changedAt: 2, hint: { a: 1 } },
             ],
             nextCursor: 12,
+            full: false,
             sessionAccessWitness: {
                 v: 1,
                 throughCursor: 12,
@@ -565,6 +566,7 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
         expect(response).toEqual({
             changes: [],
             nextCursor: 50,
+            full: false,
             sessionAccessWitness: {
                 v: 1,
                 throughCursor: 50,

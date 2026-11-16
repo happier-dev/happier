@@ -10,6 +10,9 @@ import { auth } from '@/app/auth/auth';
 import { startSocket } from './socket';
 import type { Fastify as AppFastify } from './types';
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
+import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { buildAccountChangeRowsSocketAuthV1 } from '@happier-dev/protocol/changes';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 
 type ConnectErrorPayload = {
@@ -257,6 +260,34 @@ describe('startSocket handshake compatibility', () => {
             await waitForConnectionSuccess(current);
         } finally {
             current.close();
+            await app.close();
+        }
+    }, 30_000);
+
+    it('admits change-row demand on a session host Account socket and pushes it the rows of each wake', async () => {
+        const account = await db.account.create({ data: { publicKey: 'pk-account-change-rows-user-scoped' }, select: { id: true } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'rows', metadata: '{}' }, select: { id: true } });
+        const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const { app, port } = await startSocketApp();
+        const host = ioClient(`http://127.0.0.1:${port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false,
+            auth: { token, clientType: 'user-scoped',
+                ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+                ...buildAccountChangeRowsSocketAuthV1(['session']) },
+        });
+        const wakes: { body: { t: string; rows?: { after: number; page: { changes: { entityId: string }[] } } } }[] = [];
+        host.on('update', (update: (typeof wakes)[number]) => { if (update.body.t === 'account-change') wakes.push(update); });
+        try {
+            await waitForConnectionSuccess(host);
+            // Room admission completes after connect: write until the first wake arrives.
+            await vi.waitFor(async () => {
+                await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id }));
+                await new Promise(resolve => setTimeout(resolve, 100));
+                expect(wakes.length).toBeGreaterThan(0);
+            }, { timeout: 10_000, interval: 50 });
+            expect(wakes.at(-1)!.body.rows?.page.changes).toEqual([expect.objectContaining({ entityId: session.id })]);
+        } finally {
+            host.close();
             await app.close();
         }
     }, 30_000);

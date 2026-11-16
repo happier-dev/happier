@@ -895,9 +895,10 @@ export function startSocket(app: Fastify): () => Promise<void> {
         if (clientType === 'machine-scoped' && machineId && typeof socket.data.verifiedMachineInstallationId === 'string') {
             protectedRooms.push(getMachineInstallationSocketRoom(userId, machineId, socket.data.verifiedMachineInstallationId));
         }
-        // Pushed change pages are read with this socket's credential through the feed owner. Only an
-        // unrestricted Account credential reads the whole Account feed; restricted admissions keep the wake.
-        const accountChangeRowsDemand = clientType === 'machine-scoped' && !handshakeEphemeralRunnerAdmission
+        // Pushed change rows are authorized for this socket's credential through the feed owner. Only an
+        // unrestricted Account credential (a daemon's Machine socket, a session host's Account socket)
+        // reads the whole Account feed; restricted admissions keep the wake.
+        const accountChangeRowsDemand = (clientType === 'machine-scoped' || clientType === 'user-scoped') && !handshakeEphemeralRunnerAdmission
             && readAccountStoredContentCompatibilityForSocket(socket).supportsPluginDataProtocol
             ? readAccountChangeRowsDemandV1(socket.handshake.auth) : null;
         if (accountChangeRowsDemand) {

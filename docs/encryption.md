@@ -823,10 +823,12 @@ Saved Secret changes retain their own catalog and dependent Profile projection.
 Direct `update-account` encryption-currentness pushes, reconnect, observer gaps
 and fresh authority admission retain their existing owners and semantics.
 Older kind-less wakes remain readable.
-A daemon socket that declares change-row demand receives its wake with the
-feed page its own credential would read from `GET /v2/changes` (the same plain
-row hints and Session access witness, read once at fan-out by the feed owner);
-it carries no content, key or credential material the feed read would not.
+A daemon or session host socket that declares change-row demand receives its
+wake with the rows that wake committed, projected for its own credential exactly
+as `GET /v2/changes` projects them (the same plain row hints and Session access
+witness, by the feed owner at fan-out); it carries no content, key or credential
+material the feed read would not. Between server nodes the delivery event
+carries the unprojected rows (plain hints, never content or keys).
 
 Ordinary socket loss and resume refreshes (reconnect, foreground, reachable and
 manual) withdraw that settled observation, but do not retire a captured finite

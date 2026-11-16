@@ -310,7 +310,7 @@ describe("markAccountChanged", () => {
             },
             accountChange: {
                 findUnique: vi.fn().mockResolvedValue(null),
-                upsert: vi.fn().mockResolvedValue({}),
+                upsert: vi.fn().mockResolvedValue({ hint: null }),
             },
         };
 
@@ -334,6 +334,7 @@ describe("markAccountChanged", () => {
             where: {
                 accountId_kind_entityId: { accountId: "a1", kind: "session", entityId: "s1" },
             },
+            select: { hint: true },
             create: {
                 accountId: "a1",
                 kind: "session",
@@ -368,7 +369,7 @@ describe("markAccountChanged", () => {
             },
             accountChange: {
                 findUnique: vi.fn().mockResolvedValue({ hint: existingHint }),
-                upsert: vi.fn().mockResolvedValue({}),
+                upsert: vi.fn().mockResolvedValue({ hint: null }),
             },
         };
 
@@ -428,7 +429,7 @@ describe("markAccountChanged", () => {
                 update: vi.fn().mockResolvedValue({ seq: 8 }),
             },
             accountChange: {
-                upsert: vi.fn().mockResolvedValue({}),
+                upsert: vi.fn().mockResolvedValue({ hint: null }),
             },
         };
 
@@ -444,6 +445,7 @@ describe("markAccountChanged", () => {
             where: {
                 accountId_kind_entityId: { accountId: "a1", kind: "pet", entityId: "pet-package-1" },
             },
+            select: { hint: true },
             create: {
                 accountId: "a1",
                 kind: "pet",
@@ -480,7 +482,7 @@ describe("markAccountChanged", () => {
                 update: vi.fn().mockResolvedValue({ seq: 9 }),
             },
             accountChange: {
-                upsert: vi.fn().mockResolvedValue({}),
+                upsert: vi.fn().mockResolvedValue({ hint: null }),
             },
         };
 
@@ -527,7 +529,7 @@ describe("markAccountChanged", () => {
                 findMany: vi.fn(async () => []),
                 deleteMany: vi.fn(async () => ({ count: 0 })),
                 createMany: vi.fn(async ({ data }: { data: typeof changes }) => { changes.push(...data); }),
-                upsert: vi.fn(async ({ create }: { create: typeof changes[number] }) => { changes.push(create); }),
+                upsert: vi.fn(async ({ create }: { create: typeof changes[number] }) => { changes.push(create); return { hint: create.hint ?? null }; }),
             },
         };
 

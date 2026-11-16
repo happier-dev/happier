@@ -59,6 +59,39 @@ describe("AccountChange coalescing database contract", () => {
         if (dbConnected) await db.$disconnect();
     });
 
+    it('carries on each Account wake exactly the rows its transaction stored, from both publishers', async () => {
+        const owner = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
+        const viewer = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: `rows-${randomUUID()}`, metadata: '{}' } });
+        const emitted: Array<{ userId: string; rows: unknown }> = [];
+        const emitUpdate = vi.spyOn(eventRouter, 'emitUpdate').mockImplementation((params) => {
+            if (params.accountChangeFromCursor !== undefined) emitted.push({ userId: params.userId, rows: params.accountChangeRows });
+        });
+        try {
+            // The point writer coalesces Session hints in SQL; the set writer allocates for many Accounts at once.
+            await inTx(async tx => {
+                await markAccountChanged(tx, { accountId: owner.id, kind: 'session', entityId: session.id,
+                    hint: { pendingCount: 1, pendingVersion: 1 } });
+                await markAccountChanged(tx, { accountId: owner.id, kind: 'session', entityId: session.id,
+                    hint: { pendingCount: 2, pendingVersion: 2 } });
+                await markAccountChanged(tx, { accountId: owner.id, kind: 'account', entityId: 'public-profile' });
+            });
+            await inTx(tx => markAccountsChanged(tx, { accountIds: [owner.id, viewer.id], kind: 'machine', entityId: `machine-${randomUUID()}` }));
+            const stored = async (accountId: string) => (await db.accountChange.findMany({ where: { accountId },
+                select: { cursor: true, kind: true, entityId: true, changedAt: true, hint: true } }))
+                .map(row => ({ ...row, hint: row.hint ?? null }));
+            const pushedFor = (accountId: string) => emitted.filter(entry => entry.userId === accountId)
+                .flatMap(entry => entry.rows as unknown[]);
+            const byCursor = (rows: unknown[]) => [...rows].sort((left, right) =>
+                (left as { cursor: number }).cursor - (right as { cursor: number }).cursor);
+            expect(byCursor(pushedFor(owner.id))).toEqual(byCursor(await stored(owner.id)));
+            expect(byCursor(pushedFor(viewer.id))).toEqual(byCursor(await stored(viewer.id)));
+            expect(pushedFor(owner.id)).toHaveLength(3);
+        } finally {
+            emitUpdate.mockRestore();
+        }
+    });
+
     it('retains every known Artifact kind through transitions and keeps unknown catch-up coarse', async () => {
         const account = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
         const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: account.id,

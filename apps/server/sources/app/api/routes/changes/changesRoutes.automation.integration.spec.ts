@@ -136,6 +136,7 @@ describe("changesRoutes automation changes (integration)", () => {
                         },
                     }],
                     nextCursor: exactCursor.resolveCursor(),
+                    full: false,
                 });
             },
         );

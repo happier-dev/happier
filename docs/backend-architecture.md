@@ -324,21 +324,31 @@ entity hints remain in the durable feed. Attempt-local state is discarded on
 rollback/replay. Exact-Machine plugin-webhook wakes are a separate audience and
 do not join this coalescing.
 
-A machine socket with an unrestricted Account credential may declare
-change-row demand in its socket auth (`accountChangeRows`: the kinds it
-consumes). Such a socket leaves the bare wake's room and instead receives the
-wake with `rows`: the page `GET /v2/changes` would return to that socket's own
-credential, read once at fan-out by the same owner
-(`app/changes/readAccountChangesPage.ts`), including the per-credential Session
-access witness. Each socket's pages are read in order, each starting at the
-`nextCursor` of the last page that socket received, so a wake the socket was
-excluded from (its own Machine write) is covered by its next page. A failed
-read sends the bare wake. The daemon applies a page only when its own cursor
-lies in `[after, nextCursor)` and reads the feed for reconnect catch-up, a gap,
-a full page or a malformed page. A Session the credential cannot reach keeps
-its row as the access-loss event (cursor, `unavailable` witness, and an
-authoritative deletion fact when that is what happened) with none of its other
-change facts, in the read and pushed feed alike.
+A socket with an unrestricted Account credential (a daemon's Machine socket, a
+session host's Account socket) may declare change-row demand in its socket auth
+(`accountChangeRows`: the kinds it consumes). Such a socket leaves the bare
+wake's room and instead receives the wake with `rows`: the rows that wake's
+transaction stored, as each publisher's statement returned them, authorized for
+that socket's own credential at fan-out. Nothing re-reads the feed per wake. The
+projection is the feed owner's (`app/changes/readAccountChangesPage.ts`): the
+compatibility kind filter, queued execution-run ids (one read per wake) and the
+Session access witness (one batched read per wake per distinct credential;
+sockets with equal demand, compatibility and credential facts share one page).
+Each node delivers an Account's wakes in commit order. A page starts at the
+`nextCursor` of the last page its socket received when every cursor in between
+was covered (wakes the socket was excluded from because another push carried
+their facts count as covered); otherwise at the wake's first cursor. More rows
+than one page carries is a `full` page. A failed authorization sends the bare
+wake. Across nodes the server-side delivery event carries those unprojected
+rows; each node authorizes them for its own sockets. Consumers apply a page
+only when their cursor lies in `[after, nextCursor)` and read the feed for
+reconnect catch-up, a gap, a full page or a malformed page. A Session the
+credential cannot reach keeps its row as the access-loss event (cursor,
+`unavailable` witness, and an authoritative deletion fact when that is what
+happened) with none of its other change facts, in the read and pushed feed
+alike. Every page, read or pushed, says whether more rows follow (`full`),
+judged on the stored rows before any filter, so a page the filter shortened
+still reads on.
 
 Settings-only allocations in current 0.3 development use the existing
 `account-settings-changed` body with the latest committed Settings version.
