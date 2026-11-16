@@ -12,6 +12,7 @@ import { readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/execu
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
 import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
@@ -120,6 +121,8 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
     'requiredDangerLevel' | 'requiredReadOnly' | 'resourceSessionId' | 'readObservation' | 'inheritedTargetedOperation'> & Readonly<{
       /** Existing originating request identity, diagnostic only. */
       operationRequestId?: string;
+      /** Immediate host-stamped caller retained across an Account execution hop. */
+      caller?: PluginInvocationCaller;
     }>;
   managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
   observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
@@ -248,6 +251,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           ...(readHostReviewedChildRootV1(approvalContext, formatQualifiedPluginActionId(action), actionInput)
             ? { admittedPluginActionSurface: 'plugin' as const } : {}),
           initiatingActionCaller: context.actionCaller ?? { kind: 'host' },
+          ...(input.inheritedInvocation?.caller ? { caller: input.inheritedInvocation.caller } : {}),
           ...(externalActionContext ? { externalActionContext } : {}),
           ...(typeof context.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
           signal: invocationSignal,

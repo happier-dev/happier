@@ -3286,6 +3286,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     actionCaller: request.initiatingActionCaller,
                     ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}), signal: request.signal },
                 inheritedInvocation: {
+                    caller: request.caller,
                     ...(request.requestId === undefined ? {} : { operationRequestId: request.requestId }),
                     ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
                     ...(request.requiredReadOnly ? { requiredReadOnly: request.requiredReadOnly } : {}),

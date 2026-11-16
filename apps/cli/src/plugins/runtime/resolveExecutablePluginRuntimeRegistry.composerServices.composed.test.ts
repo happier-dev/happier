@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import fastify from 'fastify';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -11,6 +12,15 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import { accountSettingsParse, HappierStructuredInputV1Schema } from '@happier-dev/protocol';
+import { createSentryEvidenceCandidate, resolveSentryEvidenceReference } from '../../../../../packages/plugins/sentry/src/composer/reference';
+import { projectSentryEventForDisplay } from '../../../../../packages/plugins/sentry/src/privacy/sentryEventProjection';
+import { encodeSentryInstanceConfiguration } from '../../../../../packages/plugins/sentry/src/instances/sentryInstanceConfiguration';
+import { deriveSentryCollisionScope } from '../../../../../packages/plugins/sentry/src/instances/sentryCollisionScope';
+import { SENTRY_SCOPE_SEPARATOR } from '../../../../../packages/plugins/sentry/src/sentryContracts';
+import { createPosthogEvidenceCandidate, resolvePosthogEvidenceReference } from '../../../../../packages/plugins/posthog/src/composer/reference';
+import { encodePosthogConfiguration } from '../../../../../packages/plugins/posthog/src/source/instance';
+import { POSTHOG_ISSUE_EVENTS_INCLUDE } from '../../../../../packages/plugins/posthog/src/api/types/events';
+import posthogEventPage from '../../../../../packages/plugins/posthog/src/api/__fixtures__/queryIssueEventsPage.json';
 import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 
@@ -184,6 +194,54 @@ async function fixture(declareStorage: boolean) {
     return { ...runtime, account, external };
 }
 
+function occurrenceFixture(kind: 'sentry' | 'posthog') {
+    const entryId = kind === 'sentry' ? '5501001' : '00000000-0000-4000-8000-000000000001';
+    const teamUuid = '00000000-0000-4000-8000-0000000000d1';
+    const from = '2026-07-01T00:00:00.000Z';
+    const to = '2026-08-15T00:00:00.000Z';
+    const posthogConfiguration = encodePosthogConfiguration({ v: 1,
+        organizationUuid: '00000000-0000-4000-8000-0000000000a1',
+        environments: [{ teamPathId: 4821, teamUuid, displayName: 'Production' }],
+        scanWindowPolicy: { kind: 'exact', from, to }, detailWindowPolicy: { kind: 'exact', from, to } });
+    if (!posthogConfiguration.ok) throw new Error('Invalid fixture configuration');
+    const instance = { v: 1 as const,
+        instance: { source: { pluginId: `happier.${kind}`, localId: kind === 'sentry' ? 'sentry-issues' : 'posthog-error-tracking' },
+            sourceInstanceId: '2f1c9c4e-8c1f-4a53-9c2a-4c9a7b1d3e05' },
+        binding: { purpose: kind === 'sentry' ? 'sentry-account-use' : 'posthog-api', account: {
+            service: { pluginId: `happier.${kind}`, localId: kind === 'sentry' ? 'sentry-account' : 'posthog-api' }, accountId: 'account-1' } },
+        localInstanceKey: kind === 'sentry' ? `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`
+            : 'posthog-org:https://eu.posthog.com:00000000-0000-4000-8000-0000000000a1',
+        configuration: { v: 1 as const, token: kind === 'sentry' ? encodeSentryInstanceConfiguration({ v: 1,
+            organizationId: '7701', projectScope: { kind: 'allAccessible' }, environmentScope: { kind: 'all' } }) : posthogConfiguration.token } };
+    const sentryRaw = { groupID: entryId, eventID: 'a'.repeat(32), title: 'TypeError: selected occurrence',
+        entries: [{ type: 'exception', data: { values: [{ type: 'TypeError', value: 'selected occurrence' }] } }] };
+    const localRef = { kindId: 'error-issue', entryId, collisionScope: kind === 'sentry'
+        ? deriveSentryCollisionScope({ deploymentOrigin: 'https://de.sentry.io', organizationId: '7701' })
+        : `posthog:https://eu.posthog.com:${teamUuid}` };
+    const sentryProjection = projectSentryEventForDisplay(sentryRaw);
+    if (!sentryProjection) throw new Error('Invalid Sentry fixture');
+    const candidate = kind === 'sentry' ? createSentryEvidenceCandidate({ instance, localRef,
+        selected: sentryProjection })
+        : createPosthogEvidenceCandidate({ instance, localRef, selected: { uuid: '00000000-0000-4000-8000-0000000000f1',
+            timestampMs: 1760000000000, exceptions: [{ type: 'TypeError', value: 'selected occurrence', frames: [] }] },
+            frozenRequest: { v: 1, issueId: entryId, from, to, filterTestAccounts: false, onlyAppFrames: false, include: POSTHOG_ISSUE_EVENTS_INCLUDE, limit: 2, offset: 0 },
+            selectedAbsoluteOffset: 0 });
+    if (!candidate) throw new Error(`Could not create ${kind} occurrence fixture`);
+    return { instance, localRef, candidate: candidate.candidate, async resolve(id: string, context: PluginInvocationContext) {
+        // Provider HTTP and credential acquisition are the only substituted boundaries.
+        const boundaryContext = { ...context, services: { ...context.services,
+            connectedAccounts: { ...context.services.connectedAccounts,
+                materializeListedAccount: async () => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture' } }) },
+            http: { ...context.services.http, request: async (request: Readonly<{ url: string }>) => ({ status: 200,
+                finalUrl: request.url, headers: { 'content-type': 'application/json' },
+                body: new TextEncoder().encode(JSON.stringify(kind === 'sentry' ? sentryRaw : {
+                    ...posthogEventPage, results: posthogEventPage.results.slice(0, 1), limit: 1, offset: 0,
+                    hasMore: true, nextOffset: 1,
+                })) }) } } };
+        return await (kind === 'sentry' ? resolveSentryEvidenceReference : resolvePosthogEvidenceReference)(id, boundaryContext);
+    } };
+}
+
 async function prepare(registry: Awaited<ReturnType<typeof fixture>>['registry']) {
     const structuredInput = HappierStructuredInputV1Schema.parse({ v: 1, composerAttachments: [{
         v: 1, instanceId: 'selected-issue', attachment: { pluginId, localId: 'issue' },
@@ -264,6 +322,8 @@ describe('declared Composer callback services through admitted runtime compositi
     });
 
     it.each([
+        { kind: 'sentry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
+        { kind: 'posthog', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'daemon', requester: 'guest', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'account', requester: 'owner', encryptionMode: 'plain' },
@@ -271,7 +331,10 @@ describe('declared Composer callback services through admitted runtime compositi
         { kind: 'entry', sourceExecution: 'accountNative', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'accountNative', requester: 'owner', encryptionMode: 'e2ee' },
     ] as const)('dispatches the real Triage delivery producer through activation, Account storage and the admitted source ($kind/$sourceExecution/$requester/$encryptionMode)', async ({ kind, sourceExecution, requester, encryptionMode }) => {
-        const sourceFixture = createTriageSourceV1Fixture();
+        const selectedOccurrence = kind === 'sentry' || kind === 'posthog' ? occurrenceFixture(kind) : null;
+        const baseFixture = createTriageSourceV1Fixture();
+        const sourceFixture = selectedOccurrence ? { ...baseFixture, configuredInstance: selectedOccurrence.instance,
+            getResult: { ...baseFixture.getResult, localRef: selectedOccurrence.localRef } } : baseFixture;
         const configuredInstance = sourceExecution === 'accountNative' ? {
             ...sourceFixture.configuredInstance,
             instance: { ...sourceFixture.configuredInstance.instance, source: {
@@ -311,6 +374,13 @@ describe('declared Composer callback services through admitted runtime compositi
                     run(input: unknown) { reads.push(input); return source.getResult; },
                 } } : {}),
             },
+            composer: { references: { occurrence: { title: 'Occurrence', icon: 'error', triggers: ['@'],
+                async search() { return []; },
+                async resolve(id, context) {
+                    if (!selectedOccurrence) throw new Error('No selected occurrence');
+                    return await selectedOccurrence.resolve(id, context);
+                },
+            } } },
             ui: { renderers: [{ id: 'detail', kind: 'declarative', root: { kind: 'text', text: 'Source detail' } }] },
             contributesTo: { 'happier.triage': { sources: { [sourceIdentity.localId]:
                 TriageSourcesContributionProtocolV1.contribute({ descriptor: source.descriptor,
@@ -340,7 +410,7 @@ describe('declared Composer callback services through admitted runtime compositi
         // wrapper as an encrypted Account artifact.
         const app = fastify({ bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 });
         let published: Awaited<ReturnType<typeof registerAuthoredAccountActionRelease>> | undefined;
-        if (sourceExecution !== 'daemon') {
+        if (sourceExecution !== 'daemon' || selectedOccurrence) {
             if (encryptionMode === 'plain') registerAccountHomeHttp(app, { accountId: 'composer-fixture-account', serverId: 'composer-fixture-home' });
             else {
                 app.get('/v1/account/encryption', async () => ({ mode: encryptionMode, updatedAt: 1 }));
@@ -359,24 +429,29 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
     : '() => fixture.getResult'}); }
 `);
             published = await registerAuthoredAccountActionRelease(app, 'composer-fixture-account', { encryptionMode,
+                ...(selectedOccurrence ? { additional: [{ manifest: TRIAGE_PLUGIN.manifest,
+                    projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugins/triage'),
+                    entryPath: resolve(import.meta.dirname, '../../../../../packages/plugins/triage/src/accountRuntime.ts'),
+                    artifactId: 'triage-account-runtime', activateExport: 'activate', manifestExport: null }] } : {}),
                 primary: {
                 manifest: provider.manifest, projectRoot: resolve(import.meta.dirname, '../../..'),
                 entryPath, artifactId: 'source-account-runtime', activateExport: 'activate', manifestExport: null,
             } });
-            if (sourceExecution === 'accountNative') {
-                const keys = requesterCredentials.encryption;
-                const sessionKey = nacl.randomBytes(32);
-                app.get('/v2/sessions/session-1', async () => ({ session: {
-                    id: 'session-1', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, encryptionMode,
-                    metadata: keys ? encryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' },
-                        payload: { machineId: 'composer-fixture-machine' } }) : JSON.stringify({ machineId: 'composer-fixture-machine' }),
-                    metadataVersion: 1, dataEncryptionKey: keys?.type === 'dataKey' ? encodeBase64(sealEncryptedDataKeyEnvelopeV1({
-                        dataKey: sessionKey, recipientPublicKey: keys.publicKey, randomBytes: nacl.randomBytes,
-                    })) : null, agentState: null, agentStateVersion: 0, responsibleAccountId: null, responsibleAccount: null,
-                    effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
-                } }));
-            }
         }
+        {
+            const keys = requesterCredentials.encryption;
+            const sessionKey = nacl.randomBytes(32);
+            app.get('/v2/sessions/cmwircsyq0152mcnzs977nj4b', async () => ({ session: {
+                id: 'cmwircsyq0152mcnzs977nj4b', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, encryptionMode,
+                metadata: keys ? encryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' },
+                    payload: { machineId: 'composer-fixture-machine' } }) : JSON.stringify({ machineId: 'composer-fixture-machine' }),
+                metadataVersion: 1, dataEncryptionKey: keys?.type === 'dataKey' ? encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+                    dataKey: sessionKey, recipientPublicKey: keys.publicKey, randomBytes: nacl.randomBytes,
+                })) : null, agentState: null, agentStateVersion: 0, responsibleAccountId: null, responsibleAccount: null,
+                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+            } }));
+        }
+        if (selectedOccurrence) app.post('/v1/plugins/data/query', async () => ({ rows: [row], changeCursor: 0 }));
         await app.ready();
         const restoreAccountHttp = installAxiosFastifyAdapter({ app, origin: 'https://composer-account.example.test' });
         await runWithServerHttpBaseUrl('https://composer-account.example.test', async () => published?.publishArtifacts(requesterCredentials));
@@ -392,7 +467,8 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
         // Triage's real Session relation owner reads and commits the link after
         // resolving an entry. Keep that HTTP storage boundary stateful too.
         const sessionLinkRows = new Map<string, PluginCollectionRowV1>();
-        const subject = await createAuthoredAdmittedPluginRuntimeFixture({
+        const requesterChannel = await createRequesterCurrentnessSocketHarness();
+        const subject = await runWithServerHttpBaseUrl('https://composer-account.example.test', async () => createAuthoredAdmittedPluginRuntimeFixture({
             happyHomeDir: home,
             plugins: await Promise.all([TRIAGE_PLUGIN, provider].map(async plugin => ({
                 manifest: plugin.manifest,
@@ -454,7 +530,7 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
                     },
                 } },
             },
-        });
+        }));
         const rpcHandlers = new Map<string, RpcHandler>();
         registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { rpcHandlers.set(method, handler); } }, {
             resolveRuntimeRegistry: async () => subject.registry,
@@ -464,7 +540,7 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
         });
         // Replace only the Machine network hop; both RPC producer and Action
         // receiver execute their real registry/admission/handler paths.
-        const rpc = sourceExecution === 'accountNative' ? vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async input => {
+        const rpc = sourceExecution === 'accountNative' || selectedOccurrence ? vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async input => {
             expect(input.machineId).toBe('composer-fixture-machine');
             const handler = rpcHandlers.get(input.method);
             if (!handler) throw new Error(`Unexpected Machine RPC ${input.method}`);
@@ -483,7 +559,7 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
             if (delivery.kind !== 'input') throw new Error('Triage did not produce structured input');
             const admission = await admitPluginSessionInputAttachmentsV1({
                 attachments: subject.registry.composerAttachments!, caller: { kind: 'plugin', pluginId: TRIAGE_PLUGIN.manifest.id },
-                sessionId: 'session-1', messageLocalId: 'triage-input', text: delivery.text, authored: delivery.attachments,
+                sessionId: 'cmwircsyq0152mcnzs977nj4b', messageLocalId: 'triage-input', text: delivery.text, authored: delivery.attachments,
             });
             expect(admission.status).toBe('admitted');
             if (admission.status !== 'admitted') throw new Error('Triage input was not admitted');
@@ -495,12 +571,20 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
                     meta: JSON.parse(JSON.stringify(admission.meta)), preparedComposerAttachments: admission.attachments });
                 expect(readSessionInputForgeEvidenceV1(retained.meta)).toEqual(forgeEvidence);
             } else expect(readSessionInputForgeEvidenceV1(admission.meta)).toBeNull();
-            const structuredInput = HappierStructuredInputV1Schema.parse({ v: 1, composerAttachments: admission.attachments });
+            const structuredInput = HappierStructuredInputV1Schema.parse(selectedOccurrence ? { v: 1, mentions: [{
+                kind: 'happier.composerReference', ref: `composerReference:${encodeURIComponent(selectedOccurrence.candidate.id)}`,
+                composerReference: { pluginId: sourceIdentity.pluginId, localId: 'occurrence' },
+                label: 'Occurrence', token: 'Occurrence',
+            }] } : { v: 1, composerAttachments: admission.attachments });
             expect(JSON.stringify(structuredInput)).not.toContain(source.getResult.snapshot.title);
             const preparation = prepareSessionInputForProviderDispatch({
                 prompt: { text: delivery.text, localId: 'triage-input', structuredInput }, transformedUserText: delivery.text,
                 providerNativeCommand: false, signal: new AbortController().signal, localId: 'triage-input',
-                services: { sessionId: 'session-1', resolveComposerAttachmentForDispatch: input => subject.registry.composerAttachments!.resolveForDispatch({ ...input, requesterAccount }) },
+                services: { sessionId: 'cmwircsyq0152mcnzs977nj4b',
+                    resolveComposerReference: input => runWithServerHttpBaseUrl('https://composer-account.example.test',
+                        () => subject.registry.composerReferences!.resolve({ ...input, sessionId: 'cmwircsyq0152mcnzs977nj4b' })),
+                    resolveComposerAttachmentForDispatch: input => subject.registry.composerAttachments!.resolveForDispatch({ ...input, requesterAccount }),
+                },
             });
             if (requester === 'guest') {
                 await expect(preparation).rejects.toMatchObject({ code: 'composer_attachment_resolution_failed',
@@ -511,11 +595,11 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
             }
             expect(await preparation.then(() => null, error => readStructuredInputPreparationFailure(error))).toBeNull();
             const prepared = await preparation;
-            expect(prepared.requiredPrompt).toContain(kind === 'entry' ? source.getResult.snapshot.title : 'Retain this failing assertion');
+            expect(prepared.requiredPrompt).toContain(kind === 'entry' ? source.getResult.snapshot.title : selectedOccurrence ? 'TypeError' : 'Retain this failing assertion');
             expect(reads).toEqual(kind === 'entry' && sourceExecution !== 'account' ? [source.getInput] : []);
         } finally {
             rpc?.mockRestore();
-            await subject.dispose(); restoreAccountHttp(); await app.close(); await rm(home, { recursive: true, force: true });
+            await subject.dispose(); await requesterChannel.close(); restoreAccountHttp(); await app.close(); await rm(home, { recursive: true, force: true });
             resetActiveAccountSettingsSnapshotForTests();
             vi.mocked(readStoredCredentials).mockResolvedValue({ token: 'composer-fixture-token', encryption: null });
         }
