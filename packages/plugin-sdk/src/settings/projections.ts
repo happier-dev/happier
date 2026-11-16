@@ -24,3 +24,5 @@ export type {
     SettingsScopeRef,
     SettingsService,
 } from '../services/core.js';
+
+export { PluginSettingFieldSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';

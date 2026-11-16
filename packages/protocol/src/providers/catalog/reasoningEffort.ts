@@ -16,13 +16,30 @@ export function readProviderReasoningEffortOption(
   return values.size === option.options.length && values.has(option.currentValue) ? option : null;
 }
 
+type AgentReasoningSupport = Pick<AgentProviderRequirementsV1, 'supportsReasoningEffort' | 'reasoningEffortValues'>;
+
+/** The Agent's native transport may accept fewer effort tiers than a Provider exposes. */
+export function canAgentApplyProviderReasoningEffort(agent: AgentReasoningSupport, effort: unknown): boolean {
+  return agent.supportsReasoningEffort === true
+    && (agent.reasoningEffortValues === undefined || agent.reasoningEffortValues.some(value => value === effort));
+}
+
 /** Agent declarations govern application; source descriptors retain their model-owned facts. */
 export function projectProviderModelReasoningForAgent<TModel extends ProviderModelDescriptorV1>(
   model: TModel,
-  agent: Pick<AgentProviderRequirementsV1, 'supportsReasoningEffort'>,
+  agent: AgentReasoningSupport,
 ): TModel {
-  if (!model.modelOptions
-    || agent.supportsReasoningEffort === true && readProviderReasoningEffortOption(model) !== null) return model;
+  if (!model.modelOptions) return model;
+  const effort = readProviderReasoningEffortOption(model);
+  if (effort && agent.supportsReasoningEffort === true && agent.reasoningEffortValues === undefined) return model;
+  const options = effort?.options?.filter(option => canAgentApplyProviderReasoningEffort(agent, option.value));
+  if (effort && options?.length) {
+    if (options.length === effort.options!.length) return model;
+    const currentValue = options.some(option => option.value === effort.currentValue)
+      ? effort.currentValue : options[0]!.value;
+    return { ...model, modelOptions: model.modelOptions.map(option => option === effort
+      ? { ...effort, currentValue, options } : option) };
+  }
   const retained = model.modelOptions.filter(option => option.id !== PROVIDER_REASONING_EFFORT_OPTION_ID
     && option.overridesWhenOn?.optionIds.includes(PROVIDER_REASONING_EFFORT_OPTION_ID) !== true);
   if (retained.length === model.modelOptions.length) return model;

@@ -349,3 +349,11 @@ export interface ProvidersService {
 export interface ProviderUsageService {
     refresh(request: ProviderUsageRefreshRequest, options?: PluginCancellationOptions): Promise<ProviderUsageRefreshResult>;
 }
+
+export { formatProviderReasoningEffortLevelLabel, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+export { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+export type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+export { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+
+export { resolveProviderCatalogFormatParser } from '@happier-dev/protocol/providers/catalog/response';
+export type { ProviderCatalogFormatParser } from '@happier-dev/protocol/providers/catalog/response';

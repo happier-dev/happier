@@ -971,7 +971,13 @@ configuration owner and do not add fields to the model reference.
 
 In development source, native, Account Provider and Team model choices use the shared
 picker's selected-control owner. A source-backed row supplies its own `modelOptions`;
-an equal native model id does not supply or override those controls. Team discovery
+an equal native model id does not supply or override those controls. An Agent's
+optional `reasoningEffortValues` declaration narrows those source tiers to values
+its native transport can apply. The shared reasoning projection preserves an
+applicable source default, otherwise selecting the first retained tier; the
+source catalog remains unchanged. Claude declares its native effort vocabulary,
+so gateway-only tiers such as `minimal` remain available to Agents that accept
+them and are omitted for Claude. Team discovery
 qualifies each read using the same admitted Agent/Provider application projection as
 the CLI broker path. CLIProxyAPI's pinned catalog carries explicit reasoning levels
 from its SDK registry for both Account and Team projections; budget-only models do

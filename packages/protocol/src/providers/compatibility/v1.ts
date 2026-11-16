@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { AgentModelOptionValueIdSchema } from '../../models/descriptor.js';
 
 import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ProviderCredentialFormatKindV1Schema } from '../credentials/v1.js';
@@ -98,6 +99,8 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
   supportsFreeformModelIds: z.boolean(),
   /** Applies the selected Provider model's canonical reasoning_effort option. */
   supportsReasoningEffort: z.optional(z.literal(true)),
+  /** Native effort values the Agent can apply; omitted accepts the Provider's declared values. */
+  reasoningEffortValues: z.optional(z.array(AgentModelOptionValueIdSchema).check(z.minLength(1))),
 }).check(z.superRefine((value, ctx) => {
   if (new Set(value.acceptsProtocols).size !== value.acceptsProtocols.length) {
     ctx.addIssue({ code: 'custom', path: ['acceptsProtocols'], message: 'Accepted protocols must be unique' });

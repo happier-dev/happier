@@ -2,10 +2,10 @@ import {
   PROVIDER_REASONING_EFFORT_LEVELS_V1,
   PROVIDER_REASONING_EFFORT_OPTION_ID,
   buildProviderReasoningModelOptions,
+  resolveProviderCatalogFormatParser,
   formatProviderReasoningEffortLevelLabel,
   type ProviderReasoningEffortLevelV1,
-} from '@happier-dev/protocol/providers/catalog/reasoningEffort';
-import { parseAnthropicModelCatalog } from '@happier-dev/protocol/providers/anthropic-models';
+} from '@happier-dev/plugin-sdk/providers';
 
 import {
   readProviderReasoningEffortOption,
@@ -13,6 +13,9 @@ import {
   type ProviderContribution,
   type ProviderCatalogParser,
 } from '@happier-dev/plugin-sdk/providers';
+
+// The canonical bundled-format map guarantees this declared wire codec exists.
+const parseAnthropicModelCatalog = resolveProviderCatalogFormatParser('anthropic-models')!;
 
 type AnthropicModelOption = NonNullable<ProviderCatalogParsedModel['modelOptions']>[number];
 

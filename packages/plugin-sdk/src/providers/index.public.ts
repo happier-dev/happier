@@ -83,3 +83,11 @@ export { containsProviderRegisteredSensitiveValue } from './projections.js';
 export { normalizeProviderCredentialHeaderName } from './projections.js';
 export { resolveProviderBindingCompatibilityWithFingerprintV1 } from './projections.js';
 export { resolveSessionModelSelectionIntentV1 } from './projections.js';
+
+export { formatProviderReasoningEffortLevelLabel, formatReasoningEffortTierLabel } from './projections.js';
+export { createProviderErrorV1, ProviderErrorCodeV1Schema } from './projections.js';
+export type { ProviderErrorV1 } from './projections.js';
+export { ProviderBrokerAdmissionFailureCodeV1Schema } from './projections.js';
+
+export { resolveProviderCatalogFormatParser } from './projections.js';
+export type { ProviderCatalogFormatParser } from './projections.js';

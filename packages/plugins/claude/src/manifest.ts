@@ -1,4 +1,4 @@
-import { CLAUDE_SESSION_RETENTION_SETTING_ID } from '@happier-dev/protocol/agents/claude/session-retention';
+import { CLAUDE_SESSION_RETENTION_SETTING_ID } from './protocol/sessionRetention.js';
 import { applyClaudeAccountSettings } from './agent/settings/applyAccountSettings.js';
 import { CLAUDE_ACCOUNT_USAGE_PROVIDER_ID } from './agent/auth/services/usage/identity.js';
 import { CLAUDE_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
@@ -59,7 +59,7 @@ import {
 } from './connectedAccounts/claudeSubscriptionNativeRuntime.js';
 
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
-import { parseClaudeModelCatalog } from './provider/catalog.js';
+import { ANTHROPIC_EFFORT_LEVELS, parseClaudeModelCatalog } from './provider/catalog.js';
 import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from './connectedAccounts/service.js';
 import { CLAUDE_KIMI_DECLARATION, CLAUDE_KIMI_ENVIRONMENT_USES, prepareClaudeConnectedAccountKeyPreflight } from './agent/runtime/connectedAccountKeys.js';
 
@@ -465,6 +465,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           modelRoles: CLAUDE_PROVIDER_MODEL_ROLES,
           supportsFreeformModelIds: true,
           supportsReasoningEffort: true,
+          reasoningEffortValues: [...ANTHROPIC_EFFORT_LEVELS],
         },
         surfaces: { externalSession: {
           externalLinkedTakeover: { writerSafety: 'unsupported' },
@@ -505,6 +506,16 @@ export const CLAUDE_PLUGIN = definePlugin({
         },
       },
       cliAuth: {
+        // Claude Code docs, "Credential management" (code.claude.com/docs/en/iam, read 2026-11-16):
+        // Linux keeps the login in ~/.claude/.credentials.json and Windows in
+        // %USERPROFILE%\.claude\.credentials.json (both under CLAUDE_CONFIG_DIR when set); a keyless
+        // Console sign-in writes an Anthropic profile in ~/.config/anthropic (%APPDATA%\Anthropic on
+        // Windows). macOS keeps the login in the Keychain and writes the file only when the Keychain
+        // refuses, so darwin is not declared: the host checks there on every read.
+        signInState: {
+          paths: ['~/.claude/.credentials.json', '~/.config/anthropic', '~/AppData/Roaming/Anthropic'],
+          platforms: ['linux', 'win32'],
+        },
         async detectAuthStatus({ runDeclaredSystemToolCommand }) {
           // Claude Code 2.1.292 observes CLAUDE_CONFIG_DIR and native credential
           // custody through this noninteractive command. Use the host probe budget.
@@ -620,8 +631,9 @@ export const CLAUDE_PLUGIN = definePlugin({
           loadedInHappierSessions: true,
           metadata: { agentId: 'claude' },
         },
-        discover: async (input) => {
+        discover: async (input, context) => {
           const detected = await readClaudeMcpConfigServers({
+            exec: context.services.exec,
             directory: input?.directory ?? null,
           });
           return {

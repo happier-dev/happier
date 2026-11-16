@@ -29,7 +29,7 @@ export type ProviderCatalogProbeModelV1 = Readonly<{
   connectedAccountPurposes?: readonly QualifiedConnectedAccountPurposeV1[];
 }>;
 
-export const ProviderCatalogProbeModelV1Schema = z.strictObject({
+const providerCatalogProbeModelSchema = z.strictObject({
   id: ProviderModelDescriptorV1Schema.shape.id,
   name: z.optional(ProviderModelDescriptorV1Schema.shape.name),
   contextWindowTokens: ProviderModelDescriptorV1Schema.shape.contextWindowTokens,
@@ -37,6 +37,10 @@ export const ProviderCatalogProbeModelV1Schema = z.strictObject({
   capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
   connectedAccountPurposes: z.optional(ConnectedAccountPurposesSchema),
 }) satisfies z.ZodMiniType<ProviderCatalogProbeModelV1>;
+
+/** Catalog readers consume the same readonly model contract as producers. */
+export const ProviderCatalogProbeModelV1Schema: z.ZodMiniType<ProviderCatalogProbeModelV1, ProviderCatalogProbeModelV1>
+  & Pick<typeof providerCatalogProbeModelSchema, 'shape'> = providerCatalogProbeModelSchema;
 
 const ProviderRuntimeTimestampV1Schema = lazyZodSchema(() => z.number().check(z.nonnegative()));
 export const ProviderCatalogProbeModelsV1Schema = lazyZodSchema(() => z.array(ProviderCatalogProbeModelV1Schema).check(z.superRefine((models, ctx) => {

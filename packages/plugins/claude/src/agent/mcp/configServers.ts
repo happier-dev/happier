@@ -1,8 +1,12 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalizePathSync, expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import type { DetectedMcpServerV1, DiscoveryWarning as McpDiscoveryWarningV1 } from '@happier-dev/plugin-sdk/mcp';
-import { resolveClaudeConfigDirOverride } from '../environment.js';
+import { CLAUDE_CONFIG_DIR_ENV_KEYS, resolveClaudeConfigDirOverride } from '../environment.js';
+
+const CLAUDE_MCP_CONFIG_ENV_KEYS = ['HOME', 'USERPROFILE', ...CLAUDE_CONFIG_DIR_ENV_KEYS] as const;
 
 export type ReadClaudeMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
@@ -20,8 +24,12 @@ function stringArray(value: unknown): string[] {
 export async function readClaudeMcpConfigServers(params: Readonly<{
     directory: string | null;
     env?: NodeJS.ProcessEnv;
+    exec?: Pick<ExecService, 'readEnvironment'>;
 }>): Promise<ReadClaudeMcpConfigServersResult> {
-    const env = params.env ?? process.env;
+    if (params.env === undefined && params.exec && !params.exec.readEnvironment) {
+        throw new PluginError({ code: 'plugin_service_unavailable', message: 'Inherited invocation environment is unavailable.' });
+    }
+    const env = params.env ?? params.exec?.readEnvironment?.(CLAUDE_MCP_CONFIG_ENV_KEYS) ?? process.env;
     const home = resolveHomeDirFromEnvironment(env);
     const override = resolveClaudeConfigDirOverride(env);
     const userPath = join(override ? expandHomePath(override, home) : home, '.claude.json');

@@ -13,3 +13,5 @@ export type { SettingsMutationResult } from './projections.js';
 export type { SettingsScopeRef } from './projections.js';
 export type { SettingsService } from './projections.js';
 export type { SettingsSnapshot } from './projections.js';
+
+export { PluginSettingFieldSchemaV2Schema } from './projections.js';
