@@ -7,6 +7,7 @@ import { projectProtocolValue } from './protocol/projectProtocolValue.js';
 import type { PluginProcessResult } from './services/io.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
 import type { InputPredicate } from './actions/dtos/pluginActionDtoSupport.generated.js';
+import type { PluginActionResultById } from './actions/actionTypeMap.generated.js';
 import type { PluginContributionRef } from './identity.js';
 import type { AcquireResultV1, ManagedLocalResourceFactsV1, ManagedBootstrapCarrierV1, ProviderDeletionNoticeV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -82,7 +83,8 @@ export const MachineProvisionerSizeV1Schema: ProtocolComposableSchema<MachinePro
 export const MachineProvisionerResizeResultV1Schema: ProtocolComposableSchema<MachineProvisionerResizeResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerResizeResultV1Schema);
 export type MachineProvisionerDeletionNoticeV1 = ProviderDeletionNoticeV1;
 
-export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; nativeCause?: MachineProvisionerNativeCauseV1; status?: PluginLocalizedStringV2; nativeCredentialDelivery?: Readonly<{ status: 'supported' | 'unsupported' | 'unknown'; code?: string }>; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; setupSources?: NonNullable<NonNullable<canonical.MachineProvisionerCheckResultV1['prerequisites']>[number]['setupSources']> & ProtocolJsonValue; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: ManagedLocalResourceFactsV1 }>;
+/** Neutral Action DTOs keep inferred author declarations independent of transitive Protocol type names. */
+export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; nativeCause?: MachineProvisionerNativeCauseV1; status?: PluginLocalizedStringV2; nativeCredentialDelivery?: Readonly<{ status: 'supported' | 'unsupported' | 'unknown'; code?: string }>; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; setupSources?: NonNullable<NonNullable<PluginActionResultById['machines.provisioners.check']['prerequisites']>[number]['setupSources']> & ProtocolJsonValue; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: ManagedLocalResourceFactsV1 }>;
 export type MachineProvisionerNativeOptionFactsV1 = Readonly<{
   size?: Readonly<{ id: string; title: PluginLocalizedStringV2; cpuCores?: number; memoryBytes?: number; diskBytes?: number }>;
   image?: Readonly<{ id: string; title: PluginLocalizedStringV2; description?: PluginLocalizedStringV2;
