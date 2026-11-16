@@ -235,6 +235,23 @@ If another editor changed it, keep your draft, read the current file and review 
 changes before saving again. This check is best effort: it does not lock out an
 external editor. Inspection and saving do not run setup or grant setup approval.
 
+Setup approval with **Until it changes** covers the setup commands and the current
+contents of the checkout files they run. For a plain command, that means a script
+named as the program or passed to an interpreter, such as `./setup.sh` or
+`bash scripts/setup.sh`. Editing one of those files asks again. Happier does not
+follow what a script sources or reads, so list those files in `workspace.setupInputs`
+to make their changes ask again too:
+
+```json
+{
+  "version": 1,
+  "workspace": {
+    "setup": [{ "kind": "command", "command": "bash scripts/setup.sh" }],
+    "setupInputs": ["scripts/lib.sh", ".tool-versions"]
+  }
+}
+```
+
 ## Running commands on workers
 
 <Callout type="info">

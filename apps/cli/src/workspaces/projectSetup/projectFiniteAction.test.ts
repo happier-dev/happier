@@ -1767,6 +1767,20 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
     });
 
+    it('revalidates the in-root script a literal command runs after queued admission and refuses changed bytes without a second launch', async () => {
+        const h = await harness({ version: 1, scripts: { checked: { source: { kind: 'command', command: 'sh ./check.sh' } } } }, 1);
+        await writeFile(join(h.root, 'check.sh'), 'echo reviewed');
+        const input = { workspace: h.address, selection: { kind: 'named', name: 'checked' } };
+        await h.invoke('projects.script.run', input);
+        await expect.poll(() => h.spawned.length).toBe(1);
+        expect(await h.invoke('projects.script.run', input, { ...h.context, transportRequestId: 'second' })).toMatchObject({ operation: { operationId: 'operation-2', state: 'accepted' } });
+        await writeFile(join(h.root, 'check.sh'), 'echo changed after approval');
+        h.spawned[0]!.pty.exit(0);
+        await expect.poll(() => h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation-2')?.state).toBe('failed');
+        expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation-2')).toMatchObject({ error: { errorCode: 'project_script_effect_changed' } });
+        expect(h.spawned).toHaveLength(1);
+    });
+
     it('refuses detected native worker execution before accepting an operation, copying or spawning', async () => {
         const h = await harness(undefined, 1, 'source-machine');
         const target = await h.addWorkerTarget();
