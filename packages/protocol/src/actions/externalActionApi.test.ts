@@ -135,6 +135,26 @@ it('binds current edge read authority to its authenticated controller without in
   }
 });
 
+it('binds a receipt-shaped platform log read to its executing receiver without inventing a Machine selector', () => {
+  // COR4-164 (#164): the app and agent read Vercel Build logs with only Environment, receipt and kind.
+  const admission = { actionId: 'deployments.logs.read' as const, environmentId: 'cmwix9v2x01nkmc06m8j4yhmg',
+    deploymentId: 'cmwixfeut01rvmc06a7jyn1yo', kind: 'build' as const };
+  const binding = { serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account' as const, tokenEpoch: 0 },
+    machineId: 'controller', installationId: 'installed', custodianAccountId: 'owner', actionId: admission.actionId,
+    requestId: 'platform-log', requestEnvelopeDigest: 'a'.repeat(43),
+    target: { kind: 'machine' as const, machineId: 'controller' }, deploymentReadAdmission: admission };
+  const schema = externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema;
+
+  expect(schema.safeParse(binding).success).toBe(true);
+  expect(schema.safeParse({ ...binding, deploymentReadAdmission: { ...admission, machineId: 'controller',
+    installationId: 'installed' } }).success).toBe(true);
+  for (const deploymentReadAdmission of [{ ...admission, machineId: 'another-controller' },
+    { ...admission, machineId: 'controller', installationId: 'another-installation' }]) {
+    expect(schema.safeParse({ ...binding, deploymentReadAdmission }).success).toBe(false);
+  }
+  expect(schema.safeParse({ ...binding, target: { kind: 'machine', machineId: 'another-controller' } }).success).toBe(false);
+});
+
 it('binds a qualified managed data query to its generic Action target', () => {
   const admission = { actionId: 'action.invoke' as const,
     action: { pluginId: 'happier.deploy.neon', localId: 'query-read' },

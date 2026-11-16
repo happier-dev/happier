@@ -3834,14 +3834,17 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it.each(['vercel', 'workers'] as const)('admits the %s log role admission metadata reads its logs root signs', async platformTarget => {
+    it.each([['vercel', 'placed'], ['workers', 'placed'], ['vercel', 'compact'], ['workers', 'compact']] as const)(
+        'admits the %s %s log role admission metadata reads its logs root signs', async (platformTarget, shape) => {
         // Live #162 (COR4B-VERCEL-1115, COR6): a provider build-log read re-admits its role through the role admission host,
         // which signs its Environment and receipt reads with the logs root. Home refused them (deployment_native_read_purpose, 401).
+        // Live #164 (COR4-164): the app and agent send the compact receipt-shaped read, which mint refused (credential_scope_denied).
         const f = await fixture('account', 'account', { platformTarget });
         const actionId = 'deployments.logs.read' as const;
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const input = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
-            targetLinkId: f.link.id, machineId: f.controller.id, installationId: f.controller.installationId,
+            ...(shape === 'placed' ? { targetLinkId: f.link.id, machineId: f.controller.id,
+                installationId: f.controller.installationId } : {}),
             kind: 'build' as const };
         const admission = projectDeploymentReadAdmissionV1(actionId, input);
         if (!admission) throw new Error('Build log read admission missing');

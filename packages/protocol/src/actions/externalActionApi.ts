@@ -1420,7 +1420,9 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     && value.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
   if (isDeploymentReadAdmissionActionIdV1(value.actionId) ? !value.deploymentReadAdmission
     || value.deploymentReadAdmission.actionId !== value.actionId || value.target.kind !== 'machine'
-    || value.target.machineId !== value.machineId || value.deploymentReadAdmission.machineId !== value.machineId
+    || value.target.machineId !== value.machineId
+    // A receipt-shaped platform log read names no Machine; an explicit selector must be the executing receiver.
+    || ('machineId' in value.deploymentReadAdmission && value.deploymentReadAdmission.machineId !== value.machineId)
     || ('installationId' in value.deploymentReadAdmission
       && value.deploymentReadAdmission.installationId !== value.installationId)
     : qualifiedManagedQueryRead ? value.target.kind !== 'machine' || value.target.machineId !== value.machineId
