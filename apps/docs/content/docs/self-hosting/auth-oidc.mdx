@@ -168,6 +168,41 @@ export OKTA_CLIENT_SECRET='…'   # or inject it into the server environment fro
 
 This option requires the JSON or file path to be set by the deployment operator. Provider configuration supplied through Home settings cannot reference server environment secrets; use a literal secret there. Managed identity providers keep their separately stored secrets. Changing the resolved secret invalidates in-progress OAuth attempts through the existing configuration binding.
 
+## Microsoft (Entra ID)
+
+Microsoft sign-in in 0.3 development source uses the same generic OIDC provider and has not yet been released.
+
+Choose the issuer that matches who may sign in:
+
+| Who may sign in | `issuer` |
+|---|---|
+| Only accounts in one company directory | `https://login.microsoftonline.com/<tenantId>/v2.0` |
+| Any work or school account | `https://login.microsoftonline.com/organizations/v2.0` |
+| Personal Microsoft accounts only | `https://login.microsoftonline.com/consumers/v2.0` |
+| Work, school and personal accounts | `https://login.microsoftonline.com/common/v2.0` |
+
+```json
+[
+  {
+    "id": "microsoft",
+    "type": "oidc",
+    "displayName": "Microsoft",
+    "issuer": "https://login.microsoftonline.com/<tenantId>/v2.0",
+    "clientId": "<Application (client) ID>",
+    "clientSecretEnv": "MICROSOFT_CLIENT_SECRET",
+    "redirectUrl": "https://YOUR_SERVER/v1/oauth/microsoft/callback",
+    "scopes": "openid profile email"
+  }
+]
+```
+
+In the Microsoft Entra admin center, register an application whose supported account types match the issuer you chose. Add a **Web** redirect URI equal to `redirectUrl`, then create a client secret under **Certificates & secrets**.
+
+- Microsoft does not list PKCE in its discovery document, although it supports it. Happier still sends S256 PKCE to `login.microsoftonline.com`.
+- With `/common` or `/organizations`, Happier accepts a token only when its issuer names the same tenant as its `tid` claim. With `/consumers` or a tenant id, only that tenant's tokens are accepted.
+- Microsoft ID tokens carry no `email_verified` claim, so the email is never treated as verified and `allow.emailDomains` refuses every user. To limit sign-in to one company, use that company's single-tenant issuer instead of a domain allowlist.
+- Only the global cloud host `login.microsoftonline.com` is supported.
+
 ## Group overage / external claims
 
 Some providers (notably Microsoft Entra ID / Azure AD) may omit groups from tokens and instead return an “overage” pointer (e.g. `_claim_names/_claim_sources`). If you configure `groupsAny`/`groupsAll`, Happier will **fail closed** when it detects group overage (treating the user as ineligible) unless it can read groups from the configured claim source (for example by enabling `fetchUserInfo` and mapping `claims.groups` appropriately).

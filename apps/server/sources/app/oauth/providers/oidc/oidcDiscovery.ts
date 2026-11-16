@@ -161,13 +161,32 @@ export async function discoverOidcConfiguration(
     return config;
 }
 
+/**
+ * Microsoft Entra ID's global authority, the origin `openid-client` itself treats as Entra
+ * (`handleEntraId`). Its `/common`, `/organizations`, `/consumers` and tenant-domain issuers
+ * discover a different issuer: the `{tenantid}` template or the tenant's GUID issuer.
+ * `openid-client` then validates every ID token's `iss` against that discovered issuer with
+ * the template filled from the token's own `tid` claim, so a token can only name its tenant.
+ */
+const ENTRA_AUTHORITY_ORIGIN = "https://login.microsoftonline.com";
+
+function isEntraAuthority(issuer: unknown): boolean {
+    if (typeof issuer !== "string") return false;
+    try {
+        return new URL(issuer).origin === ENTRA_AUTHORITY_ORIGIN;
+    } catch {
+        return false;
+    }
+}
+
 function assertDiscoveredOidcMetadata(
     config: oidcClient.Configuration,
     expectedIssuer: string,
     networkPolicy: OutboundIdentityNetworkPolicy,
 ): void {
     const metadata = config.serverMetadata();
-    if (metadata.issuer !== expectedIssuer) {
+    const entra = isEntraAuthority(expectedIssuer);
+    if (metadata.issuer !== expectedIssuer && !(entra && isEntraAuthority(metadata.issuer))) {
         throw new Error("oidc_issuer_mismatch");
     }
     if (
@@ -176,10 +195,11 @@ function assertDiscoveredOidcMetadata(
     ) {
         throw new Error("oidc_authorization_code_unsupported");
     }
-    if (
-        !Array.isArray(metadata.code_challenge_methods_supported)
-        || !metadata.code_challenge_methods_supported.includes("S256")
-    ) {
+    // Entra supports S256 but omits `code_challenge_methods_supported` from discovery; an
+    // advertised list is still checked, for Entra and every other issuer.
+    const pkceMethods = metadata.code_challenge_methods_supported;
+    const supportsS256 = Array.isArray(pkceMethods) ? pkceMethods.includes("S256") : pkceMethods === undefined && entra;
+    if (!supportsS256) {
         throw new Error("oidc_pkce_s256_unsupported");
     }
 
