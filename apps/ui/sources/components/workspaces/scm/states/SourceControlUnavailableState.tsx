@@ -30,9 +30,12 @@ function sanitizeDetails(details: string | null): string | null {
  * matched the literal `RPC method not available` string, which mislabelled the "session has no
  * machine binding" case (sessionScm bail-out) as "daemon unreachable".
  */
-function resolveBodyKey(errorCode: string | undefined, rawDetails: string): 'errors.sourceControlUnavailableForSession' | 'errors.daemonUnavailableBody' | 'errors.tryAgain' {
+function resolveBodyKey(errorCode: string | undefined, rawDetails: string): 'errors.sourceControlUnavailableForSession' | 'errors.daemonUnavailableBody' | 'errors.tryAgain' | 'deps.installNotSupported' {
     if (errorCode === SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE) {
         return 'errors.sourceControlUnavailableForSession';
+    }
+    if (errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
+        return 'deps.installNotSupported';
     }
     // Legacy: pre-errorCode callers — match the raw string only as a fallback.
     if (rawDetails === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE) {
@@ -68,7 +71,8 @@ export function SourceControlUnavailableState(props: {
             kind="error"
             title={t('errors.sourceControlUnavailableTitle')}
             reason={t(bodyKey)}
-            detail={details ?? undefined}
+            diagnosticCode={errorCode ?? details}
+            diagnosticDetail={errorCode ? details : undefined}
             action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
         />
     );

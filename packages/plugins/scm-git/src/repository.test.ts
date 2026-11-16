@@ -15,6 +15,8 @@ import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner, run
 
 import { gitDiffFile } from './operations/readOperations.js';
 import { runScmCommand as runHostScmCommand } from '../../../../apps/cli/src/scm/runtime';
+import { createScmBackendRegistry } from '../../../../apps/cli/src/scm/registry';
+import { runScmRoute } from '../../../../apps/cli/src/scm/rpc/dispatch';
 
 const readSnapshot = (input: Parameters<typeof getGitSnapshot>[0]) => runWithRealGitScmRuntime(() => getGitSnapshot(input));
 const readFileDiff = (input: Parameters<typeof gitDiffFile>[0]) => runWithRealGitScmRuntime(() => gitDiffFile(input));
@@ -410,10 +412,17 @@ describe('Git repository detection', () => {
                     args: ['-c', 'safe.directory=', ...input.args],
                     env: { ...input.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' },
                 }),
-                () => detectGitRepo({ cwd: repoRoot }),
+                () => runScmRoute({
+                    request: { cwd: repoRoot }, workingDirectory: repoRoot,
+                    registry: createScmBackendRegistry([createGitBackend()]),
+                    onNonRepository: () => ({ success: true }),
+                    runWithBackend: async () => ({ success: true }),
+                }),
             );
-            await expect(detection).rejects.toMatchObject({
+            await expect(detection).resolves.toMatchObject({
+                success: false,
                 errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                error: 'git_dubious_ownership',
             });
             expect(await runWithRealGitScmRuntime(() => detectGitRepo({ cwd: repoRoot }))).toMatchObject({
                 isRepo: true,

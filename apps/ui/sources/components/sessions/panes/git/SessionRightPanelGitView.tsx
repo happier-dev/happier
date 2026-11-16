@@ -61,7 +61,6 @@ import { resolveAgentIdFromSessionMetadata, getAgentCore } from '@/agents/catalo
 import { useSessionTerminalAction } from '@/components/sessions/terminal/useSessionTerminalAction';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { GitPaneLayout, resolveGitPaneActiveSubTab } from '@/components/workspaces/scm/GitPaneLayout';
 import { SessionRightPanelGitCommitTabContent } from './SessionRightPanelGitCommitTabContent';
 import { useWorkspaceScmTabState } from '@/components/workspaces/scm/useWorkspaceScmTabState';
@@ -640,18 +639,14 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         }
 
         // `SourceControlUnavailableState` owns the typed body: it resolves user-facing copy from the
-        // structured `errorCode` and only shows `details` as a sanitized supplementary line.
+        // structured `errorCode` and retains sanitized diagnostics in Details.
         const scmSnapshotErrorCode = typeof (scmSnapshotError as { errorCode?: unknown }).errorCode === 'string'
             ? (scmSnapshotError as { errorCode: string }).errorCode
             : undefined;
-        const userFacingDetails = scmSnapshotErrorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED
-            ? t('deps.installNotSupported')
-            : scmSnapshotError.message;
-
         return (
             <SourceControlUnavailableState
                 testID="session-rightpanel-git-unavailable"
-                details={userFacingDetails}
+                details={scmSnapshotError.message}
                 {...(scmSnapshotErrorCode ? { errorCode: scmSnapshotErrorCode } : {})}
                 onRetry={() => void refreshGitPane()}
             />

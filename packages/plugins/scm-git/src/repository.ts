@@ -46,7 +46,9 @@ export function createGitExecutionFeatureDetector(): () => Promise<GitExecutionF
  */
 function detectionUnavailable(detail: string): Error {
     return Object.assign(
-        new Error(`Unable to determine whether this path is a Git repository: ${detail}`),
+        new Error(/^fatal: detected dubious ownership in repository at /u.test(detail)
+            ? 'git_dubious_ownership'
+            : `Unable to determine whether this path is a Git repository: ${detail}`),
         { errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE },
     );
 }
