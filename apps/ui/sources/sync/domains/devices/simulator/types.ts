@@ -80,6 +80,7 @@ export type SimulatorPreviewStreamState = Pick<
     | 'bufferedBytes'
     | 'diagnostic'
 > & Readonly<{
+    sidebands?: Partial<Record<SimulatorSidebandKindV1, SimulatorSidebandMessageV1>>;
     streamId?: string;
     avccChunks?: readonly Uint8Array[];
     onFrameDecoded?: () => void;

@@ -11,6 +11,9 @@ import type { LiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/
 
 import { frameToAvccChunks, frameToUrl, resolveFrameCodecId } from '../selectors';
 import type { SimulatorPreviewStreamState } from '../types';
+import { SimulatorSidebandMessageV1Schema, type SimulatorSidebandMessageV1, type SimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
+import { decodeBase64 } from '@/encryption/base64';
+import { decodeUTF8 } from '@/encryption/text';
 
 /**
  * UI relay-ingestion stream state (finding #36). Wraps the canonical live-stream
@@ -20,12 +23,14 @@ import type { SimulatorPreviewStreamState } from '../types';
  * decoders in `components/stream/*` through one transport (`server_relay`).
  */
 export type SimulatorRelayStreamState = Readonly<{
+    sidebands?: Partial<Record<SimulatorSidebandKindV1, SimulatorSidebandMessageV1>>;
     player: LiveStreamPlayerState;
     streamId?: string;
     avccChunks?: readonly Uint8Array[];
 }>;
 
 export type SimulatorRelayIngestionEvent =
+    | Readonly<{ type: 'sideband'; message: SimulatorSidebandMessageV1 }>
     | Readonly<{
         type: 'open';
         sourceCodecs: readonly MachineLiveStreamCodecIdV1[];
@@ -57,6 +62,8 @@ export function reduceSimulatorRelayStreamState(
     event: SimulatorRelayIngestionEvent,
 ): SimulatorRelayStreamState {
     switch (event.type) {
+        case 'sideband':
+            return { ...state, sidebands: { ...state.sidebands, [event.message.kind]: event.message } };
         case 'reset_open':
             return reduceSimulatorRelayStreamState(
                 createSimulatorRelayStreamState(event.streamId),
@@ -87,6 +94,7 @@ export function reduceSimulatorRelayStreamState(
                 if (!chunks || chunks.length === 0) {
                     return {
                         ...state,
+                        ...state,
                         player: reduceLiveStreamPlayerState(state.player, {
                             type: 'frame_dropped',
                             count: 1,
@@ -97,6 +105,7 @@ export function reduceSimulatorRelayStreamState(
                     };
                 }
                 return {
+                    ...state,
                     // Bytes are decoder input, not proof that a frame was displayed.
                     player: { ...state.player, lastFrameAtMs: event.frame.timestampMs },
                     avccChunks: chunks,
@@ -106,6 +115,7 @@ export function reduceSimulatorRelayStreamState(
             const url = frameToUrl(event.frame);
             if (!url) {
                 return {
+                    ...state,
                     ...state,
                     player: reduceLiveStreamPlayerState(state.player, {
                         type: 'frame_dropped',
@@ -118,6 +128,7 @@ export function reduceSimulatorRelayStreamState(
             }
             const resolvedCodec: MachineLiveStreamCodecIdV1 = codecId ?? 'image.mjpeg';
             return {
+                ...state,
                 player: reduceLiveStreamPlayerState(state.player, {
                     type: 'frame',
                     codecId: resolvedCodec,
@@ -162,6 +173,7 @@ export function reduceSimulatorRelayStreamState(
 export function toSimulatorPreviewStreamState(state: SimulatorRelayStreamState): SimulatorPreviewStreamState {
     const player = state.player;
     return {
+        ...(state.sidebands ? { sidebands: state.sidebands } : {}),
         phase: player.phase,
         selectedCodec: player.selectedCodec,
         activeRenderer: player.activeRenderer,
@@ -188,10 +200,16 @@ export function mapSimulatorRelayEnvelopeToIngestionEvent(input: Readonly<{
     }
     const message = envelope.message;
     switch (message.kind) {
-        case 'frame':
-            return message.frame.streamId === input.streamId
-                ? { type: 'frame', frame: message.frame }
-                : null;
+        case 'frame': {
+            if (message.frame.streamId !== input.streamId) return null;
+            if (message.frame.payloadKind === 'metadata') {
+                try {
+                    const parsed = SimulatorSidebandMessageV1Schema.safeParse(JSON.parse(decodeUTF8(decodeBase64(message.frame.payloadBase64))));
+                    return parsed.success ? { type: 'sideband', message: parsed.data } : null;
+                } catch { return null; }
+            }
+            return { type: 'frame', frame: message.frame };
+        }
         case 'control': {
             if (message.control.streamId !== input.streamId) return null;
             switch (message.control.kind) {

@@ -775,7 +775,7 @@ describe('daemon simulator preview runtime', () => {
         await expect(runtime.routes.dispatchAction({
             type: 'simulator.sideband.request',
             simulatorId: 'sim_ios',
-            kind: 'logs',
+            kind: 'network_diagnostics',
         })).resolves.toEqual({
             v: 1,
             eventType: 'simulator.sideband.request',

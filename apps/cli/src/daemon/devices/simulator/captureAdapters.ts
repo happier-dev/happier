@@ -14,6 +14,7 @@ import {
 } from './android/capture';
 import type { AndroidScrcpyServerEncoderParamsV1 } from './android/server';
 import { createSimulatorFrameProducerCaptureAdapter, type SimulatorCaptureFrameProducer } from './capture/adapter';
+import { withSimulatorLogs } from './capture/logs';
 
 export type SimulatorCaptureAdapterFactoryOptions = Readonly<{
     android?: Readonly<{
@@ -51,7 +52,7 @@ export function createSimulatorCaptureAdapterForResource(
         if (!capture.supportedCodecs.includes('h264.avcc')) {
             return unavailableMachineLiveStreamCaptureAdapter;
         }
-        return createAndroidScrcpyServerCaptureAdapter({
+        return withSimulatorLogs(resource, createAndroidScrcpyServerCaptureAdapter({
             serial: resource.deviceId,
             sourceId: capture.sourceId,
             ...(options.android?.ensureServer ? { ensureServer: options.android.ensureServer } : {}),
@@ -59,15 +60,15 @@ export function createSimulatorCaptureAdapterForResource(
             ...(options.android?.initialEncoder ? { initialEncoder: options.android.initialEncoder } : {}),
             ...(options.android?.adaptiveBitrate ? { adaptiveBitrate: options.android.adaptiveBitrate } : {}),
             ...(options.android?.maxBufferedBytes ? { maxBufferedBytes: options.android.maxBufferedBytes } : {}),
-        });
+        }));
     }
 
     if (resource.platform === 'ios' && options.ios?.producer) {
-        return createSimulatorFrameProducerCaptureAdapter({
+        return withSimulatorLogs(resource, createSimulatorFrameProducerCaptureAdapter({
             sourceId: capture.sourceId,
             sourceCodecs: capture.supportedCodecs,
             producer: options.ios.producer,
-        });
+        }));
     }
 
     return unavailableMachineLiveStreamCaptureAdapter;

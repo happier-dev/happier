@@ -17,6 +17,23 @@ const STREAM_ID = 'stream_1';
 const SOURCE = 'machine_source';
 const TARGET = 'machine_target';
 
+it('ingests pushed log sidebands without sending metadata to the image decoder', () => {
+    const sideband = { v: 1, kind: 'logs', simulatorId: 'sim', emittedAtMs: 123, level: 'info', message: 'seeded log' };
+    const payloadBase64 = Buffer.from(JSON.stringify(sideband)).toString('base64');
+    const event = mapSimulatorRelayEnvelopeToIngestionEvent({ sourceMachineId: SOURCE, targetMachineId: TARGET, streamId: STREAM_ID,
+        envelope: { v: 1, sourceMachineId: SOURCE, targetMachineId: TARGET, message: { kind: 'frame', frame: {
+            ...imageFrame(1), payloadKind: 'metadata', payloadBase64, payloadSizeBytes: Buffer.byteLength(JSON.stringify(sideband)),
+        } } },
+    });
+    expect(event).toEqual({ type: 'sideband', message: sideband });
+    const state = openState();
+    const next = reduceSimulatorRelayStreamState(state, event!);
+    expect(next.player).toBe(state.player);
+    expect(toSimulatorPreviewStreamState(next)).toMatchObject({ sidebands: { logs: sideband } });
+    const video = reduceSimulatorRelayStreamState(next, { type: 'frame', frame: imageFrame(2) });
+    expect(toSimulatorPreviewStreamState(video)).toMatchObject({ sidebands: { logs: sideband } });
+});
+
 const webViewerCapabilities = resolveLiveStreamViewerCapabilities({
     platform: 'web',
     renderers: { mjpeg: true, webcodecs: true, mse: false, wasm: false, nativeVideo: false },

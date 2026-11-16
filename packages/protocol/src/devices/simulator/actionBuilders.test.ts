@@ -17,15 +17,15 @@ describe('simulator preview action builders', () => {
     });
   });
 
-  it('keeps capture_health as the only backed sideband kind before native producers land', async () => {
+  it('backs capture health and process-produced device logs', async () => {
     const mod = await import('./actionBuilders.js');
 
-    expect(mod?.BACKED_SIMULATOR_SIDEBAND_KINDS_V1).toEqual(['capture_health']);
+    expect(mod?.BACKED_SIMULATOR_SIDEBAND_KINDS_V1).toEqual(['capture_health', 'logs']);
     expect(mod?.normalizeBackedSimulatorSidebandKindsV1?.([
       'logs',
       'capture_health',
       'route',
       'capture_health',
-    ])).toEqual(['capture_health']);
+    ])).toEqual(['logs', 'capture_health']);
   });
 });

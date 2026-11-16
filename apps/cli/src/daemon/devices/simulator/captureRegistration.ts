@@ -1,5 +1,6 @@
 import { MachineLiveStreamCaptureSourceV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/captureV1';
 import { simulatorCaptureStreamFamilyV1 } from '@happier-dev/protocol/devices/simulator/v1';
+import { BACKED_SIMULATOR_SIDEBAND_KINDS_V1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 import type { MachineLiveStreamCaptureSourceV1, SimulatorCaptureCapabilitiesV1, SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
 
 import type { MachineLiveStreamCaptureAdapter } from '../../peer/mediation/stream/captureAdapter';
@@ -54,7 +55,7 @@ function capabilitiesForResource(
         supportedCodecs: resource.capture.supportedCodecs,
         maxFramesPerSecond,
         inputMode: resource.capture.inputMode,
-        sidebands: ['capture_health'],
+        sidebands: [...BACKED_SIMULATOR_SIDEBAND_KINDS_V1],
         health: { status: 'available' },
     });
 }

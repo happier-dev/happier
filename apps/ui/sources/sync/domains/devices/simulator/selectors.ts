@@ -340,7 +340,7 @@ export function selectSimulatorPreviewViewModel(input: SimulatorPreviewSelection
         activeLease: previewState?.activeLease ?? null,
         lease,
         controls,
-        sidebands: selectBackedSidebands(previewState?.sidebandsByKind),
+        sidebands: selectBackedSidebands({ ...previewState?.sidebandsByKind, ...stream.sidebands }),
         availability,
         diagnostics: collectDiagnostics({
             availability,

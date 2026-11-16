@@ -679,6 +679,14 @@ rows, not an older daemon's `resources` snapshot.
 
 ### 1.3 Live-stream lifecycle (0.3 development)
 
+Simulator log sidebands in development use the capture session's encrypted frame relay.
+The daemon starts `simctl spawn <device> log stream` on iOS and device-scoped
+`adb logcat` on Android; capture stop or a terminal receipt stops that child process.
+Log lines share the admitted frame byte budget, travel as metadata, and never enter
+the video decoder. The Tools panel shows the latest log sideband; the sideband
+Action reads that same active producer's latest message. Closing the viewer retires
+the producer and its snapshot. This is live device logging, without retained history.
+
 The direct HTTP start endpoint is not a complete live-stream carrier. It verifies signed grants,
 proofs and scope, then returns `direct_stream_channel_unavailable` before starting capture or
 consuming the grant. Frames, receipts, acknowledgements, control and stop must all have a connected

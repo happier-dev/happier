@@ -7,6 +7,7 @@ import type {
     SimulatorPreviewActionV1,
     SimulatorSidebandMessageV1,
 } from '@happier-dev/protocol';
+import { readSimulatorLogSideband } from '../capture/logs';
 
 import {
     ANDROID_SCRCPY_CONTROL_INPUT_KINDS,
@@ -509,6 +510,10 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
                     ...(discoveryResult ? { authorizedResources: discoveryResult.resources } : {}),
                 });
                 if (!sidebandAuthority.ok) return sidebandAuthority.result;
+                if (event.kind === 'logs') {
+                    const message = readSimulatorLogSideband(sidebandAuthority.resource.simulatorId);
+                    return message ? actionAcceptedResult(event, message) : actionUnavailableResult(event, 'simulator_logs_not_started');
+                }
                 const health = discoveryResult?.health ?? await readCurrentHealth();
                 if (event.kind === 'capture_health') {
                     return actionAcceptedResult(event, createAndroidCaptureHealthSideband({

@@ -175,7 +175,7 @@ describe('simulator preview selectors', () => {
                 canSetScale: false,
                 supportedInputKinds: expect.arrayContaining(['tap', 'swipe', 'keyboard_text', 'hardware_button']),
             },
-            sidebands: {},
+            sidebands: { logs: { kind: 'logs', message: 'booted' } },
             availability: { state: 'degraded' },
         });
         expect(viewModel.controls.supportedInputKinds).not.toEqual(expect.arrayContaining(['orientation', 'pinch', 'rotate']));

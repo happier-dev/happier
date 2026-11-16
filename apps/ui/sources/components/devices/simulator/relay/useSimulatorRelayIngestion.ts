@@ -310,6 +310,7 @@ export function useSimulatorRelayIngestion(
             if (parsed.data.message.kind === 'frame' && parsed.data.message.frame.streamId === streamId
                 && parsed.data.message.frame.payloadKind === 'metadata') {
                 latestRef.current.onMetadataFrame?.(parsed.data.message.frame);
+                if (event?.type === 'sideband') dispatch(event);
                 return;
             }
             if (event) {

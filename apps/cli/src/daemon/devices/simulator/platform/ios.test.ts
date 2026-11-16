@@ -81,6 +81,6 @@ describe('iOS simulator platform adapter', () => {
         await expect(adapter.dispatchAction({ event: { type: 'simulator.sideband.request', simulatorId: resource.simulatorId, kind: 'capture_health' }, resource })).resolves.toMatchObject({
             status: 'accepted', sideband: { status: 'available', emittedAtMs: 123 },
         });
-        await expect(adapter.dispatchAction({ event: { type: 'simulator.sideband.request', simulatorId: resource.simulatorId, kind: 'logs' }, resource })).resolves.toMatchObject({ status: 'unavailable', reasonCode: 'ios_simulator_sideband_logs_unsupported' });
+        await expect(adapter.dispatchAction({ event: { type: 'simulator.sideband.request', simulatorId: resource.simulatorId, kind: 'logs' }, resource })).resolves.toMatchObject({ status: 'unavailable', reasonCode: 'simulator_logs_not_started' });
     });
 });

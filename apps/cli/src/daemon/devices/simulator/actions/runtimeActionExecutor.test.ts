@@ -837,7 +837,7 @@ describe('daemon simulator runtime action executor', () => {
             input: {
                 type: 'simulator.sideband.request',
                 simulatorId: 'sim_ios',
-                kind: 'logs',
+                kind: 'network_diagnostics',
             },
         }))).resolves.toEqual({
             ok: false,

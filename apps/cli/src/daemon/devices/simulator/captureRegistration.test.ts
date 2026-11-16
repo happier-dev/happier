@@ -56,7 +56,7 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
                     sourceKind: 'simulator',
                     supportedCodecs: ['image.mjpeg'],
                     inputMode: 'exclusive',
-                    sidebands: ['capture_health'],
+                    sidebands: ['capture_health', 'logs'],
                     health: { status: 'available' },
                 },
             },

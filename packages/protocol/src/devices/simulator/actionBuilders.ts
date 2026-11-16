@@ -4,6 +4,7 @@ import type { SimulatorPreviewActionV1 } from './runtimeV1.js';
 
 export const BACKED_SIMULATOR_SIDEBAND_KINDS_V1 = [
   'capture_health',
+  'logs',
 ] as const satisfies readonly SimulatorSidebandKindV1[];
 
 const BACKED_SIMULATOR_SIDEBAND_KIND_SET_V1 = new Set<SimulatorSidebandKindV1>(

@@ -161,7 +161,7 @@ describe('Android emulator platform adapter', () => {
             },
         })).resolves.toMatchObject({
             status: 'unavailable',
-            reasonCode: 'android_simulator_sideband_logs_unsupported',
+            reasonCode: 'simulator_logs_not_started',
         });
     });
 

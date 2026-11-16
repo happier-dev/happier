@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { IosSimulatorResourcesDiscoveryResult } from '../ios/discovery';
+import { readSimulatorLogSideband } from '../capture/logs';
 import { createIosSimulatorUnavailableHealth } from '../ios/diagnostics';
 import {
     dispatchIosSimulatorInput,
@@ -225,6 +226,10 @@ export function createIosSimulatorPlatformAdapter(input: Readonly<{
                 const discoveryResult = await readDiscoveryResult();
                 const authority = validateIosSidebandDispatchAuthority({ event, resource, authorizedResources: discoveryResult.resources });
                 if (!authority.ok) return authority.result;
+                if (event.kind === 'logs') {
+                    const message = readSimulatorLogSideband(authority.resource.simulatorId);
+                    return message ? actionAcceptedResult(event, message) : actionUnavailableResult(event, 'simulator_logs_not_started');
+                }
                 if (event.kind === 'capture_health') {
                     return actionAcceptedResult(event, createIosCaptureHealthSideband({
                         event, resource: authority.resource, health: discoveryResult.health,
