@@ -257,6 +257,44 @@ describe('retained stored deployment source', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it.each([['newer', 'b'.repeat(40)], ['same', null]] as const)(
+    'a Git-integration build says the newer commit the platform built on the branch (deploy auto-mode U8): %s', async (_case, builtSha) => {
+    const serverId = await homes.addHome({ name: 'Pages Git', serverUrl: 'https://pages-git.test',
+      serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const base = createDeploymentReceiptDetailV1();
+    const requested = base.content.sourceIntent?.kind === 'repository' ? base.content.sourceIntent.sha : '';
+    const receipt = createDeploymentReceiptDetailV1({ content: DeploymentPlatformContentV1Schema.parse({ sourceIntent: base.content.sourceIntent,
+      sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
+      platform: { targetLinkRevision: 1,
+        credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+          purpose: { consumer: { pluginId: 'acme.alpha', localId: 'deploy' }, purpose: 'deploy' },
+          target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
+        providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' },
+        observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha: builtSha ?? requested } },
+    }) });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner', projectSourceId: environment.environment.projectSourceId }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller} environmentId={environment.environment.id}
+      deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+      accountId="account-owner" serverId={serverId} readLogs={null} onBack={() => {}} rollback={null}
+      cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+    await waitForReceipt(screen);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.comparison.status')).not.toBeNull());
+    const { Item } = await import('@/components/ui/lists/Item');
+    const built = screen.findAllByType(Item).find((node) => node.props.testID === 'project-deployments.comparison.built') ?? null;
+    if (builtSha) {
+      expect(built?.props.title).toBe(t('projects.deployments.editors.builtNewer', { sha: builtSha.slice(0, 7), branch: 'main' }));
+    } else {
+      expect(built, 'the platform built exactly what was asked: nothing more to say').toBeNull();
+    }
+  });
+
   it('says an existing checkout could not be read, with Refresh, instead of asking for a checkout', async () => {
     const serverId = await homes.addHome({ name: 'Unreadable checkout', serverUrl: 'https://unreadable-checkout.test',
       serverIdentityId: `srv_${'f'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });

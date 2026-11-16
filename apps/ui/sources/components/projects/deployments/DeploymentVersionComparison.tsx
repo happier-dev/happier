@@ -18,6 +18,8 @@ import { useDeploymentRepositoryComparison, type DeploymentRepositoryComparisonI
 type Props = Readonly<{
   source: DeploymentSourceIntentV1;
   current: DeploymentEnvironmentDefinitionV1 | null;
+  /** The commit the platform observed building (Git integrations build the branch head, which may be newer). */
+  builtSha?: string | undefined;
   workspaceRef?: WorkspaceRefV1 | null;
   serverId: string;
   accountId: string;
@@ -71,7 +73,7 @@ function DefinitionSelectors({ definition }: Readonly<{ definition: Extract<Depl
   </>;
 }
 
-function RepositoryComparison(props: DeploymentRepositoryComparisonInput) {
+function RepositoryComparison(props: DeploymentRepositoryComparisonInput & Readonly<{ builtSha?: string | undefined }>) {
   const comparisonState = useDeploymentRepositoryComparison(props);
   return <DeploymentRepositoryComparisonView {...props} comparisonState={comparisonState} />;
 }
@@ -79,6 +81,7 @@ function RepositoryComparison(props: DeploymentRepositoryComparisonInput) {
 /** Lift the hook once to share its newer-commit fact with Overview and this Compare presenter. */
 export function DeploymentRepositoryComparisonView(props: DeploymentRepositoryComparisonInput & Readonly<{
   comparisonState: DeploymentRepositoryComparisonState;
+  builtSha?: string | undefined;
 }>) {
   const router = useRouter();
   const { comparison, history, proven, pending, unavailable, unreadable, newerCommitCount, refresh } = props.comparisonState;
@@ -105,6 +108,9 @@ export function DeploymentRepositoryComparisonView(props: DeploymentRepositoryCo
       onPress={comparison && workspace ? () => router.push(buildProjectRouteHref({ workspaceRefId: workspace.id,
         serverId: props.serverId, segment: 'changes', activeRootPath: workspace.rootPath, defaultRootPath: workspace.rootPath,
         details: { kind: 'scmReview', comparison: comparison.range, view: 'files', explain: false } }) as never) : undefined} />
+    {/* A Git-integration platform builds the branch head when it runs, so it can build a newer commit than the one asked for. */}
+    {props.builtSha && props.builtSha !== props.source.sha && sourceRef ? <Item testID="project-deployments.comparison.built"
+      title={t('projects.deployments.editors.builtNewer', { sha: props.builtSha.slice(0, 7), branch: sourceRef })} showChevron={false} /> : null}
     {!workspace || (unavailable && !unreadable) ? <DeploymentSourceCheckoutRow testID="project-deployments.comparison.checkout"
       projectSourceId={props.source.projectSourceId} serverId={props.serverId} checkout={workspace ? null : ownCheckout} /> : null}
   </ItemGroup>;

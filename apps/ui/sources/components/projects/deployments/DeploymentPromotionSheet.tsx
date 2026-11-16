@@ -23,6 +23,8 @@ import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection'
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentPromotionBindingGaps } from './useDeploymentPromotionBindingGaps';
+import { DeploymentReviewPreview } from './DeploymentReviewPreview';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 /** The destination a person chose: the receipt keeps it so Promote reopens on it after they add what it lacks. */
 export type DeploymentPromotionDestination = Readonly<{ environmentId: string; projectSourceId: string; title: string }>;
@@ -101,6 +103,9 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="project-deployments.promote" style={deploymentSheetStyles.body}>
         <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.promotion.lead', { name: props.name, version: props.version })}</Text>
+        {/* Promoting a build preview: its address and health first, from the Environment's own owners (U9). */}
+        <DeploymentReviewPreview controller={props.controller} environmentId={props.sourceEnvironmentId} demand={SHEET_DEMAND}
+          onOpenAddress={(url) => { void requestOpenExternalUrl(url, { serverId: props.serverId, expectedAccountId: props.controller.scope.accountId }); }} />
         <DeploymentEnvironmentChooser controller={props.controller} testID="project-deployments.promote.destination"
           title={t('projects.deployments.promotion.destination')} eligible={isDestination}
           selectedId={destination} onSelect={selectDestination} disabled={busy}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
-import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import {
   act,
   renderScreen,
@@ -182,6 +182,35 @@ describe('Promote', () => {
       await act(async () => { open(); });
       await waitFor(notice);
       expect(screen.getTextContent()).toContain('TOKEN');
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it('promoting a build preview shows what it built, its address and health, above the destinations (deploy auto-mode U9)', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const preview = { ...base, environment: createDeploymentEnvironmentHeaderV1({ ...base.environment, purpose: 'preview',
+      previewTemplateEnvironmentId: 'environment-production', previewRepositoryId: base.environment.projectSourceId,
+      previewPullRequestId: 'pr:12', previewTargetLinkId: base.environment.runtimeTargetLinkId! }) };
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [{ environment: preview.environment, title: 'Preview 12' }], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: preview }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: false, failure: { code: 'deployment_unavailable', retryable: false } }),
+      listDomains: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+    } });
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => {
+        showDeploymentPromotionSheet({ controller, serverId: 'home', sourceEnvironmentId: preview.environment.id, sourceDeploymentId: 'receipt-1',
+          name: 'Preview 12', version: 'a41c09e', promote: vi.fn() as never,
+          review: { pendingId: null, request() {}, open() {} }, onOpenReceipt: () => {} });
+      });
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.review.preview.health'), (node) => node !== null);
+      });
+      expect(screen.findByTestId('project-deployments.review.preview.health')).not.toBeNull();
     } finally {
       await screen.unmount();
       controller.retire();

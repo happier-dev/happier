@@ -138,6 +138,12 @@ export function useDeploymentEnvironmentRecord(controller: DeploymentReadControl
     return useEnvironmentRead(controller, environmentId, demand, false);
 }
 
+/** One Environment's record with its health aggregate, without the page's registry update check or health notices. */
+export function useDeploymentEnvironmentHealthRecord(controller: DeploymentReadControllerV1 | null, environmentId: string | null,
+    demand: DeploymentReadDemandV1) {
+    return useEnvironmentRead(controller, environmentId, demand, true);
+}
+
 function useEnvironmentRead(controller: DeploymentReadControllerV1 | null, environmentId: string | null,
     demand: DeploymentReadDemandV1, health: boolean) {
     const acquire = React.useMemo(() => controller && environmentId

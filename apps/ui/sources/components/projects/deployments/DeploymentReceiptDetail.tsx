@@ -636,6 +636,7 @@ export const DeploymentReceiptDetail = React.memo(
             <DeploymentUploadProvenance testID="project-deployments.receipt.upload"
               provenance={content.platform?.observation.uploadProvenance} />
             {content.sourceIntent ? <DeploymentVersionComparison source={content.sourceIntent}
+              builtSha={content.platform?.observation.builtSha}
               current={environmentValue?.content.definition ?? null} workspaceRef={props.workspaceRef}
               serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
             {content.buildMachineId !== undefined && deployment.operation !== 'teardown' ? <ItemGroup testID="project-deployments.receipt.storage"
