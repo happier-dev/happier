@@ -11,6 +11,7 @@ import {
 import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
 import { ACCOUNT_PURPOSE, nativeFetch, readAccountScope } from './machine/credentials.js';
 import { createVercelNativeClient } from './machine/nativeClient.js';
+import { createVercelPreparationClient, VERCEL_PREPARATION_HOME, VercelPreparationInputSchema, VercelPreparedArtifactSchema, VercelPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, VercelLaunchSchema, VercelOptionsSchema, VercelOperationSchema, VercelResourceSchema, VERCEL_REGIONS, type VercelOperation } from './machine/schemas.js';
 import { label } from './ui/translations.js';
 
@@ -22,6 +23,8 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 const nativeDefaults = { ...defaults, scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' } } as const;
 const confirmation = { title: label('confirmTitle'), body: label('confirmBody') };
 const runtime = async (context: PluginAccountActionContext | PluginInvocationContext) => createVercelNativeClient(
+  await readAccountScope(context), nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = async (context: PluginAccountActionContext | PluginInvocationContext) => createVercelPreparationClient(
   await readAccountScope(context), nativeFetch(context), context.signal, context.invokedAtMs);
 const errorCode = (error: unknown) => error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
   ? error.code : error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'vercel_unavailable';
@@ -39,6 +42,9 @@ export const MACHINE_PROVISIONER = {
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   nativeCredentialDelivery: { apply: 'native-credential-apply', transports: ['https_headers'], preservesEndpoint: true, perBindingMatching: true },
   reconciliation: { nativeOperationSchema: VercelOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup' },
+  preparation: { inputSchema: VercelPreparationInputSchema.jsonSchema, artifactSchema: VercelPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: VercelPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -114,7 +120,9 @@ export const PLUGIN = definePlugin({
           // public selection projector owns selection completeness and launch.
           return { base: { launch, guestPlatform: 'linux', available: launch.vcpus <= limits.vcpus && launch.timeoutMs <= limits.timeoutMs },
             dimensions: { ...dimensions,
-              image: [{ id: image.id, title: image.title, guestPlatform: 'linux', assignments: [], nativeFacts: { image } }],
+              image: [{ id: image.id, title: image.title, guestPlatform: 'linux', assignments: [], nativeFacts: { image,
+                preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: VERCEL_PREPARATION_HOME },
+              } }],
               size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
               location: [{ id: location.id, title: location.title, assignments: [], nativeFacts: { location } }],
               duration: [{ id: duration.id, title: duration.title, assignments: [], nativeFacts: { duration } }],
@@ -139,6 +147,21 @@ export const PLUGIN = definePlugin({
           }) }));
         }
       } },
+    'prepare-build': { ...defaults, title: 'Build Vercel prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Vercel snapshot?', body: 'Provider charges apply for runtime and snapshot storage. See https://vercel.com/docs/sandbox/pricing for current pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return (await preparationRuntime(context)).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Vercel prepared snapshot', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return (await preparationRuntime(context)).inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Vercel prepared snapshot', dangerLevel: 'destructive',
+      confirmation: { title: label('deleteTitle'), body: label('deleteBody') },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return (await preparationRuntime(context)).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     reconcile: { ...defaults, title: label('kind'), dangerLevel: 'safe', inputSchema: RECONCILIATION.input, resultSchema: RECONCILIATION.result,
       async run(input, context) {
         let operation: VercelOperation | undefined = 'nativeOperation' in input ? input.nativeOperation : undefined;

@@ -15,13 +15,14 @@ const image = defineProtocolString({ minLength: 1, maxLength: 255, pattern: '\\S
 // Vercel REST v4 + pricing limits, verified 2026-10-25. Team limits are checked separately.
 const timeoutMs = defineProtocolNumber({ integer: true, minimum: 1000, maximum: 86_400_000 });
 const snapshotExpirationMs = defineProtocolNumber({ integer: true, minimum: 0 });
-export const VercelLaunchSchema = defineProtocolObject({ image, region, vcpus, timeoutMs, snapshotExpirationMs }, closed);
+export const VercelLaunchSchema = defineProtocolObject({ image, region, vcpus, timeoutMs, snapshotExpirationMs, snapshotId: text.optional() }, closed);
 export const VercelOptionsSchema = defineProtocolObject({ image: image.optional(), region: region.optional(), vcpus: vcpus.optional(), timeoutMs: timeoutMs.optional(), snapshotExpirationMs: snapshotExpirationMs.optional() }, closed);
 export const VercelResourceSchema = defineProtocolObject({ name, createdAt: timestamp, managedId: text, teamId: text, projectId: text }, closed);
 export const VercelScopeSchema = defineProtocolObject({ teamId: text, projectId: text }, closed);
+export const VercelAcquisitionSchema = defineProtocolObject({ kind: defineProtocolLiteral('acquire'), name, managedId: text, teamId: text, projectId: text,
+  createdAt: timestamp.optional() }, closed);
 export const VercelOperationSchema = defineProtocolUnion([
-  defineProtocolObject({ kind: defineProtocolLiteral('acquire'), name, managedId: text, teamId: text, projectId: text,
-    createdAt: timestamp.optional() }, closed),
+  VercelAcquisitionSchema,
   defineProtocolObject({ kind: defineProtocolLiteral('delete'), resource: VercelResourceSchema,
     phase: defineProtocolUnion([defineProtocolLiteral('stop'), defineProtocolLiteral('delete')]),
     snapshotIds: defineProtocolArray(text) }, closed),

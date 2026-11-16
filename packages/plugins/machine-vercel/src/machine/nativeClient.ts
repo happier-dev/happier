@@ -21,7 +21,7 @@ const namedIdentityFields = { name: text, createdAt: number, tags: defineProtoco
 const namedIdentityResponse = defineProtocolObject({ sandbox: defineProtocolObject(namedIdentityFields, open) }, open);
 const namedSchema = defineProtocolObject({
   ...namedIdentityFields, currentSessionId: text, currentSnapshotId: text.optional(),
-  persistent: defineProtocolLiteral(true), status: defineProtocolUnion([defineProtocolLiteral('running'), defineProtocolLiteral('stopped'), defineProtocolLiteral('stopping')]),
+  persistent: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]), status: defineProtocolUnion([defineProtocolLiteral('running'), defineProtocolLiteral('stopped'), defineProtocolLiteral('stopping')]),
   expiresAt: number.optional(), networkPolicy: defineProtocolJsonValue().optional(),
 }, open);
 const namedResponse = defineProtocolObject({ sandbox: namedSchema, session: sessionSchema }, open);
@@ -178,7 +178,7 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     return { ...project, nativeCredentialDelivery: qualification.kind === 'available'
       ? { status: 'supported' } : { status: 'unknown', code: qualification.code } };
   }
-  async function acquire(inputLaunch: VercelLaunch, managedId: string): Promise<Acquisition> {
+  async function acquire(inputLaunch: VercelLaunch, managedId: string, options: { persistent?: boolean } = {}): Promise<Acquisition> {
     signal?.throwIfAborted();
     const launch = VercelLaunchSchema.safeParse(inputLaunch);
     const operation = VercelOperationSchema.safeParse({ kind: 'acquire', name: 'happier-' + managedId, managedId, ...scope });
@@ -194,7 +194,8 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     if (before.kind !== 'absent') return pending(operation.data);
     signal?.throwIfAborted();
     const created = await http('/v4/sandboxes', 'POST', { projectId: scope.projectId, name: operation.data.name,
-      image: launch.data.image, region: launch.data.region, architecture: 'amd64', persistent: true,
+      ...(launch.data.snapshotId ? { source: { type: 'snapshot', snapshotId: launch.data.snapshotId } } : { image: launch.data.image }),
+      region: launch.data.region, architecture: 'amd64', persistent: options.persistent ?? true,
       resources: { vcpus: launch.data.vcpus, memory: launch.data.vcpus * 2048 }, timeout: launch.data.timeoutMs,
       snapshotExpiration: launch.data.snapshotExpirationMs,
       keepLastSnapshots: { count: 1, deleteEvicted: true, expiration: launch.data.snapshotExpirationMs },
@@ -298,13 +299,16 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     const result = await execute(native, ['sh', '-c', command], bytes);
     if (result.exitCode !== 0) fail('vercel_file_unconfirmed');
   }
-  async function bootstrap(resource: VercelResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const native = await running(resource);
+  async function guestHome(native: Native): Promise<Extract<MachineProvisionerBootstrapCarrierV1, { kind: 'native' }>['guestHome']> {
     const probe = await execute(native, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
     const parts = (probe.stdout.endsWith('\n') ? probe.stdout.slice(0, -1) : probe.stdout).split(/\r?\n/);
     if (probe.exitCode !== 0 || parts.length !== 3 || parts[0] !== 'Linux' || parts[1] !== 'x86_64' || !parts[2]!.startsWith('/')) fail('vercel_guest_unsupported');
+    return { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' };
+  }
+  async function bootstrap(resource: VercelResource): Promise<MachineProvisionerBootstrapCarrierV1> {
+    const native = await running(resource);
     return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' } };
+      guestHome: await guestHome(native) };
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const parsed = ROLE_SCHEMAS.execInput.parse(input);
@@ -402,6 +406,31 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     if (resumed.value.sandbox.status !== 'running') return { kind: 'unknown', code: 'vercel_resume_unconfirmed' };
     return { kind: 'confirmed' };
   }
+  async function qualifySnapshot(resource: VercelResource, snapshot: ProtocolSchemaOutput<typeof snapshotSchema>): Promise<Readonly<{ kind: 'present'; value: ProtocolSchemaOutput<typeof snapshotSchema> }> | Failure> {
+    const source = await http(sessionPath(snapshot.sourceSessionId));
+    if (source.kind !== 'ok') return source.kind === 'absent'
+      ? { kind: 'unknown', code: 'vercel_cleanup_unqualified', ...(source.nativeCause ? { nativeCause: source.nativeCause } : {}) } : source;
+    const decoded = sessionResponse.safeParse(source.value);
+    // Vercel requests the initial session before committing its named sandbox.
+    if (!decoded.success || decoded.data.session.id !== snapshot.sourceSessionId || decoded.data.session.projectId !== resource.projectId
+      || decoded.data.session.sourceSandboxName !== resource.name || snapshot.createdAt < resource.createdAt) {
+      return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
+    }
+    return { kind: 'present', value: snapshot };
+  }
+  async function readOwnedSnapshot(resource: VercelResource, id: string) {
+    if (!sameScope(resource)) return { kind: 'refused' as const, code: 'vercel_scope_mismatch' };
+    const snapshot = await readSnapshot(id);
+    return snapshot.kind === 'present' ? qualifySnapshot(resource, snapshot.value) : snapshot;
+  }
+  async function capture(native: Native, expiration: number) {
+    const result = await http(sessionPath(native.session.id) + '/snapshot', 'POST', { expiration });
+    if (result.kind !== 'ok') return result;
+    const decoded = snapshotResponse.safeParse(result.value);
+    return decoded.success && decoded.data.snapshot.sourceSessionId === native.session.id
+      && decoded.data.snapshot.createdAt >= native.sandbox.createdAt
+      ? { kind: 'present' as const, value: decoded.data.snapshot } : { kind: 'unknown' as const, code: 'vercel_snapshot_unconfirmed' };
+  }
   async function snapshots(resource: VercelResource): Promise<Readonly<{ kind: 'present'; ids: readonly string[] }> | Failure> {
     const ids: string[] = [];
     let cursor: string | null = null;
@@ -414,14 +443,8 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       if (!parsed.success) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
       for (const snapshot of parsed.data.snapshots) {
         if (snapshot.status === 'deleted') continue;
-        const source = await http(sessionPath(snapshot.sourceSessionId));
-        if (source.kind !== 'ok') return source.kind === 'absent'
-          ? { kind: 'unknown', code: 'vercel_cleanup_unqualified', ...(source.nativeCause ? { nativeCause: source.nativeCause } : {}) } : source;
-        const decoded = sessionResponse.safeParse(source.value);
-        // Vercel requests the initial session before committing its named
-        // sandbox. Qualify the snapshot's generation, not that request's time.
-        if (!decoded.success || decoded.data.session.id !== snapshot.sourceSessionId || decoded.data.session.projectId !== resource.projectId || decoded.data.session.sourceSandboxName !== resource.name
-          || snapshot.createdAt < resource.createdAt) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
+        const qualified = await qualifySnapshot(resource, snapshot);
+        if (qualified.kind !== 'present') return qualified;
         ids.push(snapshot.id);
       }
       cursor = parsed.data.pagination.next;
@@ -502,5 +525,6 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     return cleaned.kind === 'confirmed' ? { kind: 'confirmed' } : cleaned.kind === 'retryable'
       ? accepted(operation) : nativeFailureResult(cleaned);
   }
-  return { check, checkProject, limits, acquire, recover, inspect, bootstrap, exec, putFile, applyNativeCredentials, power, destroy, cleanup };
+  return { check, checkProject, limits, acquire, recover, inspect, bootstrap, exec, putFile, applyNativeCredentials, power, destroy, cleanup,
+    preparation: { read, readSnapshot, readOwnedSnapshot, capture, snapshots, execute, put, guestHome, http } };
 }
