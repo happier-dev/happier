@@ -3693,7 +3693,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(accountContext ? { accountLifecycleAction: createUiAccountLifecycleAction(accountContext,
       async path => {
         if (opts?.openRoute) await opts.openRoute(path);
-        else { const { router } = await import('expo-router'); router.replace(path as never); }
+        else {
+          const [{ router }, { openWorkspaceHrefOrElse }] = await Promise.all([
+            import('expo-router'), import('@/components/appShell/workspace/workspaceActionRuntime'),
+          ]);
+          await openWorkspaceHrefOrElse(path, () => router.replace(path as never));
+        }
       }) } : {}),
     ...(opts?.workspaceSyncConflictResolve ? { workspaceSyncConflictResolve: opts.workspaceSyncConflictResolve } : {}),
     ...(accountContext ? { managedMachineReferences: createUiManagedMachineReferenceReader(accountContext),

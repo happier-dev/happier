@@ -34,6 +34,7 @@ const { encodeBase64 } = await import('@/encryption/base64');
 const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
 // Route replacement is an external navigation boundary; mounted Action and Auth lifetimes remain real.
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 // Reset before the real manager starts: its generation state shares this runtime's lifetime.
 // Rewinding only serverProfiles between tests leaves the manager ahead of every new target.
 (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
@@ -357,6 +358,7 @@ describe('AuthContext with the production connection manager', () => {
         { name: 'approved all-credentials forget with failed navigation', entrypoint: 'forget-navigation' },
         { name: 'stale all-credentials forget', entrypoint: 'stale-forget' },
         { name: 'mounted focused sign-out during its own route replacement', entrypoint: 'mounted-signout' },
+        { name: 'mounted workspace sign-out without returning to Account', entrypoint: 'mounted-workspace-signout' },
         { name: 'mounted focused sign-out after unrelated caller unmount', entrypoint: 'mounted-cancel' },
         { name: 'mounted focused sign-out with failed own route replacement', entrypoint: 'mounted-navigation-failure' },
         { name: 'approved Account deletion with renewed resource review', entrypoint: 'delete' },
@@ -378,6 +380,30 @@ describe('AuthContext with the production connection manager', () => {
         }
         vi.stubGlobal('window', { location: { origin: 'https://origin.example.test' } });
         vi.stubGlobal('document', {});
+        const workspace = entrypoint === 'mounted-workspace-signout';
+        const routeWrites: string[] = [];
+        const location = { origin: 'https://origin.example.test', pathname: '/settings/account', search: '', hash: '' };
+        const history = { state: null as unknown,
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
+                history.state = state;
+                if (!href) return;
+                const next = new URL(href, location.origin);
+                location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+                routeWrites.push(next.pathname);
+            },
+            pushState: (state: unknown, unused: string, href?: string | URL | null) => history.replaceState(state, unused, href),
+            go: () => {},
+        };
+        if (workspace) {
+            const { Platform } = await import('react-native');
+            const previous = Object.getOwnPropertyDescriptor(Platform, 'OS');
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+            restorePlatform = () => { if (previous) Object.defineProperty(Platform, 'OS', previous); };
+            const events = new EventTarget();
+            vi.stubGlobal('window', { location, history, sessionStorage: { getItem: () => 'main' },
+                addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events),
+                dispatchEvent: events.dispatchEvent.bind(events) });
+        }
         const { ACCOUNT_ERASURE_HTTP_PATH_V1, ACCOUNT_ERASURE_CONFIRMATION_V1, AccountErasureRequestV1Schema } = await import('@happier-dev/protocol/auth/accountErasure');
         const { createManagedResourceDependencyFixture } = await import('@/dev/testkit/fixtures/managedResourceDependencyFixtures');
         let retainedResources: ReturnType<typeof createManagedResourceDependencyFixture>[] = [];
@@ -419,7 +445,7 @@ describe('AuthContext with the production connection manager', () => {
         await profiles.setActiveServerId(home.id, { scope: 'device' });
         await (await import('@/sync/runtime/orchestration/connectionManager')).switchConnectionToActiveServer();
         (await import('@/sync/domains/state/storage')).storage.getState().activateProfileScope({ serverId: home.id, accountId: 'account-a' });
-        const { AuthProvider } = await import('./AuthContext');
+        const { AuthProvider, useAuth } = await import('./AuthContext');
         const mounted = entrypoint.startsWith('mounted');
         const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
         let author: ReturnType<typeof useMountedActionExecution> | undefined;
@@ -433,8 +459,26 @@ describe('AuthContext with the production connection manager', () => {
             removeAuthor = () => { setVisible(false); };
             return visible ? React.createElement(MountedAccountAuthor) : null;
         }
-        const screen = await renderScreen(React.createElement(AuthProvider, { initialCredentials: credentials,
-            children: mounted ? React.createElement(NavigationOwner) : React.createElement(React.Fragment, null) }));
+        let children: React.ReactElement = mounted ? React.createElement(NavigationOwner) : React.createElement(React.Fragment, null);
+        let restoreWorkspaceSettings: (() => void) | undefined;
+        if (workspace) {
+            const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
+            const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+            const { storage } = await import('@/sync/domains/state/storage');
+            const previous = { isDataReady: storage.getState().isDataReady, settings: storage.getState().settings };
+            restoreWorkspaceSettings = () => storage.setState(previous);
+            storage.setState({ isDataReady: true, settings: { ...storage.getState().settings, workspaceTabsSyncEnabled: false } });
+            const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+                externalSessions: false, inbox: false, workflows: false, friends: false,
+            } });
+            const authorElement = children;
+            function AccountWorkspace() {
+                return React.createElement(WorkspaceProvider, { enabled: useAuth().isAuthenticated,
+                    catalog, children: authorElement });
+            }
+            children = React.createElement(AccountWorkspace);
+        }
+        const screen = await renderScreen(React.createElement(AuthProvider, { initialCredentials: credentials, children }));
         const account = await (await import('@/sync/ops/actions/actionAccountContext')).captureLazyActionAccountContext(home.id);
         const { createUiAccountLifecycleAction } = await import('@/sync/ops/actions/accountLifecycleActionDeps');
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
@@ -495,9 +539,14 @@ describe('AuthContext with the production connection manager', () => {
                 const { router } = await import('expo-router');
                 const replace = vi.spyOn(router, 'replace').mockImplementation(() => {
                     if (entrypoint === 'mounted-navigation-failure') throw new Error('Navigation unavailable');
+                    if (workspace) {
+                        act(() => { history.replaceState(history.state, '', '/'); });
+                        return;
+                    }
                     // Expo navigation unmounts the Account route, not the app's Auth provider.
                     act(() => { remove(); });
                 });
+                routeWrites.length = 0;
                 if (entrypoint === 'mounted-cancel') await act(async () => { remove(); });
                 const result = await execute('account.signOut', { serverId: home.id, accountId: 'account-a' });
                 expect(await TokenStorage.getCredentialsForServerUrl(otherHome.serverUrl, { serverId: otherHome.id })).toEqual(other);
@@ -512,7 +561,11 @@ describe('AuthContext with the production connection manager', () => {
                     expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(credentials);
                     expect(result).toMatchObject({ ok: false });
                 } else {
-                    expect(replace).toHaveBeenCalledWith('/');
+                    if (workspace) {
+                        expect(routeWrites).toContain('/');
+                        expect(routeWrites).not.toContain('/settings/account');
+                        expect(location.pathname).toBe('/');
+                    } else expect(replace).toHaveBeenCalledWith('/');
                     expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toBeNull();
                     expect(result).toEqual({ ok: true, result: { status: 'signed_out' } });
                 }
@@ -651,6 +704,7 @@ describe('AuthContext with the production connection manager', () => {
             }
             await pendingOwnAction;
             releasePresentation?.(); account.dispose(); await screen.unmount();
+            restoreWorkspaceSettings?.();
         }
     });
 
