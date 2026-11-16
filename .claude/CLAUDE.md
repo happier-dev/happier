@@ -45,7 +45,7 @@ Runtime prompt guidance and runtime action discovery are authoritative. After a 
 
 For bounded Happier delegation, discover and use `subagents.delegate.start`; use `execution.run.start` when the requested work needs its lower-level controls. In an in-session call, omit `sessionId` to host the run in the current invoking session. An explicit `sessionId` remains supported for a deliberate authorized cross-session target.
 
-Monitor runs through the discovered action contract: use start-and-wait or `execution.run.wait` for bounded observation, and use the action-based list/send/stop surfaces when needed. A wait timeout is observational and the run may still be active. Report-file watchers are only the backup described in [.claude/references/waiting.md](references/waiting.md); do not create completion ledgers or marker files to infer execution-run completion.
+Monitor runs through the discovered action contract: use start-and-wait or `execution.run.wait` for bounded observation, and use the action-based list/send/stop surfaces when needed. A wait that ends on a timeout or a server/daemon reconnect is observational and the run may still be active: check `execution.run.get` and wait again. Report-file watchers are only the backup described in [.claude/references/waiting.md](references/waiting.md); do not create completion ledgers or marker files to infer execution-run completion.
 
 `session.spawn_new` creates an independent, persistent top-level Happier session. It remains valid for that purpose, but it is not routine delegation.
 
