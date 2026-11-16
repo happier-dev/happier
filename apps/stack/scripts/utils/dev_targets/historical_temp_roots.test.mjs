@@ -509,3 +509,45 @@ test('count-retention owners can reclaim recent unheld candidates while retainin
   assert.equal(result.reclaimedRoots, 1);
   assert.equal(result.reclaimedBytes, allocatedBytes, 'hard-linked Cargo outputs occupy storage once');
 });
+
+test('process census stats each mapped path once and never stats kernel-object descriptors', { skip: process.platform === 'win32' }, async t => {
+  // A census walks every same-UID process (~2,200 on the controller, 2026-11-16): each maps the same
+  // runtime libraries many times and holds sockets/pipes whose identity is never a file in a temp root.
+  const { root } = await createTempFixture(t, { prefix: 'hstack-census-stats-' });
+  const parent = join(root, 'tmp'), proc = join(root, 'proc'), library = join(root, 'lib', 'libnode.so');
+  await mkdir(join(root, 'lib'), { recursive: true });
+  await writeFile(library, '');
+  const old = new Date(Date.now() - 48 * 3600000);
+  for (const name of ['hstack-mapped', 'hstack-unused']) {
+    await mkdir(join(parent, name), { recursive: true });
+    await writeFile(join(parent, name, 'data'), '');
+    await utimes(join(parent, name, 'data'), old, old);
+    await utimes(join(parent, name), old, old);
+  }
+  for (const pid of ['42', '43']) {
+    await mkdir(join(proc, pid, 'fd'), { recursive: true });
+    await writeFile(join(proc, pid, 'status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+    await writeFile(join(proc, pid, 'environ'), '');
+    const mapped = pid === '42' ? `1-2 r--p 0 00:00 1 ${join(parent, 'hstack-mapped', 'data')}\n` : '';
+    await writeFile(join(proc, pid, 'maps'), `${Array(5).fill(`1-2 r-xp 0 00:00 1 ${library}\n`).join('')}${mapped}`);
+    await symlink(root, join(proc, pid, 'cwd'));
+    await symlink('socket:[123]', join(proc, pid, 'fd', '3'));
+    await symlink('pipe:[456]', join(proc, pid, 'fd', '4'));
+  }
+  const statSync = fs.statSync;
+  const stats = new Map();
+  t.mock.method(fs, 'statSync', (path, ...args) => {
+    stats.set(String(path), (stats.get(String(path)) ?? 0) + 1);
+    return statSync(path, ...args);
+  });
+  t.mock.method(console, 'error', () => {});
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const result = reapHistoricalTempRoots(parent, proc);
+  assert.deepEqual(result.reclaimedNames, ['hstack-unused']);
+  await access(join(parent, 'hstack-mapped'));
+  // Two censuses per sweep: the shared library is stat'd once per census, not once per mapping line.
+  assert.equal(stats.get(library), 2);
+  const kernelObjectStats = [...stats.keys()].filter(path => /\/fd\/[34]$|^(socket|pipe):/.test(path));
+  assert.deepEqual(kernelObjectStats, []);
+});

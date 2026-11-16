@@ -108,3 +108,27 @@ test('recent dispatches read only the window tail first, then only appended byte
   assert.equal(bytes, Buffer.byteLength(appended));
   assert.equal(second.history.recentAdmissions, 101);
 });
+
+test('one fabric read lists the reservation directory once, whatever the target count', async t => {
+  // The TUI reads the fabric every second; the controller's directory held ~9,000 entries (2026-11-16) and
+  // one listing per target made getdents the TUI's largest idle cost.
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'happier-fabric-listing-'));
+  t.after(async () => rm(stackBaseDir, { recursive: true, force: true }));
+  const cacheDir = join(stackBaseDir, 'dev-target-command-load-native');
+  await mkdir(cacheDir, { recursive: true });
+  await writeFile(join(cacheDir, `a.active.${process.pid}`), `${process.pid}\nfull-validation\n`);
+  await writeFile(join(cacheDir, `b.active.${process.pid}`), `${process.pid}\ncompilation\n`);
+  const readdir = fsPromises.readdir;
+  let listings = 0;
+  t.mock.method(fsPromises, 'readdir', async (path, ...args) => {
+    if (String(path) === cacheDir) listings++;
+    return readdir(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const reader = createExecutionFabricSummaryReader({ stackBaseDir, targetNames: ['a', 'b', 'c', 'd'],
+    sampleLocal: () => ({ name: 'primary' }), readDurations: async () => [] });
+  const summary = await reader.read({ now: Date.now() });
+  assert.equal(listings, 1);
+  assert.deepEqual(summary.live.slice(1).map(target => [target.name, target.activeReservations]), [['a', 1], ['b', 1], ['c', 0], ['d', 0]]);
+});

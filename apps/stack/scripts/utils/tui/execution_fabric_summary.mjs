@@ -1,5 +1,5 @@
 import { open, readFile, readdir } from 'node:fs/promises';
-import { cpus, freemem, loadavg, totalmem } from 'node:os';
+import { availableParallelism, freemem, loadavg, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { EXECUTION_PROVENANCE_FILENAME, readExecutionDurationSummaries } from '../dev_targets/execution_provenance.mjs';
 
@@ -59,13 +59,16 @@ function processIsAlive(pid) {
   }
 }
 
-async function readActiveReservations(cacheDir, targetName) {
-  let names = [];
+async function listCacheDir(cacheDir) {
   try {
-    names = await readdir(cacheDir);
+    return await readdir(cacheDir);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
+    return [];
   }
+}
+
+async function readActiveReservations(cacheDir, targetName, names) {
   const prefix = `${targetName}.active.`;
   let active = 0;
   const classes = new Map();
@@ -79,11 +82,11 @@ async function readActiveReservations(cacheDir, targetName) {
   return { active, classes: Object.fromEntries(classes) };
 }
 
-async function readTargetSnapshot(cacheDir, targetName, now) {
+async function readTargetSnapshot(cacheDir, targetName, now, names) {
   const [telemetryRaw, cacheRaw, reservations] = await Promise.all([
     readText(join(cacheDir, `${targetName}.telemetry`)),
     readText(join(cacheDir, `${targetName}.cache`)),
-    readActiveReservations(cacheDir, targetName),
+    readActiveReservations(cacheDir, targetName, names),
   ]);
   const telemetry = parseTelemetry(telemetryRaw);
   return {
@@ -191,7 +194,8 @@ function defaultLocalSample() {
   return {
     name: 'primary',
     platform: process.platform === 'darwin' ? 'darwin' : 'linux',
-    capacity: cpus().length,
+    // availableParallelism, not cpus().length: cpus() parses per-core /proc data on every 1 Hz sample.
+    capacity: availableParallelism(),
     load: loadavg()[0],
     memAvailableKiB: Math.floor(freemem() / 1024),
     memTotalKiB: Math.floor(totalmem() / 1024),
@@ -211,11 +215,13 @@ export function createExecutionFabricSummaryReader({
   const recentAdmissions = createRecentAdmissionsWindow(join(cacheDir, EXECUTION_PROVENANCE_FILENAME));
   return {
     async read({ now = Date.now() } = {}) {
+      // One listing serves every target: the directory also holds per-command cache files.
+      const names = targetNames.length > 0 ? listCacheDir(cacheDir) : Promise.resolve([]);
       const [local, durations, recent, ...targets] = await Promise.all([
         Promise.resolve(sampleLocal()),
         readDurations(stackBaseDir),
         recentAdmissions.read(now),
-        ...targetNames.map((targetName) => readTargetSnapshot(cacheDir, targetName, now)),
+        ...targetNames.map(async (targetName) => readTargetSnapshot(cacheDir, targetName, now, await names)),
       ]);
       return { live: [local, ...targets], durations: durations ?? [],
         history: { recentAdmissions: recent.length, recentByTarget: summarizeByTarget(recent) } };

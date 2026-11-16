@@ -396,6 +396,33 @@ exec ${quote(process.execPath)} "$@"
   assert.equal((await readFile(censusLog, 'utf8')).trim().split('\n').length, 1);
 });
 
+test('test-root reclamation skips the process census when every candidate is retained by its live group', { skip: process.platform !== 'linux' }, async t => {
+  // Every top-level test producer runs this pass at exit (2026-11-16 controller: ~2.6 full censuses a
+  // minute, ~3 CPU-s each). A root whose creator group still lives is retained whatever the census says.
+  const { root } = await createTempFixture(t, { prefix: 'hstack-temp-live-groups-' });
+  const bootId = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
+  const identity = new URL('../proc/native_process_identity.sh', import.meta.url).pathname;
+  const token = spawnSync('/bin/bash', ['-c', '. "$1"; heavyweight_process_token "$2"', 'identity', identity, String(process.pid)], { encoding: 'utf8' }).stdout;
+  const liveGroup = spawn('/bin/sleep', ['300'], { detached: true, stdio: 'ignore' });
+  t.after(() => liveGroup.kill('SIGTERM'));
+  const env = await processCensusEnv(root, [process.pid, liveGroup.pid]);
+  const censusLog = join(root, 'census.log');
+  await writeFile(censusLog, '');
+  writeFakeBin({ root, name: 'node', content: `#!/bin/sh
+case "$*" in *--test-temp-users*) echo census >> ${quote(censusLog)} ;; esac
+exec ${quote(process.execPath)} "$@"
+` });
+  const retained = Array.from({ length: 3 }, (_, index) => join(root, `happier-test-home-live-group-${index}`));
+  for (const directory of retained) {
+    await mkdir(directory);
+    await writeFile(join(directory, '.happier-test-temp-owner'), `happier-test-temp-v1\n${bootId}\n2147483647\n${token}\n${liveGroup.pid}\n`);
+  }
+  const result = spawnSync('/bin/bash', [custody, 'reap-test-temp-roots', '-', '-'], { env: { ...env, TMPDIR: root }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  for (const directory of retained) await access(directory);
+  assert.equal((await readFile(censusLog, 'utf8')).trim(), '', 'no census for candidates their live group already retains');
+});
+
 test('maintenance reclaims dead scratch when a census process exits before its environment is read', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-temp-stale-census-' });
   const identity = new URL('../proc/native_process_identity.sh', import.meta.url).pathname;

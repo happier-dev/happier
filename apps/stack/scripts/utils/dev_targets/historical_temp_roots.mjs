@@ -38,6 +38,9 @@ function inspectTree(path, countedInodes = new Set(), ownerUid = process.getuid(
 
 function collectProcessReferences(procRoot, ownerUid, { bindingsOnly = false, processIds } = {}) {
   const paths = [], identities = new Set();
+  // One census reads every same-UID process; most map the same runtime libraries many times. A path's
+  // identity is observed once per census (descriptor links below still identify each opened inode).
+  const observedPaths = new Set();
   for (const pid of processIds ?? readdirSync(procRoot).filter(name => /^\d+$/.test(name))) {
     const processRoot = join(procRoot, pid);
     let matchingOwnerUid = false;
@@ -51,7 +54,9 @@ function collectProcessReferences(procRoot, ownerUid, { bindingsOnly = false, pr
       if (/^State:\s+Z/m.test(status) || /^Kthread:\s+1/m.test(status)) continue;
       const addPath = path => {
         paths.push(path.replace(/ \(deleted\)$/, ''));
-        if (bindingsOnly) return;
+        // Sockets, pipes and anon inodes (`socket:[n]`) are kernel objects, never files in a temp root.
+        if (bindingsOnly || !path.startsWith('/') || observedPaths.has(path)) return;
+        observedPaths.add(path);
         try { identities.add(identity(statSync(path))); }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       };
@@ -80,8 +85,9 @@ function collectProcessReferences(procRoot, ownerUid, { bindingsOnly = false, pr
       if (bindingsOnly) continue;
       for (const link of [join(processRoot, 'cwd'), ...readdirSync(join(processRoot, 'fd')).map(fd => join(processRoot, 'fd', fd))]) {
         try {
-          addPath(readlinkSync(link));
-          identities.add(identity(statSync(link)));
+          const target = readlinkSync(link);
+          addPath(target);
+          if (target.startsWith('/')) identities.add(identity(statSync(link)));
         } catch (error) {
           // A descriptor may close during inspection. Missing cwd for a live
           // userspace process is unknown, not proof that it owns no root.

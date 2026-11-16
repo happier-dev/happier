@@ -194,18 +194,26 @@ reap_test_temp_roots() {
     candidates+=("$directory"); candidate_pids+=("$owner_pid"); candidate_tokens+=("$owner_token"); candidate_groups+=("$owner_group")
   done
   [ "${#candidates[@]}" -gt 0 ] || return 0
-  # One fresh observation of every candidate, taken after discovery and
-  # immediately before removal (a per-root census scales with the abandoned
-  # set). It includes cwd, descriptors and mappings: a process working in a
-  # root uses it even after dropping the binding. A live descendant remains an
-  # owner after its creator dies; shared or recycled groups are retained
-  # conservatively; no process is signaled.
+  # A live descendant remains an owner after its creator dies; shared or
+  # recycled groups are retained conservatively; no process is signaled. That
+  # retention needs only the process snapshot, so it is decided first and the
+  # census runs only when some candidate is still undecided (every top-level
+  # test producer runs this pass at exit; a full census costs seconds of CPU).
   snapshot=$(ps -eo pid=,pgid=,stat=,uid=) || return 0
-  read_test_temp_root_users "$snapshot" --references || return 0
+  local -a undecided=()
   for index in "${!candidates[@]}"; do
+    printf '%s\n' "$snapshot" | awk -v group="${candidate_groups[$index]}" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && continue
+    undecided+=("$index")
+  done
+  [ "${#undecided[@]}" -gt 0 ] || return 0
+  # One fresh observation of every remaining candidate, taken after discovery
+  # and immediately before removal (a per-root census scales with the abandoned
+  # set). It includes cwd, descriptors and mappings: a process working in a
+  # root uses it even after dropping the binding.
+  read_test_temp_root_users "$snapshot" --references || return 0
+  for index in "${undecided[@]}"; do
     directory=${candidates[$index]}
     printf '%s\n' "$test_temp_root_users" | grep -Fx -- "$directory" >/dev/null && continue
-    printf '%s\n' "$snapshot" | awk -v group="${candidate_groups[$index]}" '$2 == group && $3 !~ /^Z/ {found=1} END {exit !found}' && continue
     heavyweight_process_is_current "${candidate_pids[$index]}" "${candidate_tokens[$index]}" && continue
     printf '[preferred-execution] removing abandoned test temporary root %s\n' "$directory" >&2
     rm -rf -- "$directory" 2>/dev/null || node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" --remove-owned-temp-root "$directory"
