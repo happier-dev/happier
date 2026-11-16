@@ -304,19 +304,70 @@ describe('private preset preparation operation', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('Archive cleanup rejects a stale revision before native destruction', async () => {
+  it.each(['plain', 'e2ee'] as const)('Archive retains manual cleanup references and restores cold when its original host is permanently gone in %s', async mode => {
+    let nonce = 90;
+    const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }
+      : { mode, accountId: 'owner', accountKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(71)),
+        randomBytes: length => new Uint8Array(length).fill(nonce++) };
+    const fixture = storageFixture(custody);
+    const original = { operationId: 'operation-one', ...identity, machineId: 'original-prepare-host', custody,
+      composeBuild: async () => ({ input: buildInput }), storage: fixture.storage,
+      native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }) }) };
+    await advanceManagedMachinePresetPreparationOperationV1(original);
+    await advanceManagedMachinePresetPreparationOperationV1(original);
+    const prepared = fixture.opened().prepared!;
+    const recipients = fixture.row().recipients;
+    const expectedRevision = fixture.row().revision;
+    const effects: string[] = [];
+    const outcome = await settleManagedMachinePresetPreparationOperationV1({ ...original,
+      operationId: 'archive-operation', expectedRevision, cleanupOnly: true,
+      cleanupUnavailable: mode === 'plain' ? 'machine_revoked' : 'machine_replaced',
+      native: nativeFixture({
+        build: async () => { effects.push('build'); return { kind: 'ready', artifact }; },
+        inspect: async () => { effects.push('inspect'); return { kind: 'ready', artifact }; },
+        destroy: async () => { effects.push('destroy'); return { kind: 'confirmed' }; },
+      }) });
+    expect(outcome).toEqual({ kind: 'cancelled', revision: expectedRevision + 1,
+      prepared: { ...prepared, status: 'cancelled', code: 'preparation_cleanup_required' } });
+    expect(fixture.opened().prepared).toEqual({ ...prepared, status: 'cancelled', code: 'preparation_cleanup_required' });
+    expect(fixture.row().recipients).toEqual(recipients);
+    expect(effects).toEqual([]);
+    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
+      .toEqual({ kind: 'cold', reason: 'cancelled' });
+  });
+
+  it.each([undefined, 'machine_revoked', 'machine_replaced'] as const)('Archive cleanup rejects a stale revision before native destruction (%s)', async cleanupUnavailable => {
     const fixture = storageFixture();
     await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
       composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
       native: nativeFixture() });
     let destroys = 0;
-    const archive = { operationId: 'archive-operation', ...identity, cleanupOnly: true as const,
+    const writes = fixture.writes.length;
+    const archive = { operationId: 'archive-operation', ...identity, cleanupOnly: true as const, cleanupUnavailable,
       custody: { mode: 'plain' as const }, storage: fixture.storage,
       native: nativeFixture({ destroy: async () => { destroys++; return { kind: 'confirmed' }; } }) };
     expect(await settleManagedMachinePresetPreparationOperationV1(archive)).toEqual({ kind: 'conflict',
       currentRevision: fixture.row().revision });
     expect(destroys).toBe(0);
+    expect(fixture.writes).toHaveLength(writes);
     expect(fixture.opened().prepared).toMatchObject({ status: 'ready', artifact });
+  });
+
+  it('ordinary Prepare still cleans up the old image when a cleanup-unavailable fact is supplied', async () => {
+    const fixture = storageFixture();
+    const original = { operationId: 'operation-one', ...identity, custody: { mode: 'plain' as const },
+      composeBuild: async () => ({ input: buildInput }), storage: fixture.storage, native: nativeFixture() };
+    await advanceManagedMachinePresetPreparationOperationV1(original);
+    const effects: string[] = [];
+    const outcome = await settleManagedMachinePresetPreparationOperationV1({ ...original,
+      operationId: 'operation-two', expectedRevision: fixture.row().revision, cleanupUnavailable: 'machine_revoked',
+      native: nativeFixture({
+        destroy: async () => { effects.push('destroy'); return { kind: 'confirmed' }; },
+        build: async () => { effects.push('build'); return { kind: 'ready', artifact }; },
+      }) });
+    expect(outcome).toMatchObject({ kind: 'ready', prepared: { operationId: 'operation-two', status: 'ready' } });
+    expect(effects).toEqual(['destroy', 'build']);
+    expect(fixture.opened().prepared).not.toHaveProperty('code');
   });
 
   it.each(['artifact', 'nativeOperation'] as const)('reload follows retained cancelled %s cleanup through confirmed absence', async reference => {

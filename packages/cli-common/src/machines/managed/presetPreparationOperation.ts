@@ -1,5 +1,6 @@
 import type { ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { ManagedMachinePresetPreparedV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { openManagedMachinePresetContentV1, replaceManagedMachinePresetPreparationV1,
   type ManagedMachinePresetContentV1, type ManagedMachinePresetPreparedWriteV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -40,6 +41,8 @@ export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   cliIdentity?: string;
   /** Archive removes the incumbent image without composing a replacement. */
   cleanupOnly?: boolean;
+  /** Machine admission established that the original cleanup host is permanently gone. */
+  cleanupUnavailable?: Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'];
   /** Only a new build needs CLI assets; recovery uses the retained native facts. */
   composeBuild?: (capturedContent: ManagedMachinePresetContentV1) => Promise<ManagedMachinePresetPreparationBuildCompositionV1>;
   custody: ManagedMachinePresetPreparationCustodyV1;
@@ -313,6 +316,10 @@ export async function settleManagedMachinePresetPreparationOperationV1(
       return { kind: 'conflict', currentRevision: initial.preset.revision };
     }
     if (!incumbent) return { kind: 'refused', code: 'invalid_request' };
+    if (input.cleanupUnavailable !== undefined) {
+      return await persist(input, current, { ...incumbent, status: 'cancelled', code: 'preparation_cleanup_required' },
+        'cancelled', input.expectedRevision);
+    }
     return await follow({ ...input, operationId: incumbent.operationId }, true, input.expectedRevision);
   }
   if (!incumbent || incumbent.operationId === input.operationId
