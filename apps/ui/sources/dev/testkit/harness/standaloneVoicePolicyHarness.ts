@@ -13,11 +13,8 @@ import { createConnectedPurposeCatalogHttpBoundary } from './connectedAccountCat
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { createExternalActionAccountHttpBoundary } from './externalActionAccountHttpBoundary';
+import { createRetainedVoiceAgentActionHttpBoundaries } from './voiceAgentRpcBoundary';
 import { createAccountTokenForTests } from './homeGovernanceHarness';
-import { ExecutionRunEnsureRequestSchema, ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/index';
-import { ExternalActionRequesterInvocationBaseV1Schema } from '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 // Native/OS adapters only: Account, Sync, settings, catalog and launch remain real.
 vi.mock('react-native', async () => {
@@ -130,7 +127,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
             ...params.existingSession });
         const machineId = session.metadata?.machineId ?? 'voice-machine';
         session = { ...session, metadata: { path: '/voice', host: 'voice.test', ...session.metadata, machineId } };
-        let actionBoundaries: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>[] = [];
+        let actionBoundaries: Awaited<ReturnType<typeof createRetainedVoiceAgentActionHttpBoundaries>> = [];
         const { createSessionMetadataHttpBoundary } = await import('./sessionMetadataHttpBoundary');
         const extraSessions = params.sessions ?? [];
         const sessionHttp = createSessionMetadataHttpBoundary(() => Object.fromEntries([session, ...extraSessions].map(value => [value.id, value])));
@@ -195,36 +192,12 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         const sessionScopeId = resolveServerProfileScopeIdForIdentifier(connection.home.id);
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(connection.home.id);
-        let admittedInvocation: ReturnType<typeof ExternalActionRequesterInvocationBaseV1Schema.parse> | undefined;
         try {
             if (!account.serverIdentityId) throw new Error('Expected the restored Voice Action Home');
-            const serverIdentityId = account.serverIdentityId;
-            actionBoundaries = await Promise.all((['execution.run.start', 'execution.run.ensure'] as const).map(actionId =>
-                createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl, serverIdentityId,
-                    accountId: account.accountId, machineId, actionId, tokenEpoch: 0,
-                    failure: value => value && typeof value === 'object' && 'ok' in value && value.ok === false
-                        && 'errorCode' in value && typeof value.errorCode === 'string'
-                        ? { errorCode: value.errorCode, error: 'error' in value && typeof value.error === 'string' ? value.error : value.errorCode,
-                            ...('details' in value ? { details: value.details } : {}) } : null,
-                    execute: async (input, context) => {
-                        // This external daemon fixture exposes its existing Ensure-or-Start bridge
-                        // beneath the genuine signed Action transport, just as the runtime does.
-                        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a Run Action input');
-                        const { sessionId: _sessionId, ...runInput } = input as Record<string, unknown>;
-                        const request = actionId === 'execution.run.start'
-                            ? { start: ExecutionRunStartRequestSchema.parse(runInput) }
-                            : ExecutionRunEnsureRequestSchema.parse(runInput);
-                        const result = await params.dispatch(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, request);
-                        if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) return result;
-                        if (actionId === 'execution.run.ensure') return { ok: true, actionInvocation: admittedInvocation };
-                        admittedInvocation = ExternalActionRequesterInvocationBaseV1Schema.parse(context.invocation && {
-                            caller: context.invocation.caller, surface: context.invocation.surface, authority: context.invocation.authority,
-                        });
-                        return { runId: 'runId' in result ? result.runId : undefined, callId: 'voice-call', sidechainId: 'voice-sidechain',
-                            ...('preparedInstructionsFor' in result ? { preparedInstructionsFor: result.preparedInstructionsFor } : {}),
-                            actionInvocation: admittedInvocation };
-                    },
-                })));
+            actionBoundaries = await createRetainedVoiceAgentActionHttpBoundaries({
+                serverUrl: account.endpointUrl, serverIdentityId: account.serverIdentityId,
+                accountId: account.accountId, machineId, dispatch: params.dispatch,
+            });
         } finally { account.dispose(); }
         applyPreference({ experiments: true, featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
             voice: { ...storage.getState().settings.voice, providerId: 'local_conversation', assistantLanguage: 'fr-FR', welcome: { ...storage.getState().settings.voice.welcome, enabled: params.mode !== 'off', mode: params.mode === 'on_first_turn' ? params.mode : 'immediate' },

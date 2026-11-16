@@ -85,6 +85,8 @@ export async function answerExternalActionAccountForHome(homes: Pick<HomeGoverna
 /** One current Account's external issuer and Machine HTTP responses.
  * Account capture, custody admission, authorization binding and requester-box crypto stay real.
  */
+export type ExternalActionAccountHttpBoundary = Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
+
 export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     serverUrl: string;
     serverIdentityId: string;

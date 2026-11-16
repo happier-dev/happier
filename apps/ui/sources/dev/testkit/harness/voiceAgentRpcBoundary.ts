@@ -5,6 +5,46 @@
  * This module has no platform or mock-registration side effects.
  */
 import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ExternalActionAccountHttpBoundary } from './externalActionAccountHttpBoundary';
+
+/** Serve retained daemon launch through the actual Account Action admission transport. */
+export async function createRetainedVoiceAgentActionHttpBoundaries(params: Readonly<{
+    serverUrl: string;
+    serverIdentityId: string;
+    accountId: string;
+    machineId: string;
+    dispatch: (method: string, input: unknown, context: Readonly<{ sessionId: unknown }>) => Promise<unknown>;
+}>): Promise<ExternalActionAccountHttpBoundary[]> {
+    const { createExternalActionAccountHttpBoundary } = await import('./externalActionAccountHttpBoundary');
+    const { ExecutionRunEnsureRequestSchema, ExecutionRunStartRequestSchema } = await import('@happier-dev/protocol/execution/runs/index');
+    const { ExternalActionRequesterInvocationBaseV1Schema } = await import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1');
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    let admittedInvocation: ReturnType<typeof ExternalActionRequesterInvocationBaseV1Schema.parse> | undefined;
+    const createBoundary = (actionId: 'execution.run.start' | 'execution.run.ensure') =>
+        createExternalActionAccountHttpBoundary({ ...params, actionId, tokenEpoch: 0,
+            failure: value => value && typeof value === 'object' && 'ok' in value && value.ok === false
+                && 'errorCode' in value && typeof value.errorCode === 'string'
+                ? { errorCode: value.errorCode, error: 'error' in value && typeof value.error === 'string' ? value.error : value.errorCode,
+                    ...('details' in value ? { details: value.details } : {}) } : null,
+            execute: async (input, context) => {
+                if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a Run Action input');
+                const { sessionId, ...runInput } = input as Record<string, unknown>;
+                const request = actionId === 'execution.run.start'
+                    ? { start: ExecutionRunStartRequestSchema.parse(runInput) }
+                    : ExecutionRunEnsureRequestSchema.parse(runInput);
+                const result = await params.dispatch(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, request, { sessionId });
+                if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) return result;
+                if (actionId === 'execution.run.ensure') return { ok: true, actionInvocation: admittedInvocation };
+                admittedInvocation = ExternalActionRequesterInvocationBaseV1Schema.parse({
+                    caller: context.invocation.caller, surface: context.invocation.surface, authority: context.invocation.authority,
+                });
+                return { runId: 'runId' in result ? result.runId : undefined, callId: 'voice-call', sidechainId: 'voice-sidechain',
+                    ...('preparedInstructionsFor' in result ? { preparedInstructionsFor: result.preparedInstructionsFor } : {}),
+                    actionInvocation: admittedInvocation };
+            },
+        });
+    return await Promise.all([createBoundary('execution.run.start'), createBoundary('execution.run.ensure')]);
+}
 
 export async function createRetainedVoiceAgentRpcBoundary(params: Readonly<{
     /** Identity assigned by this synthetic daemon, parsed by the real public schema. */
