@@ -372,6 +372,7 @@ const actionFamilyTranslations = { fr: translated({
             client_files: "Fichiers du client",
             project_readiness: "Préparation du projet",
             deployments: "Déploiements",
+            deployment_suggestions: 'Suggestions de déploiement',
             machine_isolation: "Isolation",
             machine_agent_isolation: `Les agents s’exécutent en tant que`,
             plugin_execution_origin: "Exécution des plugins",

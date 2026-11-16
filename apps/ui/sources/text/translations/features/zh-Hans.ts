@@ -372,6 +372,7 @@ const actionFamilyTranslations = { 'zh-Hans': translated({
             client_files: "客户端文件",
             project_readiness: "项目就绪状态",
             deployments: "部署",
+            deployment_suggestions: '部署建议',
             machine_isolation: "隔离",
             machine_agent_isolation: `代理运行身份`,
             plugin_execution_origin: "插件执行",

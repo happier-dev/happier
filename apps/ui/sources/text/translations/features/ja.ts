@@ -372,6 +372,7 @@ const actionFamilyTranslations = { ja: translated({
             client_files: "クライアントのファイル",
             project_readiness: "プロジェクトの準備状況",
             deployments: "デプロイ",
+            deployment_suggestions: 'デプロイの提案',
             machine_isolation: "分離",
             machine_agent_isolation: `エージェントの実行ユーザー`,
             plugin_execution_origin: "プラグインの実行",

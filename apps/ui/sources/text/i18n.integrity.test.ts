@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { ACTION_ID_FAMILIES_V1, type ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
+import { actionIdFamilyTitleKey } from '@/components/settings/actions/actionSettingsFamily';
 
 import { en } from './translations/en';
 import { ru } from './translations/ru';
@@ -1225,6 +1227,16 @@ function callSampledTranslation(value: unknown, args: readonly unknown[]): strin
 }
 
 describe('i18n integrity', () => {
+    it('resolves every canonical Action family title at each public locale root', () => {
+        for (const family of Object.keys(ACTION_ID_FAMILIES_V1) as ActionIdFamilyV1[]) {
+            const key = actionIdFamilyTitleKey(family);
+            for (const [code, root] of Object.entries({ en, ca, de, es, fr, it: itLocale, ja, pl, pt, ru, zhHans, zhHant })) {
+                const label = readTranslationLeaf(root, key);
+                expect(typeof label, `${code}: ${key}`).toBe('string');
+                expect(label, `${code}: ${key}`).not.toBe('');
+            }
+        }
+    });
     it('provides the desktop window Action family label in every supported locale', () => {
         const english = readTranslationLeaf(en, 'actionFamilies.desktop_windows');
         expect(typeof english).toBe('string');

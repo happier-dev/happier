@@ -71,6 +71,7 @@ export const english = {
         project_execution: "Project scripts",
         project_definitions: "Project settings",
         deployments: "Deployments",
+        deployment_suggestions: 'Deployment suggestions',
         account_profile: "Account profile",
         project_workers: "Project workers",
         operation_output: "Operation output",
