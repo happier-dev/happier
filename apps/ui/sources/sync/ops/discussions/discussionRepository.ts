@@ -1705,6 +1705,14 @@ export function createDiscussionRepository(options: Readonly<{
                 mountedWatch = watchMountedDiscussions({ scope: options.scope, address: options.address,
                     includeDocSourceChanges: () => attentionMountReferences > 0 || [...mountedAnchors.values()].some(entry => typeof entry.anchor === 'object'),
                     onSnapshotInvalidated: () => { void refreshMountedSnapshot(); },
+                    readNotCurrent: () => {
+                        const failed = (status: DiscussionRepositoryStatus | undefined) => status === 'offline' || status === 'error';
+                        if (attentionMountReferences > 0 && failed(snapshot.attention.status)) return true;
+                        const anchors = [...(homeMountReferences > 0 ? [undefined] : []), ...[...mountedAnchors.values()].map(entry => entry.anchor)];
+                        if (anchors.some(anchor => failed(getListSnapshot(anchor).lists.active.status)
+                            || failed(getListSnapshot(anchor).lists.archived.status))) return true;
+                        return [...mountedThreads.keys(), ...mountedSummaries.keys()].some(id => failed(snapshot.threads[id]?.status));
+                    },
                     onInvalidated: (discussionIds, revisions, readStateOnlyIds, docArtifactIds) => {
                         void refreshLoaded(discussionIds, revisions, { readStateOnlyIds, docArtifactIds });
                     } });

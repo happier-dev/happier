@@ -356,3 +356,30 @@ it('reads attention once for one Artifact write: the local receipt is not a snap
         expect(network.list).not.toHaveBeenCalled();
     } finally { leave(); repository.clear(); }
 });
+
+it('re-reads mounted attention on a primary-Home reconnect only when its last read did not succeed', async () => {
+    let response: Response = Response.json({ discussions: [], nextCursor: null, incomplete: false });
+    // HTTP is the boundary: the catch-up's exact Discussion rows are the reconnect's delivery path.
+    const request = vi.fn(async () => response.clone());
+    const repository = createDiscussionRepository({ scope, address, client: client({
+        attention: (input, signal) => readDiscussionAttentionPage({ scope, encryption: null, availability: 'available', request }, input, signal),
+    }) });
+    await repository.refreshAttention();
+    const leave = repository.mount({ attention: true });
+    try {
+        await flushHookEffects();
+        request.mockClear();
+        publishHomeAccountChange(scope.serverId, undefined, { source: 'connected', changesCatchUp: true });
+        await flushHookEffects();
+        expect(request).toHaveBeenCalledTimes(0);
+
+        response = Response.json({ error: 'unavailable' }, { status: 503 });
+        publishHomeAccountChange(scope.serverId, undefined, { source: 'snapshot' });
+        await vi.waitFor(() => expect(repository.getSnapshot().attention.status).not.toBe('ready'));
+        response = Response.json({ discussions: [], nextCursor: null, incomplete: false });
+        request.mockClear();
+        publishHomeAccountChange(scope.serverId, undefined, { source: 'connected', changesCatchUp: true });
+        await vi.waitFor(() => expect(repository.getSnapshot().attention.status).toBe('ready'));
+        expect(request).toHaveBeenCalledTimes(1);
+    } finally { leave(); repository.clear(); }
+});

@@ -14,6 +14,7 @@ type ActiveWatch = Readonly<{
     onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>, readStateOnlyIds?: ReadonlySet<string>, docArtifactIds?: ReadonlySet<string>): void;
     includeDocSourceChanges?: () => boolean;
     onSnapshotInvalidated?: () => void;
+    readNotCurrent?: () => boolean;
 }>;
 
 const activeWatches = new Set<ActiveWatch>();
@@ -29,6 +30,11 @@ export function watchMountedDiscussions(input: Readonly<{
     onInvalidated: ActiveWatch['onInvalidated'];
     includeDocSourceChanges?: () => boolean;
     onSnapshotInvalidated?: () => void;
+    /**
+     * Whether a mounted read did not succeed. Discussion and doc rows arrive through the changes
+     * catch-up (`publishMountedDiscussionChanges`), so a primary-Home reconnect re-reads only then.
+     */
+    readNotCurrent?: () => boolean;
 }>): MountedDiscussionChangeWatch {
     const watch: ActiveWatch = Object.freeze({
         scope: Object.freeze({ ...input.scope }),
@@ -36,6 +42,7 @@ export function watchMountedDiscussions(input: Readonly<{
         onInvalidated: input.onInvalidated,
         includeDocSourceChanges: input.includeDocSourceChanges,
         onSnapshotInvalidated: input.onSnapshotInvalidated,
+        readNotCurrent: input.readNotCurrent,
     });
     activeWatches.add(watch);
     const stopSnapshotWatch = input.onSnapshotInvalidated ? subscribeHomeAccountChange(event => {
@@ -51,7 +58,7 @@ export function watchMountedDiscussions(input: Readonly<{
         if (event.changeKinds !== undefined && !event.changeKinds.includes('discussion')
             && !(event.changeKinds.includes('artifact') && watch.includeDocSourceChanges?.())) return;
         watch.onSnapshotInvalidated?.();
-    }, { includeCatchUpPending: true, serverIds: [watch.address.serverId], reconnect: 'refresh' }) : undefined;
+    }, { includeCatchUpPending: true, serverIds: [watch.address.serverId], reconnect: { readNotCurrent: () => watch.readNotCurrent?.() === true } }) : undefined;
     let disposed = false;
     return Object.freeze({
         dispose(): void {
