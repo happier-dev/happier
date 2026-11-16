@@ -159,21 +159,31 @@ export const LocalServiceMachineSummaryV1Schema = lazyZodSchema(() => z.discrimi
 ]));
 export type LocalServiceMachineSummaryV1 = z.infer<typeof LocalServiceMachineSummaryV1Schema>;
 
-/** The process classifier emits a kind for recognized dev servers; unnamed/noisy listeners remain diagnostics. */
-export function isLocalServiceWebServerV1(entry: Readonly<{
+/** Listing a Session-owned listener does not infer its runtime or endpoint scheme. */
+export function isLocalServiceInventoryTargetV1(entry: Readonly<{
   classification?: unknown;
+  provenance?: unknown;
 }>): boolean {
   const classification = entry.classification;
-  if (!classification || typeof classification !== 'object') return false;
-  return 'kind' in classification && typeof classification.kind === 'string' && classification.kind.length > 0
-    && classification.kind !== 'happier' && !('lowSignal' in classification && classification.lowSignal === true);
+  if (classification && typeof classification === 'object') {
+    if (('kind' in classification && classification.kind === 'happier')
+      || ('lowSignal' in classification && classification.lowSignal === true)) return false;
+    if ('kind' in classification && typeof classification.kind === 'string' && classification.kind.length > 0) return true;
+  }
+  const provenance = entry.provenance;
+  if (!provenance || typeof provenance !== 'object') return false;
+  const session = 'session' in provenance ? provenance.session : undefined;
+  const workspace = 'workspace' in provenance ? provenance.workspace : undefined;
+  return !!session && typeof session === 'object' && 'id' in session && typeof session.id === 'string' && session.id.length > 0
+    && !!workspace && typeof workspace === 'object' && 'association' in workspace && workspace.association === 'process_tree';
 }
 
 /** Shared by the daemon publication and admitted client inventory snapshots. */
 export function projectLocalServiceMachineSummaryV1(snapshot: Readonly<{
   generatedAt: number;
   refreshState: string;
-  entries: readonly (Parameters<typeof localServiceListenerGroupKey>[0] & Readonly<{ state: string; classification?: unknown }>)[];
+  entries: readonly (Parameters<typeof localServiceListenerGroupKey>[0] & Parameters<typeof isLocalServiceInventoryTargetV1>[0]
+    & Readonly<{ state: string }>)[];
   diagnostics: readonly unknown[];
 }>): LocalServiceMachineSummaryV1 {
   const codes = snapshot.diagnostics.flatMap(diagnostic => diagnostic && typeof diagnostic === 'object'
@@ -181,7 +191,7 @@ export function projectLocalServiceMachineSummaryV1(snapshot: Readonly<{
   if (snapshot.refreshState === 'error') return { v: 1, state: codes.includes('local_services_inventory_probe_failed') ? 'unknown' : 'error' };
   if (codes.some(code => code.startsWith('local_services_inventory_'))) return { v: 1, state: 'disabled' };
   if (snapshot.generatedAt === 0) return { v: 1, state: 'unknown' };
-  const listeners = new Set(snapshot.entries.filter(entry => entry.state === 'listening' && isLocalServiceWebServerV1(entry))
+  const listeners = new Set(snapshot.entries.filter(entry => entry.state === 'listening' && isLocalServiceInventoryTargetV1(entry))
     .map(localServiceListenerGroupKey));
   return { v: 1, state: 'ready', runningCount: listeners.size };
 }

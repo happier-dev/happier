@@ -24,9 +24,10 @@ Private previews are the normal path and the rest of this page is mostly about t
 The table describes the current checkout; it does not certify stable or preview
 release availability.
 
-Automatic discovery recognizes development servers rather than every listening
-process. Generic runtimes, SSH, agent CLIs and browser debug ports stay out of the
-Services list. An unrecognized server can be declared as a Project Service. Open
+Automatic discovery lists recognized development servers and listeners owned by
+a Happier Session's Shell, including those with an unrecognized runtime. Known
+low-signal listeners, such as database and browser helper processes, stay out of
+the Services list. Other unrecognized servers can be declared as Project Services. Open
 checks the selected server's HTTP or HTTPS endpoint and reports a failure if it
 cannot resolve one; appearing in the list does not certify HTTP readiness.
 
