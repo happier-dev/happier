@@ -18,11 +18,11 @@ type Family = Readonly<{
 }>;
 
 const SHELL: Family = { inline: ['-c'], valued: ['-o', '+o', '-O', '+O'] };
-const NODE: Family = { inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions'] };
+const NODE: Family = { inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
 const FAMILIES: Readonly<Record<string, Family>> = {
     sh: SHELL, bash: SHELL, zsh: SHELL, dash: SHELL, ksh: SHELL, fish: SHELL,
     source: { inline: [] }, '.': { inline: [] },
-    node: NODE, tsx: NODE,
+    node: NODE, tsx: { ...NODE, subcommand: 'watch' },
     deno: { ...NODE, subcommand: 'run' }, bun: { ...NODE, subcommand: 'run' },
     python: { inline: ['-c', '-m'], valued: ['-W', '-X'] },
     ruby: { inline: ['-e'], valued: ['-r', '-I', '-C'] },
@@ -52,12 +52,24 @@ function familyOf(program: string): Family | undefined {
  */
 export function listLiteralCommandExecutedFiles(root: string, cwd: string, command: string): string[] {
     const files = new Set<string>();
+    const within = (path: string) => {
+        const local = relative(root, path);
+        return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? local : undefined;
+    };
+    let segmentCwd = cwd;
+    // Home (`~`) is outside the checkout.
     const add = (token: string) => {
-        const local = relative(root, resolve(cwd, token));
-        if (local !== '' && local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local)) files.add(local.replaceAll('\\', '/'));
+        const local = token.startsWith('~') ? undefined : within(resolve(segmentCwd, token));
+        if (local) files.add(local.replaceAll('\\', '/'));
     };
     for (const segment of command.split(/&&|\|\||[;&|\n]/)) {
         const tokens = [...segment.matchAll(TOKEN)].map(match => match[1] ?? match[2] ?? match[3] ?? '');
+        // `cd <dir>` moves later segments when it stays in the checkout; `cd`, `cd -` and `~` keep the cwd.
+        if (tokens[0] === 'cd') {
+            const target = tokens[1];
+            if (target !== undefined && target !== '-' && !target.startsWith('~') && within(resolve(segmentCwd, target)) !== undefined) segmentCwd = resolve(segmentCwd, target);
+            continue;
+        }
         let index = 0;
         for (;;) {
             while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]!)) index += 1;
@@ -96,12 +108,13 @@ export function listLiteralCommandExecutedFiles(root: string, cwd: string, comma
     return [...files];
 }
 
-export type LiteralCommandFileFactV1 = Readonly<{ file: string; digest: string } | { file: string; absent: true } | { file: string; linkTarget: string }>;
+export type LiteralCommandFileFactV1 = Readonly<{ file: string; digest: string } | { file: string; absent: true } | { file: string; directory: true } | { file: string; linkTarget: string }>;
 
 /**
  * The reviewed facts for those files. A present in-checkout file contributes its bytes; an
  * absent one is recorded so adding it asks again; a link out of the checkout (a venv's
  * `bin/python`) contributes its target path, because outside bytes are not Project inputs.
+ * A directory operand (`node server`) is recorded without reading what it loads.
  */
 export async function readLiteralCommandExecutedFiles(root: string, cwd: string, command: string)
     : Promise<Readonly<{ kind: 'read'; files: LiteralCommandFileFactV1[] }> | Readonly<{ kind: 'refused'; code: string }>> {
@@ -110,10 +123,18 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
         const read = await readProjectDefinitionFileBytes(root, file);
         if (read.kind === 'read') files.push({ file, digest: createHash('sha256').update(read.bytes).digest('hex') });
         else if (read.kind === 'absent') files.push({ file, absent: true });
-        else if (read.code === 'outside_root') {
-            try { files.push({ file, linkTarget: await currentWorkspaceSource().realpath(resolve(root, file)) }); }
-            catch { return { kind: 'refused', code: 'unreadable_definition' }; }
-        } else return { kind: 'refused', code: read.code };
+        else {
+            try {
+                const target = await currentWorkspaceSource().realpath(resolve(root, file));
+                if (read.code === 'outside_root') files.push({ file, linkTarget: target });
+                else if ((await currentWorkspaceSource().stat(target)).isDirectory()) files.push({ file, directory: true });
+                else return { kind: 'refused', code: read.code };
+            } catch (error) {
+                const code = error instanceof Error && 'code' in error ? error.code : undefined;
+                if (code !== 'ENOENT' && code !== 'ENOTDIR') return { kind: 'refused', code: 'unreadable_definition' };
+                files.push({ file, absent: true });
+            }
+        }
     }
     return { kind: 'read', files };
 }

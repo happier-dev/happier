@@ -1,7 +1,9 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { listLiteralCommandExecutedFiles } from './literalCommandFiles';
+import { listLiteralCommandExecutedFiles, readLiteralCommandExecutedFiles } from './literalCommandFiles';
 
 describe('files a literal Project command runs', () => {
   const root = join('/', 'checkout');
@@ -35,9 +37,27 @@ describe('files a literal Project command runs', () => {
     ['php -f tools/run.php', ['tools/run.php']],
     // Outside the checkout is not a Project input.
     ['bash /opt/outside.sh', []],
+    ['bash ~/x.sh', []],
+    // cd moves later segments within the checkout; outside it the declared cwd stays.
+    ['cd scripts && ./setup.sh; cd /opt; ./run.sh', ['scripts/setup.sh', 'scripts/run.sh']],
+    // Subcommands and valued runtime flags are not the script.
+    ['tsx watch src/main.ts', ['src/main.ts']],
+    ['node --max-old-space-size 4096 server.js', ['server.js']],
   ] as const)('%s', (command, expected) => {
     expect(listLiteralCommandExecutedFiles(root, root, command)).toEqual(
       expected,
     );
+  });
+
+  it('records a directory operand and a path through a file without refusing the command', async () => {
+    const checkout = await mkdtemp(join(tmpdir(), 'happier-literal-files-'));
+    try {
+      await mkdir(join(checkout, 'server'));
+      await writeFile(join(checkout, 'server/index.js'), 'listen()');
+      await writeFile(join(checkout, 'notdir'), 'file');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node server; bash notdir/x.sh')).toEqual({ kind: 'read', files: [
+        { file: 'notdir/x.sh', absent: true }, { file: 'server', directory: true },
+      ] });
+    } finally { await rm(checkout, { recursive: true, force: true }); }
   });
 });
