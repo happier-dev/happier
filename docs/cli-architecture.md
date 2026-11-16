@@ -2693,7 +2693,9 @@ The target-daemon handler in `rpc/handlers/daemonMachineAgentIsolation.ts` owns
 returns the exact workspace/ancestor effects, replacement count and administrator
 requirement without applying them. Set consumes the reviewed policy, metadata
 version and plan digest, then uses the common Machine-field CAS and existing
-elevated-effect owner. A policy conflict or changed plan requires its returned
+elevated-effect owner. CLI and UI use the shared isolation Action deadline policy:
+Preview awaits its native review without a short RPC acknowledgement deadline,
+and retains the existing cancellation signal. A policy conflict or changed plan requires its returned
 current review; an unavailable or uncertain outcome is not permission to replay
 host effects. Desired enablement and accepted work do not establish effective
 isolation while replacement or native observation remains incomplete.

@@ -69,7 +69,9 @@ describe('Storage receipt through the captured UI Action Home', () => {
         const preview = { kind: 'ready', policy: { enabled: true }, metadataVersion: 5,
             plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'successor-check' },
             status: { kind: 'applying', phase: 'runtime_replacement' } };
-        rpc.machine.mockResolvedValue(preview);
+        // Preview may wait for elevation; the network boundary models expiration of a bounded call.
+        rpc.machine.mockImplementation(async request => request.operationTimeoutMs === null
+            ? preview : { error: 'Machine RPC call timeout', errorCode: 'MACHINE_RPC_TIMEOUT' });
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         expect(await createDefaultActionExecutor().execute('machines.agentIsolation.preview', { serverId, machineId: 'machine', enabled: true },
             { surface: 'ui', serverId, expectedAccountId: 'owner' })).toEqual({ ok: true, result: preview });

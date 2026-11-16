@@ -117,6 +117,7 @@ import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/action
 import { readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
 import { readSyncedMachineRoles, readSyncedMachineRolesList } from '@/sync/domains/machines/roles/machineRoles';
 import { resolveMachineGuardOperationTimeoutMs } from '@happier-dev/protocol/machines/guard/actionIdsV1';
+import { resolveMachineAgentIsolationOperationTimeoutMs } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
 import { machineResourcesPolicyGet } from '@/sync/ops/machineResourcesPolicy';
 import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
 import { filterVisibleMachines, resolveServerScopedMachineInventoryKeys } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -5425,7 +5426,8 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
     },
     machineServiceLogsRead: ({ input, context, signal }) => machineActionRpc('machines.services.logs.read', input, signal, context.actionRequestId ?? undefined),
     machineAdminAccessAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
-    machineAgentIsolationAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
+    machineAgentIsolationAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined,
+      resolveMachineAgentIsolationOperationTimeoutMs(actionId)),
     machineReboot: ({ input, context, signal }) => machineActionRpc('machines.reboot', input, signal, context.actionRequestId ?? undefined),
     // Guard reads, Activity, Undo and Keep running are the target daemon's: Undo re-runs the captured
     // original Action there, through its own approval, so the host only carries the request.
