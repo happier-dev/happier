@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { AppPaneFileFrontContext } from '../AppPaneContext';
-import { useDestinationInstanceFacts } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 
 const subscribeToNothing = () => () => {};
@@ -34,7 +34,7 @@ export function useActiveTerminalsOpen(resourceScopeId: string | null): boolean 
  * The scope is derived exactly as `useWorkspaceFileOpener` derives it (Session + retained instance).
  */
 export function useSessionFileTabFront(sessionId: string | null | undefined, serverId: string | null | undefined, path: string, rootPath?: string): boolean {
-    const instance = useDestinationInstanceFacts();
-    const scopeId = sessionId ? createSessionPaneScopeId(sessionId, serverId ?? undefined, instance?.tabId ?? null) : '';
+    const instanceKey = useDestinationInstanceKey();
+    const scopeId = sessionId ? createSessionPaneScopeId(sessionId, serverId ?? undefined, instanceKey) : '';
     return useFileTabFront(scopeId, path, rootPath);
 }

@@ -20,7 +20,7 @@ import { matchWorkspaceDestinationRoute, workspaceRouteFiles } from './workspace
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 import { HostedSessionRouteQualification } from '@/components/sessions/shell/HostedSessionRouteQualification';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { DestinationInstanceContext, DestinationHeaderOptionsContext, useDestinationFocus, useDestinationInstance, useDestinationInstanceIdentity, useDestinationInstanceKey, type DestinationInstanceContextValue, type DestinationNavigation } from './destinationInstanceContext';
+import { DestinationInstanceContext, DestinationHeaderOptionsContext, useDestinationFocus, useDestinationInstance, useDestinationInstanceIdentity, useDestinationInstanceKey, useHasDestinationRoute, type DestinationInstanceContextValue, type DestinationNavigation } from './destinationInstanceContext';
 export { useDestinationInstanceKey, useDestinationNavigation, type DestinationNavigation } from './destinationInstanceContext';
 
 const EMPTY_SCREEN_OPTIONS: NativeStackNavigationOptions = {};
@@ -59,7 +59,8 @@ function RetainedDestinationContext(props: Readonly<{
     // The portal remains under the live workspace owner even after its route/binder leaves.
     // Only actual destination removal ends this lifetime; inactive workspaces still own their tabs.
     // Membership alone: a tab's target or title write does not render this retained portal.
-    const capturedTabId = props.captured?.tabId ?? null;
+    // A stack-owned body is no workspace tab: its native screen ends its lifetime.
+    const capturedTabId = props.captured?.stackOwned ? null : props.captured?.tabId ?? null;
     const present = useOptionalWorkspaceNavigation(React.useCallback((workspace: WorkspaceNavigationContextValue | null) =>
         capturedTabId === null || workspace === null || Object.hasOwn(workspace.state.tabs, capturedTabId), [capturedTabId]));
     React.useLayoutEffect(() => {
@@ -93,6 +94,11 @@ export function DestinationInstanceHost(props: Readonly<{
     visible: boolean;
     navigation?: DestinationInstanceContextValue['navigation'];
     phone?: boolean;
+    /**
+     * One of several bodies a native stack screen keeps mounted: the instance supplies params, focus and
+     * visibility, while the screen keeps its router, Back, chrome and pane state (no hosted tab identity).
+     */
+    stackOwned?: boolean;
     children: React.ReactNode;
 }>): React.ReactNode {
     const rootOptions = useRootStackRouteOptions();
@@ -112,17 +118,24 @@ export function DestinationInstanceHost(props: Readonly<{
         visible: props.visible,
         isFocused,
         ...(props.navigation ? { navigation: props.navigation } : {}),
-    }), [focused, isFocused, props.navigation, props.pathname, props.ref, props.tabId, props.visible]);
+        ...(props.stackOwned ? { stackOwned: true as const } : {}),
+    }), [focused, isFocused, props.navigation, props.pathname, props.ref, props.stackOwned, props.tabId, props.visible]);
+    const scoped = sessionAddress ? <SessionViewerDestinationScope key={sessionAddressKey(sessionAddress)}
+        sessionId={sessionAddress.sessionId} serverId={sessionAddress.serverId}>
+        {props.children}
+    </SessionViewerDestinationScope> : props.children;
+    if (props.stackOwned) return <DestinationInstanceContext.Provider value={value}>
+        <PluginSurfaceFocusEligibilityProvider active={value.focused} presentationActive={value.visible} currentUiContextActive={value.focused}>
+            {scoped}
+        </PluginSurfaceFocusEligibilityProvider>
+    </DestinationInstanceContext.Provider>;
     return <DestinationInstanceContext.Provider value={value}>
         <PluginSurfaceFocusEligibilityProvider active={value.focused} presentationActive={value.visible} currentUiContextActive={value.focused}>
             <DestinationNavigationChrome scopeKey={`destination:${props.tabId}`} phone={props.phone === true} navigation={props.navigation} baseOptions={baseOptions}
                 identityKey={props.pathname}>
                 {sessionRoute && !props.ref.params.serverId && props.navigation ? <HostedSessionRouteQualification
                     params={props.ref.params} pathname={props.pathname} focused={focused} replace={props.navigation.replace} /> : null}
-                {sessionAddress ? <SessionViewerDestinationScope key={sessionAddressKey(sessionAddress)}
-                    sessionId={sessionAddress.sessionId} serverId={sessionAddress.serverId}>
-                    {props.children}
-                </SessionViewerDestinationScope> : props.children}
+                {scoped}
             </DestinationNavigationChrome>
         </PluginSurfaceFocusEligibilityProvider>
     </DestinationInstanceContext.Provider>;
@@ -307,7 +320,7 @@ export function useDestinationParams<T extends Record<string, string | string[] 
 /** A hosted reader follows only its selected params; the Expo owner keeps its existing fallback. */
 export function useDestinationParamsSelector<T>(selector: (params: Readonly<Record<string, string | string[] | undefined>>) => T,
     equal?: (left: T | null, right: T | null) => boolean): T {
-    const hosted = useDestinationInstanceKey() !== null;
+    const hosted = useHasDestinationRoute();
     const select = React.useCallback((instance: DestinationInstanceContextValue | null) => instance ? selector(instance.ref.params) : null, [selector]);
     const selected = useDestinationInstance(select, equal);
     if (hosted) return selected as T;
@@ -332,7 +345,7 @@ type DestinationRouteParams = Readonly<Record<string, string | string[] | undefi
  * must keep its identity (a module-level function).
  */
 export function useDestinationGlobalParamsSelector<T>(select: (params: DestinationRouteParams) => T): T {
-    const hosted = useDestinationInstanceKey() !== null;
+    const hosted = useHasDestinationRoute();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     if (hosted) return useDestinationParamsSelector(select);
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.

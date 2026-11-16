@@ -6,7 +6,7 @@ import { BackHandler, Platform, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationFocus, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { useDestinationInstance, type DestinationInstanceContextValue } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDestinationFocusSignal, useDestinationInstance, type DestinationInstanceContextValue } from '@/components/appShell/workspace/destinationInstanceContext';
 import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -277,14 +277,17 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     const openFocusedBoardItem = React.useCallback((itemId: string) => {
         setFocusedBoardItemId?.(itemId);
     }, [setFocusedBoardItemId]);
+    // A retained Session the phone is not showing leaves Back to the one on screen.
+    const destinationFocus = useDestinationFocusSignal();
     React.useEffect(() => {
         if (Platform.OS !== 'android' || props.surface !== 'board' || !focusedBoardItemId) return;
         const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+            if (!destinationFocus.get()) return false;
             setFocusedBoardItemId?.(null);
             return true;
         });
         return () => subscription.remove();
-    }, [focusedBoardItemId, props.surface, setFocusedBoardItemId]);
+    }, [destinationFocus, focusedBoardItemId, props.surface, setFocusedBoardItemId]);
     const findPluginMobileTab = React.useCallback((placementId: string) => {
         const entry = mobileCatalog.find((candidate) => (
             candidate.owner === 'rightSidebar'

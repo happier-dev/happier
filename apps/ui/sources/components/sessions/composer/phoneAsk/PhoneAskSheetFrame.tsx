@@ -26,6 +26,7 @@ import { useSessionCockpitComposerBottomChromeHeight } from '@/components/worksp
 import { t } from '@/text';
 
 import { usePhoneAskSheet } from './phoneAskSheetState';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 
 /** What the Ask sheet inside the Chat scene tells its frame: its own height and the composer's keyboard lift. */
 export type PhoneAskSheetGeometry = Readonly<{
@@ -82,14 +83,17 @@ export function PhoneAskSheetFrame(
 
   // Android Back closes the raised sheet first (the draft stays), before it leaves the page.
   const close = sheet?.close;
+  // A retained Session the phone is not showing leaves Back to the one on screen.
+  const focus = useDestinationFocusSignal();
   React.useEffect(() => {
     if (!raised || !close || Platform.OS === 'web') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!focus.get()) return false;
       close();
       return true;
     });
     return () => subscription.remove();
-  }, [close, raised]);
+  }, [close, focus, raised]);
 
   const report = React.useCallback(
     (geometry: PhoneAskSheetGeometry) => {

@@ -1,7 +1,9 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { Slot, useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useExpoSceneMirrorsWorkspace } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
+import { SessionRouteRetainedAddressProvider } from '@/components/sessions/shell/PhoneRetainedSessionViews';
 import { useNavigationState, useRoute } from '@react-navigation/native';
 
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
@@ -11,7 +13,7 @@ import { isVoiceTranscriptHistorySession } from '@/voice/persistence/voiceTransc
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionRouteQualification } from '@/hooks/session/useSessionRouteQualification';
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
-import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 type SessionLayoutParams = Record<string, string | string[] | undefined>;
 
@@ -28,12 +30,12 @@ function readStringRouteParams(params: Readonly<Record<string, unknown>> | undef
     return into;
 }
 
-function useSessionLayoutParams() {
+function useSessionLayoutParams(): Readonly<{ params: SessionLayoutParams; leaf: string | null }> {
     const layoutParams = readStringRouteParams(useLocalSearchParams());
     const hosted = useDestinationInstanceKey() !== null;
     // The retained destination already supplies its leaf's exact params. Expo's
     // outer branch describes another mounted route and must not lend its Home.
-    if (hosted) return layoutParams;
+    if (hosted) return { params: layoutParams, leaf: null };
     // eslint-disable-next-line react-hooks/rules-of-hooks -- only Expo layouts have a native route branch.
     const route = useRoute();
     // Expo puts a cold leaf's query on the child state, not its ancestor layout.
@@ -41,19 +43,23 @@ function useSessionLayoutParams() {
     // eslint-disable-next-line react-hooks/rules-of-hooks -- only Expo layouts have a native route branch.
     const childNavigationState = useNavigationState((state) => state.routes.find((candidate) => candidate.key === route.key)?.state);
     const childParams: SessionLayoutParams = {};
+    // Before the child navigator mounts, the leaf it will show is the layout route's `screen` param.
+    const routeScreen = (route.params as Readonly<{ screen?: unknown }> | undefined)?.screen;
+    let leaf = typeof routeScreen === 'string' ? routeScreen : 'index';
     let childState = childNavigationState;
     while (childState?.routes.length) {
         const child = childState.routes[childState.index ?? childState.routes.length - 1];
         readStringRouteParams(child.params as Readonly<Record<string, unknown>> | undefined, childParams);
+        leaf = child.name;
         childState = child.state;
     }
-    return { ...layoutParams, ...childParams, serverId: readSessionRouteServerId(childParams) ?? layoutParams.serverId };
+    return { params: { ...layoutParams, ...childParams, serverId: readSessionRouteServerId(childParams) ?? layoutParams.serverId }, leaf };
 }
 
 export default function OrdinarySessionRouteLayout() {
     const router = useRouter();
     const pathname = usePathname();
-    const params = useSessionLayoutParams();
+    const { params, leaf } = useSessionLayoutParams();
     const mirrorsWorkspace = useExpoSceneMirrorsWorkspace();
     const { id, ...routeQuery } = params;
     // A workspace-hosted Session is qualified by its destination host (HostedSessionRouteQualification);
@@ -104,8 +110,22 @@ export default function OrdinarySessionRouteLayout() {
     }
 
     const viewerAddress = normalizeSessionAddress(explicitServerId ?? resolvedServerId, sessionId);
-    return viewerAddress ? <SessionViewerDestinationScope key={sessionAddressKey(viewerAddress)}
+    if (!viewerAddress) return <Slot />;
+    // A native Session switch keeps this one screen (the stack reuses its route). Its Session view keeps the
+    // presented Sessions the workspace still lists mounted, each in its own destination scope (index.tsx), so
+    // this layout must not rebuild the view per address. Without listed tabs that is the presented one alone.
+    if (Platform.OS !== 'web' && !hosted && leaf === 'index') {
+        return <RetainedSessionAddress address={viewerAddress} />;
+    }
+    return <SessionViewerDestinationScope key={sessionAddressKey(viewerAddress)}
         sessionId={viewerAddress.sessionId} serverId={viewerAddress.serverId}>
         <Slot />
-    </SessionViewerDestinationScope> : <Slot />;
+    </SessionViewerDestinationScope>;
+}
+
+/** The address keeps its identity while it stands, so the Session route below renders only when it moves. */
+function RetainedSessionAddress(props: Readonly<{ address: SessionAddress }>) {
+    const { serverId, sessionId } = props.address;
+    const address = React.useMemo(() => ({ serverId, sessionId }), [serverId, sessionId]);
+    return <SessionRouteRetainedAddressProvider value={address}><Slot /></SessionRouteRetainedAddressProvider>;
 }

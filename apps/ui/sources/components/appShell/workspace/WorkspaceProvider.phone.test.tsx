@@ -27,6 +27,8 @@ const boundary = vi.hoisted(() => ({
     params: { serverId: 'home-a', mobileSurface: 'git' } as Record<string, string>,
     pushes: [] as string[],
     replaces: [] as string[],
+    /** Navigations that move an existing screen: the href and the screen's singular id. */
+    singularNavigations: [] as string[],
 }));
 const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
 Object.defineProperty(boundary, 'layouts', {
@@ -68,6 +70,10 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock({ pathname: () => boundary.pathname, params: () => boundary.params, router: {
         push: (href: unknown) => { boundary.pushes.push(String(href)); },
         replace: (href: unknown) => { boundary.replaces.push(String(href)); },
+        navigate: (href: unknown, options?: unknown) => {
+            const singular = (options as Readonly<{ dangerouslySingular?: (name: string, params: object) => unknown }> | undefined)?.dangerouslySingular;
+            boundary.singularNavigations.push(`${String(href)} singular=${String(singular?.('session/[id]', {}))}`);
+        },
     } }).module;
 });
 const homes = createHomeGovernanceHarness();
@@ -124,7 +130,7 @@ describe('workspace owner on a phone', () => {
         standardCleanup();
         setScreenSharingPrivacyActive(false);
         boundary.layouts = {}; boundary.pathname = '/session/A1'; boundary.params = { serverId: 'home-a', mobileSurface: 'git' };
-        boundary.pushes = []; boundary.replaces = [];
+        boundary.pushes = []; boundary.replaces = []; boundary.singularNavigations = [];
         clearActiveUnsavedChangesGuard();
         clearSessionNavigationCursor();
         restoreStorage?.(); restoreStorage = null;
@@ -234,7 +240,8 @@ describe('workspace owner on a phone', () => {
         await act(async () => { read(screen).tabs.activate('second'); });
         expect(read(screen).workspace.state.focusedGroupId).toBe('other');
         expect(read(screen).workspace.state.groups.other.activeTabId).toBe('second');
-        expect(boundary.replaces).toEqual(['/session/A1?serverId=home-a']);
+        // From a Session view to a Session view: the one Session screen moves.
+        expect(boundary.singularNavigations).toEqual(['/session/A1?serverId=home-a singular=session']);
     });
 
     it('keeps tab membership and focus unchanged when a phone open or close is declined', async () => {
@@ -273,7 +280,7 @@ describe('workspace owner on a phone', () => {
         boundary.pathname = '/session/A3'; boundary.params = { serverId: 'home-a' };
         await act(async () => { screen.update(<WorkspaceProvider enabled={false} phone catalog={catalog}><Probe /></WorkspaceProvider>); });
         await act(async () => { expect(await invokeWorkspaceAction({ actionId: 'workspace.tabs.close', input: { tabId: kept } })).toEqual({ ok: true }); });
-        expect(boundary.replaces.at(-1)).toBe('/session/A1?serverId=home-a');
+        expect(boundary.singularNavigations.at(-1)).toBe('/session/A1?serverId=home-a singular=session');
         await act(async () => { expect(await invokeWorkspaceAction({ actionId: 'workspace.tabs.close', input: { tabId: first } })).toEqual({ ok: true }); });
         expect(boundary.replaces.at(-1)).toBe('/');
         const before = state();
@@ -485,8 +492,10 @@ describe('workspace owner on a phone', () => {
         expect(rows(read(screen).tabs)).toEqual(['session:A3', 'session:A1 (preview)']);
         const kept = read(screen).tabs.tabs[0];
         await act(async () => { read(screen).tabs.activate(kept.id); });
-        // A tab switch replaces the screen: Back still leads to the list.
-        expect(boundary.replaces).toEqual(['/session/A3?serverId=home-a']);
+        // A tab switch between Session views moves the one Session screen (its retained views stay mounted)
+        // at the same stack position a replace would take: Back still leads to the list.
+        expect({ replaces: boundary.replaces, singular: boundary.singularNavigations })
+            .toEqual({ replaces: [], singular: ['/session/A3?serverId=home-a singular=session'] });
 
         // This no-Account layout harness exercises the already admitted mounted transport;
         // human close admission is composed with real Account policy in WorkspaceTabs.seam.

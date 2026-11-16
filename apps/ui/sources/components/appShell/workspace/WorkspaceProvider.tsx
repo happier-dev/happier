@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useGlobalSearchParams, usePathname, useRouter, useSegments } from 'expo-router';
 import { resolveHref } from 'expo-router/build/link/href';
 import { matchWorkspaceDestinationRoute, workspaceRouteHref } from './workspaceRoutes';
+import { sessionScreenSingular } from '@/components/navigation/root/sessionScreenSingular';
 import { CurrentRouteLocationProvider, readCurrentRouteLocation } from './currentRouteLocation';
 import { randomUUID } from '@/platform/randomUUID';
 import { Modal } from '@/modal';
@@ -74,6 +75,9 @@ function runNavigation(navigate: () => void, intent?: 'history'): void {
 }
 
 /** Slice 2 owns the layout; this owner alone translates navigation intent to it and the URL. */
+/** The Session view leaf (`/session/<id>`), not one of its pages. */
+const isSessionViewRoute = (path: string) => matchWorkspaceDestinationRoute(path)?.routeKey === 'session/[id]';
+
 /**
  * The path params of `path` when the workspace hosts it (any destination route pattern). While the workspace
  * hosts the route, Expo's scene draws no body: it is only this workspace's URL mirror, so moving to another
@@ -260,6 +264,11 @@ export function WorkspaceProvider(props: Readonly<{
             }
             setMirrorLead(null);
             if (phoneTransport && latest.current.phoneTabHref === null && projected !== '/') latest.current.router.push(projected as never);
+            // A phone tab switch from one Session view to another moves the one Session screen (its retained views
+            // stay mounted) instead of replacing it with a new screen. The stack position is the same as a replace.
+            else if (phoneTransport && isSessionViewRoute(latest.current.pathname) && isSessionViewRoute(path)) {
+                latest.current.router.navigate(projected as never, { dangerouslySingular: sessionScreenSingular });
+            }
             else latest.current.router.replace(projected as never);
         };
         const browser = hostsBrowserHistory

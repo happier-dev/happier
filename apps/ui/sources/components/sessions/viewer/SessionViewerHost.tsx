@@ -58,6 +58,7 @@ import {
   SESSION_VIEWER_EDGE,
   resolveSessionViewerBodyAspect,
 } from './sessionViewerGeometry';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 
 
 
@@ -351,14 +352,17 @@ function MountedSessionViewerHost(
   // Android's hardware Back leaves the deliberate expanded overlay for where the viewer was.
   // Only Android has that event; React Native Web reports BackHandler as unsupported.
   const expanded = mode === 'expanded';
+  // A retained Session the phone is not showing leaves Back to the one on screen.
+  const focus = useDestinationFocusSignal();
   React.useEffect(() => {
     if (Platform.OS !== 'android' || !expanded) return undefined;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!focus.get()) return false;
       void requestSemantic({ kind: 'viewer.restore' });
       return true;
     });
     return () => subscription.remove();
-  }, [expanded, requestSemantic]);
+  }, [expanded, focus, requestSemantic]);
 
   const frameRect = mode === 'expanded' ? availableRect : rect;
   const bodyRect = frameRect ? resolveFloatingFrameBodyRect(frameRect, { footer }) : null;

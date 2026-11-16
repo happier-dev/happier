@@ -14,6 +14,7 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { sync } from '@/sync/sync';
 import { requireSpawnedSessionVisibleForRoute } from '@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness';
+import { sessionScreenSingular } from '@/components/navigation/root/sessionScreenSingular';
 
 type CreatedNewSessionRouter = Readonly<{
     replace(path: unknown, options?: unknown): void;
@@ -134,9 +135,7 @@ export async function presentCreatedNewSession(params: Readonly<{
         sessionId: params.sessionId,
         serverId: params.serverId,
     }), {
-        dangerouslySingular() {
-            return 'session';
-        },
+        dangerouslySingular: sessionScreenSingular,
         ...(params.opensDestination ? { opensDestination: true } : {}),
     });
     actionOperationPresentationCoordinator.acknowledgeRequestPresented({

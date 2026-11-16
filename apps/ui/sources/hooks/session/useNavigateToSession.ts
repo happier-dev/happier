@@ -13,6 +13,7 @@ import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/select
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { areServerProfileIdentifiersEquivalent, getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { sessionScreenSingular } from '@/components/navigation/root/sessionScreenSingular';
 
 type NavigateToSessionOptions = Readonly<{
     serverId?: string;
@@ -81,11 +82,7 @@ export async function navigateToSession(sessionId: string, opts: NavigateToSessi
         ...(opts?.messageId ? { messageId: opts.messageId } : {}),
         ...(opts?.suffix ? { suffix: opts.suffix } : {}),
         ...(opts?.query ? { query: opts.query } : {}),
-    }), {
-        dangerouslySingular(name, params) {
-            return 'session';
-        },
-    });
+    }), { dangerouslySingular: sessionScreenSingular });
     return true;
 }
 

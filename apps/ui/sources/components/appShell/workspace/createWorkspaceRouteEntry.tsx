@@ -5,7 +5,7 @@ import { PaneHeaderScrollScope, PaneHeaderShade } from '@/components/appShell/pa
 import { useRouteNode } from 'expo-router/build/Route';
 import { resolveHref } from 'expo-router/build/link/href';
 import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
-import { DestinationTitlePublication, useDestinationInstanceKey } from './DestinationInstanceHost';
+import { DestinationTitlePublication, useDestinationInstanceKey, useDestinationParams } from './DestinationInstanceHost';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { workspaceRouteFiles, workspaceRouteHref } from './workspaceRoutes';
@@ -67,7 +67,8 @@ function ExpoWorkspaceRouteFocus(props: React.PropsWithChildren) {
 function NativeWorkspaceRouteTitle(props: React.PropsWithChildren) {
     const workspace = useOptionalWorkspaceNavigation();
     const node = useRouteNode();
-    const params = useLocalSearchParams();
+    // A stack-owned retained body (a phone's earlier Session) names its own destination, not the screen's current one.
+    const params = useDestinationParams();
     const rootOptions = useRootStackRouteOptions();
     const nativeShowsTitle = useNavigationTitleChromeShowsTitle();
     const nativeShowsBack = useNavigationChromeShowsBack();

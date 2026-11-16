@@ -27,13 +27,13 @@ vi.mock('react-native', async () => {
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function mountExpanded() {
+async function mountExpanded(wrap: (children: React.ReactElement) => React.ReactElement = children => children) {
   const harness: { controller: SessionViewerController | null } = { controller: null };
   function Probe() {
     harness.controller = useOptionalSessionViewerController();
     return null;
   }
-  const result = await renderWithAppProviders(
+  const result = await renderWithAppProviders(wrap(
     <SessionViewerControllerProvider
       sessionId="session-a"
       serverId="home-a"
@@ -44,7 +44,7 @@ async function mountExpanded() {
       <Probe />
       <SessionViewerHost sessionId="session-a" serverId="home-a" />
     </SessionViewerControllerProvider>,
-  );
+  ));
   await act(async () => {
     harness.controller!.port.apply({ kind: 'viewer.open', source: 'computer' });
   });
@@ -59,7 +59,7 @@ async function mountExpanded() {
     harness.controller!.port.apply({ kind: 'viewer.expand' });
   });
   expect(harness.controller!.state.mode).toBe('expanded');
-  return result;
+  return Object.assign(result, { controller: () => harness.controller! });
 }
 
 describe('SessionViewerHost hardware Back', () => {
@@ -72,6 +72,27 @@ describe('SessionViewerHost hardware Back', () => {
     const result = await mountExpanded();
     expect(nativeBack.addEventListener).toHaveBeenCalledWith('hardwareBackPress', expect.any(Function));
     await result.unmount();
+  });
+
+  it('leaves hardware Back to the shown Session while its retained Session is hidden on the phone stack', async () => {
+    platform.os = 'android';
+    const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const retained = (focused: boolean) => (children: React.ReactElement) => <DestinationInstanceHost stackOwned
+      tabId="phone-session:a" ref={{ kind: 'probe', params: {} }} pathname="" focused={focused} visible={focused}>{children}</DestinationInstanceHost>;
+    const pressBack = () => {
+      const calls = nativeBack.addEventListener.mock.calls;
+      return calls[calls.length - 1][1]();
+    };
+    const hidden = await mountExpanded(retained(false));
+    const handledWhileHidden = await act(async () => pressBack());
+    const modeWhileHidden = hidden.controller().state.mode;
+    await hidden.unmount();
+    nativeBack.addEventListener.mockClear();
+    const shown = await mountExpanded(retained(true));
+    const handledWhileShown = await act(async () => pressBack());
+    await shown.unmount();
+    expect({ handledWhileHidden, modeWhileHidden, handledWhileShown })
+      .toEqual({ handledWhileHidden: false, modeWhileHidden: 'expanded', handledWhileShown: true });
   });
 
   it('never reaches the platform Back listener on web, where React Native reports it unsupported', async () => {
