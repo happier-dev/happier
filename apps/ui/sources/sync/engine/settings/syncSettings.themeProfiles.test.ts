@@ -1,252 +1,173 @@
-import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import type { RawSettingsMutationOptions } from '@/sync/ops/actions/accountSettingsMutation';
-import type { SettingOwnerMutation } from '@/components/settings/catalog/settingDeclarations';
-import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import { artifactIdScopeMatchesAccountV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { createThemeProfileLibrary, type ThemeProfileArtifactRecord } from '@/theme/profiles/themeProfileLibrary';
+import { createThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileArtifactAdapter';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createArtifactsDomain, type ArtifactsDomain } from '@/sync/store/domains/artifacts';
+import type { ArtifactDataKeyCacheEntry } from '@/sync/engine/artifacts/syncArtifacts';
+import { isArtifactInventoryLoaded } from '@/sync/domains/artifacts/artifactInventory';
+import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
+import type { WithThemeProfileLibrary } from './themeProfileMigration';
+import { writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
-const { syncSettings, requireOneShotAccountSettingsMutationApplied } = await import('./syncSettings');
-const { persistThemeProfilesForSetting } = await import('@/components/settings/appearance/themeProfiles/themeProfilesSettingBinding');
-const { resolveAccountThemeProfiles } = await import('@/sync/domains/settings/themeProfiles');
-const { createAccountSettingsMutation } = await import('@/sync/ops/actions/accountSettingsMutation');
-const { ThemeProfileMigrationSourceExpiredError } = await import('@/theme/profiles/themeProfileMigrationEdits');
-const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
-const { fetchAccountEncryptionMode } = await import('@/sync/api/account/apiAccountEncryptionMode');
+// Prove the migration producer loads before collecting its existing Sync consumer.
+await import('./themeProfileMigration');
+const { syncSettings } = await import('./syncSettings');
 const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
-const { localSettingsParse } = await import('@/sync/domains/settings/localSettings');
 const { storage } = await import('@/sync/domains/state/storageStore');
-const { loadLocalSettings, saveLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
-const { loadThemeRuntimeLocalState } = await import('@/sync/domains/state/persistence');
-const { loadPendingAccountSettingsState, saveActiveAccountSettingsScope, savePendingAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
-const profile = (id: string, name = id): ThemeProfileV1 => ({ schemaVersion: 1, id, name,
-    createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
-    base: { light: 'light', dark: 'dark' }, assetAppearance: 'dark', overrides: { light: {}, dark: {} } });
+const { loadLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
+const { pendingAccountSettingsKey } = await import('@/sync/domains/state/pendingAccountSettingsPersistence');
+const { saveActiveAccountSettingsScope, savePendingAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
 
+// Golden producer vector: ui-web-v0.2.20 cc98c23cea1d,
+// themeProfilePersistence.test.ts profile('ocean'); assetAppearance was optional.
+const profile = (id = 'ocean', name = `Profile ${id}`) => ({ schemaVersion: 1 as const, id, name,
+    createdAt: '2026-05-12T00:00:00.000Z', updatedAt: '2026-05-12T00:00:00.000Z',
+    base: { light: 'light' as const, dark: 'dark' as const }, overrides: { light: {}, dark: {} } });
+
+async function artifactBoundary(serverId: string) {
+    const boundary = harness.artifacts(serverId);
+    const account = await captureLazyActionAccountContext(serverId);
+    onTestFinished(() => account.dispose());
+    const { encryption } = await account.resolveAccountEncryption();
+    const store = createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
+    const captured = { credentials: account.credentials, request: account.request, readTransport: account.readTransport,
+        serverId: account.serverId, ownerAccountId: account.accountId, encryption,
+        artifactDataKeys: new Map<string, ArtifactDataKeyCacheEntry>() };
+    const withLibrary: WithThemeProfileLibrary = async (operation, options) => {
+        const before = store.getState().artifacts;
+        const artifacts = createThemeProfileArtifactAdapter({ ...captured, signal: options?.signal,
+            artifactIdScopes: options?.artifactIdScopes, readArtifacts: () => store.getState().artifacts,
+            applyArtifacts: rows => store.getState().applyArtifacts(rows),
+            applyInventory: (rows, source) => store.getState().applyArtifacts(rows, source ? before : undefined, [THEME_ARTIFACT_KIND], source),
+            deleteArtifact: id => store.getState().deleteArtifact(id),
+            isLoaded: () => isArtifactInventoryLoaded(store.getState(), [THEME_ARTIFACT_KIND]) });
+        return operation(createThemeProfileLibrary({ artifacts,
+            readSelection: () => readThemeProfileReferenceSelection(loadLocalSettings().themeProfileSelection),
+            writeSelection: (mode, reference) => storage.getState().applyLocalSettings({ themeProfileSelection:
+                { ...readThemeProfileReferenceSelection(loadLocalSettings().themeProfileSelection), [mode]: reference } }),
+            createId: () => '123e4567-e89b-42d3-a456-426614174000', now: () => 0,
+        }));
+    };
+    return { get records() {
+        return new Map(boundary.list().map(row => {
+            const parsed = parseThemeProfileDocument(JSON.parse(boundary.readPlainBody(row.id)!));
+            if (!parsed.ok) throw new Error('Stored theme document is invalid');
+            return [row.id, { document: parsed.document, revision: row.bodyVersion, headerVersion: row.headerVersion } satisfies ThemeProfileArtifactRecord] as const;
+        }));
+    }, withLibrary, writes: () => boundary.list().reduce((total, row) => total + row.bodyVersion, 0),
+    loseReply: (beforeLoss: () => void) => boundary.afterNextCreate(async () => { beforeLoss(); throw new Error('Artifact reply lost'); }),
+    assertScopedIds: () => {
+        for (const request of harness.requests.filter(request => request.serverId === serverId && request.path === '/v1/artifacts' && request.method === 'POST')) {
+            const input = request.input;
+            if (!input || typeof input !== 'object' || !('id' in input) || typeof input.id !== 'string') throw new Error('Missing Artifact create identity');
+            expect(artifactIdScopeMatchesAccountV1({ accountId: account.accountId, artifactId: input.id,
+                idScope: 'idScope' in input ? input.idScope : undefined })).toBe(true);
+        }
+    } };
+}
+
+beforeEach(() => installHomeGovernanceBoundaries(harness));
 afterEach(async () => { await harness.reset(); });
-beforeEach(() => { installHomeGovernanceBoundaries(harness); });
 
-describe('account theme library migration', () => {
-    async function setup(initialLibrary: readonly ThemeProfileV1[] = [profile('cloud')]) {
+describe('released theme input transfer', () => {
+    async function setup(accountProfiles: readonly unknown[] = [profile('cloud')], localProfiles: readonly unknown[] = [profile('local')]) {
         const serverId = await harness.addHome({ name: 'Themes', serverUrl: 'https://themes.example', accountId: 'owner', currentAccount: true });
+        const artifacts = await artifactBoundary(serverId);
         const scope = { serverId, accountId: 'owner' };
         writeThemeProfileLegacyAccountScope(null);
-        const localSettings = localSettingsParse({ themeProfiles: { profiles: [profile('local')], activeProfileIds: { light: null, dark: 'local' } } });
-        saveLocalSettings(localSettings);
-        storage.setState({ settingsScope: scope, settingsVersion: 1, settings: settingsParse({}), localSettings });
+        const setDevice = (profiles: readonly unknown[]) => {
+            getPersistenceStorage().set('local-settings', JSON.stringify({ themeProfiles: { profiles, activeProfileIds: { light: null, dark: profiles.length ? 'local' : null } } }));
+            storage.setState({ localSettings: loadLocalSettings() });
+        };
+        setDevice(localProfiles);
+        storage.setState({ settingsScope: scope, settingsVersion: 1, settings: settingsParse({}) });
+        expect(loadLocalSettings().themeProfiles.profiles).toHaveLength(localProfiles.length);
+        expect(storage.getState().settingsScope).toEqual(scope);
         savePendingAccountSettings(scope, {});
         saveActiveAccountSettingsScope(scope);
-        let library = initialLibrary;
+        let raw: Record<string, unknown> = accountProfiles.length ? { themeProfiles: accountProfiles } : {};
         let version = 4;
-        let posts = 0;
-        let fail = false;
+        const posts: Record<string, unknown>[] = [];
         let conflict = false;
-        let loseReply = false;
-        let nextPost: (() => Promise<void>) | null = null;
-        harness.answer(serverId, '/v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: { themeProfiles: library } }, version } }) });
-        harness.answer(serverId, 'POST /v2/account/settings', { select: async input => {
-            const hook = nextPost; nextPost = null; if (hook) await hook();
-            if (fail) return { status: 503, body: { error: 'offline' } };
-            if (conflict) {
-                conflict = false; library = [...library, profile('another-device')]; version++;
-                return { body: { success: false, error: 'version-mismatch', currentVersion: version, currentContent: { t: 'plain', v: { themeProfiles: library } } } };
-            }
+        let refuse = false;
+        harness.answer(serverId, '/v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: raw }, version } }) });
+        harness.answer(serverId, 'POST /v2/account/settings', { select: input => {
+            if (refuse) return { status: 503, body: { error: 'offline' } };
+            if (conflict) { conflict = false; raw = { themeProfiles: [...(Array.isArray(raw.themeProfiles) ? raw.themeProfiles : []), profile('winner')] }; version++; }
             const request = AccountSettingsV2UpdateRequestSchema.parse(input);
-            if (request.expectedVersion !== version) {
-                return { body: { success: false, error: 'version-mismatch', currentVersion: version,
-                    currentContent: { t: 'plain', v: { themeProfiles: library } } } };
-            }
-            const content = request.content;
-            if (!content || content.t !== 'plain') throw new Error('Expected plain fixture');
-            expect(content.v).not.toHaveProperty('themeProfileSelection');
-            library = settingsParse(content.v).themeProfiles; posts++;
-            version++;
-            if (loseReply) { loseReply = false; throw new Error('Reply lost after server commit'); }
+            if (request.expectedVersion !== version) return { body: { success: false, error: 'version-mismatch', currentVersion: version, currentContent: { t: 'plain', v: raw } } };
+            if (request.content?.t !== 'plain') throw new Error('Expected plain fixture');
+            raw = request.content.v; posts.push(raw); version++;
             return { body: { success: true, version } };
         } });
-        const sync = (target = scope) => syncSettings({ credentials: { token: createAccountTokenForTests(target.accountId, { currentAccount: true }) },
-            encryption: null, settingsScope: target, pendingSettings: {}, clearPendingSettings: next => savePendingAccountSettings(target, next) });
-        return { scope, sync, onNextPost: (hook: () => Promise<void>) => { nextPost = hook; }, library: () => library, posts: () => posts, removeProfile: (id: string) => { library = library.filter(p => p.id !== id); version++; }, loseReply: () => { loseReply = true; }, fail: () => { fail = true; }, conflict: () => { conflict = true; } };
+        const sync = () => syncSettings({ credentials: { token: createAccountTokenForTests(scope.accountId, { currentAccount: true }) },
+            encryption: null, settingsScope: scope, pendingSettings: {}, clearPendingSettings: next => savePendingAccountSettings(scope, next),
+            withThemeProfileLibrary: artifacts.withLibrary });
+        return { scope, sync, raw: () => raw, posts, artifacts, setDevice, conflict: () => { conflict = true; }, refuse: (value: boolean) => { refuse = value; } };
     }
-    it('merges the account library and clears the backup only after CAS acknowledgement', async () => {
-        const state = await setup(); await state.sync();
-        expect(state.library().map(p => p.id)).toEqual(['cloud', 'local']);
-        expect(state.posts()).toBe(1);
-        expect(loadLocalSettings()).toMatchObject({ themeProfiles: { profiles: [] }, themeProfileSelection: { light: null, dark: 'local' } });
-        await state.sync(); expect(state.posts()).toBe(1);
+    it('transfers released definitions with stable scoped ids and preserves colliding device selection', async () => {
+        const state = await setup([profile('local', 'Account local')]);
+        await state.sync();
+        expect(state.raw()).not.toHaveProperty('themeProfiles');
+        expect([...state.artifacts.records.values()].map(row => row.document.profile.name).sort()).toEqual(['Account local', 'Profile local']);
+        const selected = readThemeProfileReferenceSelection(loadLocalSettings().themeProfileSelection).dark;
+        expect(selected?.kind).toBe('artifact');
+        if (selected?.kind !== 'artifact') throw new Error('Expected migrated Artifact selection');
+        expect(state.artifacts.records.get(selected.id)?.document.profile.name).toBe('Profile local');
+        const writes = state.artifacts.writes();
+        await state.sync();
+        expect(state.artifacts.writes()).toBe(writes);
+        expect(state.posts).toHaveLength(1);
+        state.artifacts.assertScopedIds();
     });
-    it('retains the backup and binding on failure, excluding a different account', async () => {
-        const state = await setup(); state.fail();
-        await expect(state.sync()).rejects.toThrow();
-        expect(loadLocalSettings()).toMatchObject({ themeProfiles: { profiles: [profile('local')] } });
-        expect(readThemeProfileLegacyAccountScope()).toEqual(state.scope);
-        expect(loadLocalSettings()).not.toHaveProperty('themeProfileLegacyAccountScope');
-        expect(JSON.parse(getPersistenceStorage().getString('ui-state:theme-profile-migration-v1:legacy-account-scope')!)).toEqual(state.scope);
-        const otherScope = { ...state.scope, accountId: 'other' };
-        storage.setState({ settingsScope: otherScope, settingsVersion: 1, settings: settingsParse({}) });
-        await state.sync(otherScope);
-        expect(state.posts()).toBe(0);
-        expect(loadLocalSettings().themeProfiles.profiles).toEqual([profile('local')]);
-    });
-    it('merges with the winning account library after a CAS conflict', async () => {
-        const state = await setup(); state.conflict(); await state.sync();
-        expect(state.library().map(p => p.id)).toEqual(['cloud', 'another-device', 'local']);
-        expect(loadLocalSettings().themeProfiles.profiles).toEqual([]);
-    });
-    it.each([
-        [{ light: null, dark: { legacyProfileId: 'local' } }, 'local_2'],
-        [{ light: null, dark: 'local' }, 'local'],
-    ] as const)('canonicalizes a newer selection %j before clearing its legacy backup', async (selection, expectedId) => {
-        const state = await setup([profile('local', 'Cloud local')]);
-        const entered = createDeferred<void>(); const release = createDeferred<void>();
-        state.onNextPost(async () => { entered.resolve(); await release.promise; });
-        const migrating = state.sync();
-        await entered.promise;
-        try { storage.getState().applyLocalSettings({ themeProfileSelection: selection }); }
-        finally { release.resolve(); await migrating; }
-        expect(loadLocalSettings()).toMatchObject({ themeProfiles: { profiles: [] },
-            themeProfileSelection: { light: null, dark: expectedId } });
-        expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe(expectedId);
-    });
-    function createMutation(scope: { serverId: string; accountId: string }, onAdmitted?: () => void) {
-        const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }) };
-        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://themes.example', credentials, serverId: scope.serverId });
-        return createAccountSettingsMutation({ scope: scope, credentials,
-            endpointUrl: 'https://themes.example', request, scopeSignal: new AbortController().signal,
-            assertCurrent: () => { onAdmitted?.(); expect(storage.getState().settingsScope).toEqual(scope); },
-            resolveAccountEncryption: async () => {
-                const mode = await fetchAccountEncryptionMode(credentials, { request, usage: 'fresh-authority' });
-                if (mode.mode !== 'plain') throw new Error('Expected plain fixture');
-                return { accountMode: 'plain', encryption: null };
-            },
+    it('recovers a lost Artifact acknowledgement without duplicating a released definition', async () => {
+        const state = await setup([profile('cloud')], []);
+        let sawLostAcknowledgement = false;
+        state.artifacts.loseReply(() => {
+            sawLostAcknowledgement = true;
+            expect(state.raw()).toHaveProperty('themeProfiles');
+            expect(state.artifacts.records.size).toBe(1);
         });
-    }
-    it.each(['cleanup failure', 'lost acknowledgement', 'checkpoint cleanup', 'lost acknowledgement and cloud deletion'] as const)('recovers an accepted legacy edit after %s without importing the old definition again', async failure => {
-        const state = await setup([profile('local', 'Cloud local')]);
-        const mutateAccount = createMutation(state.scope);
-        const local = loadLocalSettings();
-        const before = resolveAccountThemeProfiles({ profiles: [], legacy: local.themeProfiles,
-            selection: local.themeProfileSelection, legacyScope: readThemeProfileLegacyAccountScope(), scope: state.scope });
-        const next = { ...before, profiles: [profile('local', 'Edited local')] };
-        const device = getPersistenceStorage(); const write = device.set.bind(device);
-        if (failure.startsWith('lost acknowledgement')) state.loseReply();
-        const refused = vi.spyOn(device, 'set').mockImplementation((key, value) => {
-            if (failure === 'cleanup failure' && key === 'local-settings' && typeof value === 'string'
-                && JSON.parse(value).themeProfiles?.profiles?.length === 0) throw new Error('Cleanup refused');
-            write(key, value);
-        });
+        await state.sync();
+        expect(sawLostAcknowledgement).toBe(true);
+        await state.sync();
+        expect(state.artifacts.records.size).toBe(1);
+        expect(state.artifacts.writes()).toBe(1);
+        expect(state.raw()).not.toHaveProperty('themeProfiles');
+        state.artifacts.assertScopedIds();
+    });
+    it('retries a released attempted-remap checkpoint after post-acknowledgement cleanup refusal', async () => {
+        const state = await setup([profile('local', 'Account local')]);
+        // ui-web-v0.2.20 syncSettings.ts 663-674 persisted the attempted library
+        // and mapping before POST, retaining this envelope through acknowledgement.
+        const pending = { themeProfiles: [profile('local', 'Account local'), profile('local_2', 'Edited local')],
+            __themeProfileMigrationEditsV1: { edits: [{ target: { kind: 'legacy', id: 'local' }, profile: profile('local', 'Edited local') }],
+                legacyProfileIds: { local: 'local_2' }, attemptedLegacyProfileIds: { local: 'local_2' } } };
+        const key = pendingAccountSettingsKey(state.scope);
+        getPersistenceStorage().set(key, JSON.stringify(pending));
+        const device = getPersistenceStorage();
         const remove = device.delete.bind(device);
-        const refusedDelete = vi.spyOn(device, 'delete').mockImplementation(key => {
-            if (failure === 'checkpoint cleanup' && key.startsWith('pending-account-settings:v2:')) throw new Error('Checkpoint cleanup refused');
-            remove(key);
+        const refusal = vi.spyOn(device, 'delete').mockImplementation(candidate => {
+            if (candidate === key) throw new Error('Pending cleanup refused');
+            remove(candidate);
         });
-        try {
-            await expect(persistThemeProfilesForSetting({ local, before, next, legacyProfileIds: { local: 'local' },
-                writeLocal: delta => storage.getState().applyLocalSettings(delta),
-                context: { accountScope: state.scope, isCurrent: () => true, readLocalSettings: loadLocalSettings,
-                    mutateSettings: async (mutate: SettingOwnerMutation, options?: RawSettingsMutationOptions) => {
-                        await mutateAccount(raw => ({ ...raw, ...mutate(settingsParse(raw)) }), options);
-                    } },
-            })).rejects.toThrow();
-        } finally { refused.mockRestore(); refusedDelete.mockRestore(); }
-        expect(state.library().map(p => [p.id, p.name])).toEqual([['local', 'Cloud local'], ['local_2', 'Edited local']]);
-        expect(loadPendingAccountSettingsState(state.scope).themeProfileMigration).toMatchObject({ legacyProfileIds: { local: 'local_2' },
-            ...(!failure.startsWith('lost acknowledgement') ? { acknowledged: true } : {}) });
-        expect(loadThemeRuntimeLocalState().themeProfiles.profiles.map(p => [p.id, p.name])).toEqual([['local', 'Cloud local'], ['local_2', 'Edited local']]);
-        const afterCloudDeletion = failure === 'lost acknowledgement and cloud deletion';
-        if (afterCloudDeletion) state.removeProfile('local');
-        storage.setState({ localSettings: loadLocalSettings() });
+        try { await expect(state.sync()).rejects.toThrow('Pending cleanup refused'); }
+        finally { refusal.mockRestore(); }
+        expect(state.raw()).not.toHaveProperty('themeProfiles');
+        expect(loadLocalSettings().themeProfiles.profiles).toEqual([]);
+        expect([...state.artifacts.records.values()].map(row => row.document.profile.name).sort()).toEqual(['Account local', 'Edited local']);
         await state.sync();
-        expect(state.library().map(p => [p.id, p.name])).toEqual(afterCloudDeletion
-            ? [['local_2', 'Edited local']] : [['local', 'Cloud local'], ['local_2', 'Edited local']]);
-        expect(loadLocalSettings()).toMatchObject({ themeProfiles: { profiles: [] },
-            themeProfileSelection: { light: null, dark: 'local_2' } });
-        expect(state.posts()).toBe(1);
-        expect(loadPendingAccountSettingsState(state.scope).themeProfileMigration).toBeNull();
-        await state.sync(); expect(state.posts()).toBe(1);
+        expect(state.artifacts.writes()).toBe(2);
+        expect(getPersistenceStorage().getString(key)).toBeUndefined();
+        state.artifacts.assertScopedIds();
     });
-    it.each(['cleanup failure', 'lost acknowledgement and cloud deletion'] as const)('recovers an automatic import after %s using its staged actual identities', async failure => {
-        const state = await setup([profile('local', 'Cloud local')]);
-        const device = getPersistenceStorage(); const write = device.set.bind(device);
-        if (failure.startsWith('lost acknowledgement')) state.loseReply();
-        const refused = vi.spyOn(device, 'set').mockImplementation((key, value) => {
-            if (failure === 'cleanup failure' && key === 'local-settings' && typeof value === 'string'
-                && JSON.parse(value).themeProfiles?.profiles?.length === 0) throw new Error('Cleanup refused');
-            write(key, value);
-        });
-        try { await expect(state.sync()).rejects.toThrow(); }
-        finally { refused.mockRestore(); }
-        expect(loadPendingAccountSettingsState(state.scope).themeProfileMigration).toMatchObject({ edits: [], legacyProfileIds: { local: 'local_2' } });
-        expect(state.library().map(p => [p.id, p.name])).toEqual([['local', 'Cloud local'], ['local_2', 'local']]);
-        if (failure.startsWith('lost acknowledgement')) state.removeProfile('local');
-        storage.setState({ localSettings: loadLocalSettings() });
-        await state.sync();
-        expect(state.library().map(p => [p.id, p.name])).toEqual(failure === 'cleanup failure'
-            ? [['local', 'Cloud local'], ['local_2', 'local']] : [['local_2', 'local']]);
-        expect(loadLocalSettings()).toMatchObject({ themeProfiles: { profiles: [] }, themeProfileSelection: { light: null, dark: 'local_2' } });
-        expect(loadPendingAccountSettingsState(state.scope)).toMatchObject({ settings: {}, themeProfileMigration: null });
-        expect(state.posts()).toBe(1);
-    });
-    it('refuses a legacy editor captured before an ordinary migration consumed its source', async () => {
-        const state = await setup([profile('local', 'Cloud local')]);
-        const entered = createDeferred<void>(); const release = createDeferred<void>();
-        state.onNextPost(async () => { entered.resolve(); await release.promise; });
-        const migrating = state.sync();
-        await entered.promise;
-        const local = loadLocalSettings();
-        const before = resolveAccountThemeProfiles({ profiles: [], legacy: local.themeProfiles,
-            selection: local.themeProfileSelection, legacyScope: readThemeProfileLegacyAccountScope(), scope: state.scope });
-        let admitted = false;
-        const mutateAccount = createMutation(state.scope, () => { admitted = true; });
-        const editing = persistThemeProfilesForSetting({ local, before,
-            next: { ...before, profiles: [profile('local', 'Edited local')] }, legacyProfileIds: { local: 'local' },
-            writeLocal: delta => storage.getState().applyLocalSettings(delta),
-            context: { accountScope: state.scope, isCurrent: () => true, readLocalSettings: loadLocalSettings,
-                mutateSettings: async (mutate: SettingOwnerMutation, options?: RawSettingsMutationOptions) => {
-                    await mutateAccount(raw => ({ ...raw, ...mutate(settingsParse(raw)) }), options);
-                } },
-        }).then(() => null, (error: unknown) => error);
-        // The public currentness hook marks admission before any asynchronous
-        // authority reads. Let an already admitted edit settle ahead of this POST;
-        // a correctly queued editor stays unopened until the migration settles.
-        try { await Promise.resolve(); if (admitted) await editing; }
-        finally { release.resolve(); }
-        await migrating;
-        expect(await editing).toBeInstanceOf(ThemeProfileMigrationSourceExpiredError);
-        expect(state.library().map(p => [p.id, p.name])).toEqual([['local', 'Cloud local'], ['local_2', 'local']]);
-        expect(loadPendingAccountSettingsState(state.scope).themeProfileMigration).toBeNull();
-        expect(state.posts()).toBe(1);
-    });
-    it('does not resurrect a captured legacy copy after an acknowledged editor CAS consumed it', async () => {
-        const state = await setup();
-        const entered = createDeferred<void>(); const release = createDeferred<void>();
-        state.onNextPost(async () => { entered.resolve(); await release.promise; });
-        const migrating = state.sync();
-        await entered.promise;
-        try {
-            const local = loadLocalSettings();
-            const before = resolveAccountThemeProfiles({ profiles: storage.getState().settings.themeProfiles, legacy: local.themeProfiles,
-                selection: local.themeProfileSelection, legacyScope: readThemeProfileLegacyAccountScope(), scope: state.scope });
-            const next = { ...before, profiles: before.profiles.map(p => p.id === 'local' ? { ...p, name: 'Edited local' } : p) };
-            await persistThemeProfilesForSetting({ local, before, next,
-                writeLocal: delta => storage.getState().applyLocalSettings(delta),
-                context: { accountScope: state.scope, isCurrent: () => true, mutateSettings: async mutate => {
-                    requireOneShotAccountSettingsMutationApplied(await syncSettings({
-                        credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
-                        encryption: null, settingsScope: state.scope, pendingSettings: {}, clearPendingSettings: () => {},
-                        oneShotServerSettingsMutation: { expectedSettingsVersion: null, rebaseOnConflict: true,
-                            mutate: raw => ({ settings: { ...raw, ...mutate(settingsParse(raw)) }, value: undefined }) },
-                    }));
-                } },
-            });
-            expect(loadLocalSettings().themeProfiles.profiles).toEqual([]);
-        } finally { release.resolve(); await migrating; }
-        expect(state.library().map(p => [p.id, p.name])).toEqual([['cloud', 'cloud'], ['local', 'Edited local']]);
-    });
-
-
 });

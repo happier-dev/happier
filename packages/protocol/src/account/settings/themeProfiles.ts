@@ -92,7 +92,7 @@ defineStoredReadProjection(ThemeProfileV1Schema, () => z.pipe(z.unknown(), z.tra
     return z.NEVER;
 })));
 export const ThemeProfileStoredSchema = createStoredReadSchema(ThemeProfileV1Schema);
-// The Account document owns the byte budget; device creation limits never truncate reads.
+// Released Account library input retains predecessor cardinality; new saved bodies use Artifacts.
 export const ThemeProfileLibrarySchema: z.ZodMiniType<readonly ThemeProfileV1[]> = z.array(ThemeProfileV1Schema).check(z.refine((profiles) => new Set(profiles.map((profile) => profile.id)).size === profiles.length));
 // Legacy libraries recover valid siblings; mutation admission remains strict.
 defineStoredReadProjection(ThemeProfileLibrarySchema, () => z.pipe(z.unknown(), z.transform((value): ThemeProfileV1[] => {

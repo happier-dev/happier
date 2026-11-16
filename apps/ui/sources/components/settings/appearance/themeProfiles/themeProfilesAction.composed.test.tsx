@@ -1,36 +1,32 @@
-import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import axios, { type AxiosAdapter } from 'axios';
+import axios from 'axios';
+import type { Socket } from 'socket.io-client';
 import type { Theme } from '@/theme';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { parseThemeProfileDocument, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 
-import { renderHook, renderScreen, pressTestInstanceAsync } from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createSecretSettingsTestHarness, type SecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
-import { useThemeProfiles } from '@/sync/store/hooks';
-import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
-import { areThemeProfileLegacyIdsCurrent, readCanonicalThemeProfiles } from './themeProfilesSettingBinding';
-import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
-import { DEFAULT_THEME_PROFILES_LOCAL_STATE, parseThemeProfilesLocalState } from '@/theme/profiles/themeProfilePersistence';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
-import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
-import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
-import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
+import { getThemePresetSourceReferenceId } from './themeProfilePresetOptions';
 import { Modal } from '@/modal';
-import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
-import { createClientActionReverseDispatcher } from '../../../../../../cli/src/session/actions/clientActionReverseDispatch';
-import { createActionSettingsProvider } from '../../../../../../cli/src/settings/actionsSettingsProvider';
 
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));
-const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Appearance: { getColorScheme: () => 'light' },
+}));
 vi.mock('react-native-unistyles', async () => {
     const { lightTheme, darkTheme } = await import('@/theme');
     const themes = { light: lightTheme, dark: darkTheme };
@@ -42,333 +38,159 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    router, params: () => routeParams.current,
-}).module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router }).module);
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
-vi.mock('reanimated-color-picker', async () =>
-    (await import('@/dev/testkit/mocks/reanimatedColorPicker')).createReanimatedColorPickerMock());
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    return { ...original, createFrontDoorActionExecute:
+        (await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary')).createFrontDoorActionExecuteForVitest(original) };
+});
 
-installDisconnectedServerSocketBoundary();
+const boundarySockets = new Set<Socket>();
+installDisconnectedServerSocketBoundary(socket => {
+    socket.id = 'theme-ui-client';
+    boundarySockets.add(socket);
+});
 await loadSyncSingletonForTests();
-const { ThemeProfileImportScreen } = await import('./ThemeProfileImportScreen');
-const { ThemeProfileEditorScreen } = await import('./ThemeProfileEditorScreen');
-const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
-const { UnistylesRuntime } = await import('react-native-unistyles');
+const { sync } = await import('@/sync/sync');
+const { ThemeProfilesSettingsScreen } = await import('./ThemeProfilesSettingsScreen');
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const originalState = storage.getState();
-const originalLegacyScope = readThemeProfileLegacyAccountScope();
 const originalAxiosAdapter = axios.defaults.adapter;
 afterEach(() => {
     standardCleanup(); storage.setState(originalState, true); axios.defaults.adapter = originalAxiosAdapter;
-    writeThemeProfileLegacyAccountScope(originalLegacyScope);
+    for (const socket of boundarySockets) socket.id = 'theme-ui-client';
     vi.unstubAllGlobals(); router.back.mockClear(); router.push.mockClear();
-    routeParams.current = {};
 });
 
-const profile = parseThemeProfilesLocalState({ profiles: [{ ...createThemeProfileDraft({
-    id: 'custom-action-theme', name: 'Custom theme', now: '2026-10-20T12:00:00.000Z',
-}), overrides: { light: { 'background.canvas': '#F1E2D3' }, dark: {} } }],
-    activeProfileIds: { light: null, dark: null } }).state.profiles[0]!;
-const library = { profiles: [profile], activeProfileIds: { light: profile.id, dark: 'nightDark' } };
-const anchor = 'appearance.themes.yourThemes';
-
-async function settleAccountBootstrap() {
-    const { sync } = await import('@/sync/sync');
-    await sync.awaitBootstrapForegroundAcquisition();
-    const queue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
-    await queue.awaitQueue();
+const firstId = '11111111-1111-4111-8111-111111111111';
+const siblingId = '22222222-2222-4222-8222-222222222222';
+function document(id: string, name: string): ThemeProfileDocument {
+    const parsed = parseThemeProfileDocument({ ...createThemeProfileDraft({ id, name, now: '2026-11-16T12:00:00.000Z' }),
+        assetAppearance: 'light', overrides: { light: { 'background.canvas': '#F1E2D3' }, dark: {} },
+        futureThemeField: { retained: true } });
+    if (!parsed.ok) throw new Error(parsed.error);
+    return parsed.document;
 }
 
-describe('theme profile library Settings Action ingress', () => {
-    it('admits the real local owner under Off, rejected/approved Ask and Allowed and rejects noncanonical libraries', async () => {
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
-            actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
-        }) });
-        storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE,
-            uiFontScale: 1.15 });
-        const probe = await renderHook(() => ({ profiles: useThemeProfiles(), ...useSettingActionFeedback() }));
+/** Seed the Home's persisted bytes; the real Sync inventory reader must publish the private headers. */
+async function seedLibrary(account: SecretSettingsTestHarness) {
+    const documents = [document(firstId, 'Custom theme'), document(siblingId, 'Sibling theme')];
+    for (const value of documents) {
+        const entry = projectThemeLibraryEntry(value);
+        const rawHeader = { v: 1, kind: THEME_ARTIFACT_KIND, title: entry.name, mode: entry.mode, themeSource: entry.source,
+            compatibility: entry.compatibility, palette: projectThemeMiniaturePalette(value.profile) };
+        account.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: entry.id, title: entry.name,
+            body: JSON.stringify(value.raw), rawHeader, headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: Date.parse(value.profile.createdAt), updatedAt: Date.parse(value.profile.updatedAt), isDecrypted: true,
+            ownerAccountId: account.scope.accountId, access: 'owner', sourceServerId: account.scope.serverId }, account.scope.accountId));
+    }
+    await sync.awaitBootstrapForegroundAcquisition();
+    await sync.fetchArtifactsList({ kinds: [THEME_ARTIFACT_KIND] });
+    return documents;
+}
+
+/** Approval policy remains the real Account-owned policy, with only Home HTTP/credential storage synthetic. */
+describe('theme profile library Action ingress', () => {
+    it('refuses explicit absent Account scope without borrowing the active library', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
         try {
-            await act(async () => { expect(await probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse(library))).toBe(false); });
-            expect(probe.getCurrent().profiles).toEqual(DEFAULT_THEME_PROFILES_LOCAL_STATE);
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: { v: 1,
-                approvalWaivedSurfaces: { 'settings.set': ['ui'] },
-            } })); });
-            await act(async () => { expect(await probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse(library))).toBe(true); });
-            expect(account.persistedRawSettings.themeProfiles).toEqual(library.profiles);
-            expect(probe.getCurrent().profiles).toEqual(library);
-            expect(storage.getState().localSettings).toMatchObject({ themePreference: 'light', uiFontScale: 1.15 });
-            expect(UnistylesRuntime.getTheme('light').colors.background.canvas).toBe('#F1E2D3');
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: { v: 1,
-                actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } },
-            } })); });
-            let pending!: Promise<boolean>;
-            await act(async () => { pending = probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse(DEFAULT_THEME_PROFILES_LOCAL_STATE)); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            expect(probe.getCurrent().profiles).toEqual(library);
-            const rejectedId = account.artifacts.list()[0]!.id;
-            await decideApprovalAsInbox(account.scope.serverId, rejectedId, 'reject');
-            expect(await pending).toBe(false);
-            expect(probe.getCurrent().profiles).toEqual(library);
-            await act(async () => { pending = probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse(DEFAULT_THEME_PROFILES_LOCAL_STATE)); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(2));
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list().find(item => item.id !== rejectedId)!.id, 'approve');
-            expect(await pending).toBe(true);
-            expect(probe.getCurrent().profiles).toEqual(DEFAULT_THEME_PROFILES_LOCAL_STATE);
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: { v: 1,
-                approvalWaivedSurfaces: { 'settings.set': ['ui'] },
-            } })); });
-            for (const invalid of [{ ...library, extra: true }, { ...library, profiles: [BUILT_IN_THEME_PROFILES[0]!.profile] },
-                { ...library, activeProfileIds: { light: 'missing', dark: null } },
-                { ...library, profiles: [{ ...profile, overrides: { light: { 'background.canvas': 'var(--untrusted)' }, dark: {} } }] }]) {
-                await act(async () => { expect(await probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse(invalid))).toBe(false); });
-                expect(probe.getCurrent().profiles).toEqual(DEFAULT_THEME_PROFILES_LOCAL_STATE);
-            }
-            expect(account.persistedSettings.themeProfiles).toEqual([]);
+            await sync.awaitBootstrapForegroundAcquisition();
+            await expect(sync.withThemeProfileLibrary(async () => 'admitted', { expectedScope: account.scope }))
+                .resolves.toBe('admitted');
+            await expect(sync.withThemeProfileLibrary(async () => 'borrowed current Account', { expectedScope: null }))
+                .rejects.toThrow('Artifact Account scope changed');
         } finally { standardCleanup(); await account.dispose(); }
     });
-
-    it('rebases a library edit while retaining another device profile and keeps activation local', async () => {
-        const remote = { ...profile, id: 'theme_remote-added', name: 'Remote theme' };
-        const edited = { ...profile, name: 'Edited here' };
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ themeProfiles: [profile],
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-        }) });
-        storage.getState().applyLocalSettings({ themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE,
-            themeProfileSelection: { light: null, dark: null } });
-        const originalRequest = account.request.getMockImplementation()!;
-        let conflicted = false;
-        account.request.mockImplementation(async (input, init) => {
-            if (!conflicted && String(input).endsWith('/v2/account/settings') && init?.method === 'POST') {
-                conflicted = true;
-                account.replaceSettings(settingsParse({ ...account.persistedSettings, themeProfiles: [profile, remote] }),
-                    { version: 2, publish: false });
-            }
-            return originalRequest(input, init);
-        });
-        const probe = await renderHook(() => ({ profiles: useThemeProfiles(), ...useSettingActionFeedback() }));
+    it('activates the acknowledged saved document without acquiring the whole header library', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
+            approvalWaivedSurfaces: { 'settings.set': ['ui'] },
+        } }) });
         try {
-            await act(async () => { expect(await probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse({
-                edit: { before: probe.getCurrent().profiles, next: {
-                    profiles: [edited], activeProfileIds: { light: profile.id, dark: null },
-                }, legacyProfileIds: {} },
-            }))).toBe(true); });
-            expect(conflicted).toBe(true);
-            expect(account.persistedSettings.themeProfiles).toEqual(expect.arrayContaining([edited, remote]));
-            expect(account.persistedRawSettings).not.toHaveProperty('themeProfileSelection');
-            expect(storage.getState().localSettings.themeProfileSelection).toEqual({ light: profile.id, dark: null });
-            expect(probe.getCurrent().profiles.profiles).toHaveLength(2);
-        } finally { standardCleanup(); await account.dispose(); }
-    });
-
-    it.each([false, true])('keeps unknown cloud profiles when a local edit starts before the first account snapshot (colliding ID: %s)', async colliding => {
-        const remote = { ...profile, id: colliding ? profile.id : 'theme_remote-before-fetch', name: 'Already in the account' };
-        const edited = { ...profile, name: 'Edited before fetch' };
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ themeProfiles: [remote],
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-        }) });
-        const probe = await renderHook(() => useSettingActionFeedback());
-        await settleAccountBootstrap();
-        storage.setState({ settings: settingsParse({ actionsSettingsV1: account.persistedSettings.actionsSettingsV1 }) });
-        const before = { profiles: [profile], activeProfileIds: { light: profile.id, dark: null } };
-        storage.getState().applyLocalSettings({ themeProfiles: before, themeProfileSelection: null });
-        writeThemeProfileLegacyAccountScope(null);
-        try {
-            expect(loadLocalSettings().themeProfiles).toEqual(storage.getState().localSettings.themeProfiles);
-            expect(areThemeProfileLegacyIdsCurrent(storage.getState().localSettings, before,
-                { [profile.id]: profile.id }, { accountScope: account.scope, isCurrent: () => true })).toBe(true);
-            const canonicalBefore = readCanonicalThemeProfiles(before);
-            expect(canonicalBefore).toEqual(before);
-            expect(canonicalBefore && areThemeProfileLegacyIdsCurrent(storage.getState().localSettings, canonicalBefore,
-                { [profile.id]: profile.id }, { accountScope: account.scope, isCurrent: () => true })).toBe(true);
-            await act(async () => {
-                const applied = await probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse({
-                    edit: { before, next: { ...before, profiles: [edited] }, legacyProfileIds: { [profile.id]: profile.id } },
-                }));
-                expect(applied, JSON.stringify({ feedback: vi.mocked(Modal.alert).mock.calls,
-                    scope: storage.getState().settingsScope, expectedScope: account.scope,
-                    legacyBinding: readThemeProfileLegacyAccountScope(),
-                    backup: storage.getState().localSettings.themeProfiles,
-                    persistedBackup: loadLocalSettings().themeProfiles, writes: account.settingsWrites.length,
-                    acceptedProfiles: account.persistedSettings.themeProfiles,
-                })).toBe(true);
-            });
-            const editedId = colliding ? `${profile.id}_2` : profile.id;
-            expect(account.persistedSettings.themeProfiles).toEqual(expect.arrayContaining([{ ...edited, id: editedId }, remote]));
-            expect(storage.getState().localSettings.themeProfiles.profiles).toEqual([]);
-            expect(storage.getState().localSettings.themeProfileSelection).toEqual({ light: editedId, dark: null });
-        } finally { standardCleanup(); await account.dispose(); }
-    });
-
-    it('keeps a pre-fetch legacy activation distinct from a later account activation with the same ID', async () => {
-        const remote = { ...profile, name: 'Account profile with the same ID' };
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ themeProfiles: [remote],
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-        }) });
-        const probe = await renderHook(() => ({ profiles: useThemeProfiles(), ...useSettingActionFeedback() }));
-        await settleAccountBootstrap();
-        await act(async () => {
-            storage.setState({ settings: settingsParse({ actionsSettingsV1: account.persistedSettings.actionsSettingsV1 }) });
-            storage.getState().applyLocalSettings({ themeProfiles: { profiles: [profile], activeProfileIds: { light: null, dark: null } },
-                themeProfileSelection: null });
-            writeThemeProfileLegacyAccountScope(null);
-        });
-        try {
-            await act(async () => { expect(await probe.getCurrent().setSetting({ anchor: 'appearance.themeMode' },
-                SettingsDeclarationValueV1Schema.parse({ themePreference: 'light', themeProfiles: {
-                    ...probe.getCurrent().profiles, activeProfileIds: { light: profile.id, dark: null },
-                }, legacyProfileIds: { [profile.id]: profile.id } }))).toBe(true); });
-            expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual({ legacyProfileId: profile.id });
-            await act(async () => { account.replaceSettings(account.persistedSettings); });
-            expect(probe.getCurrent().profiles.activeProfileIds.light).toBe(`${profile.id}_2`);
-            await act(async () => { expect(await probe.getCurrent().setSetting({ anchor: 'appearance.themeMode' },
-                SettingsDeclarationValueV1Schema.parse({ themePreference: 'light', themeProfiles: {
-                    ...probe.getCurrent().profiles, activeProfileIds: { light: profile.id, dark: null },
-                }, legacyProfileIds: { [`${profile.id}_2`]: profile.id } }))).toBe(true); });
-            expect(storage.getState().localSettings.themeProfileSelection?.light).toBe(profile.id);
-            expect(probe.getCurrent().profiles.activeProfileIds.light).toBe(profile.id);
+            await sync.awaitBootstrapForegroundAcquisition();
+            const before = account.request.mock.calls.length;
+            const saved = document(firstId, 'Save and activate');
+            const execute = createFrontDoorActionExecute();
+            const result = await execute('settings.set', { anchor: 'appearance.themeMode', value: {
+                activation: { profileId: firstId, profileMode: 'light', nextThemePreference: 'light', saveDocument: saved.raw },
+                reduceMotion: true,
+            } }, { surface: 'ui' });
+            expect(account.request.mock.calls.slice(before).filter(([url, init]) =>
+                new URL(String(url)).pathname === '/v1/artifacts' && (!init?.method || init.method === 'GET'))).toEqual([]);
+            requireActionSuccess(result, 'settings.set');
+            expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual({ kind: 'artifact', id: firstId });
             expect(account.settingsWrites).toEqual([]);
         } finally { standardCleanup(); await account.dispose(); }
     });
 
-    it('refuses an approved legacy edit after another acknowledged writer consumed its source', async () => {
-        const remote = { ...profile, name: 'Cloud owner' };
-        const migrated = { ...profile, id: `${profile.id}_2` };
-        const before = { profiles: [profile], activeProfileIds: { light: profile.id, dark: null } };
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
-            actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
-        }) });
-        storage.getState().applyLocalSettings({ themeProfiles: before, themeProfileSelection: null });
-        const probe = await renderHook(() => useSettingActionFeedback());
-        try {
-            let pending!: Promise<boolean>;
-            await act(async () => { pending = probe.getCurrent().setSetting({ anchor }, SettingsDeclarationValueV1Schema.parse({
-                edit: { before, next: { ...before, profiles: [{ ...profile, name: 'Waiting draft' }] },
-                    legacyProfileIds: { [profile.id]: profile.id } },
-            })); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            await act(async () => {
-                account.replaceSettings(settingsParse({ ...account.persistedSettings, themeProfiles: [remote, migrated] }));
-                storage.getState().applyLocalSettings({ themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE,
-                    themeProfileSelection: { light: migrated.id, dark: null } });
-                writeThemeProfileLegacyAccountScope(null);
-            });
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            expect(await pending).toBe(false);
-            expect(account.persistedSettings.themeProfiles).toEqual([remote, migrated]);
-            expect(storage.getState().localSettings.themeProfileSelection?.light).toBe(migrated.id);
-        } finally { standardCleanup(); await account.dispose(); }
-    });
-
-    it('keeps an import on screen until admission succeeds', async () => {
+    it('browses private headers without bodies and applies a saved theme only when its Action is allowed', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
-            actions: { 'settings.set': { disabledSurfaces: ['ui'] } },
+            actions: { [THEME_ACTION_IDS.apply]: { disabledSurfaces: ['ui'] } },
         } }) });
-        storage.getState().applyLocalSettings({ themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
         try {
-            const screen = await renderScreen(<ThemeProfileImportScreen />);
-            act(() => screen.changeTextByTestId('settings-theme-profile-import-json', exportThemeProfileToJson(profile)));
-            await pressTestInstanceAsync(screen.findByTestId('settings-theme-profile-import-submit'));
-            expect(router.back).not.toHaveBeenCalled();
-            expect(storage.getState().localSettings.themeProfiles.profiles).toEqual([]);
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: { v: 1,
-                actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } },
+            await seedLibrary(account);
+            storage.getState().applyLocalSettings({ themePreference: 'light', themeProfileSelection: {
+                light: null, dark: { kind: 'built-in', presetId: 'nightDark' },
+            }, uiFontScale: 1.15 });
+            const beforeBrowse = account.request.mock.calls.length;
+            const screen = await renderSettingsView(React.createElement(ThemeProfilesSettingsScreen));
+            const key = getThemePresetSourceReferenceId({ kind: 'artifact', id: firstId });
+            expect(screen.findAllByProps({ testID: `settings-theme-light:${key}` }).length).toBeGreaterThan(0);
+            const browseRequests = account.request.mock.calls.slice(beforeBrowse).map(([url]) => String(url));
+            expect(browseRequests.filter(url => {
+                const path = new URL(url).pathname;
+                return path === `/v1/artifacts/${firstId}` || path === `/v1/artifacts/${siblingId}` || path === '/v1/artifacts/read';
+            })).toEqual([]);
+            const siblingBefore = account.artifacts.readPlainBody(siblingId);
+            vi.mocked(Modal.alert).mockClear();
+            await screen.pressByTestIdAsync(`settings-theme-light:${key}`);
+            await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
+            expect(storage.getState().localSettings.themeProfileSelection?.light).toBeNull();
+            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
+                v: 1, approvalWaivedSurfaces: { [THEME_ACTION_IDS.apply]: ['ui'] },
             } })); });
-            let pending!: Promise<void>;
-            await act(async () => { pending = pressTestInstanceAsync(screen.findByTestId('settings-theme-profile-import-submit')); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            expect(router.back).not.toHaveBeenCalled();
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
-            await pending;
-            expect(screen.findByTestId('settings-theme-profile-import-json')!.props.value).toBe(exportThemeProfileToJson(profile));
-            expect(router.back).not.toHaveBeenCalled();
-            expect(storage.getState().localSettings.themeProfiles.profiles).toEqual([]);
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: { v: 1,
-                approvalWaivedSurfaces: { 'settings.set': ['ui'] },
-            } })); });
-            await pressTestInstanceAsync(screen.findByTestId('settings-theme-profile-import-submit'));
-            await vi.waitFor(() => {
-                expect(account.persistedSettings.themeProfiles).toHaveLength(1);
-                expect(router.back).toHaveBeenCalledOnce();
-            });
+            vi.mocked(Modal.alert).mockClear();
+            await screen.pressByTestIdAsync(`settings-theme-light:${key}`);
+            await vi.waitFor(() => expect(storage.getState().localSettings.themeProfileSelection).toEqual({
+                light: { kind: 'artifact', id: firstId }, dark: { kind: 'built-in', presetId: 'nightDark' },
+            }));
+            await screen.pressByTestIdAsync('settings-theme-light:light');
+            await vi.waitFor(() => expect(storage.getState().localSettings.themeProfileSelection).toEqual({
+                light: null, dark: { kind: 'built-in', presetId: 'nightDark' },
+            }));
+            expect(Modal.alert).not.toHaveBeenCalled();
+            // An offline local apply must settle successfully, with no invented transport identity.
+            for (const socket of boundarySockets) socket.id = undefined;
+            const result = await createFrontDoorActionExecute()(THEME_ACTION_IDS.apply,
+                { ref: { kind: 'artifact', id: firstId }, mode: 'light' }, { surface: 'ui' });
+            requireActionSuccess(result, THEME_ACTION_IDS.apply);
+            expect(result.result).toMatchObject({ applied: { mode: 'light' }, undoHandle: expect.any(String) });
+            expect(result.result).not.toHaveProperty('applied.clientId');
+            expect(storage.getState().localSettings.uiFontScale).toBe(1.15);
+            expect(account.artifacts.readPlainBody(siblingId)).toBe(siblingBefore);
+            expect(account.settingsWrites).toEqual([]);
         } finally { standardCleanup(); await account.dispose(); }
     });
 
-    it.each(['duplicate', 'delete'] as const)('keeps the %s editor in place when Off and commits only after admission', async operation => {
+    it('edits an addressed Artifact through the default Action executor without replacing siblings or future fields', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
-            actions: { 'settings.set': { disabledSurfaces: ['ui'] } },
+            approvalWaivedSurfaces: { [THEME_ACTION_IDS.save]: ['ui'] },
         } }) });
-        const inactiveLibrary = { ...library, activeProfileIds: { light: null, dark: 'nightDark' } };
-        account.replaceSettings(settingsParse({ ...account.persistedSettings, themeProfiles: inactiveLibrary.profiles }));
-        storage.getState().applyLocalSettings({ themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE,
-            themeProfileSelection: inactiveLibrary.activeProfileIds });
-        writeThemeProfileLegacyAccountScope(null);
-        routeParams.current = { profileId: profile.id };
-        vi.mocked(Modal.confirm).mockResolvedValue(true);
         try {
-            const screen = await renderScreen(<ThemeProfileEditorScreen />);
-            const choose = () => screen.tree.findAll(node => node.props.testID === 'settings-theme-profile-menu'
-                && typeof node.props.onSelect === 'function')[0]!.props.onSelect(operation);
-            await act(async () => { await choose(); });
-            expect(account.persistedSettings.themeProfiles).toEqual(inactiveLibrary.profiles);
-            expect(storage.getState().localSettings.themeProfileSelection).toEqual(inactiveLibrary.activeProfileIds);
-            expect(router.back).not.toHaveBeenCalled();
-            expect(router.push).not.toHaveBeenCalled();
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: { v: 1,
-                approvalWaivedSurfaces: { 'settings.set': ['ui'] },
-            } })); });
-            await act(async () => { await choose(); });
-            expect(account.persistedSettings.themeProfiles).toHaveLength(operation === 'delete' ? 0 : 2);
-            expect(storage.getState().localSettings.themeProfileSelection).toEqual(inactiveLibrary.activeProfileIds);
-            if (operation === 'delete') expect(router.back).toHaveBeenCalledOnce();
-            else expect(router.push).toHaveBeenCalledOnce();
-        } finally { standardCleanup(); await account.dispose(); }
-    });
-
-    it('projects a genuine Agent/CLI local Action through the answering app to its theme reader and runtime', async () => {
-        const account = await createSecretSettingsTestHarness({ serverIdentityId: 'srv_theme_profiles', settings: settingsParse({
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['agent'] } },
-        }) });
-        await settleAccountBootstrap();
-        storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
-        const adapter: AxiosAdapter = async config => {
-            const response = await account.request(String(config.url), { method: config.method?.toUpperCase(),
-                headers: Object.fromEntries(Object.entries(config.headers.toJSON()).map(([key, value]) => [key, String(value)])),
-                ...(config.data === undefined ? {} : { body: typeof config.data === 'string' ? config.data : JSON.stringify(config.data) }) });
-            return { config, status: response.status, statusText: response.statusText,
-                headers: Object.fromEntries(response.headers), data: await response.json() };
-        };
-        axios.defaults.adapter = adapter;
-        vi.stubGlobal('fetch', account.request);
-        const receive = createUiClientActionReverseHandler({ ...account.scope, isCurrent: () => true });
-        const reverse = createClientActionReverseDispatcher(() => ({ hasConnectedClientRpcHandler: () => true,
-            callConnectedClientRpc: async (_method, payload, options) => {
-                options.onIssued();
-                const result = await receive(JSON.parse(JSON.stringify(payload)), { signal: new AbortController().signal });
-                return { ok: true, result };
-            } }));
-        // This explicit Account policy must not inherit the host's standalone CLI environment override.
-        const policy = createActionSettingsProvider({ getAccountSettings: () => account.persistedSettings, allowEnvironmentOverride: false });
-        expect(policy.getActionsSettings().approvalWaivedSurfaces?.['settings.set']).toContain('agent');
-        const cli = createCliActionExecutorFromCredentials({ credentials: { token: account.credentials.token,
-            encryption: null, credentialProvenance: 'stored_session' }, serverId: account.scope.serverId,
-            serverIdentityId: 'srv_theme_profiles', serverApiUrl: new URL(String(account.request.mock.calls[0]![0])).origin,
-            clientActionExecute: reverse,
-            actionsSettingsProvider: policy,
-        });
-        const probe = await renderHook(() => useThemeProfiles());
-        try {
-            await act(async () => {
-                const result = await cli.execute('settings.set', { anchor, value: library }, { surface: 'agent',
-                    authority: 'account_automation', actionCaller: { kind: 'host' }, actionRequestId: 'theme-library-agent' });
-                expect(result.ok ? 'ok' : result.errorCode).toBe('ok');
-            });
-            await vi.waitFor(() => expect(probe.getCurrent()).toEqual(library));
-            expect(UnistylesRuntime.getTheme('light').colors.background.canvas).toBe('#F1E2D3');
-            expect(account.persistedSettings.themeProfiles).toEqual(library.profiles);
+            const [before] = await seedLibrary(account);
+            const edited = parseThemeProfileDocument({ ...before!.raw, name: 'Edited here' });
+            if (!edited.ok) throw new Error(edited.error);
+            const siblingBefore = account.artifacts.readPlainBody(siblingId);
+            const execute = createFrontDoorActionExecute();
+            const result = await execute(THEME_ACTION_IDS.save, { ref: { kind: 'artifact', id: firstId }, document: edited.document }, { surface: 'ui' });
+            expect(result.ok ? 'ok' : result.errorCode).toBe('ok');
+            expect(JSON.parse(account.artifacts.readPlainBody(firstId)!)).toMatchObject({ name: 'Edited here', futureThemeField: { retained: true } });
+            expect(account.artifacts.readPlainBody(siblingId)).toBe(siblingBefore);
+            expect(account.artifacts.list().map(row => row.id)).toEqual([firstId, siblingId]);
+            expect(account.settingsWrites).toEqual([]);
         } finally { standardCleanup(); await account.dispose(); }
     });
 });

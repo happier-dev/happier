@@ -1,3 +1,4 @@
+import type { ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { t } from '@/text';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { resolveThemeProfileAssetAppearance } from '@/theme/profiles/themeProfileAssetAppearance';
@@ -14,6 +15,13 @@ export type ThemePresetSourceOption = Readonly<{
     preferredMode: ThemeProfileMode;
     builtInDefinition?: BuiltInThemeProfileDefinition;
 }>;
+
+/** Stable selection identity includes the reference namespace and contribution owner. */
+export function getThemePresetSourceReferenceId(reference: ThemeReference): string {
+    if (reference.kind === 'built-in') return reference.presetId;
+    return JSON.stringify(reference.kind === 'artifact' ? ['artifact', reference.id]
+        : ['plugin', reference.pluginId, reference.contributionId]);
+}
 
 export const resolveThemePresetSourcePreferredMode = (profile: ThemeProfileV1): ThemeProfileMode => {
     return resolveThemeProfileAssetAppearance(profile);

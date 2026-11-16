@@ -3,7 +3,7 @@ import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from './themeProfileTy
 
 const stableStringify = (value: unknown): string => JSON.stringify(value);
 
-/** Lossless Account/legacy composition shared by readers and mutation rebasing. */
+/** Interpret released Account/local collision identities during one-shot import. */
 export function mergeThemeProfileLibraries(
     profiles: readonly ThemeProfileV1[],
     legacy: ThemeProfilesLocalStateV1,

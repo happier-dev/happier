@@ -1,4 +1,3 @@
-import { readThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import type { SessionInitialAccessDraftV1} from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actions';
 import type { SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
@@ -14,13 +13,11 @@ import {
 import { readLegacyVoiceSettingsMigrationSource } from '@/voice/settings/migrations/legacyAdapters';
 import { type LocalSettings, localSettingsParse } from '../settings/localSettings';
 import {
-    migrateThemeProfileLocalStateTokenIds,
-    parseThemeProfilesLocalState,
+    DEFAULT_THEME_PROFILES_LOCAL_STATE,
+    readThemeProfileReferenceSelection,
+    resolveThemeProfilesState,
 } from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
-import { resolveAccountThemeProfiles } from '../settings/themeProfiles';
-import { loadPendingAccountSettingsState } from './pendingAccountSettingsPersistence';
-import { loadStartupAccountSettings } from './startupAccountSettings';
 import { loadSettings } from './settingsPersistence';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/account/accountSettingArtifacts';
@@ -75,7 +72,7 @@ import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/
 import { PluginUiNewSessionActionDefaultV1Schema, type PluginUiNewSessionActionDefaultV1, PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1, type PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { getPersistenceStorage } from './persistenceStorage';
-import { loadLocalSettingsSnapshot, saveLocalSettings } from './settingsPersistence';
+import { loadLocalSettingsSnapshot } from './settingsPersistence';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { log } from '@/log';
 import { prepareSessionPersistenceScopeForActivation } from './sessionPersistence';
@@ -618,30 +615,10 @@ export type ThemeRuntimeLocalState = Readonly<{
     uiSurfaceFinishOverrides: LocalSettings['uiSurfaceFinishOverrides'];
 }>;
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
-    const { settings, storedValue: parsed } = loadLocalSettingsSnapshot();
-    const parsedProfiles = parseThemeProfilesLocalState(isRecord(parsed) ? parsed.themeProfiles : undefined);
-    const migratedProfiles = migrateThemeProfileLocalStateTokenIds(parsedProfiles.state);
-    const { scope, settings: accountSettings } = loadStartupAccountSettings();
-    const pendingThemeState = scope ? loadPendingAccountSettingsState(scope) : null;
-    const themeProfiles = resolveAccountThemeProfiles({
-        ...(pendingThemeState ? { pendingIntent: pendingThemeState.themeProfileMigration,
-            pendingProfiles: pendingThemeState.settings.themeProfiles } : {}),
-        profiles: accountSettings.themeProfiles, legacy: migratedProfiles.state,
-        selection: settings.themeProfileSelection, legacyScope: readThemeProfileLegacyAccountScope(), scope,
-    });
-
-    if (parsedProfiles.changed || migratedProfiles.changed) {
-        const healedSettings = localSettingsParse({
-            ...(isRecord(parsed) ? parsed : {}),
-            themeProfiles: migratedProfiles.state,
-        });
-        saveLocalSettings(healedSettings);
-    }
+    const { settings } = loadLocalSettingsSnapshot();
+    const themeProfiles = resolveThemeProfilesState([], DEFAULT_THEME_PROFILES_LOCAL_STATE,
+        readThemeProfileReferenceSelection(settings.themeProfileSelection));
 
     return {
         themePreference: settings.themePreference,

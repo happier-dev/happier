@@ -168,7 +168,7 @@ function readMigratedLocalSettingsStoredValue(requireReadableSource = false): un
     return storedValue;
 }
 
-/** Retain the stored value only for owner-level startup healing of theme profiles. */
+/** Retain released raw theme input until its Artifact transfer is acknowledged. */
 export function loadLocalSettingsSnapshot(): Readonly<{ settings: LocalSettings; storedValue: unknown }> {
     try {
         const storedValue = readMigratedLocalSettingsStoredValue();
@@ -234,6 +234,10 @@ export function saveLocalSettingsDelta(delta: Partial<LocalSettings>): Readonly<
 function persistLocalSettings(settings: LocalSettings, storedValue: unknown, previous: LocalSettings): void {
     const mmkv = getPersistenceStorage();
     let retained: unknown = settings;
+    if (storedValue && typeof storedValue === 'object' && Object.hasOwn(storedValue, 'themeProfiles')
+        && areAccountSettingsJsonValuesEqual(settings.themeProfiles, previous.themeProfiles)) {
+        retained = { ...settings, themeProfiles: Reflect.get(storedValue, 'themeProfiles') };
+    }
     for (const legacyKey of ['mainAppTab', 'sessionMruOrderV1', 'sessionComposerCollapsedBannerKinds',
         'sessionLastMobileSurfaceBySessionId', 'collapsedGroupKeysV1', 'brandHeroSeenAt', 'hasCompletedAuthOnce',
         'acknowledgedCliVersions', 'petsDismissedCompanionTrayItemKeys', 'petsCompanionPosition']) {

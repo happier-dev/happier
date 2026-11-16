@@ -1,8 +1,7 @@
 import { isHomeCredentialCurrent } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { AccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 import { tracking } from '@/track';
-import { ThemeProfileLibraryStoredSchema } from '@/theme/profiles/themeProfilePersistence';
-import { captureLegacyThemeProfileMigration } from './themeProfileMigration';
+import { hasReleasedThemeProfileMigrationInput, migrateReleasedThemeProfiles, type WithThemeProfileLibrary } from './themeProfileMigration';
 import { runAccountSettingsMutation } from './accountSettingsMutationOrder';
 import { applySettings, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import {
@@ -188,6 +187,7 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
     credentials: AuthCredentials;
     encryption: Encryption | null;
     settingsScope?: AccountSettingsScope | null;
+    withThemeProfileLibrary?: WithThemeProfileLibrary;
     pendingSettings: Partial<Settings>;
     /** Latest intents for this captured scope, including those awaiting the quiet disk flush. */
     getPendingSettings?: () => Partial<Settings>;
@@ -444,9 +444,9 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         }
     }
 
-    // Explicit semantic mutations retain their exact requested transition.
-    const themeProfileMigration = settingsScope && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation
-        ? captureLegacyThemeProfileMigration(settingsScope) : null;
+    const themeProfileTransfer = settingsScope && params.withThemeProfileLibrary
+        && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation
+        ? { scope: settingsScope, withThemeProfileLibrary: params.withThemeProfileLibrary } : null;
 
     const admittedBaseline = requestContext?.admittedBaseline;
     // The admitted path initializes material at the fresh pre-seal boundary below.
@@ -872,7 +872,8 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
     // change of which moves the head, so a known status cannot be stale here. An unknown one (an older
     // Home omits it) keeps the consumer's exact-version re-read below.
     if (settingsScope && isSettingsScopeActive() && !admittedBaseline && Object.keys(pendingServerSettings).length === 0
-        && !themeProfileMigration && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation
+        && !(themeProfileTransfer && hasReleasedThemeProfileMigrationInput(themeProfileTransfer.scope, readRetainedAccountSettingsRawSnapshot(settingsScope)?.raw ?? null))
+        && !params.accountSettingsMutation && !params.oneShotServerSettingsMutation
         && storage.getState().settingsRemoteAlertPolicyStatus != null) {
         const admitted = readRetainedAccountSettingsRawSnapshot(settingsScope);
         if (admitted && admitted.version === loadSettingsForCapturedScope().version
@@ -888,7 +889,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
 
     // Apply pending settings
     if (Object.keys(pendingServerSettings).length > 0
-        || themeProfileMigration
+        || (themeProfileTransfer && hasReleasedThemeProfileMigrationInput(themeProfileTransfer.scope, initialBaseline.raw))
         || params.accountSettingsMutation
         || params.oneShotServerSettingsMutation) {
         dbgSettings('syncSettings: pending detected; will POST', {
@@ -950,17 +951,16 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                     },
                 );
             }
-            const mutationBaseline = oneShotMutation
+            const preparedBaseline = oneShotMutation
                 ? oneShotMutation.settings
                 : immutableMutation?.raw ?? baseline.raw;
-            const migratedThemes = themeProfileMigration?.resolve(
-                ThemeProfileLibraryStoredSchema.parse(baseline.raw?.themeProfiles ?? []), pendingServerSettings.themeProfiles,
-            ) ?? null;
-            const pendingWithMigration: Partial<Settings> = migratedThemes
-                ? { ...pendingServerSettings, themeProfiles: [...migratedThemes.profiles] } : pendingServerSettings;
+            const migratedThemes = themeProfileTransfer && hasReleasedThemeProfileMigrationInput(themeProfileTransfer.scope, baseline.raw)
+                ? await migrateReleasedThemeProfiles({ ...themeProfileTransfer, profiles: baseline.raw?.themeProfiles, signal: params.signal }) : null;
+            const mutationBaseline = migratedThemes ? { ...preparedBaseline } : preparedBaseline;
+            if (migratedThemes && mutationBaseline) delete mutationBaseline.themeProfiles;
             const merged = mergePendingSettingsIntoRawBaseline({
                 rawBaseline: mutationBaseline,
-                pendingSettings: pendingWithMigration,
+                pendingSettings: pendingServerSettings,
                 normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode, current: baseline.raw ?? {} }),
             });
             const normalizedUnmutatedBaseline = normalizeSettingsForServerStorageResult({
@@ -968,7 +968,6 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                 mode: accountMode,
                 current: baseline.raw ?? {},
             }).value;
-            if (migratedThemes) themeProfileMigration?.stage(migratedThemes);
             const captured = params.oneShotServerSettingsMutation?.capture?.({
                 before: baseline.raw ?? {}, applied: merged.outgoingRaw, beforeVersion: version,
             });
@@ -981,7 +980,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                 && !serverMutationChanged
                 && !merged.comparisonChanged
                 && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingWithMigration, {
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
                     preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
                         && !pendingLegacySessionOrganizationImported,
                 });
@@ -996,10 +995,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                     remoteAlertPolicyStatus: baseline.remoteAlertPolicyStatus,
                     remainingPendingSettings,
                 });
-                if (migratedThemes) {
-                    themeProfileMigration?.acknowledge(migratedThemes);
-                    themeProfileMigration?.finish(migratedThemes);
-                }
+                migratedThemes?.complete();
                 return oneShotMutation
                     ? Object.freeze({
                         status: 'applied',
@@ -1064,7 +1060,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
             }
 
             if (data.success) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingWithMigration, {
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
                     preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
                         && !pendingLegacySessionOrganizationImported,
                 });
@@ -1079,10 +1075,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                     remoteAlertPolicyStatus: data.remoteAlertPolicyStatus,
                     remainingPendingSettings,
                 });
-                if (migratedThemes) {
-                    themeProfileMigration?.acknowledge(migratedThemes);
-                    themeProfileMigration?.finish(migratedThemes);
-                }
+                migratedThemes?.complete();
                 return oneShotMutation
                     ? Object.freeze({
                         status: 'applied',

@@ -95,6 +95,17 @@ describe('accountSettingsPersistence', () => {
         store.clear();
     });
 
+    it('retains a released pending theme library as import-only input across ordinary preference flushes', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod).not.toBeNull(); if (!mod) return;
+        const profile = { schemaVersion: 1, id: 'ocean', name: 'Ocean', createdAt: '2026-05-12', updatedAt: '2026-05-12',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, futurePresentation: { retained: true } };
+        writeLegacyPendingAccountSettingsCache(scopeA, { themeProfiles: [profile] });
+        mod.savePendingAccountSettings(scopeA, { analyticsOptOut: true });
+        expect(JSON.parse(store.get(pendingAccountSettingsStorageKey(scopeA))!)).toEqual({ analyticsOptOut: true, themeProfiles: [profile] });
+        expect(mod.loadPendingAccountSettings(scopeA)).not.toHaveProperty('themeProfiles');
+    });
+
     it('retains the theme acknowledgement checkpoint across ordinary pending flushes', async () => {
         const mod = await loadAccountSettingsPersistenceModule();
         expect(mod).not.toBeNull(); if (!mod) return;

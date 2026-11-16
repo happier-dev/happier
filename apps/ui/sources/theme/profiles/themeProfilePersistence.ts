@@ -50,10 +50,9 @@ const sanitizeActiveProfileId = (
 
 export const parseThemeProfile = (value: unknown): Readonly<{ profile: ThemeProfileV1; changed: boolean }> | null => {
     if (!isRecord(value)) return null;
-    const parsed = ThemeProfileStoredSchema.safeParse({
-        ...value,
-        assetAppearance: isThemeProfileAssetAppearance(value.assetAppearance) ? value.assetAppearance : undefined,
-    });
+    const candidate = { ...value };
+    if (!isThemeProfileAssetAppearance(candidate.assetAppearance)) delete candidate.assetAppearance;
+    const parsed = ThemeProfileStoredSchema.safeParse(candidate);
     if (!parsed.success) return null;
     const profile: ThemeProfileV1 = {
         ...parsed.data,
@@ -191,7 +190,7 @@ export function encodeThemeProfileSelection(
     return { light: encode(selection.light), dark: encode(selection.dark) };
 }
 
-/** One composition for migration, live consumers, and approval-time provenance capture. */
+/** Resolve visible definitions, including released migration input when supplied. */
 export function resolveThemeProfilesStateSnapshot(
     profiles: readonly ThemeProfileV1[],
     legacy: ThemeProfilesLocalStateV1,

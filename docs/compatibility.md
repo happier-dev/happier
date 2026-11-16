@@ -2501,38 +2501,59 @@ kind or provide an older daemon with a fallback clipboard path.
 
 ## Custom theme library (unreleased 0.3)
 
-Account Settings owns the `themeProfiles` custom-definition array through the
-existing encrypted/plain Settings document and CAS writer. The Protocol-owned
-schema validates each profile, its base and override maps; safe token identifiers
-unknown to this UI are retained but have no visual effect until the token registry
-recognizes them. A library is not truncated to the editor's creation limit.
+Saved custom definitions are Account-scoped `theme_profile.v1` Artifacts. The
+kind is excluded from the generic Artifact browser and sharing; its Account
+owner retains Artifact deletion rights. The
+`ThemeProfileLibrary` facade owns addressed save, duplicate, delete, selection and
+Undo operations. It uses the existing Artifact transport, revisions and
+Account encryption mode: plain Accounts use plain envelopes, and E2EE Accounts
+use the existing Account-scoped cipher. A theme save writes one body and its
+header together. Lists use header metadata; bodies are opened only on demand.
+Theme mutations publish bodyless Account changes and suppress legacy body-bearing
+Socket events; addressed Artifact reads deliver the retained document. Other
+Artifact kinds keep their existing publication behavior.
+Create acknowledgements add an optional `created` fact. Only `true` permits
+delete-on-Undo; Keep refuses selection if an older server omits that fact.
 
-Device settings retain `themeProfileSelection` and the legacy `themeProfiles`
-record during migration. Selection entries distinguish account IDs from
-`{ legacyProfileId }` references until migration acknowledges the corresponding
-definition, so a local choice made before the first account fetch follows its
-legacy profile through a collision rename. The shared composition owner supplies the startup theme,
-settings screens and running theme from the same account library and local
-selection. Migration bookkeeping lives in keyed persistent UI state, outside
-device Settings. The storage boundary imports the current 0.2 predecessor's
-`themeProfileLegacyAccountScope` binding before exposing its retained library;
-a failed binding copy leaves the source intact and withholds that library.
-A local library is bound to its original Account before migration;
-another Account cannot consume it. The existing Home identity-alias transition
-moves that binding with the Account cache. Migration preserves colliding
-profiles under deterministic alternative IDs. Migration edits and their identity
-mapping are stored in the existing scoped pending Settings record before POST.
-An acknowledgement checkpoint is durable before the local input is cleared, and
-remains until cleanup succeeds. Lost responses retry the captured edit without
-reimporting its old definition. The predecessor 0.2 pending record's represented
-profile mapping remains readable during this transition. Library writes carry no
-activation choice. Settings Actions retain their admission and account CAS owner;
-ordinary migration uses the same Account mutation order. A stale editor whose
-legacy source has already migrated must reopen before writing that draft.
+A parsed theme document retains its raw JSON alongside the fields this build can
+apply. Unknown presentation fields and safe token identifiers survive unrelated
+edits and export; unsupported presentation has no visual effect. A deliberate
+edit overlays only the supported fields it changed. The header carries palette
+inputs and style summary; the miniature is derived from those inputs at read
+time. An explicit Reset removes known seeds, style or CSS while retaining unknown
+presentation children; omitted sections in a partial edit remain unchanged.
 
-This is development-source behavior, not a released-client availability claim.
-The existing local record remains a supported migration input; this adds no
-theme-specific transport, synchronization writer or rollback protocol.
+Device `themeProfileSelection` entries are tagged Artifact, built-in or plugin
+references. An unavailable reference renders the mode's base theme without
+rewriting the saved choice. Pure light/dark/adaptive changes retain both mode
+references. Startup can apply bundled built-ins immediately; Artifact and plugin
+presentation arrives through the source owner's demand hydration.
+
+The released 0.2 Account `themeProfiles` array, device-local legacy library and
+scoped pending envelope are one-shot migration inputs. They are excluded from
+writable effective Account Settings. The migration owner transfers raw documents
+through the same Artifact facade, then retires the old Account source after
+acknowledged record writes. Canonical definition identities produce deterministic
+Account-scoped Artifact ids, coalescing equal inputs and separating differing
+same-id definitions. A lost response retries the same destination. Released
+pending edits and attempted-remap checkpoints remain readable solely for this
+transfer; the new client creates no staged intent or parallel settings writer.
+Device selection settles before source retirement, and cleanup retains failed
+inputs for retry. If cleanup fails and a person deletes the copied Artifact before
+the retry, replay of that retained input can recreate its id; the person can
+delete it again after transfer completes. Existing scope activation moves retained pending inputs and the
+legacy Account binding together; another Account cannot consume that backup.
+An existing destination pending theme snapshot and checkpoint take precedence
+over an older server-identity alias; the alias is a fallback, so explicit
+deletions in the current snapshot cannot be resurrected by a union.
+
+The retained `yourThemes` settings Action is an adapter to the facade while its
+callers transition to theme Actions. Its read returns the canonical header
+inventory and tagged selection, loading headers on demand through the same
+Artifact owner. A missing Account context or failed load returns unavailable;
+the read does not enumerate bodies. Older 0.2 clients cannot edit the new Artifact
+format. Upgrade preserves their saved input without an ongoing bidirectional
+settings/Artifact mirror.
 
 ## Local Action Operation acknowledgements (unreleased 0.3)
 

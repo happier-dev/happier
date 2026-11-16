@@ -332,36 +332,42 @@ describe('persistence', () => {
     });
 
     describe('theme runtime local state', () => {
-        it('keeps collision-remapped legacy activation distinct from an explicit account selection across startup', async () => {
-            const owner = await import('./accountSettingsPersistence');
-            const profile = { schemaVersion: 1, id: 'ocean', name: 'Cloud ocean', createdAt: '2026-10-01', updatedAt: '2026-10-01',
-                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
-            owner.saveAccountSettings(sessionLocalScopeA, settingsParse({ themeProfiles: [profile] }), 1);
-            store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeA));
-            store.set('local-settings', JSON.stringify({ themeProfiles: { profiles: [{ ...profile, name: 'Local ocean' }], activeProfileIds: { light: null, dark: 'ocean' } } }));
-            expect(loadLocalSettings().themeProfileSelection).toBeNull();
-            expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe('ocean_2');
-            saveLocalSettings({ ...loadLocalSettings(), themeProfileSelection: { light: null, dark: 'ocean' } });
-            expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe('ocean');
-            saveLocalSettings({ ...loadLocalSettings(), themeProfileSelection: { light: null, dark: { legacyProfileId: 'ocean' } } });
-            expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe('ocean_2');
-            expect(loadLocalSettings().themeProfiles.profiles[0]?.name).toBe('Local ocean');
+        it('preserves released raw theme input across an unrelated local preference edit', () => {
+            const themeProfiles = { activeProfileId: 'ocean', profiles: [{ schemaVersion: 1, id: 'ocean', name: 'Ocean',
+                createdAt: '2026-05-11T00:00:00.000Z', updatedAt: '2026-05-11T00:00:00.000Z',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} },
+                newerPresentation: { retained: true } }] };
+            store.set('local-settings', JSON.stringify({ themeProfiles, themePreference: 'light' }));
+            saveLocalSettings({ ...loadLocalSettings(), themePreference: 'dark' });
+            expect(JSON.parse(store.get('local-settings')!).themeProfiles).toEqual(themeProfiles);
         });
-
-        it('loads the active account cache with device activation and isolates a switched account at startup', async () => {
-            const owner = await import('./accountSettingsPersistence');
+        it('renders base for an unavailable tagged theme without rewriting released migration input', () => {
+            const source = { themePreference: 'dark',
+                themeProfileSelection: { light: null, dark: { kind: 'plugin', pluginId: 'custom.palette', contributionId: 'night' } },
+                themeProfiles: { activeProfileId: 'ocean', profiles: [{ schemaVersion: 1, id: 'ocean', name: 'Ocean',
+                    createdAt: '2026-05-11T00:00:00.000Z', updatedAt: '2026-05-11T00:00:00.000Z',
+                    base: { light: 'light', dark: 'dark' }, overrides: { light: { 'groupped.background': '#fafafa' }, dark: {} },
+                    newerField: { retained: true } }] } };
+            const bytes = JSON.stringify(source);
+            store.set('local-settings', bytes);
+            const write = vi.spyOn(getPersistenceStorage(), 'set');
+            try {
+                expect(loadThemeRuntimeLocalState().themeProfiles).toEqual({ profiles: [], activeProfileIds: { light: null, dark: null } });
+                expect(loadLocalSettings().themeProfileSelection).toEqual(source.themeProfileSelection);
+                expect(store.get('local-settings')).toBe(bytes);
+                expect(write.mock.calls.filter(([key]) => key === 'local-settings')).toEqual([]);
+            } finally { write.mockRestore(); }
+        });
+        it('leaves released Account bodies out of startup presentation until Artifact hydration', async () => {
             const profile = { schemaVersion: 1, id: 'ocean', name: 'Ocean', createdAt: '2026-10-01', updatedAt: '2026-10-01',
                 base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
-            owner.saveAccountSettings(sessionLocalScopeA, settingsParse({ themeProfiles: [profile] }), 1);
+            store.set('account-settings:v2:8:server-a9:account-a', JSON.stringify({ settings: { themeProfiles: [profile] }, version: 1 }));
             store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeA));
-            store.set('local-settings', JSON.stringify({ themePreference: 'dark', themeProfileSelection: { light: null, dark: 'ocean' } }));
-            expect(loadThemeRuntimeLocalState().themeProfiles).toMatchObject({ profiles: [profile], activeProfileIds: { light: null, dark: 'ocean' } });
-            store.set('local-settings', JSON.stringify({ themeProfiles: { profiles: [profile], activeProfileIds: { light: null, dark: 'ocean' } },
-                themeProfileLegacyAccountScope: sessionLocalScopeA }));
-            store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeB));
-            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
-            store.delete('active-account-settings-scope');
-            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+            store.set('local-settings', JSON.stringify({ themePreference: 'dark',
+                themeProfileSelection: { light: null, dark: { kind: 'artifact', id: 'saved-ocean' } } }));
+            expect(loadThemeRuntimeLocalState().themeProfiles).toEqual({ profiles: [], activeProfileIds: { light: null, dark: null } });
+            expect(JSON.parse(store.get('account-settings:v2:8:server-a9:account-a')!).settings).toEqual({ themeProfiles: [profile] });
+            expect(loadLocalSettings().themeProfileSelection).toEqual({ light: null, dark: { kind: 'artifact', id: 'saved-ocean' } });
         });
 
         it('keeps the predecessor theme binding intact when UI state storage refuses its import', () => {
@@ -441,37 +447,7 @@ describe('persistence', () => {
             });
         });
 
-        it('heals deprecated theme profile token ids in persisted local settings at startup', () => {
-            store.set('local-settings', JSON.stringify({
-                themePreference: 'light',
-                themeProfiles: {
-                    activeProfileId: 'ocean',
-                    profiles: [{
-                        schemaVersion: 1,
-                        id: 'ocean',
-                        name: 'Ocean',
-                        createdAt: '2026-05-11T00:00:00.000Z',
-                        updatedAt: '2026-05-11T00:00:00.000Z',
-                        base: { light: 'light', dark: 'dark' },
-                        overrides: {
-                            light: { 'groupped.background': '#fafafa' },
-                            dark: { surfaceHigh: '#111111' },
-                        },
-                    }],
-                },
-            }));
 
-            const state = loadThemeRuntimeLocalState();
-            const healed = JSON.parse(store.get('local-settings') ?? '{}') as {
-                themeProfiles?: { profiles?: Array<{ overrides?: unknown }> };
-            };
-
-            expect(state.themeProfiles.profiles[0]?.overrides).toEqual({
-                light: { 'background.canvas': '#fafafa' },
-                dark: { 'surface.inset': '#111111' },
-            });
-            expect(healed.themeProfiles?.profiles?.[0]?.overrides).toEqual(state.themeProfiles.profiles[0]?.overrides);
-        });
     });
 
     describe('session materialized max seq', () => {
@@ -1045,6 +1021,12 @@ describe('persistence', () => {
             selectedProfileId: null, selectedSecretId: null, agentType: 'codex' as const,
             permissionMode: 'default' as const, acpSessionModeId: null, updatedAt: 42,
         };
+        it('retains an inherited Agent and qualified Project without promoting legacy Agent fallback', () => {
+            const projectContext = { projectRef: { serverId: 'home-a', projectKey: 'project-a' } };
+            saveNewSessionDraft({ ...ordinaryDraft, agentTarget: null, projectContext });
+            expect(loadNewSessionDraft()).toMatchObject({ agentTarget: null, projectContext });
+            expect(loadNewSessionDraft()).not.toHaveProperty('backendTarget');
+        });
 
         it('restores both capability kinds and folds the predecessor MCP-only stored draft', () => {
             const mcp = { v: 1, managedServersEnabled: false, forceIncludeServerIds: ['server-a'], forceExcludeServerIds: [] };

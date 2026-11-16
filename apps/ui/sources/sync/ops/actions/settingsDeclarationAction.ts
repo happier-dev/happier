@@ -28,7 +28,6 @@ import { executeHomeSettingDeclaration, homeSettingDeclarationUnavailable, readH
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { executeSessionAutoFollowSetting, executeTeamSettingDeclaration } from '@happier-dev/protocol/actions';
 import type { RawSettingsMutationOptions } from './actionAccountContext';
-import { ThemeProfileMigrationSourceExpiredError } from '@/theme/profiles/themeProfileMigrationEdits';
 import { reduceAccountSettingIntent } from './reduceAccountSettingIntent';
 import type { OneShotAccountSettingsMutationResult } from '@/sync/engine/settings/syncSettings';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -762,13 +761,13 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                 if (binding.kind === 'localOwner') {
                     throwIfAborted(context?.signal);
                     if (!isCurrent()) return refuse('setting_not_bound');
-                    if (await binding.read(owner.readLocalSettings(), { accountScope: owner.accountScope, readSettings: owner.readAccountSettings }) === SETTING_VALUE_UNAVAILABLE) return refuse('setting_value_unavailable');
+                    if (await binding.read(owner.readLocalSettings(), { accountScope: owner.accountScope, readSettings: owner.readAccountSettings, signal: context?.signal }) === SETTING_VALUE_UNAVAILABLE) return refuse('setting_value_unavailable');
                     let committed: void | typeof SETTING_VALUE_UNAVAILABLE;
                     try {
                         committed = await binding.commit(owner.readLocalSettings(), parsedValue.value, owner.writeLocalSettings, {
                         signal: context?.signal, isCurrent, readLocalSettings: owner.readLocalSettings,
                         accountScope: owner.accountScope, readSettings: owner.readAccountSettings,
-                        mutateSettings: async (mutate, options) => {
+                        mutateSettings: async mutate => {
                             if (!owner.accountScope) throw new RejectedSettingMutation();
                             const result = await owner.mutateAccountSettings(raw => {
                                 throwIfAborted(context?.signal);
@@ -777,7 +776,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                                 const delta = mutate(settings);
                                 if (!delta) throw new RejectedSettingMutation('invalid_setting_value');
                                 return { ...raw, ...normalizeVoiceSettingsLocalDelta(delta, settings) };
-                            }, { ...options, signal: context?.signal });
+                            }, { signal: context?.signal });
                             if (result && result.status !== 'applied') throw new RejectedSettingMutation(result.status === 'invalid'
                                 ? 'account_settings_mutation_invalid' : result.status === 'conflict'
                                     ? 'account_settings_mutation_conflict' : 'account_settings_mutation_outcome_unknown');
@@ -785,7 +784,6 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                         });
                     } catch (error) {
                         if (error instanceof RejectedSettingMutation) return refuse(error.errorCode);
-                        if (error instanceof ThemeProfileMigrationSourceExpiredError) return refuse('setting_value_unavailable');
                         throw error;
                     }
                     throwIfAborted(context?.signal);
@@ -841,7 +839,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             return output.success ? output.data : refuse('invalid_action_output');
         }
         const current = !('key' in binding)
-            ? binding.kind === 'localOwner' ? await binding.read(owner.readLocalSettings(), { accountScope: owner.accountScope, readSettings: owner.readAccountSettings }) : binding.read(await owner.readAccountSettings())
+            ? binding.kind === 'localOwner' ? await binding.read(owner.readLocalSettings(), { accountScope: owner.accountScope, readSettings: owner.readAccountSettings, signal: context?.signal }) : binding.read(await owner.readAccountSettings())
             : binding.scope === 'account'
             ? (await owner.readAccountSettings())[binding.key]
             : owner.readLocalSettings()[binding.key];

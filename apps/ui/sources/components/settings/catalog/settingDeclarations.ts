@@ -155,7 +155,7 @@ export type SettingStorageBinding = Readonly<{
         resetValue?: SettingValue;
         /** Device state keyed to an Account cannot be discovered as usable before that authority is captured. */
         requiresAccountScope?: true;
-        read: (local: LocalSettings, context?: Readonly<{ accountScope?: ServerAccountScope; readSettings?: () => Promise<Settings> }>) => unknown;
+        read: (local: LocalSettings, context?: Readonly<{ signal?: AbortSignal; accountScope?: ServerAccountScope; readSettings?: () => Promise<Settings> }>) => unknown;
         parse: (value: unknown) => Readonly<{ success: true; value: SettingValue }> | Readonly<{ success: false }>;
         /**
          * Writes through the device setting's owner, which may apply more than storage (the running
@@ -165,7 +165,7 @@ export type SettingStorageBinding = Readonly<{
             context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean; readLocalSettings?: () => LocalSettings;
                 accountScope?: ServerAccountScope; readSettings?: () => Promise<Settings>;
                 /** Compound device owners persist their account-owned facts through the admitted CAS owner. */
-                mutateSettings?: (mutate: SettingOwnerMutation, options?: Pick<import('@/sync/ops/actions/accountSettingsMutation').RawSettingsMutationOptions, 'themeProfileMigration'>) => Promise<void> }>) =>
+                mutateSettings?: (mutate: SettingOwnerMutation) => Promise<void> }>) =>
             void | typeof SETTING_VALUE_UNAVAILABLE | Promise<void | typeof SETTING_VALUE_UNAVAILABLE>;
     }>
 );

@@ -1,4 +1,3 @@
-import { ThemeProfileLibrarySchema } from './themeProfiles.js';
 import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 export { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
@@ -989,7 +988,6 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
         semanticDomain: 'application chrome', classification: 'preference', maximumSerializedValueBytes: 4 * 1024,
         mutationSchema: z.nullable(GlassSurfaceMaterialsSchema),
     }),
-    themeProfiles: accountCatalogDefinition(z._default(ThemeProfileLibrarySchema, []), [], { semanticDomain: 'theme library', classification: 'preference', maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES, structuralBoundsOwner: 'domainOwned', recoverMalformed: false }),
     homeAtmosphere: accountCatalogDefinition(HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE, {
         semanticDomain: 'Home atmosphere', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
@@ -1062,6 +1060,7 @@ export function isAccountSettingsReadOnlySourceKeyV1(key: string): boolean {
     return Object.hasOwn(RETAINED_ACCOUNT_SETTINGS_ENTITY_SOURCES, key)
         || RETIRED_SESSION_LIST_SETTING_KEYS.has(key)
         || PRIVATE_CATALOG_SETTINGS_SOURCE_KEYS.has(key)
+        || key === 'themeProfiles'
         || key === 'inferenceOpenAIKey'
         || LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS.some(sourceKey => sourceKey === key);
 }

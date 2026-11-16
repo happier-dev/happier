@@ -28,7 +28,7 @@ import { stripServerSelectionSettingsProjection } from '@/sync/domains/server/se
 import { migrateNewSessionUiState, migrateNewSessionUiStateScope } from './newSessionTargetUiState';
 
 import { publishAccountSettingsPersistenceMutation } from './accountSettingsPersistenceSubscriptions';
-import { loadPendingAccountSettings, loadPendingAccountSettingsState, savePendingAccountSettings, pendingAccountSettingsKey } from './pendingAccountSettingsPersistence';
+import { loadPendingAccountSettings, loadPendingAccountSettingsState, savePendingAccountSettings, pendingAccountSettingsKey, migratePendingThemeProfileInputToScope } from './pendingAccountSettingsPersistence';
 export { loadPendingAccountSettings, loadPendingAccountSettingsState, savePendingAccountSettings, readPendingAccountSettingsPersistenceMutationToken, THEME_PROFILE_MIGRATION_PENDING_KEY } from './pendingAccountSettingsPersistence';
 export { subscribePendingAccountSettingsPersistenceMutations } from './accountSettingsPersistenceSubscriptions';
 export { subscribeAccountSettingsPersistenceMutations } from './accountSettingsPersistenceSubscriptions';
@@ -341,6 +341,8 @@ export async function prepareAccountSettingsScopeForActivation(
         storage.delete('settings');
     }
 
+    if (legacyPendingSettingsExists) migratePendingThemeProfileInputToScope(null, scope);
+
     if (!scopedPendingSettingsExists && legacyPendingSettingsExists) {
         const legacyPendingSettings = loadPendingSettings();
         if (Object.keys(legacyPendingSettings).length > 0) {
@@ -371,6 +373,7 @@ export async function prepareAccountSettingsScopeForActivation(
     for (const legacyScope of legacyScopesForActivation) {
         if (legacyScope.serverId === scope.serverId && legacyScope.accountId === scope.accountId) continue;
 
+        migratePendingThemeProfileInputToScope(legacyScope, scope);
         const legacyPendingState = loadPendingAccountSettingsState(legacyScope);
         const legacyPendingMigration = migrateNestedServerIds(legacyPendingState.settings as Record<string, unknown>);
         const {
@@ -379,9 +382,8 @@ export async function prepareAccountSettingsScopeForActivation(
         } = splitLocalOnlySettings(legacyPendingMigration.settings as Partial<Settings>);
         if (Object.keys(legacyPending).length > 0) {
             const currentPending = loadPendingAccountSettings(scope);
-            savePendingAccountSettings(scope, mergeSettingsForScopeMigration(legacyPending, currentPending),
-                loadPendingAccountSettingsState(scope).themeProfileMigration ?? legacyPendingState.themeProfileMigration);
-            savePendingAccountSettings(legacyScope, {}, null);
+            savePendingAccountSettings(scope, mergeSettingsForScopeMigration(legacyPending, currentPending));
+            savePendingAccountSettings(legacyScope, {});
         }
         if (Object.keys(legacyPendingLocalOnlySettings).length > 0) {
             const current = loadAccountSettings(scope);
@@ -395,7 +397,7 @@ export async function prepareAccountSettingsScopeForActivation(
                 currentLocalOnlySettings,
             );
             saveAccountSettingsEnvelope(scope, applySettings(currentSettings, mergedLocalOnlySettings), current.version);
-            savePendingAccountSettings(legacyScope, {}, null);
+            savePendingAccountSettings(legacyScope, {});
         }
 
         const legacyEnvelopeRaw = storage.getString(accountSettingsKey(legacyScope));

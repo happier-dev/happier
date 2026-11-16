@@ -1,168 +1,112 @@
-import { readThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import { z } from 'zod/mini';
+import { ThemeReferenceSchema, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
-import { readThemeSettingState, readThemeSettingStateSnapshot, persistThemeProfilesForSetting, parseThemeProfileLegacyIds, areThemeProfileLegacyIdsCurrent, readCanonicalThemeProfiles } from './themeProfiles/themeProfilesSettingBinding';
-import { canUseLegacyThemeProfiles } from '@/sync/domains/settings/themeProfiles';
-import { loadPendingAccountSettingsState } from '@/sync/domains/state/accountSettingsPersistence';
-import { projectThemeProfileMigration } from '@/theme/profiles/themeProfileMigrationEdits';
-import { ThemeProfileMigrationSourceExpiredError } from '@/theme/profiles/themeProfileMigrationEdits';
+import { readThemeSettingStateSnapshot, persistThemeProfilesForSetting, parseThemeProfileLegacyIds, readCanonicalThemeProfiles, withThemeProfilesForSetting, themeReferenceForViewId } from './themeProfiles/themeProfilesSettingBinding';
 import { SETTING_VALUE_UNAVAILABLE } from '@/components/settings/catalog/settingDeclarations';
 
 export const THEME_MODE_CHOICES = ['adaptive', 'light', 'dark'] as const;
 type ThemeModeChoice = typeof THEME_MODE_CHOICES[number];
-
-const isThemeMode = (value: unknown): value is ThemeModeChoice =>
-    value === 'adaptive' || value === 'light' || value === 'dark';
-
-const compoundSelectionSchema = z.strictObject({
-    themePreference: z.enum(THEME_MODE_CHOICES),
-    themeProfiles: z.unknown(),
-    legacyProfileIds: z.optional(z.unknown()),
-});
-const activationSchema = z.strictObject({
-    activation: z.strictObject({
-        profileId: z.nullable(z.string()),
-        profileMode: z.optional(z.enum(['light', 'dark', 'all'])),
-        nextThemePreference: z.optional(z.enum(THEME_MODE_CHOICES)),
-        profile: z.optional(z.unknown()),
-        before: z.optional(z.unknown()),
-        legacyProfileIds: z.optional(z.unknown()),
-    }),
-    forceAnimate: z.optional(z.boolean()),
-    reduceMotion: z.optional(z.boolean()),
-});
-
+const isThemeMode = (value: unknown): value is ThemeModeChoice => value === 'adaptive' || value === 'light' || value === 'dark';
+const preferenceSchema = z.strictObject({ themePreference: z.enum(THEME_MODE_CHOICES) });
+const referenceSelectionSchema = z.strictObject({ themePreference: z.enum(THEME_MODE_CHOICES),
+    select: z.strictObject({ mode: z.enum(['light', 'dark']), reference: z.nullable(ThemeReferenceSchema) }) });
+const compoundSelectionSchema = z.strictObject({ themePreference: z.enum(THEME_MODE_CHOICES), themeProfiles: z.unknown(), legacyProfileIds: z.optional(z.unknown()) });
+const activationSchema = z.strictObject({ activation: z.strictObject({ profileId: z.nullable(z.string()),
+    profileMode: z.optional(z.enum(['light', 'dark', 'all'])), nextThemePreference: z.optional(z.enum(THEME_MODE_CHOICES)),
+    profile: z.optional(z.unknown()), saveDocument: z.optional(z.unknown()), before: z.optional(z.unknown()), legacyProfileIds: z.optional(z.unknown()) }),
+    forceAnimate: z.optional(z.boolean()), reduceMotion: z.optional(z.boolean()) });
 function readThemeSelectionIntent(value: unknown) {
-    if (isThemeMode(value)) return value;
+    if (isThemeMode(value)) return { kind: 'preference' as const, themePreference: value };
+    const preference = preferenceSchema.safeParse(value);
+    if (preference.success) return { kind: 'preference' as const, ...preference.data };
+    const reference = referenceSelectionSchema.safeParse(value);
+    if (reference.success) return { kind: 'reference' as const, ...reference.data };
     const activation = activationSchema.safeParse(value);
     if (activation.success) {
-        const { profile, before: beforeValue, legacyProfileIds: legacyIdsValue, ...selection } = activation.data.activation;
+        const { profile, saveDocument, before: beforeValue, legacyProfileIds: legacyIdsValue, ...selection } = activation.data.activation;
+        if (profile !== undefined && saveDocument !== undefined) return null;
+        const document = saveDocument === undefined ? undefined : parseThemeProfileDocument(saveDocument);
+        if (document && !document.ok) return null;
         const before = beforeValue === undefined ? undefined : readCanonicalThemeProfiles(beforeValue);
         if (before === null) return null;
-        const legacyProfileIds = legacyIdsValue === undefined ? undefined
-            : before ? parseThemeProfileLegacyIds(legacyIdsValue, before) : null;
+        const legacyProfileIds = legacyIdsValue === undefined ? undefined : before ? parseThemeProfileLegacyIds(legacyIdsValue, before) : null;
         if (legacyProfileIds === null) return null;
         const provenance = { ...(before ? { before } : {}), ...(legacyProfileIds ? { legacyProfileIds } : {}) };
-        if (profile === undefined) return { ...activation.data, activation: { ...selection, ...provenance } };
-        const profiles = readCanonicalThemeProfiles({ profiles: [profile], activeProfileIds: { light: null, dark: null } });
-        const canonical = profiles?.profiles[0];
-        if (!canonical) return null;
-        return { ...activation.data, activation: { ...selection, ...provenance, profile: canonical } };
+        const profiles = profile === undefined ? undefined : readCanonicalThemeProfiles({ profiles: [profile], activeProfileIds: { light: null, dark: null } });
+        if (profile !== undefined && !profiles) return null;
+        return { kind: 'activation' as const, ...activation.data, activation: { ...selection, ...provenance,
+            ...(profiles ? { profile: profiles.profiles[0]! } : {}),
+            ...(document?.ok ? { document: document.document } : {}) } };
     }
     const parsed = compoundSelectionSchema.safeParse(value);
     if (!parsed.success) return null;
     const profiles = readCanonicalThemeProfiles(parsed.data.themeProfiles);
     if (!profiles) return null;
-    const legacyProfileIds = parsed.data.legacyProfileIds === undefined ? undefined
-        : parseThemeProfileLegacyIds(parsed.data.legacyProfileIds, profiles);
+    const legacyProfileIds = parsed.data.legacyProfileIds === undefined ? undefined : parseThemeProfileLegacyIds(parsed.data.legacyProfileIds, profiles);
     if (legacyProfileIds === null) return null;
-    return { themePreference: parsed.data.themePreference, themeProfiles: profiles, ...(legacyProfileIds ? { legacyProfileIds } : {}) };
+    return { kind: 'compound' as const, themePreference: parsed.data.themePreference, themeProfiles: profiles, legacyProfileIds };
 }
 
-/**
- * The theme mode as a declared device setting: Actions write it through the theme owner, which
- * also applies the running theme and status bar and keeps the theme each mode uses — a raw
- * `themePreference` write would store a choice the screen does not show.
- */
+/** Preference, selection and runtime transitions remain one declared setting owner. */
 export const themeModeStorageBinding = {
-    scope: 'local', kind: 'localOwner', access: 'read_write',
-    allowedValues: THEME_MODE_CHOICES,
+    scope: 'local', kind: 'localOwner', access: 'read_write', allowedValues: THEME_MODE_CHOICES,
     read: local => isThemeMode(local.themePreference) ? local.themePreference : 'adaptive',
     parse: value => {
         const selection = readThemeSelectionIntent(value);
-        const parsed = SettingsDeclarationValueV1Schema.safeParse(selection);
+        // Keep the existing Action value unchanged; the discriminant is owner-local.
+        const parsed = SettingsDeclarationValueV1Schema.safeParse(value);
         return selection !== null && parsed.success ? { success: true, value: parsed.data } : { success: false };
     },
     commit: async (local, value, writeLocal, context) => {
         const selection = readThemeSelectionIntent(value);
         if (selection === null) return;
-        const { encodeThemeProfileSelection } = await import('@/sync/domains/settings/themeProfiles');
-        let snapshot = await readThemeSettingState(local, context);
-        const before = snapshot.themeProfiles;
-        const composedLocal = { ...local, themeProfiles: before };
-        const persist = (delta: Parameters<typeof writeLocal>[0]) => {
-            throwIfAborted(context?.signal);
-            if (context?.isCurrent() === false) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
-            const { themeProfiles, ...deviceDelta } = delta;
-            const latest = context?.readLocalSettings?.() ?? local;
-            const legacy = canUseLegacyThemeProfiles(readThemeProfileLegacyAccountScope(), context?.accountScope ?? null)
-                ? latest.themeProfiles : DEFAULT_THEME_PROFILES_LOCAL_STATE;
-            const pending = context?.accountScope ? loadPendingAccountSettingsState(context.accountScope) : null;
-            writeLocal({ ...deviceDelta, ...(themeProfiles ? { themeProfileSelection:
-                encodeThemeProfileSelection(snapshot.accountProfiles, legacy, themeProfiles.activeProfileIds,
-                    pending?.themeProfileMigration, pending?.settings.themeProfiles) } : {}) });
-        };
-        const resolveQualifiedId = (id: string | null, baseline: typeof before,
-            legacyProfileIds: Readonly<Record<string, string>> | undefined) => {
-            const latest = context?.readLocalSettings?.() ?? local;
-            if (legacyProfileIds && !areThemeProfileLegacyIdsCurrent(latest, baseline, legacyProfileIds, context)) {
-                throw new ThemeProfileMigrationSourceExpiredError();
-            }
-            snapshot = readThemeSettingStateSnapshot(latest, context);
-            if (!id || !legacyProfileIds || !Object.hasOwn(legacyProfileIds, id)) return id;
-            const legacy = canUseLegacyThemeProfiles(readThemeProfileLegacyAccountScope(), context?.accountScope ?? null)
-                ? latest.themeProfiles : DEFAULT_THEME_PROFILES_LOCAL_STATE;
-            const pending = context?.accountScope ? loadPendingAccountSettingsState(context.accountScope) : null;
-            return projectThemeProfileMigration(snapshot.accountProfiles, legacy,
-                pending?.themeProfileMigration, pending?.settings.themeProfiles).legacyProfileIds.get(legacyProfileIds[id]!) ?? null;
-        };
-        if (typeof selection !== 'string' && 'activation' in selection) {
-            const { activateThemeProfileFromSettingsScreen, upsertThemeProfile } = await import('./themeProfiles/themeProfileScreenUtils');
-            const baseline = selection.activation.before ?? before;
-            let profileId = selection.activation.profileId;
-            if ('profile' in selection.activation && selection.activation.profile) {
-                const next = upsertThemeProfile(baseline, selection.activation.profile);
-                const persisted = await persistThemeProfilesForSetting({ local, before: baseline, next, writeLocal, context, legacyProfileIds: selection.activation.legacyProfileIds });
-                if (persisted === SETTING_VALUE_UNAVAILABLE) return persisted;
-                profileId = profileId ? persisted.profileIds.get(profileId) ?? profileId : null;
-                snapshot = await readThemeSettingState(context?.readLocalSettings?.() ?? local, context);
-            }
-            await activateThemeProfileFromSettingsScreen({
-                profileId, profileMode: selection.activation.profileMode,
-                resolveProfileId: () => 'profile' in selection.activation && selection.activation.profile ? profileId
-                    : resolveQualifiedId(profileId, baseline, selection.activation.legacyProfileIds),
-                nextThemePreference: selection.activation.nextThemePreference,
-                readLocalSettings: () => {
-                    const latest = context?.readLocalSettings?.() ?? composedLocal;
-                    snapshot = readThemeSettingStateSnapshot(latest, context);
-                    return { ...latest, themeProfiles: snapshot.themeProfiles };
-                },
-                writeLocalSettings: persist,
-                forceAnimate: selection.forceAnimate,
-                reduceMotion: readReducedMotionPreference() || selection.reduceMotion === true,
+        const { commitThemeSelection, resolveActivationModes } = await import('@/theme/profiles/themeProfileRuntime');
+        const initial = readThemeSettingStateSnapshot(local, context).themeProfiles;
+        const preference = selection.kind === 'activation' ? selection.activation.nextThemePreference ?? local.themePreference : selection.themePreference;
+        if (selection.kind !== 'preference') {
+            const selected = await withThemeProfilesForSetting(context, async library => {
+                if (selection.kind === 'reference') return library.select(selection.select);
+                if (selection.kind === 'compound') {
+                    if (Object.keys(selection.legacyProfileIds ?? {}).length) return SETTING_VALUE_UNAVAILABLE;
+                    for (const mode of ['light', 'dark'] as const) {
+                        if (initial.activeProfileIds[mode] === selection.themeProfiles.activeProfileIds[mode]) continue;
+                        await library.select({ mode, reference: await themeReferenceForViewId(library, selection.themeProfiles.activeProfileIds[mode]) });
+                    }
+                    return;
+                }
+                const baseline = selection.activation.before ?? initial;
+                if (Object.keys(selection.activation.legacyProfileIds ?? {}).length) return SETTING_VALUE_UNAVAILABLE;
+                const saved = selection.activation.document ? await library.save({ document: selection.activation.document }) : undefined;
+                if (saved && !saved.entry) return SETTING_VALUE_UNAVAILABLE;
+                let profileId = saved?.entry?.id ?? selection.activation.profileId;
+                if (selection.activation.profile) {
+                    const { upsertThemeProfile } = await import('./themeProfiles/themeProfileScreenUtils');
+                    const persisted = await persistThemeProfilesForSetting({ before: baseline,
+                        next: upsertThemeProfile(baseline, selection.activation.profile), context, library });
+                    if (persisted === SETTING_VALUE_UNAVAILABLE) return persisted;
+                    profileId = profileId ? persisted.profileIds.get(profileId) ?? profileId : null;
+                }
+                const reference = saved?.entry?.reference ?? await themeReferenceForViewId(library, profileId);
+                if (profileId && !reference) return SETTING_VALUE_UNAVAILABLE;
+                for (const mode of resolveActivationModes({ profileMode: selection.activation.profileMode, themePreference: preference })) {
+                    await library.select({ mode, reference });
+                }
             });
-            return;
+            if (selected === SETTING_VALUE_UNAVAILABLE) return selected;
         }
-        if (typeof selection !== 'string' && selection.legacyProfileIds
-            && !areThemeProfileLegacyIdsCurrent(local, selection.themeProfiles, selection.legacyProfileIds, context)) return SETTING_VALUE_UNAVAILABLE;
-        const resolveSelection = () => {
-            throwIfAborted(context?.signal);
-            if (context?.isCurrent() === false) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
-            const latest = context?.readLocalSettings?.() ?? local;
-            snapshot = readThemeSettingStateSnapshot(latest, context);
-            const resolveSelectedId = (id: string | null) => typeof selection === 'string' ? id
-                : resolveQualifiedId(id, selection.themeProfiles, selection.legacyProfileIds);
-            return {
-                themePreference: typeof selection === 'string' ? selection : selection.themePreference,
-                themeProfiles: typeof selection === 'string' ? snapshot.themeProfiles : { ...snapshot.themeProfiles, activeProfileIds: {
-                    light: resolveSelectedId(selection.themeProfiles.activeProfileIds.light),
-                    dark: resolveSelectedId(selection.themeProfiles.activeProfileIds.dark),
-                } },
-            };
-        };
-        // The owner carries the runtime theme and status-bar modules; load them only when a write happens.
-        const { commitThemeSelection } = await import('@/theme/profiles/themeProfileRuntime');
-        await commitThemeSelection({
-            currentPreference: isThemeMode(local.themePreference) ? local.themePreference : 'adaptive',
-            nextPreference: typeof selection === 'string' ? selection : selection.themePreference,
-            nextThemeProfiles: before,
-            resolveSelection,
-            reduceMotion: readReducedMotionPreference(),
-            writeLocal: persist,
-        });
+        await commitThemeSelection({ currentPreference: local.themePreference, nextPreference: preference,
+            nextThemeProfiles: initial, resolveSelection: () => {
+                const latest = context?.readLocalSettings?.() ?? local;
+                return { themePreference: preference, themeProfiles: readThemeSettingStateSnapshot(latest, context).themeProfiles };
+            }, reduceMotion: readReducedMotionPreference() || (selection.kind === 'activation' && selection.reduceMotion === true),
+            ...(selection.kind === 'activation' ? { forceAnimate: selection.forceAnimate } : {}),
+            writeLocal: delta => {
+                throwIfAborted(context?.signal);
+                if (context?.isCurrent() === false) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
+                writeLocal({ themePreference: delta.themePreference });
+            } });
     },
 } satisfies SettingStorageBinding;

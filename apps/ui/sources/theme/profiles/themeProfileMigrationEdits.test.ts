@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ThemeProfileMigrationEdit, ThemeProfileV1 } from './themeProfileTypes';
-import { applyThemeProfileMigrationEdits, mergeThemeProfileMigrationEdits, parseThemeProfileMigrationIntent, projectThemeProfileMigration, rebaseThemeProfileMigrationEdits, removeCommittedThemeProfileMigrationEdits } from './themeProfileMigrationEdits';
+import { parseThemeProfileMigrationIntent, projectThemeProfileMigration } from './themeProfileMigrationEdits';
 
 const profile: ThemeProfileV1 = { schemaVersion: 1, id: 'ocean', name: 'Ocean', createdAt: '2026-05-12', updatedAt: '2026-05-12', base: { light: 'light', dark: 'dark' }, overrides: { light: { 'future.token': '#ffffff' }, dark: {} } };
 const edit: ThemeProfileMigrationEdit = { target: { kind: 'legacy', id: 'ocean' }, profile };
@@ -14,16 +14,7 @@ describe('pending theme migration intent', () => {
         expect(() => parseThemeProfileMigrationIntent({ ...intent, edits: [{ ...edit, profile: { ...profile, overrides: { light: { bad: 'url(secret)' }, dark: {} } } }] })).toThrow();
     });
 
-    it('retains later pending edits and rebases surviving edits to acknowledged identities', () => {
-        const latest = { ...edit, profile: { ...profile, name: 'Latest' } };
-        const merged = mergeThemeProfileMigrationEdits([edit], [latest]);
-        expect(removeCommittedThemeProfileMigrationEdits(merged, [edit])).toEqual([latest]);
-        const ids = new Map([['ocean', 'ocean_2']]);
-        const rebased = rebaseThemeProfileMigrationEdits(merged, ids);
-        expect(rebased[0].target).toEqual({ kind: 'account', id: 'ocean_2' });
-        expect(applyThemeProfileMigrationEdits([], rebased, new Map())).toEqual([{ ...profile, id: 'ocean_2', name: 'Latest' }]);
-        expect(() => rebaseThemeProfileMigrationEdits(merged, new Map())).toThrow();
-    });
+
 });
 
 it('retains completion identities for consumed account edits and removes deleted targets', () => {
