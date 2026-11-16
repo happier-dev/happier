@@ -1314,6 +1314,47 @@ async function runSdkStreamUntilEof() {
       await waitForRuntimeContinuityReleaseFile();
     }
 
+    // Long streaming run (P03-LONG-TRANSCRIPT): a prompt "lsl <rounds> <deltas> <deltaMs>" streams N rounds of
+    // real stream_event text deltas, each followed by the assembled assistant message and a Bash tool call +
+    // result. Selected by the prompt because a scenario env var does not reach a daemon-spawned Session.
+    const longStream = /^\s*lsl\s+(\d+)\s+(\d+)\s+(\d+)/.exec(String(promptText));
+    if (scenario === 'lsl-stream' || longStream) {
+      const rounds = longStream ? Number(longStream[1]) : 5;
+      const deltas = longStream ? Number(longStream[2]) : 20;
+      const deltaMs = longStream ? Number(longStream[3]) : 100;
+      const words = ['alpha', 'beta', 'gamma', 'delta', '`code`', '**bold**', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa'];
+      const sleepMs = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+      for (let round = 0; round < rounds; round += 1) {
+        const msgId = `lsl-${processNonce}-${turn}-${round}`;
+        const base = { parent_tool_use_id: null, session_id: sessionId };
+        const ev = (event) => emitSdk({ type: 'stream_event', uuid: randomUUID(), ...base, event });
+        ev({ type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', model: 'fake-claude', content: [],
+          stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } });
+        ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+        let text = '';
+        for (let delta = 0; delta < deltas; delta += 1) {
+          const chunk = (delta % 12 === 0 ? `\n\n- item ${round}.${delta} ` : ' ') + words[(round * 7 + delta) % words.length];
+          text += chunk;
+          ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } });
+          await sleepMs(deltaMs);
+        }
+        ev({ type: 'content_block_stop', index: 0 });
+        ev({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: deltas } });
+        ev({ type: 'message_stop' });
+        emitSdk({ type: 'assistant', uuid: randomUUID(), ...base, message: { id: msgId, type: 'message', role: 'assistant',
+          model: 'fake-claude', content: [{ type: 'text', text }], stop_reason: 'end_turn', stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: deltas } } });
+        const toolId = `toolu_lsl_${processNonce}_${turn}_${round}`;
+        emitSdk({ type: 'assistant', uuid: randomUUID(), ...base, message: { id: `${msgId}-tool`, type: 'message', role: 'assistant',
+          model: 'fake-claude', content: [{ type: 'tool_use', id: toolId, name: 'Bash', input: { command: `echo round ${round}` } }],
+          stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+        await sleepMs(deltaMs);
+        emitSdk(createUserMessage([{ type: 'tool_result', tool_use_id: toolId, content: `round ${round}` }]));
+      }
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
     if (scenario === 'echo-user-text') {
       emitSdk(createAssistantMessage([{ type: 'text', text: fakeClaudeEchoResponseText(promptText) }]));
       emitSdk(createResultSuccess());
