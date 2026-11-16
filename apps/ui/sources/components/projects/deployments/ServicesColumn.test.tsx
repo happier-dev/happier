@@ -5,7 +5,7 @@ import {
   type DeploymentReadControllerV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
 import {
   act,
@@ -49,6 +49,7 @@ function environment(
 ) {
   return {
     environment: createDeploymentEnvironmentHeaderV1({ id, projectSourceId }),
+    runtimeTargetLink: createDeploymentTargetLinkHeaderV1(),
     title,
     // A deployed Environment runs something; one never deployed has nothing in the column (E1).
     currentDeployment: deployed ? createDeploymentReceiptHeaderV1({ id: `receipt-${id}`, environmentId: id, state: 'succeeded' }) : null,

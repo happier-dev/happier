@@ -1,4 +1,5 @@
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import { selectDeploymentSingleDataMachineV1 } from '@happier-dev/deployments';
 
 import { isSameDeploymentName } from '../DeploymentEnvironmentCollection';
 
@@ -20,11 +21,11 @@ export function deploymentEnvironmentRowFact(
 }
 
 /**
- * The Machine an Environment's tree row opens onto (what runs there): one with a deploy runs on its controller Machine;
- * one never deployed runs nothing yet, so it has nothing to disclose.
+ * A deployed Environment opens onto its one native runtime member. Platform and unplaced targets have no Machine
+ * services to disclose; an Environment never deployed runs nothing yet.
  */
 export function deploymentEnvironmentRunsOnMachine(
   item: EnvironmentItem | undefined,
 ): string | null {
-  return item?.currentDeployment ? item.environment.controllerMachineId : null;
+  return item?.currentDeployment ? selectDeploymentSingleDataMachineV1(item.runtimeTargetLink ?? null)?.machineId ?? null : null;
 }
