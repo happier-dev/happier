@@ -44,7 +44,7 @@ describe('shared theme connected-device picker', () => {
         }
         const distributed = vi.fn();
         const props: ThemeDevicePickerInput = { enabled: false, theme: { reference: null, name: 'Base', mode: 'dark' },
-            currentClientId: 'self', onDismiss: () => {}, onDistribution: distributed };
+            currentClientId: 'self', unnamedDeviceLabel: 'Unnamed device', onDismiss: () => {}, onDistribution: distributed };
         const hook = await renderHook(input => useThemeDevicePicker(input, execute), { initialProps: props });
         expect(reads).toEqual([]);
         await hook.rerender({ ...props, enabled: true });

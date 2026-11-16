@@ -2,7 +2,6 @@ import * as React from 'react';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import type { ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { t } from '@/text';
 import type { ThemeDevicePickerRow, ThemeDevicePickerViewProps } from './themeDevicePickerViewTypes';
 import type { ThemeUiActionExecute } from './useThemeActionExecution';
 import type { ThemeResultDistribution } from '@/components/tools/renderers/system/themeActionResultViewTypes';
@@ -11,6 +10,7 @@ export type ThemeDevicePickerInput = Readonly<{
     enabled: boolean;
     theme: Readonly<{ reference: ThemeReference | null; name: string; mode: ThemeProfileMode }>;
     currentClientId: string;
+    unnamedDeviceLabel: string;
     onDismiss: () => void;
     onDistribution?: (result: ThemeResultDistribution) => void;
 }>;
@@ -63,14 +63,14 @@ export function useThemeDevicePicker(input: ThemeDevicePickerInput, execute: The
                 return outcome ? { ...row, outcome } : row;
             }));
             input.onDistribution?.({
-                applied: results.filter(result => result.outcome === 'applied').map(result => result.row.label ?? t('themeDevices.unnamed')),
+                applied: results.filter(result => result.outcome === 'applied').map(result => result.row.label ?? input.unnamedDeviceLabel),
                 failed: results.filter(result => result.outcome !== 'applied').map(result => ({
-                    label: result.row.label ?? t('themeDevices.unnamed'),
+                    label: result.row.label ?? input.unnamedDeviceLabel,
                     reason: result.outcome === 'disconnected' ? 'disconnected' : 'failed',
                 })),
             });
         }).finally(() => setDispatching(false));
-    }, [dispatching, rows, execute, input.theme, input.onDistribution]);
+    }, [dispatching, rows, execute, input.theme, input.onDistribution, input.unnamedDeviceLabel]);
     return { themeName: input.theme.name, mode: input.theme.mode, state, rows, dispatching,
         onToggle, onUse, onRetry: () => setRetry(value => value + 1), onDismiss: input.onDismiss };
 }
