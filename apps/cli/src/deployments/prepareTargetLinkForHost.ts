@@ -1,5 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { $ZodError } from 'zod/v4/core';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildDeploymentTargetLinkInputV1, createDeploymentLinkContentArtifactIdV1, DeploymentTargetLinksListResultV1Schema,
     type DeploymentTargetLinkInputV1, type DeploymentTargetLinkAlreadyLinkedResultV1,
     type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1,
@@ -59,7 +60,7 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
                 await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => host.artifacts.read(input.contentArtifactId, {
                     signal: context.signal, prepareRecipients: false, includeSharedAudience: false,
                     authorizationHeaders: host.artifactAuthorization(context) })));
-            if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+            if (!opened.ok) throw createActionExecuteFailureError({ ok: false, errorCode: opened.error, error: opened.error });
             if (opened.content.providerResourceOrigin === undefined) return input;
             content = normalizeDeploymentTargetLinkOriginV1(opened.content);
             title = opened.title;
@@ -92,7 +93,7 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
         const binding = context.externalActionExecutionAuthorization?.binding;
         const admission = binding?.deploymentLinkAdmission;
         if (binding?.actionId === 'deployments.targets.link' && !admission) {
-            throw Object.assign(new Error('deployment_content_unavailable'), { code: 'deployment_content_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' });
         }
         const created = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createDeploymentArtifactForHost({
             artifacts: host.artifacts, owner: current.environment.owner, assertCurrent: () => host.assertCurrent(context), publication: 'create',

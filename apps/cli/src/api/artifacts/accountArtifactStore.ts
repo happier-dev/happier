@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { artifactAccessUrl as accessUrl, requireArtifactAccessResponse as requireAccessResponse,
   reportArtifactTemplateAcceptedVersion } from './artifactAccessHttp';
@@ -264,6 +265,11 @@ function privateNoticeArtifactId(params: Readonly<{ occurrence: string; mode: 'p
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Account-mode refusals stay typed through Action projection; .code remains for existing readers. */
+function accountModeRefusal(code: 'artifact_account_mode_mismatch' | 'account_encryption_mode_unavailable') {
+  return createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
+}
+
 async function createCodec(params: Readonly<{
   credentials: ContentEncryption; mode: ConnectedServiceAccountEncryptionMode;
 }>): Promise<Codec> {
@@ -271,7 +277,7 @@ async function createCodec(params: Readonly<{
     return { mode: 'plain', dataKey: null, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
       encode: encodePlainArtifactStoredContent, decode: decodePlainArtifactStoredContent };
   }
-  if (params.mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
+  if (params.mode === 'unknown') throw accountModeRefusal('account_encryption_mode_unavailable');
   requireCredentials(params.credentials);
   const resource = await createResourceDataKey({ credentials: params.credentials, mode: 'e2ee' });
   if (resource.mode !== 'e2ee') throw new ArtifactEncryptionMaterialUnavailableError();
@@ -286,9 +292,9 @@ async function createCodec(params: Readonly<{
 }
 
 async function openCodec(credentialsInput: ContentEncryption, dataEncryptionKey: string, mode: ConnectedServiceAccountEncryptionMode): Promise<Codec> {
-  if (mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
+  if (mode === 'unknown') throw accountModeRefusal('account_encryption_mode_unavailable');
   if ((mode === 'plain') !== isPlainArtifactDataKeyMarker(dataEncryptionKey)) {
-    throw Object.assign(new Error('artifact_account_mode_mismatch'), { code: 'artifact_account_mode_mismatch' });
+    throw accountModeRefusal('artifact_account_mode_mismatch');
   }
   if (isPlainArtifactDataKeyMarker(dataEncryptionKey)) return {
     mode: 'plain', dataKey: null, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -562,8 +568,8 @@ export function createAccountArtifactStore(params: Readonly<{
       const startedAt = performance.now();
       const accountMode = await (options?.authorizationHeaders ? readAccountMode(options) : admittedMode ?? readAccountMode(options));
       if (timing) timing.accountModeMs += performance.now() - startedAt;
-      if (accountMode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
-      if (accountMode !== stored.encryptionMode) throw Object.assign(new Error('artifact_account_mode_mismatch'), { code: 'artifact_account_mode_mismatch' });
+      if (accountMode === 'unknown') throw accountModeRefusal('account_encryption_mode_unavailable');
+      if (accountMode !== stored.encryptionMode) throw accountModeRefusal('artifact_account_mode_mismatch');
     }
   };
   const openStored = async (stored: Pick<StoredArtifact, 'access' | 'encryptionMode' | 'dataEncryptionKey'>,
@@ -1433,7 +1439,7 @@ export function createAccountArtifactStore(params: Readonly<{
     options?.signal?.throwIfAborted();
     if (accountMode && result.items.some(item => item.access === 'owner' && Object.hasOwn(item, 'body'))) {
       const mode = await accountMode;
-      if (mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
+      if (mode === 'unknown') throw accountModeRefusal('account_encryption_mode_unavailable');
       await assertOwnerAccountMode({ access: 'owner', encryptionMode: mode }, undefined, { signal: options?.signal, authorizationHeaders });
     }
     options?.signal?.throwIfAborted();
@@ -1538,7 +1544,7 @@ export function createAccountArtifactStore(params: Readonly<{
         throw Object.assign(new Error('notice_account_scope_mismatch'), { code: 'notice_account_scope_mismatch' });
       }
       const mode = await params.getAccountEncryptionMode({ throwOnTransportError: true });
-      if (mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
+      if (mode === 'unknown') throw accountModeRefusal('account_encryption_mode_unavailable');
       const baseContent = AccountNoticeArtifactBodyV1Schema.parse({ v: 1, source: input.source, type: input.type,
         resolved: input.resolved, ...(input.healthPhase === undefined ? {} : { healthPhase: input.healthPhase }),
         ...(input.platformTransition === undefined ? {} : { platformTransition: input.platformTransition }),

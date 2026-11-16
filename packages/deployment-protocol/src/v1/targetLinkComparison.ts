@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { type DeploymentTargetLinkAlreadyLinkedResultV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkHeaderV1, type DeploymentTargetLinksListInputV1, type DeploymentTargetLinksListResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTargetLinkArtifactV1, type DeploymentArtifactDocumentV1 } from './artifacts.js';
@@ -15,7 +16,7 @@ async function* readableTargetLinks(selection: TargetLinkSelection, reads: Targe
         const page = await reads.list(selection, cursor);
         if (!page.ok || page.coverage !== 'complete') {
             const code = page.ok ? 'deployment_content_unavailable' : page.error;
-            throw Object.assign(new Error(code), { code, ...(page.ok ? {} : { details: page }) });
+            throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code, ...(page.ok ? {} : { details: page }) });
         }
         yield* page.items;
         cursor = page.nextCursor ?? undefined;
@@ -29,7 +30,7 @@ export async function findExistingDeploymentTargetLinkV1(input: DeploymentTarget
         const opened = readDeploymentTargetLinkArtifactV1(targetLink, await reads.artifact(targetLink));
         if (!opened.ok || !opened.content.providerIdentity) {
             const code = opened.ok ? 'deployment_content_unavailable' : opened.error;
-            throw Object.assign(new Error(code), { code });
+            throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
         }
         if (sameStrictJsonValue(opened.content.providerIdentity, input.provider.providerIdentity)) return {
             ok: false, error: 'provider_scope_already_linked', targetLinkId: targetLink.id,
@@ -48,7 +49,7 @@ export async function findExistingNativeComposeTargetLinkV1(input: Readonly<{
             || !targetLink.members.some(member => member.machineId === input.machineId && member.state === 'active'
                 && member.installationId === input.origin.capture?.installationId)) continue;
         const opened = readDeploymentTargetLinkArtifactV1(targetLink, await reads.artifact(targetLink));
-        if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+        if (!opened.ok) throw createActionExecuteFailureError({ ok: false, errorCode: opened.error, error: opened.error });
         const origin = opened.content.nativeOrigin;
         if (origin?.projectName === input.origin.projectName && origin.dockerEndpoint === input.origin.dockerEndpoint) return item;
     }
