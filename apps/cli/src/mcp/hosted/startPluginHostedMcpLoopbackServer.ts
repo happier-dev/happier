@@ -5,6 +5,7 @@ import type { PluginHostedMcpServerSpec } from './runtimeTypes';
 import type { HostedMcpRuntimeEndpoint } from '../runtimeTypes';
 import { createLocalMcpBearer } from '../runtime/localMcpBearer';
 import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { createStatelessMcpRequestHandler } from '../runtime/statelessMcpRequestHandler';
 
 export type PluginHostedMcpLoopbackServer = Readonly<{
     endpoint: Extract<HostedMcpRuntimeEndpoint, Readonly<{ kind: 'loopbackHttp' }>>;
@@ -28,71 +29,31 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
     spec: PluginHostedMcpServerSpec;
     toolNameSource?: 'mcpServer';
 }>): Promise<PluginHostedMcpLoopbackServer> {
-    const [{ McpServer }, { StreamableHTTPServerTransport }, { assertHostedMcpHandlerSpec, registerHostedMcpHandlers }] = await Promise.all([
+    const [{ McpServer }, { assertHostedMcpHandlerSpec, registerHostedMcpHandlers }] = await Promise.all([
         import('@modelcontextprotocol/sdk/server/mcp.js'),
-        import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
         import('./handlers'),
     ]);
     assertHostedMcpHandlerSpec(params);
-    const requestCleanups = new Set<() => Promise<void>>();
     // Any local process or OS user can reach 127.0.0.1; only the Agent's private bridge config
     // (runner-written MCP client launch material) holds this bearer. Loopback has no peer proof,
     // so the transcript writer redacts it while it is live.
     const bearer = createLocalMcpBearer();
     const unregisterTranscriptSecret = registerTranscriptSecret(bearer.token);
     const authorization = bearer.authorization;
+    const requests = createStatelessMcpRequestHandler({
+        createServer(signal) {
+            const mcp = new McpServer({ name: `${params.pluginId}:${params.spec.name}`, version: '1.0.0' });
+            registerHostedMcpHandlers({ server: mcp, pluginId: params.pluginId, spec: params.spec,
+                toolNameSource: params.toolNameSource, signal });
+            return mcp;
+        },
+    });
     const server = createServer(async (req, res) => {
         if (!bearer.authenticate(req.headers.authorization)) {
             res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
             return;
         }
-        const mcp = new McpServer({
-            name: `${params.pluginId}:${params.spec.name}`,
-            version: '1.0.0',
-        });
-        const abortController = new AbortController();
-        registerHostedMcpHandlers({
-            server: mcp,
-            pluginId: params.pluginId,
-            spec: params.spec,
-            toolNameSource: params.toolNameSource,
-            signal: abortController.signal,
-        });
-        const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: undefined,
-        });
-
-        let cleanedUp = false;
-        const cleanup = async () => {
-            if (cleanedUp) {
-                return;
-            }
-            cleanedUp = true;
-            abortController.abort();
-            requestCleanups.delete(cleanup);
-            if (!res.destroyed) {
-                res.destroy();
-            }
-            try {
-                await transport.close();
-            } finally {
-                await Promise.resolve(mcp.close());
-            }
-        };
-        requestCleanups.add(cleanup);
-        res.once('close', () => {
-            cleanup().catch(() => undefined);
-        });
-
-        try {
-            await mcp.connect(transport);
-            await transport.handleRequest(req, res);
-        } catch {
-            if (!res.headersSent) {
-                res.writeHead(500).end();
-            }
-            await cleanup();
-        }
+        await requests.handleRequest(req, res);
     });
 
     const port = await new Promise<number>((resolve, reject) => {
@@ -122,7 +83,7 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
         disposed = true;
         unregisterTranscriptSecret();
         bearer.retire();
-        await Promise.all([...requestCleanups].map((cleanup) => cleanup()));
+        await requests.dispose();
         await closeHttpServer(server);
     };
 

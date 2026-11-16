@@ -54,7 +54,7 @@ export const executionRunStartToolInputSchema = lazyZodSchema(() => z.looseObjec
 })));
 
 export function normalizeExecutionRunStartToolInput(params: Readonly<{
-  sessionId: string;
+  sessionId?: string;
   args: unknown;
 }>):
   | Readonly<{ ok: true; request: z.infer<typeof ExecutionRunStartRequestSchema> }>

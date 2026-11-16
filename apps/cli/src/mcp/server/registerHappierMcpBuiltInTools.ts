@@ -92,12 +92,12 @@ function startMcpToolProgressKeepalive(extra: unknown): () => void {
 
 function buildSessionAgentApprovalOrigin(params: Readonly<{
     surface: BuiltInHappierToolsSurface;
-    sessionId: string;
+    sessionId?: string;
     toolName: string;
     extra: unknown;
     toolCallId?: string;
 }>): ApprovalRequestOriginV1 | null {
-    if (params.surface !== 'agent') return null;
+    if (params.surface !== 'agent' || !params.sessionId) return null;
     const rawRequestId = (params.extra as { requestId?: unknown } | null | undefined)?.requestId;
     const requestId =
         typeof rawRequestId === 'string' || typeof rawRequestId === 'number'
@@ -176,7 +176,7 @@ function readBrowserResultMedia(value: unknown): readonly BrowserScreenshotMedia
 /** Bind presentation schemas once for the exact Session and admitted inventory. */
 export function prepareHappierMcpToolInventory(params: Readonly<{
     inventory: HappierToolInventory;
-    sessionId: string;
+    sessionId?: string;
     sessionMachineId?: string | null;
     sessionRootPath?: string | null;
 }>): HappierMcpToolInventory {
@@ -226,7 +226,7 @@ export function prepareHappierMcpToolInventory(params: Readonly<{
 export function registerHappierMcpBuiltInTools(
     server: ToolRegistrar,
     params: Readonly<{
-        sessionId: string;
+        sessionId?: string;
         workingDirectory?: string | null;
         sessionMachineId?: string | null;
         mcpToolCallIdMetaKey?: string;
@@ -238,7 +238,7 @@ export function registerHappierMcpBuiltInTools(
         requiredDirectActionIds?: readonly ActionId[];
         toolInventory?: HappierMcpToolInventory;
         deps: DispatchDeps;
-        resolveSessionId?: (toolArgs: unknown) => string;
+        resolveSessionId?: (toolArgs: unknown) => string | undefined;
     }>,
 ): Readonly<{ toolNames: string[] }> {
     // This registrar intentionally exposes first-party built-in Happier tools.
@@ -316,6 +316,7 @@ export function registerHappierMcpBuiltInTools(
                         // is projected; arbitrary plugin or non-browser results are not file claims.
                         if (typeof requestedActionId === 'string' && requestedActionId.startsWith('browser.context.')) {
                             for (const media of readBrowserResultMedia(result.result)) {
+                                if (!sessionId) throw new SessionMediaUnavailableError();
                                 const verified = await verifySessionStructuredImageInput({
                                     cwd: params.workingDirectory ?? process.cwd(), sessionId,
                                     image: browserMediaToStructuredImageInput(media),
@@ -331,6 +332,7 @@ export function registerHappierMcpBuiltInTools(
                             if (capture?.status === 'captured') {
                                 const media = SessionImageMediaReferenceV1Schema.safeParse(capture.media);
                                 if (!media.success) throw new SessionMediaUnavailableError();
+                                if (!params.sessionId) throw new SessionMediaUnavailableError();
                                 const verified = await verifySessionStructuredImageInput({
                                     cwd: params.workingDirectory ?? process.cwd(), sessionId: params.sessionId,
                                     image: sessionMediaToStructuredImageInput(media.data),

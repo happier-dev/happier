@@ -53,7 +53,7 @@ import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type Lin
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { logger } from '@/ui/logger';
-import { admitAgentIsolationLaunchForHost, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 import { selectRequiredAgentLaunchFiles } from '@/daemon/agentIsolation/requiredLaunchFiles';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
@@ -142,13 +142,21 @@ export type HostAgentNativeLaunchPreparation = (
     nativeExecutableOwner?: ExecService;
 }> | undefined>;
 
+/** Placement selected by native admission; callers cannot manufacture an identity. */
+export type HostAgentNativeMcpPlacement =
+    | Readonly<{ kind: 'direct'; nativeAdmission: HostAgentIsolationLaunchContext }>
+    | Readonly<{ kind: 'prepared'; nativeAdmission: HostAgentIsolationLaunchContext; localTransport: NonNullable<NonNullable<ReturnType<HostAgentIsolationLaunchContext['read']>>['localTransport']> }>;
+
 type NativeLaunchQualifiers = WeakSet<object>;
 const INTERNAL_NATIVE_LAUNCH_QUALIFIERS = new WeakMap<ExecService, NativeLaunchQualifiers>();
 const INTERNAL_NATIVE_SESSION_CONTEXTS = new WeakMap<object, () => SessionMcpLocalContext | undefined>();
 const INTERNAL_NATIVE_MCP_MATERIAL = new WeakMap<object, () => McpLaunchMaterial>();
-// Finite controls bind their invocation's Exec once, so native probes and the
-// control process share the prepared identity without live Session MCP authority.
-const INTERNAL_NATIVE_OPERATIONS = new WeakMap<ExecService, HostAgentIsolationLaunchContext>();
+// Captured admission and prepared material belong to the exact native launch
+// qualifier, never to another launch using the same Exec service.
+const INTERNAL_NATIVE_OPERATIONS = new WeakMap<object, Readonly<{
+    operation?: HostAgentIsolationLaunchContext;
+    admission?: HostAgentIsolationLaunchContext;
+}>>();
 type HostResolvedAgentLaunchAuthorizer = (
     launch: ResolvedHostExecLaunch,
     signal?: AbortSignal,
@@ -158,7 +166,8 @@ type HostResolvedAgentLaunchAuthorizer = (
 ) => Promise<HostAuthorizedPluginExecLaunch>;
 const INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS = new WeakMap<ExecService, Readonly<{
     signal: AbortSignal;
-    admit(kind: HostAgentIsolationLaunchKind, signal?: AbortSignal): Promise<void>;
+    nativeMcpPlacement?: true;
+    admit(kind: HostAgentIsolationLaunchKind, signal?: AbortSignal): Promise<HostAgentNativeMcpPlacement | null | undefined>;
     authorize: HostResolvedAgentLaunchAuthorizer;
 }>>();
 
@@ -187,10 +196,18 @@ export function captureAgentNativeLaunchAuthorityForHost(service: ExecService,
     const capturedSignal = lifetime && lifetime !== authority.signal ? AbortSignal.any([authority.signal, lifetime]) : authority.signal;
     const combined = (signal?: AbortSignal) => signal ? AbortSignal.any([capturedSignal, signal]) : capturedSignal;
     return Object.freeze({ signal: capturedSignal,
-        admit: signal => authority.admit(kind, combined(signal)),
+        admit: async signal => { await authority.admit(kind, combined(signal)); },
         authorize: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(service, launch, combined(signal), nativeLaunch, kind,
             readMcpLaunchMaterial?.()),
     });
+}
+
+/** Project an existing invocation's admitted placement without selecting another requester. */
+export async function admitAgentNativeMcpPlacementForHost(service: ExecService, signal?: AbortSignal): Promise<HostAgentNativeMcpPlacement | null> {
+    const authority = INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.get(service);
+    if (!authority?.nativeMcpPlacement) return null;
+    const placement = await authority.admit('exec', signal);
+    return placement === undefined ? fail('agent_isolation_unavailable', 'Admitted native transport is unavailable') : placement;
 }
 
 function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeLaunch?: AgentNativeLaunchQualifier): void {
@@ -213,7 +230,8 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     readSessionMcpContext?: () => SessionMcpLocalContext | undefined,
     readMcpLaunchMaterial?: () => McpLaunchMaterial,
     nativeOperation?: HostAgentIsolationLaunchContext,
-    holderRole: SessionHolderRole = 'auxiliary'): AgentNativeLaunchQualifier {
+    holderRole: SessionHolderRole = 'auxiliary',
+    nativeAdmission?: HostAgentIsolationLaunchContext): AgentNativeLaunchQualifier {
     let qualifiers = INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(service);
     if (!qualifiers) {
         qualifiers = new WeakSet();
@@ -222,7 +240,10 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     const qualifier = Object.freeze({});
     qualifiers.add(qualifier);
     INTERNAL_NATIVE_LAUNCH_ROLES.set(qualifier, holderRole);
-    if (nativeOperation) INTERNAL_NATIVE_OPERATIONS.set(service, nativeOperation);
+    if (nativeOperation || nativeAdmission) INTERNAL_NATIVE_OPERATIONS.set(qualifier, {
+        ...(nativeOperation ? { operation: nativeOperation } : {}),
+        ...(nativeAdmission ? { admission: nativeAdmission } : {}),
+    });
     if (readSessionMcpContext) INTERNAL_NATIVE_SESSION_CONTEXTS.set(qualifier, readSessionMcpContext);
     // Classify ordinary versus held native material once when the qualifier is issued.
     // A held provider stays live so withdrawal cannot become a daemon-UID fallback.
@@ -738,6 +759,9 @@ export function createStableRunnerPluginExecService(
         await params.admitAgentNativeLaunch(kind, signal);
         if (params.signal.aborted || signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
         if (!params.isOccurrenceCurrent()) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
+        // The daemon owns placement and endpoint custody. This delegated Exec
+        // does not publish that optional host-only capability in the runner.
+        return null;
     }, authorize: async (launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial) => {
         const assertCurrent = () => {
             if (!params.isOccurrenceCurrent()) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
@@ -1705,11 +1729,12 @@ export function createStablePluginExecService(params: Readonly<{
         assertCurrent();
         const nativeLaunch = options?.nativeLaunch;
         assertNativeLaunchQualifier(nativeLaunchQualifiers, nativeLaunch);
-        const nativeOperation = INTERNAL_NATIVE_OPERATIONS.get(service);
-        hostAgentIsolation = nativeOperation ?? hostAgentIsolation;
+        const nativeIsolation = nativeLaunch ? INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch) : undefined;
+        const nativeOperation = nativeIsolation?.operation;
+        hostAgentIsolation = nativeOperation ?? nativeIsolation?.admission ?? hostAgentIsolation;
         const agentNativeLaunch = nativeLaunch !== undefined && !nativeOperation;
         const requesterIdentity = await resolveExecRequesterIdentity({ agentIsolation: hostAgentIsolation ?? params.agentIsolation,
-            requesterIdentity: params.requesterIdentity, executionKind: params.executionKind,
+            requesterIdentity: nativeIsolation?.admission?.requesterIdentity ?? params.requesterIdentity, executionKind: params.executionKind,
             signal: options?.signal ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal]) : lifetime?.signal ?? params.signal });
         assertCurrent();
         if (agentNativeLaunch && !params.authorizeLaunch && !params.prepareAgentNativeLaunch && !prepareAgentNativeLaunch) {
@@ -2476,7 +2501,9 @@ export function createStablePluginExecService(params: Readonly<{
                 if (!nativeLaunch || !material) return fail('agent_isolation_unavailable', 'Held native transport identity is unavailable');
                 const bound = issueAgentNativeLaunchQualifierForHost(service,
                     INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch), () => ({ ...material,
-                        nativeSocketDirectory: { path: join(directory.path, 'private'), daemonUid: process.getuid!() } }));
+                        nativeSocketDirectory: { path: join(directory.path, 'private'), daemonUid: process.getuid!() } }),
+                    INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch)?.operation, readAgentNativeLaunchHolderRoleForHost(nativeLaunch),
+                    INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch)?.admission);
                 return Object.freeze({ ...directory, nativeProxy, nativeLaunch: bound });
             } catch (error) { await directory.dispose(); throw error; }
         },
@@ -2489,21 +2516,40 @@ export function createStablePluginExecService(params: Readonly<{
     });
     INTERNAL_PREAUTHORIZED_SPAWNS.set(service, preauthorizedSpawns);
     INTERNAL_NATIVE_LAUNCH_QUALIFIERS.set(service, nativeLaunchQualifiers);
-    INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, { signal: params.signal, async admit(kind, signal) {
+    INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, { signal: params.signal, nativeMcpPlacement: true, async admit(kind, signal) {
         const combinedSignal = signal ? AbortSignal.any([params.signal, signal]) : params.signal;
         guard(combinedSignal);
         const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: params.agentIsolation,
             requesterIdentity: params.requesterIdentity, signal: combinedSignal });
         await params.agentIsolation?.qualifyNativeReadiness?.({ requesterIdentity: identity, signal: combinedSignal });
         guard(combinedSignal);
+        const snapshot = params.agentIsolation?.read();
         assertHostRequesterExecutionAdmissionForHost({ identity: identity ?? { kind: 'unknown', reason: 'requester_authority_unavailable' },
-            snapshot: params.agentIsolation?.read(), agentLaunchKind: kind });
+            snapshot, agentLaunchKind: kind });
+        if (!identity || identity.kind === 'unknown') return fail('agent_isolation_unavailable', 'Native requester authority is unavailable');
+        const agentIdentity = resolveHostRequesterAgentExecutionIdentity(identity);
+        if (agentIdentity.kind !== 'isolated') return fail('agent_isolation_unavailable', 'Native requester authority is unavailable');
+        const placement = resolveHostRequesterAgentPlacementForHost({ identity: agentIdentity, snapshot });
+        const nativeAdmission: HostAgentIsolationLaunchContext = Object.freeze({
+            ...params.agentIsolation, requesterIdentity: identity,
+            resolveRequesterIdentity: undefined, qualifyNativeReadiness: undefined,
+            // Direct policy is captured at admission. Prepared material retains
+            // its owner's existing lifetime instead of reselecting placement.
+            read: placement === 'daemon' ? () => snapshot : () => params.agentIsolation?.read(),
+        });
+        if (placement === 'daemon') return { kind: 'direct', nativeAdmission };
+        // Only a prepared invocation owns native transport. A Machine preference
+        // cannot confer the selected Agent identity or provision it here.
+        if (!params.agentIsolation || !snapshot?.launch || !snapshot.localTransport) return undefined;
+        return { kind: 'prepared', nativeAdmission, localTransport: snapshot.localTransport };
     }, authorize: async (launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial) => {
         const combinedSignal = signal ? AbortSignal.any([params.signal, signal]) : params.signal;
+        const nativeIsolation = nativeLaunch ? INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch) : undefined;
+        const agentNativeLaunch = nativeLaunch !== undefined && !nativeIsolation?.operation;
         try {
             guard(combinedSignal);
             assertNativeLaunchQualifier(nativeLaunchQualifiers, nativeLaunch);
-            if (nativeLaunch !== undefined && !params.prepareAgentNativeLaunch) {
+            if (agentNativeLaunch && !params.prepareAgentNativeLaunch) {
                 fail('plugin_exec_native_launch_unavailable', 'Native Agent launch preparation is unavailable');
             }
         } catch (error) {
@@ -2513,9 +2559,11 @@ export function createStablePluginExecService(params: Readonly<{
         return await authorizeResolvedProjectExecLaunchForHost({
             launch: { ...launch, ...(processOwnerTag ? { processOwnerTag } : {}) },
             signal: combinedSignal, assertCurrent: () => guard(combinedSignal),
-            ...(!mcpLaunchMaterial || nativeLaunch !== undefined ? { prepareAgentNativeLaunch: params.prepareAgentNativeLaunch } : {}),
-            agentIsolation: params.agentIsolation, agentNativeLaunch: nativeLaunch !== undefined || !mcpLaunchMaterial, agentLaunchKind,
-            requesterIdentity: params.requesterIdentity,
+            ...(!nativeIsolation?.operation && (!mcpLaunchMaterial || nativeLaunch !== undefined)
+                ? { prepareAgentNativeLaunch: params.prepareAgentNativeLaunch } : {}),
+            agentIsolation: nativeIsolation?.operation ?? nativeIsolation?.admission ?? params.agentIsolation,
+            agentNativeLaunch: nativeIsolation?.operation ? false : agentNativeLaunch || !mcpLaunchMaterial, agentLaunchKind,
+            requesterIdentity: nativeIsolation?.admission?.requesterIdentity ?? params.requesterIdentity,
             ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
                 mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : { mcpLaunchMaterial }),
         });

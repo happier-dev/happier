@@ -217,7 +217,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       signal?.throwIfAborted(); input.signal.throwIfAborted(); return requesterIdentity;
     },
     read: () => read(),
-    async prepareLaunch({ requesterIdentity, signal }) {
+    async prepareLaunch({ requesterIdentity, signal, sessionMcpContext }) {
       signal?.throwIfAborted(); input.signal.throwIfAborted();
       if (requesterIdentity?.kind !== 'isolated') unavailable();
       if (member) requireAgentIsolationMaterialNativeIdentity(member, { ...requesterIdentity,
@@ -225,7 +225,10 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       const captured = input.readMaterial();
       if (!captured) unavailable();
       read(captured);
-      return { requesterIdentity, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}), read: () => read(captured) };
+      return { requesterIdentity, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}), read: () => {
+        const snapshot = read(captured);
+        return sessionMcpContext ? { ...snapshot, launch: { ...snapshot.launch, sessionMcpContext } } : snapshot;
+      } };
     },
   };
 }

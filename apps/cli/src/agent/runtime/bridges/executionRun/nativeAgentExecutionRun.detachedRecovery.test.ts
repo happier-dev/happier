@@ -14,6 +14,235 @@ import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createStablePluginExecService, createStableRunnerPluginExecService, captureAgentNativeLaunchAuthorityForHost, admitAgentNativeMcpPlacementForHost, authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { readFile, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { Readable } from 'node:stream';
+import { createAgentIsolationOperationContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
+import { projectAgentIsolationOperationMaterial, type AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { createMuseAgentRuntime } from '../../../../../../../packages/plugins/muse/src/agent/runtime';
+import { createMuseMspProcessFixture } from '../../../../../../../packages/plugins/muse/src/agent/testkit/mspProcess';
+import { callSessionMcpTool } from '@/cli/commands/toolsSessionMcp';
+import { SESSION_MCP_BEARER_ENV, SESSION_MCP_CONTEXT_FILE_ENV, SessionMcpLocalContextSchema } from '@/mcp/runtime/sessionMcpLocalContext';
+import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../../../packages/plugins/scm-git/src/backend';
+import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+
+it('publishes admitted detached Run Action discovery without granting hands-off writes', async () => {
+    const lifetime = new AbortController();
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-run-actions-' });
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+        definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.backend.git/git',
+        executableDefinition: registration.runtime!, registration,
+        hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
+    })]);
+    const pluginId = 'acme.detached';
+    const lease = { pluginId, pluginVersion: '1.0.0', agentId: `${pluginId}/default`, localAgentId: 'default',
+        occurrenceId: 'detached-actions', isCurrent: () => !lifetime.signal.aborted };
+    const unavailable = createUnavailablePluginServices();
+    let directPlacementWithdrawn = false;
+    const exec = createStablePluginExecService({ signal: lifetime.signal, isOccurrenceCurrent: lease.isCurrent,
+        agentIsolation: { requesterIdentity: { kind: 'isolated', separationRequired: false, accountAutomation: true,
+            requester: { serverId: 'home', accountId: 'account', machineId: 'machine-1', installationId: 'installation' } },
+            read: () => directPlacementWithdrawn
+                ? { enabled: true, status: { kind: 'applying', phase: 'runtime_replacement' }, workspaceRoots: [] }
+                : { enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] } },
+        async resolveExecutable() { throw new Error('No provider process is launched by this host boundary fixture'); },
+        async resolvePath() { throw new Error('No filesystem Action is used'); },
+    });
+    const createFactory = (runId: string, rootPath: string, selectedExec = exec) => createNativeAgentExecutionRunContextLeaseFactory({ lease, runId,
+        controllerOccurrenceId: 'controller', callId: 'call', sidechainId: 'sidechain', runtimeRegistry: null,
+        directory: rootPath, machineId: 'machine-1', accountSettings: null,
+        permissionMode: 'read_only', workspaceWrites: 'deny', start: { intent: 'delegate' },
+        async createInvocationServices({ signal, readActiveTurnAdmissionWitness }) {
+            return { ...unavailable, exec: selectedExec, actions: createPluginInvocationActionsService({
+                seed: { plugin: { id: pluginId, version: '1.0.0' },
+                    contribution: { id: 'default', qualifiedId: `${pluginId}/agents/default` },
+                    ...createPluginActionCallerMaterializationFixture(pluginId),
+                    occurrenceId: lease.occurrenceId, surface: 'agent', signal, processOwner: { kind: 'run', runId },
+                    isOccurrenceCurrent: lease.isCurrent, readActiveTurnAdmissionWitness },
+                actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
+                    scmActionExecute: async ({ actionId, input, context }) => {
+                        expect(context.runtimeRunId).toBe(runId);
+                        expect(context).not.toHaveProperty('defaultSessionId');
+                        return await executeScmActionOperation({
+                        actionId, input, workingDirectory: rootPath,
+                        accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] }, registry,
+                        ...(context.signal ? { signal: context.signal } : {}),
+                    }); },
+                }),
+                async invokeContributedAction() { throw new Error('No contributed Action is used'); },
+            }) };
+        },
+    });
+    const factory = createFactory('detached-actions', repository.rootPath);
+    const siblingRepository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-sibling-actions-' });
+    const witness = () => ({ turnId: 'turn', inputId: 'input', userMessageSeq: null, userMessageSeqs: [], callerPermissionMode: 'read-only' as const,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const } });
+    let bound: Awaited<ReturnType<typeof factory>> | undefined;
+    let sibling: Awaited<ReturnType<typeof factory>> | undefined;
+    try {
+    bound = await factory({ services: unavailable, signal: lifetime.signal,
+        readActiveTurnAdmissionWitness: () => ({ turnId: 'turn', inputId: 'input', userMessageSeq: null,
+            userMessageSeqs: [], callerPermissionMode: 'read-only',
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' } }),
+    });
+        expect(bound.context).not.toHaveProperty('session');
+        expect(bound.mcpServers?.happier).toBeDefined();
+        const config = bound.mcpServers!.happier;
+        const contextFile = config.env?.[SESSION_MCP_CONTEXT_FILE_ENV];
+        expect(contextFile).toBeTypeOf('string');
+        const sessionContext = SessionMcpLocalContextSchema.parse({
+            ...JSON.parse(await readFile(contextFile!, 'utf8')),
+            bearerToken: config.env?.[SESSION_MCP_BEARER_ENV],
+        });
+        const call = (toolName: string, args: unknown) => callSessionMcpTool({ source: 'happier', toolName, args, sessionContext });
+        await expect(call('action_spec_get', { id: 'scm.log.list' })).resolves.toMatchObject({ ok: true });
+        await expect(call('action_execute', { actionId: 'scm.log.list', input: { cwd: repository.rootPath, limit: 1, skip: 0 } }))
+            .resolves.toMatchObject({ ok: true, result: { success: true, entries: [expect.objectContaining({ sha: repository.headCommit })] } });
+        await expect(call('action_execute', { actionId: 'settings.set', input: { anchor: 'voiceConversations.minSpeechMs', value: 1100 } }))
+            .resolves.toMatchObject({ ok: false });
+        await expect(callSessionMcpTool({ source: 'happier', toolName: 'action_spec_get', args: { id: 'scm.log.list' },
+            sessionContext: { ...sessionContext, bearerToken: 'A'.repeat(43) } })).resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+        sibling = await createFactory('sibling-actions', siblingRepository.rootPath)({ services: unavailable,
+            signal: lifetime.signal, readActiveTurnAdmissionWitness: witness });
+        const siblingConfig = sibling.mcpServers!.happier;
+        const siblingContext = SessionMcpLocalContextSchema.parse({
+            ...JSON.parse(await readFile(siblingConfig.env![SESSION_MCP_CONTEXT_FILE_ENV]!, 'utf8')),
+            bearerToken: siblingConfig.env![SESSION_MCP_BEARER_ENV],
+        });
+        // A sibling bearer selects sibling authority, even at the shared endpoint.
+        await expect(callSessionMcpTool({ source: 'happier', toolName: 'action_execute',
+            args: { actionId: 'scm.log.list', input: { cwd: repository.rootPath, limit: 1, skip: 0 } },
+            sessionContext: { ...sessionContext, bearerToken: siblingContext.bearerToken } })).resolves.toMatchObject({ ok: true, result: { success: false } });
+        const expectedMcpServers: Record<string, JsonValue> = { happier: { transport: 'stdio', command: config.command,
+            ...(config.args ? { args: [...config.args] } : {}), ...(config.env ? { env: { ...config.env } } : {}), mode: 'required' } };
+        const native = await createMuseMspProcessFixture({ cwd: repository.rootPath, expectedMcpServers,
+            recordingPath: fileURLToPath(new URL('../../../../../../../packages/plugins/muse/src/agent/testkit/fixtures/mcp.json', import.meta.url)) });
+        const nativeBoundary = createStablePluginExecService({ ...native, signal: lifetime.signal, isOccurrenceCurrent: lease.isCurrent });
+        // Substitute only the external native process boundary. Muse's actual MSP
+        // initialize/session-start requests consume the produced detached Run descriptor.
+        const context = bound.context;
+        const conversation = await createMuseAgentRuntime().sessions.executionRunContextV1!.openConversation!({
+            kind: 'create', cwd: repository.rootPath, mcpServers: bound.mcpServers,
+            configuration: { model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
+                permissionIntent: { value: 'read-only', updatedAtMs: 0 }, workspaceWrites: 'deny', options: {} },
+        }, { ...context, services: { ...context.services, exec: { ...context.services.exec, clients: {
+            ...context.services.exec.clients,
+            spawn: (spec, options) => nativeBoundary.clients.spawn(spec, { signal: options?.signal }),
+        } } } });
+        await conversation.dispose();
+        directPlacementWithdrawn = true;
+        // This Run keeps its admitted direct placement, but still requires
+        // Project native preparation; a sibling generic launch is not admitted.
+        await expect(authorizePluginExecLaunchForHost(exec, {
+            executable: { kind: 'systemTool', id: 'fixture.agent' }, cwd: repository.rootPath,
+        }, { signal: lifetime.signal, nativeLaunch: bound.context.executionRun.services.nativeLaunch }))
+            .rejects.toMatchObject({ code: 'plugin_exec_native_launch_unavailable' });
+        await expect(authorizePluginExecLaunchForHost(exec, {
+            executable: { kind: 'systemTool', id: 'fixture.agent' }, cwd: repository.rootPath,
+        }, { signal: lifetime.signal })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+        directPlacementWithdrawn = false;
+        // Runner/daemon RPC does not transfer endpoint custody. This optional
+        // projection adds no RPC admission; native admission still owns refusal.
+        let daemonAdmissionDenied = false;
+        const runnerExec = createStableRunnerPluginExecService({ signal: lifetime.signal, isOccurrenceCurrent: lease.isCurrent,
+            agentCli: unavailable.exec.agentCli,
+            async resolveSystemTool() { throw new Error('No runner system tool is resolved'); },
+            async resolveExecutable() { throw new Error('No runner executable is resolved'); },
+            async authorizeLaunch() { throw new Error('No runner process is launched'); },
+            async admitAgentNativeLaunch() {
+                if (daemonAdmissionDenied) throw Object.assign(new Error('Requester authority unavailable'), { code: 'agent_isolation_unavailable' });
+            },
+        });
+        const delegated = await createFactory('delegated-run', repository.rootPath, runnerExec)({ services: unavailable,
+            signal: lifetime.signal, readActiveTurnAdmissionWitness: witness });
+        try {
+            expect(delegated.context.executionRun.id).toBe('delegated-run');
+            expect(delegated.mcpServers?.happier).toBeUndefined();
+            daemonAdmissionDenied = true;
+            await expect(admitAgentNativeMcpPlacementForHost(runnerExec)).resolves.toBeNull();
+            await expect(captureAgentNativeLaunchAuthorityForHost(runnerExec, 'exec')!.admit())
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+        } finally { await delegated.dispose(); }
+        const unavailablePlacement = createStablePluginExecService({ signal: lifetime.signal, isOccurrenceCurrent: lease.isCurrent,
+            agentIsolation: { requesterIdentity: { kind: 'isolated', separationRequired: true,
+                requester: { serverId: 'home', accountId: 'guest', machineId: 'machine-1', installationId: 'installation' } },
+                read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [repository.rootPath] }) },
+            async resolveExecutable() { throw new Error('No native effect before placement'); },
+            async resolvePath() { throw new Error('No path lookup before placement'); },
+        });
+        await expect(admitAgentNativeMcpPlacementForHost(unavailablePlacement)).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+        if (process.platform === 'linux') {
+            // OS identity is a constructed boundary fact; the real operation,
+            // Run qualifier, Exec finalizer and native frame remain composed.
+            const nativeIdentity = { agentUid: process.getuid!(), agentGid: process.getgid!(), home: repository.rootPath };
+            let heldMaterial: AgentLaunchOperationMaterialization | undefined = {
+                materializationKey: 'prepared-run', environment: {}, selectedMaterials: [],
+            };
+            const target = projectAgentIsolationOperationMaterial(nativeIdentity, heldMaterial);
+            const operation = createAgentIsolationOperationContext({ signal: lifetime.signal,
+                managedHappierBinaryPath: '/fixture/happier', nativeIdentity,
+                requesterIdentity: { kind: 'isolated', separationRequired: true, homeServerIdentityId: 'home',
+                    requester: { serverId: 'home', accountId: 'guest', machineId: 'machine-1', installationId: 'installation' } },
+                machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
+                    workspaceRoots: [repository.rootPath] }) },
+                readMaterial: () => heldMaterial, readTarget: () => target,
+            });
+            const preparedExec = createStablePluginExecService({ signal: lifetime.signal, isOccurrenceCurrent: lease.isCurrent,
+                agentIsolation: operation, async resolveExecutable() { return { command: '/fixture/agent' }; },
+                async resolvePath() { return repository.rootPath; },
+            });
+            const prepared = await createFactory('prepared-run', repository.rootPath, preparedExec)({ services: unavailable,
+                signal: lifetime.signal, readActiveTurnAdmissionWitness: witness });
+            try {
+                const preparedConfig = prepared.mcpServers!.happier;
+                const exactContext = SessionMcpLocalContextSchema.parse({
+                    ...JSON.parse(await readFile(preparedConfig.env![SESSION_MCP_CONTEXT_FILE_ENV]!, 'utf8')),
+                    bearerToken: preparedConfig.env![SESSION_MCP_BEARER_ENV],
+                });
+                if (!('socketPath' in exactContext)) throw new Error('Prepared native placement requires its Unix transport');
+                const launch = await authorizePluginExecLaunchForHost(preparedExec, {
+                    executable: { kind: 'systemTool', id: 'fixture.agent' }, cwd: repository.rootPath,
+                }, { signal: lifetime.signal, agentIsolation: operation, nativeLaunch: prepared.context.executionRun.services.nativeLaunch });
+                try {
+                    const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
+                    expect(frame.executable).toBe('/fixture/agent');
+                    expect(frame.selectedMaterials).toContainEqual({ relativePath: '.happier/session-mcp.json',
+                        contentBase64: Buffer.from(JSON.stringify({ v: 1, socketPath: exactContext.socketPath })).toString('base64') });
+                    expect(frame.environment[SESSION_MCP_CONTEXT_FILE_ENV]).toBe(`${target.runtimeHome}/.happier/session-mcp.json`);
+                    expect(JSON.stringify(frame)).not.toContain(exactContext.bearerToken);
+                } finally { await launch.release(); }
+                heldMaterial = undefined;
+                await expect(admitAgentNativeMcpPlacementForHost(preparedExec)).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+                await expect(authorizePluginExecLaunchForHost(preparedExec, {
+                    executable: { kind: 'systemTool', id: 'fixture.agent' }, cwd: repository.rootPath,
+                }, { signal: lifetime.signal, agentIsolation: operation, nativeLaunch: prepared.context.executionRun.services.nativeLaunch }))
+                    .rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+            } finally { await prepared.dispose(); }
+        }
+        await bound.dispose();
+        bound = undefined;
+        await expect(call('action_spec_get', { id: 'scm.log.list' })).resolves.toMatchObject({ ok: false });
+        await expect(callSessionMcpTool({ source: 'happier', toolName: 'action_spec_get', args: { id: 'scm.log.list' },
+            sessionContext: siblingContext })).resolves.toMatchObject({ ok: true });
+    } finally {
+        lifetime.abort();
+        await sibling?.dispose();
+        await bound?.dispose();
+        await rm(repository.rootPath, { recursive: true, force: true });
+        await rm(siblingRepository.rootPath, { recursive: true, force: true });
+    }
+});
 
 it.each([
     { interaction: 'approval', permissionMode: 'default', intent: 'delegate' },

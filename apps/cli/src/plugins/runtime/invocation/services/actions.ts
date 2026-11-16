@@ -797,6 +797,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 ? { sessionListAccess: 'current_session' as const }
                 : {}),
             ...(sessionAddress ? { serverId: sessionAddress.serverId, expectedSessionAddress: sessionAddress } : {}),
+            ...(params.seed.processOwner?.kind === 'run' ? { runtimeRunId: params.seed.processOwner.runId } : {}),
             surface: executionSurface,
             ...(canonicalActionId !== 'action.invoke' || requestId === undefined ? {} : { operationRequestId: requestId }),
             authority: 'account_automation',

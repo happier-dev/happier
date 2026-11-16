@@ -34,7 +34,7 @@ type DispatchDeps = Readonly<{
   executeActionByToolName: (
     toolName: string,
     args: unknown,
-    defaultSessionId: string,
+    defaultSessionId: string | undefined,
     options?: Readonly<{
       approvalOrigin?: ApprovalRequestOriginV1 | null;
       actionRequestId?: string | null;
@@ -114,7 +114,7 @@ function normalizeChangeTitleResult(result: unknown): HappierBuiltInToolDispatch
 export async function dispatchBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
-  sessionId: string;
+  sessionId?: string;
   sessionMachineId?: string | null;
   sessionRootPath?: string | null;
   surface?: import('./actionToolCatalog').HappierBuiltInToolSurface;
@@ -199,6 +199,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   }
 
   if (params.toolName === 'change_title') {
+    if (!params.sessionId) return err('session_not_selected', 'A Session is required to change its title');
     const parsed = changeTitleToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return actionInputValidationFailure(parsed.error);
     return normalizeChangeTitleResult(await params.deps.changeTitle(

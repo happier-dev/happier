@@ -61,7 +61,10 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/registry/engineRegistry/stateSharingPolicy';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
-import { issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
+import { issueAgentNativeLaunchQualifierForHost, admitAgentNativeMcpPlacementForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createNativeRunHappierMcpBridge } from './nativeRunHappierMcpBridge';
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalContext';
+import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import {
     createNativeAgentSessionInteractionOperations,
     applyNativeAgentConfigurationUpdate,
@@ -452,6 +455,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             ...(params.refreshRuntimeAuthViaDaemon ? { refreshRuntimeAuthViaDaemon: params.refreshRuntimeAuthViaDaemon } : {}),
         });
         let context: AgentExecutionRunRuntimeContextV1;
+        let happierBridge: Awaited<ReturnType<typeof createNativeRunHappierMcpBridge>> | undefined;
         let mcpMaterial: Awaited<ReturnType<typeof materializeMcpServerConfigRecord>> | null = null;
         let mcpServers: AgentSessionOpenRequest['mcpServers'];
         let mcpServersStrictMode: AgentSessionOpenRequest['mcpServersStrictMode'];
@@ -550,6 +554,12 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 }
                 signal.throwIfAborted();
             }
+            const placement = await admitAgentNativeMcpPlacementForHost(bound.services.exec, signal);
+            if (placement) {
+                happierBridge = await createNativeRunHappierMcpBridge({ services: bound.services, placement,
+                    signal, directory: params.directory, machineId: params.machineId });
+                mcpServers = { ...mcpServers, happier: happierBridge.mcpServer };
+            }
             const created = createNativeAgentInvocationContext({
                 lease: params.lease,
                 onToolNormalizationSource: params.onToolNormalizationSource,
@@ -559,6 +569,9 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 invokedAtMs: Date.now(),
                 currentSession: bound.currentSession,
                 executionRunServices,
+                ...(happierBridge ? { readSessionMcpContext: happierBridge.readContext } : {}),
+                ...(placement?.kind === 'prepared' ? { nativeOperation: placement.nativeAdmission } : {}),
+                ...(placement ? { nativeAdmission: placement.nativeAdmission } : {}),
                 ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
                 ...(params.resolveAcpHostLaunch || params.transformAgentRequest || params.acpRuntimeDefinition
                     ? {
@@ -577,7 +590,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         } catch (error) {
             try {
                 try { mcpMaterial?.cleanup(); }
-                finally { try { await disposeAttachments(); } finally { await executionRunServices.dispose(); } }
+                finally { try { await happierBridge?.dispose(); } finally { try { await disposeAttachments(); } finally { await executionRunServices.dispose(); } } }
             } finally {
                 await runPermissionScope.dispose('Execution run context construction failed');
             }
@@ -591,7 +604,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             async dispose() {
                 try {
                     try { mcpMaterial?.cleanup(); }
-                    finally { try { await disposeAttachments(); } finally { await executionRunServices.dispose(); } }
+                    finally { try { await happierBridge?.dispose(); } finally { try { await disposeAttachments(); } finally { await executionRunServices.dispose(); } } }
                 } finally {
                     await runPermissionScope.dispose('Execution run disposed');
                 }
@@ -840,6 +853,9 @@ function createNativeAgentInvocationContext(params: Readonly<{
     currentSession?: Parameters<typeof createPluginInvocationPresentation>[0]['currentSession'];
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
     executionRunServices?: AgentExecutionRunHostServicesV1;
+    readSessionMcpContext?: () => SessionMcpLocalContext | undefined;
+    nativeOperation?: HostAgentIsolationLaunchContext;
+    nativeAdmission?: HostAgentIsolationLaunchContext;
 }>): AgentExecutionRunRuntimeContextV1 {
     const interactions = params.currentSession
         ? createPluginInteractionsService({
@@ -854,7 +870,8 @@ function createNativeAgentInvocationContext(params: Readonly<{
     const services = interactions
         ? Object.freeze({ ...params.services, interactions })
         : params.services;
-    const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec);
+    const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec, params.readSessionMcpContext, undefined,
+        params.nativeOperation, 'auxiliary', params.nativeAdmission);
     const base = Object.freeze({
         plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
         contribution: Object.freeze({

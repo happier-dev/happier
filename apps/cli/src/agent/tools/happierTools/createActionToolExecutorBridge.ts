@@ -24,7 +24,7 @@ type ActionExecutorLike = Readonly<{
     actionId: ActionId,
     input: unknown,
     ctx: Readonly<{
-      defaultSessionId: string;
+      defaultSessionId?: string;
       defaultSessionMachineId?: string | null;
       surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
       authority?: 'account_automation';
@@ -115,7 +115,7 @@ function normalizeActionToolResult(
 async function buildActionExecutorContext(params: Readonly<{
   actionId: string;
   input: unknown;
-  defaultSessionId: string;
+  defaultSessionId?: string;
   defaultSessionMachineId?: string | null;
   surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
   options?: ActionToolExecutionOptions;
@@ -130,7 +130,7 @@ async function buildActionExecutorContext(params: Readonly<{
   sessionListAccess?: 'current_session' | 'led_subtree';
   resolveReviewCommentActor?: (() => Extract<ReviewCommentPrincipalHeaderV1['actor'], { kind: 'agent' }> | null) | null;
 }>): Promise<Readonly<{
-  defaultSessionId: string;
+  defaultSessionId?: string;
   defaultSessionMachineId?: string | null;
   surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
   approvalOrigin?: ApprovalRequestOriginV1 | null;
@@ -229,7 +229,7 @@ async function buildActionExecutorContext(params: Readonly<{
     ...(activeTurnAttribution !== undefined
       ? { actionRequestAttributionV1: materializeActionRequestAttributionV1(activeTurnAttribution) }
       : {}),
-    ...(hasActiveTurnPermissionWitnessResolver && activeTurnId
+    ...(hasActiveTurnPermissionWitnessResolver && activeTurnId && params.defaultSessionId
       ? {
           sessionInputSource: {
             sourceSessionId: params.defaultSessionId,
@@ -335,10 +335,10 @@ export function createActionToolExecutorBridge(params: Readonly<{
   executeActionByToolName: (
     toolName: string,
     toolArgs: unknown,
-    defaultSessionId: string,
+    defaultSessionId: string | undefined,
     options?: ActionToolExecutionOptions,
   ) => Promise<ActionToolBridgeResult>;
-  resolveActionOptions: (args: ResolveActionOptionsInput, defaultSessionId: string) => Promise<DynamicActionOptionsBridgeResult | null>;
+  resolveActionOptions: (args: ResolveActionOptionsInput, defaultSessionId: string | undefined) => Promise<DynamicActionOptionsBridgeResult | null>;
   isActionEnabled: (id: ActionId) => boolean;
 }> {
   const isActionEnabled = params.isActionEnabled ?? (() => true);
@@ -385,7 +385,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           getSessionAgentSpawnPolicyV1: params.getSessionAgentSpawnPolicyV1 ?? null,
           resolveRuntimeRunId: params.resolveRuntimeRunId,
           actionsSettings: readActionsSettings(),
-          sessionListAccess: params.resolveSessionListAccess?.(defaultSessionId),
+          sessionListAccess: defaultSessionId ? params.resolveSessionListAccess?.(defaultSessionId) : undefined,
           expectedContributorOccurrenceId: resolveExpectedContributorOccurrenceId({ actionId, pluginToolCatalog: params.pluginToolCatalog }),
         });
         let definition: import('@happier-dev/protocol').ActionDefinitionV1 | null = null;
@@ -455,7 +455,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           getSessionAgentSpawnPolicyV1: params.getSessionAgentSpawnPolicyV1 ?? null,
           resolveRuntimeRunId: params.resolveRuntimeRunId,
           actionsSettings: readActionsSettings(),
-          sessionListAccess: params.resolveSessionListAccess?.(defaultSessionId),
+          sessionListAccess: defaultSessionId ? params.resolveSessionListAccess?.(defaultSessionId) : undefined,
           expectedContributorOccurrenceId:
             resolveExpectedContributorOccurrenceId({
               actionId,
@@ -491,7 +491,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           resolveActiveTurnPermissionWitness: params.resolveActiveTurnPermissionWitness,
           resolveReviewCommentActor: params.resolveReviewCommentActor,
           sessionInputVia: params.sessionInputVia,
-          sessionListAccess: params.resolveSessionListAccess?.(defaultSessionId) }),
+          sessionListAccess: defaultSessionId ? params.resolveSessionListAccess?.(defaultSessionId) : undefined }),
       );
       if (!result.ok) {
         return normalizeActionExecutorFailure(result);
