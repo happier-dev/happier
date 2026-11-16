@@ -2814,8 +2814,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const clearTeamCredentialModel = React.useCallback(() => { void draftActions.setModel({ kind: 'team', selection: null }); }, [draftActions.setModel]);
     const modelCatalogRefreshProbe = React.useMemo(() => mergeOptionPickerProbes([
         cliAvailabilityProbe,
-        credentialResourcesEnabled ? { phase: 'idle', onRefresh: teamCredentialCatalog.reload } : null,
-    ]), [cliAvailabilityProbe, credentialResourcesEnabled, teamCredentialCatalog.reload]);
+        teamCredentialCatalog.probe,
+    ]), [cliAvailabilityProbe, teamCredentialCatalog.probe]);
     const teamModels = React.useMemo<NonNullable<React.ComponentProps<typeof NewSessionEngineOptionDetail>['teamModels']>>(() => ({
         teamCredentialResources: teamCredentialCatalog.resources,
         teamCredentialDisplayNames: teamCredentialCatalog.displayNames,

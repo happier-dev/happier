@@ -68,6 +68,7 @@ export function SessionAuthoringEngineDetail(props: Readonly<{
     return buildSessionAgentPickerDetailContent({ ...detail,
         selection: selectedTeam ? { ...detail.selection, modelId: selectedTeam.modelId, modelSelection: null } : detail.selection,
         teamModels: {
+            probe: catalog.probe,
             teamCredentialResources: catalog.resources, teamCredentialDisplayNames: catalog.displayNames,
             teamNameById: catalog.teamNameById, homeNameByTeamId: catalog.homeNameByTeamId,
             teamCredentialResourceStatusByKey: catalog.resourceStatusByKey,

@@ -20,7 +20,7 @@ export type ExecutionRunTeamCredentialModel = Readonly<{
     /** The picker, only when a Team offers models for the chosen Agent (or one is chosen). */
     picker: React.ReactNode;
     pickerProps: Pick<SessionModelPickerProps, 'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId'
-        | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel'>;
+        | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'probe'>;
 }>;
 
 /**
@@ -159,6 +159,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
 
     const displayedSelection = selected ?? params.inheritedSelection ?? null;
     const pickerProps = React.useMemo<ExecutionRunTeamCredentialModel['pickerProps']>(() => ({
+        probe: catalog.probe,
         teamCredentialResources: catalog.resources,
         teamCredentialDisplayNames: catalog.displayNames,
         teamNameById: catalog.teamNameById,
@@ -166,7 +167,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
         teamCredentialResourceStatusByKey: catalog.resourceStatusByKey,
         selectedTeamCredentialModel: displayedSelection,
         onSelectTeamCredentialModel,
-    }), [catalog.displayNames, catalog.resources, catalog.teamNameById, catalog.homeNameByTeamId, catalog.resourceStatusByKey, displayedSelection, onSelectTeamCredentialModel]);
+    }), [catalog.probe, catalog.displayNames, catalog.resources, catalog.teamNameById, catalog.homeNameByTeamId, catalog.resourceStatusByKey, displayedSelection, onSelectTeamCredentialModel]);
     const picker = selectedAgentTargetKey && (catalog.resources.length > 0 || selected) ? (
         <SessionModelPicker
             agentTargetKey={selectedAgentTargetKey}

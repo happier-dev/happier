@@ -34,18 +34,21 @@ let serverId = '';
 let enabled = false;
 let open: ReturnType<typeof useExactModelChoice>['open'];
 let choice: ReturnType<typeof useExactModelChoice>;
+let teamProbe: NonNullable<Parameters<typeof useExactModelChoice>[0]['teamModelChoice']>['probe'];
 const agentTargetKey = 'agent:happier.agent.codex/codex';
 const nativeRef = { agentTargetKey, providerConnectionId: null, modelId: 'machine-native-model' } as const;
 const nativeOptionId = `model-picker-overlay-option:${JSON.stringify([agentTargetKey, null, nativeRef.modelId])}`;
 function Host() {
   choice = useExactModelChoice({ agentTargetKey, agentId: 'codex', machineId: 'machine-a', serverId,
-    selected: null, title: 'Model', fallbackLabel: 'Choose', enabled });
+    selected: null, title: 'Model', fallbackLabel: 'Choose', enabled,
+    teamModelChoice: teamProbe ? { probe: teamProbe } : undefined });
   open = choice.open;
   return null;
 }
 
 beforeEach(async () => {
   enabled = false;
+  teamProbe = undefined;
   transport.call.mockReset();
   transport.call.mockImplementation(async ({ method }) => {
     if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createProviderModelProjectionFixture({ agentTargetKey, groups: [] });
@@ -62,6 +65,26 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { Modal.hideAll(); }); await standardCleanup(); await account.reset(); });
 
 describe('exact model choice uses machine catalogs and preserves failures', () => {
+  it('shows a Team read failure alongside selectable native models and refreshes the opened picker', async () => {
+    enabled = true;
+    const refreshTeam = vi.fn(() => {
+      teamProbe = { phase: 'idle', failed: false, onRefresh: refreshTeam };
+      screen.update(<ModalProvider><Host /></ModalProvider>);
+    });
+    teamProbe = { phase: 'idle', failed: true, refreshErrorMessage: 'Team catalog read failed', onRefresh: refreshTeam };
+    const screen = await renderScreen(<ModalProvider><Host /></ModalProvider>);
+    const selected = vi.fn();
+    await act(async () => { open(selected); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId(nativeOptionId)).not.toBeNull());
+    expect(screen.getTextContent()).toContain('Team catalog read failed');
+    expect(screen.findByTestId(nativeOptionId)?.props.disabled).not.toBe(true);
+    await screen.pressByTestIdAsync('model-picker-overlay-refresh');
+    expect(refreshTeam).toHaveBeenCalledOnce();
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).not.toContain('Team catalog read failed'));
+    await screen.pressByTestIdAsync(nativeOptionId);
+    expect(selected).toHaveBeenCalledWith(nativeRef);
+  });
+
   it.each(['native', 'provider'] as const)('loads Profile model catalogs only when opened and selects the exact %s choice', async (source) => {
     const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] });
     const entry = entries.find(candidate => candidate.builtInAgentId === 'codex');

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 
 import { createDeferred, renderHook, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { buildTeamCredentialModelPickerSections } from '@/components/sessions/modelPicker/buildTeamCredentialModelPickerSections';
 import { resourceShortUnavailableLabel } from '@/components/settings/teams/credentials/readinessPresentation';
@@ -46,7 +47,7 @@ describe('Account-scoped Team credential catalog demand', () => {
         await waitForHomeGovernance(() => expect(catalog.getCurrent().condition?.retryable).toBe(true));
         expect(catalog.getCurrent().probe).toMatchObject({ phase: 'idle', failed: true, refreshErrorMessage: expect.any(String) });
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'recovered-source', teamId: 'team-1',
-            displayName: 'Shared source', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+            displayName: teamCredentialDisplayNameFixture('Shared source'), resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
             connectedServiceSelections: [], sourcePresentation: { kind: 'connected_service',
                 service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }, providerModels: [] });
@@ -65,7 +66,7 @@ describe('Account-scoped Team credential catalog demand', () => {
             accountId: 'recipient', teamsEnabled: true, credentialResourcesEnabled: true });
         home.answer(serverId, '/v1/teams/list', { body: { items: [teamSummaryFixture({ id: 'team-1' })], nextCursor: null } });
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'muse-share-1111', teamId: 'team-1',
-            displayName: 'Shared source', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+            displayName: teamCredentialDisplayNameFixture('Shared source'), resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
             connectedServiceSelections: [{ source: 'team_resource', resourceId: 'muse-share-1111', deliveryMode: 'brokered' }],
             sourcePresentation: { kind: 'connected_service', service: agent === 'pi'
@@ -219,7 +220,7 @@ describe('Account-scoped Team credential catalog demand', () => {
         const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'account-ada' };
         const addresses = ['team-1', 'team-2', 'team-3'].map(teamId => ({ serverId: scope.serverId, teamId }));
         const held = createDeferred<void>();
-        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource-1', teamId: 'team-1', displayName: 'Shared', resourceRevision: 1,
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource-1', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Shared'), resourceRevision: 1,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
             providerModels: [], connectedServiceSelections: [],

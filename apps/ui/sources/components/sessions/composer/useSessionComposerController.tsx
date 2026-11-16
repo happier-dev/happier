@@ -4167,7 +4167,7 @@ export function useSessionComposerController({
                         // The Session's option intent lets the selected card show the values it runs with.
                         // Writing it needs write access, the same as the selected card's live controls.
                         modelOptionOverrides={hasWriteAccess ? existingSessionModelOptionOverrides : undefined}
-                        probe={mergeOptionPickerProbes([probe, providersFeatureEnabled
+                        probe={mergeOptionPickerProbes([probe, teamCredentialCatalog.probe, providersFeatureEnabled
                             ? providerModelProjection.loading
                                 ? { phase: 'loading' }
                                 : { phase: 'idle', onRefresh: () => { void providerModelProjection.refresh(); } }
@@ -4217,7 +4217,7 @@ export function useSessionComposerController({
         sessionRouteServerId,
         publishTeamCredentialModelSelection,
         publishModelSelection,
-        teamCredentialCatalog.resourceStatusByKey,
+        teamCredentialCatalog.probe, teamCredentialCatalog.resourceStatusByKey,
         teamCredentialCatalog.homeNameByTeamId,
         teamCredentialCatalog.displayNames, teamCredentialCatalog.resources,
         teamCredentialCatalog.teamNameById,

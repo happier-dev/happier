@@ -21,6 +21,7 @@ import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfir
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 
 type ProjectionGroups = NonNullable<
   ReturnType<typeof useProviderModelProjection>['data']
@@ -29,7 +30,7 @@ type ProjectionGroups = NonNullable<
 const EMPTY_GROUPS: ProjectionGroups = [];
 
 type TeamModelChoiceProps = Pick<SessionModelPickerProps, 'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId'
-  | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'experimentalConfirmation'>;
+  | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'experimentalConfirmation' | 'probe'>;
 
 function ExactModelChoiceModal(
   props: Readonly<{
@@ -184,12 +185,12 @@ export function useExactModelChoice(
     nativeCatalog.probe.onRefresh?.();
     if (providersEnabled) void projection.refresh();
   }, [nativeCatalog.probe.onRefresh, projection.refresh, providersEnabled]);
-  const probe = React.useMemo<SessionModelPickerProps['probe']>(() => ({
+  const probe = React.useMemo<SessionModelPickerProps['probe']>(() => mergeOptionPickerProbes([{
     ...nativeCatalog.probe,
     phase: nativeCatalog.probe.phase !== 'idle' ? nativeCatalog.probe.phase
       : providersEnabled && projection.loading ? projection.data ? 'refreshing' : 'loading' : 'idle',
     ...(nativeCatalog.probe.onRefresh || providersEnabled ? { onRefresh: refreshCatalogs } : {}),
-  }), [nativeCatalog.probe, projection.data, projection.loading, providersEnabled, refreshCatalogs]);
+  }, params.teamModelChoice?.probe]), [nativeCatalog.probe, params.teamModelChoice?.probe, projection.data, projection.loading, providersEnabled, refreshCatalogs]);
   const presentation = React.useMemo(
     () =>
       buildSessionModelSelectedTriggerPresentation({
@@ -234,11 +235,11 @@ export function useExactModelChoice(
       projectionFailures: providersEnabled ? projection.refreshFailures : undefined,
       retryProjection: providersEnabled ? projection.refresh : null,
       projectionApproval: providersEnabled ? projection.pendingApproval : null,
-      probe,
       currentSelectionRecovery,
       hiddenNativeModelKeys,
       selected: params.selected,
       ...params.teamModelChoice,
+      probe,
       experimentalConfirmation: params.teamModelChoice?.experimentalConfirmation?.pending || params.teamModelChoice?.experimentalConfirmation?.error
         ? params.teamModelChoice.experimentalConfirmation : confirmExperimentalModel,
     }),

@@ -3,7 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
-import type { ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
+import type { ManagedSessionDefaultsV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import {
@@ -425,6 +425,39 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
       ? stored.ref
       : (projectSessionModelSelectionV2ToV1(stored)?.ref ?? null)
     : null;
+  const selectedTeamCredentialModel = React.useMemo<TeamCredentialProviderModelSelectionV1 | null>(() => {
+    if (stored?.v !== 2 || stored.ref.source !== 'team_resource') return null;
+    const { source: _source, ...ref } = stored.ref;
+    return { kind: 'team_credential_provider_model', ...ref };
+  }, [stored]);
+  const placement = state.defaults.placement;
+  const machineId = placement?.kind === 'machine' && placement.target.serverId === state.serverId
+    ? placement.target.machineId : null;
+  const resourcesEnabled = useFeatureEnabled('teams.credentialResources', {
+    scopeKind: 'spawn', serverId: state.serverId,
+  });
+  const catalog = useHomeTeamCredentialModelCatalog({
+    serverId: state.serverId, machineId, agentTargetKey: key,
+    enabled: resourcesEnabled && Boolean(state.teamId),
+  });
+  const onSelectTeamCredentialModel = React.useCallback((selection: TeamCredentialProviderModelSelectionV1) => {
+    if (state.disabled) return;
+    const { kind: _kind, ...ref } = selection;
+    state.save(withModel(state.defaults, key, {
+      v: 2, updatedAt: Date.now(), ref: { source: 'team_resource', ...ref },
+    }));
+  }, [key, state.defaults, state.disabled, state.save]);
+  const teamModelChoice = React.useMemo(() => ({
+    probe: catalog.probe,
+    teamCredentialResources: catalog.resources.filter(resource => resource.teamId === state.teamId),
+    teamCredentialDisplayNames: catalog.displayNames,
+    teamNameById: catalog.teamNameById,
+    homeNameByTeamId: catalog.homeNameByTeamId,
+    teamCredentialResourceStatusByKey: catalog.resourceStatusByKey,
+    selectedTeamCredentialModel,
+    onSelectTeamCredentialModel,
+  }), [catalog.probe, catalog.resources, catalog.displayNames, catalog.teamNameById, catalog.homeNameByTeamId,
+    catalog.resourceStatusByKey, state.teamId, selectedTeamCredentialModel, onSelectTeamCredentialModel]);
   const title = t('teams.settings.memberDefaults.model');
   const none = t('teams.settings.memberDefaults.none');
   const choice = useExactModelChoice({
@@ -433,7 +466,7 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
     agentId: props.entry.identity
       ? resolveBundledAgentIdFromContributionIdentity(props.entry.identity)
       : props.entry.catalogAgentId,
-    machineId: null,
+    machineId,
     serverId: state.serverId,
     selected,
     title,
@@ -441,8 +474,10 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
     clearOptionLabel: none,
     clearOptionDescription: t('teams.settings.memberDefaults.modelNone'),
     enabled: true,
+    teamModelChoice,
   });
-  const label = selected ? (choice.presentation.subtitle ?? null) : null;
+  const hasSelection = selected !== null || selectedTeamCredentialModel !== null;
+  const label = hasSelection ? (choice.presentation.subtitle ?? null) : null;
   const note = props.conflict ? state.conflictNote : undefined;
   if (!state.editable) {
     return (
@@ -476,7 +511,7 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
         chevronColor: theme.colors.text.secondary,
         field: resolveFieldBoxColors(theme),
         placeholder: none,
-        secondary: selected ? (choice.presentation.detail ?? null) : null,
+        secondary: hasSelection ? (choice.presentation.detail ?? null) : null,
         secondaryColor: theme.colors.text.secondary,
         fieldSpan: 'column',
         loading: Boolean(selected?.providerConnectionId) && choice.loading,

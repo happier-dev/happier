@@ -83,7 +83,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     providerProjection?: ReturnType<typeof useProviderModelProjection>;
     teamModels?: Readonly<Pick<SessionModelPickerProps,
         'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId' | 'teamCredentialResourceStatusByKey'
-        | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'onRecoverTeamCredentialResource'> & {
+        | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'onRecoverTeamCredentialResource' | 'probe'> & {
         onSelectOtherModel: () => void;
     }>;
     /** The account or pool this Agent's own models run through, for the picker's native heading. */
@@ -409,6 +409,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     const unifiedProbe = React.useMemo(() => {
         return mergeOptionPickerProbes([
             props.refreshProbe ?? null,
+            props.teamModels?.probe,
             modelProbe ?? null,
             configProbe ?? null,
             providersFeatureEnabled
@@ -421,6 +422,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         configProbe,
         modelProbe,
         props.refreshProbe,
+        props.teamModels?.probe,
         providerProjection.loading,
         providerProjection.refresh,
         providersFeatureEnabled,

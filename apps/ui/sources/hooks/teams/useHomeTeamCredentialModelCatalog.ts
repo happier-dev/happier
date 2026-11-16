@@ -2,7 +2,8 @@ import * as React from 'react';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { teamsUnavailableReason, type TeamsDirectoryUnavailableHome } from '@/components/settings/teams/teamsDirectoryViewState';
+import { teamsUnavailableHomeReason, teamsUnavailableReason, type TeamsDirectoryUnavailableHome } from '@/components/settings/teams/teamsDirectoryViewState';
+import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 
 import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCatalog } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { getTeamCredentialResourceCatalogSnapshot, getTeamCredentialResourceCatalogsSelectionKey, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
@@ -26,6 +27,7 @@ export type HomeTeamCredentialModelCatalog = Readonly<{
     current: boolean;
     /** The owning directory/catalog's cold-load or failed-read condition, never inferred from emptiness. */
     condition: Pick<TeamsDirectoryUnavailableHome, 'reason' | 'retryable'> | null;
+    probe: OptionPickerProbeState | undefined;
     /** Re-reads membership discovery and observed Team catalogs through their canonical engine. */
     reload: () => Promise<void>;
 }>;
@@ -218,5 +220,16 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         };
     }, [discovered, input.agentTargetKey, modelProjection.data, modelProjection.error, modelProjection.loading, needsMachineProjection, reload]);
     const displayNames = useOpenedTeamCredentialDisplayNames({ scope, resources: catalog.resources, enabled });
-    return React.useMemo(() => ({ ...catalog, displayNames }), [catalog, displayNames]);
+    const probe = React.useMemo<OptionPickerProbeState | undefined>(() => {
+        if (!enabled) return undefined;
+        const condition = catalog.condition;
+        const failed = Boolean(condition && condition.reason !== 'loading');
+        return {
+            phase: condition?.reason === 'loading' ? 'loading' : 'idle',
+            failed,
+            ...(failed && condition ? { refreshErrorMessage: teamsUnavailableHomeReason(condition) } : {}),
+            ...(!condition || condition.retryable ? { onRefresh: () => { void reload(); } } : {}),
+        };
+    }, [catalog.condition, enabled, reload]);
+    return React.useMemo(() => ({ ...catalog, displayNames, probe }), [catalog, displayNames, probe]);
 }
