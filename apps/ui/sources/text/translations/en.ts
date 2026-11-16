@@ -2,7 +2,7 @@ import { deploymentRecommendationTranslations } from './deploymentRecommendation
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
-import type { AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { AgentIsolationLaunchMaterialFailureCode, AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -9816,7 +9816,7 @@ const enSession = {
       // Isolation causes share errors.agentIsolationUnavailable in the presentation owner.
     } satisfies Record<AgentStartupFailureCode | RequesterSessionRuntimeRefusalCode
       | Exclude<keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS,
-        'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable'>, string> & Record<string, string>,
+        'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable' | AgentIsolationLaunchMaterialFailureCode>, string> & Record<string, string>,
   },
   agentAuthRequired: {
     message: ({ agent }: { agent: string }) => `Sign in to ${agent} or choose a ${agent} account.`,

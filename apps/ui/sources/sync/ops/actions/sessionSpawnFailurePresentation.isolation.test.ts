@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { preloadTranslations, t } from '@/text';
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
+import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -24,6 +25,9 @@ describe('isolation refusal on a member’s session start (UI-LOGIC-R8, B-LAUNCH
   for (const code of [
     'agent_isolation_unavailable',
     'filesystem_identity_custody_unavailable',
+    'session_launch_material_missing',
+    'managed_binary_missing',
+    'session_mcp_context_missing',
   ] as const) {
     it(`says the real reason for ${code}, not the generic start failure`, async () => {
       await preloadTranslations('en');
@@ -37,6 +41,10 @@ describe('isolation refusal on a member’s session start (UI-LOGIC-R8, B-LAUNCH
       expect(message).toContain(t('errors.agentIsolationUnavailable'));
       expect(message).toContain(code);
       expect(message).not.toContain(t('newSession.failedToStart'));
+      const banner = presentSessionRuntimeIssue({ v: 1, scope: 'primary_session', status: 'failed', code,
+        source: 'agent_session_error', occurredAt: 1, failureCause: { phase: 'client_start', failureReason: 'unknown', code } });
+      expect(banner.message).toContain(t('errors.agentIsolationUnavailable'));
+      expect(banner.details).toContain(code);
     });
   }
 });

@@ -1,5 +1,6 @@
 import { createManagedProviderAuthorityError, readManagedProviderAuthorityRefusalSite } from './managedProviderAuthorityError';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readAgentIsolationLaunchMaterialFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { randomUUID } from 'node:crypto';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { createHostScmCommandRunner } from '@/scm/runtime';
@@ -110,9 +111,12 @@ export function projectRunnerDaemonPluginServicesFailure(
     const admissionReasonCode = readAccountConnectionProviderBrokerFailureDiagnostic(error)?.admissionReasonCode;
     // Provider materialization already projects its original exception at the
     // adapter boundary. Consume that sanitized owner result through wrappers.
-    const actionCause = projectActionFailureCauseV1(error);
+    const materialFailure = readAgentIsolationLaunchMaterialFailureCode(error);
+    const actionCause = materialFailure
+        ? { ...projectActionFailureCauseV1(error, 'agent_isolation.native_execution_preparation'), errorCode: materialFailure }
+        : projectActionFailureCauseV1(error);
     const causeCode = RunnerDaemonPluginServicesPreparationCauseV1Schema.shape.code.safeParse(
-        admissionReasonCode ?? actionCause.errorCode ?? candidateCode
+        materialFailure ?? admissionReasonCode ?? actionCause.errorCode ?? candidateCode
         ?? (actionCause.errorClass === 'TypeError' || actionCause.errorClass === 'RangeError'
             || actionCause.errorClass === 'SyntaxError' ? actionCause.errorClass : undefined),
     );

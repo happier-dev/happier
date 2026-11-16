@@ -3,6 +3,7 @@ import {
     readAgentStartupFailureCode,
     readRequesterSessionRuntimeRefusalCode,
     readSessionPreparationFailureCode,
+    isAgentIsolationLaunchMaterialFailureCode,
     type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
@@ -149,7 +150,8 @@ function resolveSessionStartupFailureCause(
     if (preparation === 'no_eligible_member' || preparation === 'no_eligible_group_member') {
         return t('connectedServices.diagnostics.body.no_eligible_group_member');
     }
-    if (preparation === 'agent_isolation_unavailable' || preparation === 'filesystem_identity_custody_unavailable') {
+    if (preparation === 'agent_isolation_unavailable' || preparation === 'filesystem_identity_custody_unavailable'
+        || isAgentIsolationLaunchMaterialFailureCode(preparation)) {
         return t('errors.agentIsolationUnavailable');
     }
     return isTeamCredentialRefusal(preparation)

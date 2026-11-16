@@ -57,6 +57,7 @@ import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionC
 import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessionDirectory';
 import { prepareDaemonAgentIsolationIdentity } from '../spawn/prepareDaemonAgentIsolationIdentity';
 import { projectPluginCodeRefusal } from '../spawn/pluginCodeRefusal';
+import { projectAgentIsolationLaunchMaterialFailure } from '../agentIsolation/agentIsolationLaunchMaterialFailure';
 import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
@@ -1678,7 +1679,8 @@ export async function executeSpawnSessionRequest(
                 role: (requesterRuntime?.bootstrap.savedSecretOperationContext.machineAdmission
                     ?? options.spawnActionContext?.machineAdmission)?.role,
                 target: requesterAttribution }) : undefined;
-            const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse(pluginCodeRefusal ?? { kind: 'launch_error',
+            const materialFailure = !incompleteRetirement ? projectAgentIsolationLaunchMaterialFailure(error) : undefined;
+            const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse(pluginCodeRefusal ?? materialFailure ?? { kind: 'launch_error',
                 code: incompleteRetirement ? 'STARTUP_RETIREMENT_INCOMPLETE' : rawCauseCode,
                 message: incompleteRetirement ?? errorMessage });
             return {

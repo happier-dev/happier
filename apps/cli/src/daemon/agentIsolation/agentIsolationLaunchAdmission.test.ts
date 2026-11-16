@@ -34,6 +34,22 @@ it.skipIf(process.platform !== 'linux')('admits a shared-agent Session with its 
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each([
+    ['material', 'session_launch_material_missing'],
+    ['binary', 'managed_binary_missing'],
+    ['mcp', 'session_mcp_context_missing'],
+] as const)('names the missing %s operand without exposing Session content', async (missing, cause) => {
+    const context = createAgentIsolationSessionContext({
+        machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }) },
+        managedHappierBinaryPath: missing === 'binary' ? undefined : '/managed/happier',
+        readMaterial: () => missing === 'material' ? undefined : { runtimeHome: '/member/runtime', environment: {}, selectedMaterials: [] },
+    });
+    await expect(context.prepareLaunch!({ agentNativeLaunch: true,
+        ...(missing === 'mcp' ? {} : { sessionMcpContext: { v: 1, socketPath: '/private/mcp.sock', bearerToken: 'private-token' } }),
+    })).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
+        details: { cause, phase: 'native_execution_preparation' } });
+});
+
 const requester: HostRequesterExecutionIdentity = { kind: 'isolated', separationRequired: true,
     requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
 const snapshot = (root: string): HostAgentIsolationLaunchSnapshot => ({ enabled: true,

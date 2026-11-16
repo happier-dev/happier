@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { serializerCompiler } from 'fastify-type-provider-zod';
 import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
@@ -18,8 +18,56 @@ import { prepareDaemonAgentIsolationIdentity } from '@/daemon/spawn/prepareDaemo
 import { createAgentIsolationMemberPreparationBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { SessionSpawnNewActionResultV1Schema, projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createSessionAgentIsolationMemberPreparation } from '@/daemon/agentIsolation/sessionPreparation';
+import { projectRunnerDaemonPluginServicesFailure, createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
+import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { projectAgentIsolationLaunchMaterialFailure } from '@/daemon/agentIsolation/agentIsolationLaunchMaterialFailure';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { appendBoundedChildStderr, buildChildExitBeforeWebhookFailure } from '@/daemon/spawn/childStderrDiagnostic';
+import { logger } from '@/ui/logger';
 
 describe('Session launch cause transport', () => {
+  it.each(['session_launch_material_missing', 'managed_binary_missing', 'session_mcp_context_missing'] as const)(
+    'retains %s through runner dispatch, daemon control and the strict Action result', cause => {
+      const source = new PluginError({ code: 'agent_isolation_unavailable', message: 'PRIVATE_MESSAGE', retryable: false,
+        details: { cause, phase: 'native_execution_preparation', token: 'PRIVATE_TOKEN', path: '/PRIVATE_HOME' } });
+      const dispatched = AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false,
+        error: projectRunnerDaemonPluginServicesFailure(source) });
+      expect(dispatched).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable',
+        cause: { code: cause, stage: 'dispatch' }, failureCause: { phase: 'agent_isolation.native_execution_preparation', errorCode: cause } } });
+      const wrapped = createRunnerDaemonPluginServicesPreparationError(source, 'invocation_context');
+      for (const error of [source, wrapped]) {
+        let captured: ReturnType<typeof appendBoundedChildStderr> = { head: '', tail: '' };
+        const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+          captured = appendBoundedChildStderr(captured, `${values.join(' ')}\n`);
+        });
+        const info = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+        const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+        try { expect(reportSessionRunnerFailure(error)).toBe(1); }
+        finally { output.mockRestore(); info.mockRestore(); fatal.mockRestore(); }
+        expect(captured.failureCause).toMatchObject({ code: cause, phase: 'client_start' });
+        expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error }))
+          .toMatchObject({ failureCause: { code: cause, phase: 'client_start' } });
+        const childFailure = buildChildExitBeforeWebhookFailure({ pid: 5154, code: 1, signal: null,
+          stderrTail: captured.tail, failureCause: captured.failureCause });
+        expect(projectSessionSpawnFailure({ errorCode: childFailure.errorCode,
+          errorMessage: childFailure.errorMessage, errorDetail: childFailure.errorDetail }))
+          .toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { code: cause, failureCause: { code: cause } } });
+        const launchError = projectAgentIsolationLaunchMaterialFailure(error);
+        expect(launchError).toMatchObject({ kind: 'launch_error', code: cause, failureCause: { code: cause, phase: 'client_start' } });
+        const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse({
+          errorCode: 'SPAWN_FAILED', errorMessage: 'Launch refused', errorDetail: launchError,
+        }));
+        const result = SessionSpawnNewActionResultV1Schema.parse(projectSessionSpawnNewActionResultV1(projectSessionSpawnFailure({
+          errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+        })));
+        expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: false, launchError: { code: cause } });
+        expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: {
+          code: launchError?.code, failureCause: launchError?.failureCause,
+        } })).toMatchObject({ code: cause, failureCause: { code: cause, phase: 'client_start' } });
+        expect(JSON.stringify({ response, result, dispatched })).not.toContain('PRIVATE_');
+      }
+    });
   it.each(['use', 'manage'] as const)('offers only the admitted %s requester’s available setup remedy', async role => {
     const client = new ApiMachineClient('token', { id: 'member-refusal', encryptionMode: 'plain', metadataVersion: 1,
       daemonStateVersion: 1, metadata: { host: 'fixture', platform: 'linux', happyCliVersion: '0.3',

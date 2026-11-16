@@ -13,6 +13,16 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it.each(['session_launch_material_missing', 'managed_binary_missing', 'session_mcp_context_missing'] as const)(
+    'retains only closed native launch operands (%s) at the runtime cause owner', code => {
+      const source = { code: 'agent_isolation_unavailable', details: { cause: code, phase: 'native_execution_preparation',
+        token: 'PRIVATE_TOKEN', path: '/PRIVATE_PATH' } };
+      const result = readSessionRuntimeFailureCause(source);
+      expect(result).toMatchObject({ code, phase: 'client_start', providerErrorCode: 'agent_isolation_unavailable', retryable: false });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+      expect(readSessionRuntimeFailureCause({ ...source, code: 'another_plugin_failure' })).toBeUndefined();
+      expect(readSessionRuntimeFailureCause({ ...source, details: { cause: 'PRIVATE_TOKEN' } })).toBeUndefined();
+    });
   it('retains only closed carrier stages through the public Session cause parser', () => {
     const carrierFailure = { closingSide: 'initiator', closingStage: 'local_http_head' };
     const failureCause = { phase: 'turn', failureReason: 'unknown', carrierFailure };

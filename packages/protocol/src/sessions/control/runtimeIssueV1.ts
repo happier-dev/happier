@@ -112,11 +112,24 @@ export function readAgentStartupFailureDetails(error: unknown): AgentStartupFail
 
 export const TEAM_CREDENTIAL_FAILURE_PREVIEW = 'Shared Team credential refused the request';
 
+/** Closed diagnostics from native Session launch material preparation. */
+export const AGENT_ISOLATION_LAUNCH_MATERIAL_FAILURE_PREVIEWS = {
+  session_launch_material_missing: 'Session launch material is unavailable. Retry starting the session.',
+  managed_binary_missing: 'The managed Happier binary is unavailable for Agent isolation. Review the machine setup, then retry the session.',
+  session_mcp_context_missing: 'The Session MCP context is unavailable for Agent isolation. Retry starting the session.',
+} as const;
+export type AgentIsolationLaunchMaterialFailureCode = keyof typeof AGENT_ISOLATION_LAUNCH_MATERIAL_FAILURE_PREVIEWS;
+
+export function isAgentIsolationLaunchMaterialFailureCode(value: unknown): value is AgentIsolationLaunchMaterialFailureCode {
+  return typeof value === 'string' && Object.hasOwn(AGENT_ISOLATION_LAUNCH_MATERIAL_FAILURE_PREVIEWS, value);
+}
+
 /** Code-only failures returned by daemon preparation and skill delivery.
  * PluginError accepts arbitrary plugin strings; only these host-owned codes
  * may cross startup diagnostic and launch-result boundaries. Broker codes use
  * their schema at lookup time so cyclic Protocol entry graphs can initialize. */
 export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
+  ...AGENT_ISOLATION_LAUNCH_MATERIAL_FAILURE_PREVIEWS,
   no_eligible_member: 'No eligible Connected Account is available. Review Connected Accounts, then retry the session.',
   no_eligible_group_member: 'No eligible Connected Account is available. Review Connected Accounts, then retry the session.',
   connected_account_purpose_catalog_unavailable: 'Default Connected Accounts are temporarily unavailable. Retry starting the session.',
@@ -430,11 +443,30 @@ function readDataRecord(value: unknown): Record<string, unknown> | undefined {
   } catch { return undefined; }
 }
 
+/** Read only the closed native preparation operands under their owning refusal code. */
+export function readAgentIsolationLaunchMaterialFailureCode(error: unknown): AgentIsolationLaunchMaterialFailureCode | null {
+  const data = readDataRecord(readDataField(error, 'data'));
+  const pluginData = isPluginErrorData(data) ? data : undefined;
+  if ((readDataField(error, 'code') ?? readDataField(pluginData, 'code')) !== 'agent_isolation_unavailable') return null;
+  const details = readDataField(error, 'details') ?? readDataField(pluginData, 'details');
+  const cause = readDataField(details, 'cause');
+  const retained = readDataField(error, 'failureCause') ?? readDataField(pluginData, 'failureCause');
+  const code = typeof cause === 'string' ? cause : readDataField(cause, 'code') ?? readDataField(retained, 'errorCode');
+  return isAgentIsolationLaunchMaterialFailureCode(code) ? code : null;
+}
+
 /** Read the existing runtime cause envelopes without evaluating foreign accessors. */
 export function readSessionRuntimeFailureCause(
   error: unknown,
   phase?: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'],
 ): SessionRuntimeIssueV1['failureCause'] {
+  const materialFailure = readAgentIsolationLaunchMaterialFailureCode(error);
+  if (materialFailure) return {
+    code: materialFailure, phase: 'client_start', failureReason: 'unknown', retryable: false,
+    providerErrorCode: 'agent_isolation_unavailable', actionCause: {
+      ...projectActionFailureCauseV1(error, 'agent_isolation.native_execution_preparation'), errorCode: materialFailure,
+    },
+  };
   const details = readDataField(error, 'details');
   const providerError = readDataField(details, 'providerError') ?? error;
   const pluginData = readDataRecord(readDataField(providerError, 'data'));

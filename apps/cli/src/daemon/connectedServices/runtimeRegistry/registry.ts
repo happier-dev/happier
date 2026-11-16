@@ -347,7 +347,9 @@ export class ConnectedServiceRuntimeRegistry {
       ?? this.getIndexedProcessSlot(input.pid)
       ?? (input.soleSessionOfProcess === true ? this.getIndexedForProcess(input.pid) : null);
     if (!adoptable) return null;
-    const target = this.writeTarget(input.pid, { pid: input.pid, sessionId }, adoptable.target);
+    // Adoption changes the spawn's address, not its selected launch material.
+    const target = this.writeTarget(input.pid, { pid: input.pid, sessionId,
+      agentLaunchMaterials: adoptable.target.agentLaunchMaterials }, adoptable.target);
     if (target !== adoptable.target) this.notifyTargetRegistration(target);
     return target;
   }

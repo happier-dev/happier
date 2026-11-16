@@ -74,8 +74,21 @@ import { createDeferred } from '@/testkit/async/deferred';
 import { assertStartupFailureThroughCli } from '@/session/services/createSpawnedSession.startupFailure.testkit';
 import { createFirstConversationAgentFixture } from '@/daemon/testkit/firstConversationAgent.testkit';
 import { runInstalledFirstConversationRuntime } from '@/daemon/testkit/firstConversationRuntime.testkit';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { prepareDaemonConnectedServices } from '@/daemon/spawn/prepareDaemonConnectedServices';
+import type { ApiClient } from '@/api/api';
+import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 
-const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
+const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null,
+  memberWorkspaceRoots: new Set<string>() }));
+// Synthetic member accounts have no native directory on this test host. Only
+// their OS canonical-path observation is substituted; real workspaces stay real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, realpath: async (...args: Parameters<typeof actual.realpath>) =>
+    boundary.memberWorkspaceRoots.has(String(args[0])) ? String(args[0]) : actual.realpath(...args) };
+});
 // The private HTTP listener is the transport boundary. Its production dispatcher,
 // installed finite registration, requester custody and Exec remain real.
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async (input: Parameters<typeof startDaemonControlServer>[0]) => {
@@ -95,7 +108,7 @@ vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawn: vi.fn(actual.spawn) };
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; boundary.memberWorkspaceRoots.clear(); });
 afterAll(() => pluginReloadController.shutdown());
 
 function observeGrantChildren(cwd: string) {
@@ -118,6 +131,76 @@ const pluginExecAgent = {
     files: { 'agent.mjs': 'export function factory() { return { sessions: { open() { throw new Error("Native process boundary only"); } } }; }',
       'daemon.mjs': 'import { factory } from "./agent.mjs"; export function activate(api) { api.agents.register("agent", factory, { sessionRunnerFactory: { module: "./agent.mjs", export: "factory", runtimeApiVersion: 1 } }); }' },
   };
+
+it.skipIf(process.platform !== 'linux')('authorizes OpenCode member launch after adopting its prepared spawn material', async () => {
+  const home = 'srv_installed_project_fixture';
+  const roots: string[] = [];
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, 'opencode', true, undefined, undefined, {
+    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: home, machineId: 'machine' }),
+    agentIsolation: { managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+      read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+        status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: roots }) },
+  });
+  roots.push(h.cwd);
+  const requester = { kind: 'isolated' as const, separationRequired: true,
+    homeServerIdentityId: home, requester: h.f.bootstrap.attribution };
+  // The OS account observation is a simulated boundary; material projection,
+  // registry adoption and the installed OpenCode daemon dispatcher stay real.
+  const member = { ...deriveAgentIsolationMemberIdentity(requester), agentUid: 2401, agentGid: 2401 };
+  boundary.memberWorkspaceRoots.add(member.workspaceRoot);
+  const api = new Proxy({} as ApiClient, { get() { throw new Error('Brokered member launch must not acquire local credentials'); } });
+  const prepared = await prepareDaemonConnectedServices({
+    options: { directory: h.cwd, requesterWorkAttributionV1: requester.requester,
+      modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.opencode/opencode',
+        providerConnectionId: null, modelId: 'muse-spark-1.3' } },
+      teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'team-model',
+        teamId: 'team', expectedResourceRevision: 1, deliveryMode: 'brokered' }] },
+    preparedAgentIsolationIdentity: { memberIdentity: member, nativeIdentity: member },
+    normalizedExistingSessionId: '', requestedSessionId: h.sessionId, effectiveResume: '', catalogAgentId: 'opencode',
+    credentials: { token: 'synthetic-requester', encryption: null }, api,
+    activeServerDir: join(h.f.directory, 'server'), connectedServicesMaterializationBaseDir: join(h.f.directory, 'materialized'),
+    connectedServiceRefreshCoordinator: null, processEnv: {}, pluginRuntimeRegistry: h.plugin.registry,
+  });
+  expect(prepared).toMatchObject({ ok: true });
+  if (!prepared.ok) throw new Error('Brokered member preparation refused');
+  onTestFinished(() => prepared.auth?.cleanupOnExit?.());
+  const material = prepared.agentLaunchMaterials;
+  if (!material) throw new Error('Selected material producer returned no projection');
+  h.connectedServiceRuntimeRegistry.registerTarget({ pid: h.runner.pid, spawnTrackingKey: 'opencode-spawn',
+    agentId: h.retainedAgent.agentId, materializationKey: prepared.materializationKey,
+    requesterWorkAttributionV1: h.f.bootstrap.attribution, agentLaunchMaterials: material,
+    connectedServicesBindingsRaw: prepared.effectiveBindings,
+    connectedServiceSelectionsEnv: prepared.auth?.env });
+  h.connectedServiceRuntimeRegistry.adoptSessionId({ pid: h.runner.pid,
+    spawnTrackingKey: 'opencode-spawn', sessionId: h.sessionId });
+  expect(h.connectedServiceRuntimeRegistry.getBySessionId(h.sessionId)?.agentLaunchMaterials).toBe(material);
+  const transport = await prepareSessionMcpLocalTransport({ agentUid: process.getuid!() });
+  onTestFinished(() => transport.retire());
+  const mcpMaterial = await resolveSessionMcpNativeLaunchMaterial({
+    launch: { agentIsolationMemberIdentity: member, agentIsolationRuntimeHome: material.runtimeHome },
+    isolationEnabled: true, homeServerIdentityId: home,
+    source: { kind: 'requester', identity: requester, hostHomeServerIdentityId: home }, signal: h.signal,
+  });
+  if (!mcpMaterial) throw new Error('Session MCP material producer returned no native identity');
+  expect(await h.dispatch({ kind: 'plugin_services.prepare_v1', ...h.operationBase() })).toMatchObject({ ok: true });
+  expect(h.connectedServiceRuntimeRegistry.getBySessionId(h.sessionId)?.agentLaunchMaterials).toBe(material);
+  const refusals = vi.spyOn(logger, 'warnLocalFile');
+  const launch = await h.dispatch({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1',
+    agentLaunchKind: 'managedService', ...h.operationBase(),
+    sessionMcpContext: transport.localContext,
+    mcpLaunchMaterial: { ...material, nativeIdentity: mcpMaterial.identity },
+    launch: { command: '/installed/opencode', args: ['serve'], cwd: h.cwd, env: {} } });
+  expect(launch, JSON.stringify(launch.ok ? { ok: true } : {
+    error: launch.error, diagnostics: refusals.mock.calls.map(([message, details]) => ({ message, details })),
+  })).toMatchObject({
+    ok: true, result: { kind: 'plugin_services.result_v1' },
+  });
+  if (!launch.ok || launch.result.kind !== 'plugin_services.result_v1') throw new Error('Missing authorized Agent tuple');
+  expect(decodeRunnerDaemonPluginServiceWireValueV1(launch.result.value)).toMatchObject({
+    launch: { command: 'sudo', args: ['-n', '-u', member.username, '--', '/opt/happier/cli/current/happier', 'agent-launch'] },
+  });
+  await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase() });
+}, 120_000);
 
 it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-policy-on', 'cancelled-parent-before-admission', 'withdrawn-after-admission'] as const)(
   'admits runner managed Agent servers only through the original requester finalizer (S0-5 %s)', async shape => {

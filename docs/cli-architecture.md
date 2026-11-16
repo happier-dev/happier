@@ -908,6 +908,11 @@ another Account's homes are unreferenced. Restarting before requester recovery
 therefore does not authorize deleting that namespace. Ordinary custodian identity
 and staging-attempt cleanup retain their existing retention rules.
 
+When a fresh spawn receives its canonical Session ID, the runtime registry carries
+that spawn's selected Agent launch material into the Session target. Adoption
+changes the address of the prepared target; credential identity changes still
+retire its selected material through the registry's existing lifecycle.
+
 Isolated native launches share `XDG_CACHE_HOME` at the executing Agent identity's
 private home `.cache`; separate member identities never share that cache. Finite
 operations keep their own `runtime/operations/<materialization-key>` home until
@@ -917,6 +922,13 @@ the executing UID through pinned, no-follow directory access. Retained Session
 homes keep their existing retention policy. This unreleased development contract
 requires matching daemon and installed shim bytes; it adds no background reaper
 and does not sweep historical operation directories.
+
+Native launch preparation keeps isolation admission strict. Missing Session
+launch material, the managed Happier binary, or the Session MCP context is
+reported with a content-free cause token (`session_launch_material_missing`,
+`managed_binary_missing`, or `session_mcp_context_missing`) through the existing
+launch failure projection. These diagnostics describe 0.3 development source;
+guest daemons need updated code before they can report the specific operand.
 
 Piped isolated Agent launches retain a redacted native stderr tail within the
 existing Session runtime-issue preview budget. The shim reports the first

@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { AgentIsolationLaunchMaterialFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { requireAgentIsolationMaterialNativeIdentity, projectAgentIsolationOperationMaterial,
   type AgentLaunchMaterialization, type AgentLaunchOperationMaterialization } from './agentLaunchMaterials';
 import { resolveHostRequesterAgentPlacementForHost, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
@@ -67,7 +68,9 @@ export function createAgentIsolationSessionContext(input: Readonly<{
       const managedHappierBinaryPath = input.managedHappierBinaryPath;
       if (!material || !managedHappierBinaryPath
         || agentNativeLaunch && !sessionMcpContext) throw new PluginError({ code: 'agent_isolation_unavailable',
-        message: 'Current Session isolation material is unavailable', retryable: false });
+        message: 'Current Session isolation material is unavailable', retryable: false,
+        details: { phase: 'native_execution_preparation', cause: (!material ? 'session_launch_material_missing'
+          : !managedHappierBinaryPath ? 'managed_binary_missing' : 'session_mcp_context_missing') satisfies AgentIsolationLaunchMaterialFailureCode } });
       const member = material.memberIdentity;
       // Ordinary Account Sessions use the Home already qualified by the
       // requester resolver; protected requester birth keeps its retained Home.

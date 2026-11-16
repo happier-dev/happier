@@ -512,16 +512,20 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     const onTargetRegistered = vi.fn();
     registry.subscribeTargetRegistrations(onTargetRegistered);
+    const material = { runtimeHome: '/var/lib/happier-agent/session', environment: {}, selectedMaterials: [] };
 
     registry.registerTarget({
       pid: 123,
       agentId: 'codex',
+      agentLaunchMaterials: material,
       connectedServicesBindingsRaw: connectedBindings,
       connectedServiceSelectionsEnvRaw: connectedSelections,
     });
 
     registry.adoptSessionId({ pid: 123, sessionId: 'session-1' });
+    expect(registry.getBySessionId('session-1')?.agentLaunchMaterials).toBe(material);
     registry.transferPid(123, 456);
+    expect(registry.getBySessionId('session-1')?.agentLaunchMaterials).toBe(material);
 
     expect(registry.getByPid(123)).toBeNull();
     expect(registry.getByPid(456)?.sessionId).toBe('session-1');
