@@ -745,6 +745,13 @@ export function createActionOperationRunner(deps: Readonly<{
       }
       return response;
     },
+    /** Join the admitted executor without requesting cancellation or trusting an early terminal projection. */
+    async waitForCompletion(scope: ActionOperationQueryScope, operationId: string) {
+      const snapshot = deps.store.get(scope, operationId);
+      if (!snapshot) return null;
+      await active.get(operationId)?.result.catch(() => undefined);
+      return deps.store.get(scope, operationId);
+    },
     requestCancellation,
     claimServiceMoveStart(scope: ActionOperationQueryScope, requestId: string, input: ProjectServiceRelocateInputV1): ProjectServiceMoveStartClaimResultV1 {
       const snapshot = deps.store.findByRequestIdentity(scope, 'projects.service.relocate', requestId);
