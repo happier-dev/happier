@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { admitAgentIsolationLaunchForHost, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createHappierTempDir, removeHappierTempDir } from '@happier-dev/cli-common/tempDirs';
 import type { ScmCommandInput, ScmCommandRunner, ScmExecResult } from './runtime';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const PUSH_DATA_CONFIG = /^(?:remote\..+\.(?:url|pushurl|push|fetch|mirror)|branch\..+\.(?:remote|pushremote|merge)|push\.(?:default|followtags|autosetupremote|pushoption))$/i;
@@ -84,6 +85,10 @@ export function isHostGitPush(input: ScmCommandInput): boolean {
  */
 export async function runHostGitPush(input: ScmCommandInput, runHost: ScmCommandRunner,
     context?: HostAgentIsolationLaunchContext, runWorkspace?: ScmCommandRunner): Promise<ScmExecResult | undefined> {
+    // Host credentials and host config files serve only a workspace on this Machine. In a target the
+    // config origins are reported by the guest's own Git, so reading them here would let the guest
+    // name any host file; the push runs in the target with the target's own credentials instead.
+    if (currentWorkspaceSource().kind !== 'local') return undefined;
     const environment = sessionProcessEnvironment();
     const clearedGitEnvironment = Object.fromEntries(Object.keys(environment)
         .filter(key => key.startsWith('GIT_') || key === 'SSH_ASKPASS')
