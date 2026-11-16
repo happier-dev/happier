@@ -33,11 +33,14 @@ const out = `// GENERATED — do not edit by hand.
 // Only the icons this app actually uses are imported. Phosphor ships 1,512 icons; importing the
 // whole catalogue would bundle ~12MB of path data, so the registry is the allowlist. Adding a new
 // icon is a one-line addition to the mapping, which keeps the icon set curated on purpose.
+//
+// Each entry is a getter: Metro keeps a named import's require inside the function that reads it,
+// so the app evaluates an icon's module when it first draws it, not every icon at start.
 ${components.map(c => `import { ${c} } from 'phosphor-react-native/src/icons/${c.slice(0, -4)}';`).join('\n')}
 import type { Icon as PhosphorIcon } from 'phosphor-react-native';
 
 export const ICON_REGISTRY = {
-${entries.map(([k, v]) => `    '${k}': ${pascal(v)},`).join('\n')}
+${entries.map(([k, v]) => `    get '${k}'() { return ${pascal(v)}; },`).join('\n')}
 } as const satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICON_REGISTRY;
