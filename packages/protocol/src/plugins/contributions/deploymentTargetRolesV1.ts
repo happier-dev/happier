@@ -307,6 +307,8 @@ export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictOb
     /** Positive native absence observation, required by the host to settle provider deletion. */
     providerResourceAbsent: z.optional(z.literal(true)),
     urls: z.optional(z.array(publicUrl)), steps: z.optional(z.array(DeploymentStepV1Schema)),
+    /** Provider-observed built-in routing addresses, distinct from immutable deployment/preview URLs. */
+    builtInUrls: z.optional(z.array(publicUrl)),
     /** Immutable upload evidence retained alongside later provider lifecycle observations. */
     uploadProvenance: z.optional(z.strictObject({
         sourceManifestFingerprint: id,

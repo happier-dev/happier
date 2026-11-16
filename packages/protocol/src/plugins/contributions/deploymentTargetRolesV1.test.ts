@@ -1,6 +1,13 @@
 import { expect, it } from 'vitest';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1Schema } from './deploymentTargetRolesV1.js';
 
+it('retains provider-observed built-in addresses separately from deployment URLs', () => {
+    const result = { v: 1, state: 'succeeded', observedAtMs: 1,
+        urls: ['https://app-exact.vercel.app'], builtInUrls: ['https://app.vercel.app'] };
+    expect(DeploymentTargetRoleResultV1Schema.parse(result)).toEqual(result);
+    expect(DeploymentTargetRoleResultV1Schema.parse({ ...result, builtInUrls: [] })).toHaveProperty('builtInUrls', []);
+});
+
 it('retains positive provider absence evidence through the lifecycle result boundary', () => {
     expect(DeploymentTargetRoleResultV1Schema.parse({ v: 1, state: 'succeeded', observedAtMs: 1,
         providerResourceAbsent: true })).toMatchObject({ providerResourceAbsent: true });
