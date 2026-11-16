@@ -181,8 +181,9 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
    */
   tileSizing?: 'natural' | 'fill';
   /**
-   * Visual `fill` only: the preview's width ÷ height (default a small app window, 2.2). A picture or
-   * swatch picker sets its own proportions.
+   * Visual `fill`: the preview's width ÷ height (default a small app window, 2.2). A picture or swatch
+   * picker sets its own proportions. A regular card with `descriptionPlacement="below"` uses it for the
+   * preview it leads with (default 1.6).
    */
   previewAspectRatio?: number;
   /**
@@ -226,6 +227,12 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
    */
   descriptionPlacement?: 'beside' | 'below';
   renderOptionFooter?: HappierSelectionTileFooterRenderer<T, I>;
+  /**
+   * Visual variant. A tile's own quiet operations (its "…" menu), drawn over the preview's top-right corner as a
+   * sibling of the choice, never inside it. `revealed` is true while the pointer is over the tile or the tile is
+   * chosen; touch devices, which have no hover, see it on the chosen tile.
+   */
+  renderOptionAccessory?: (params: Readonly<{ option: HappierSelectionTileOption<T, I>; selected: boolean; revealed: boolean }>) => ReactNode;
 }>;
 
 export type HappierSingleSelectionTilesProps<T extends string, I extends string = string> =
@@ -435,7 +442,9 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
         const selected = isSelected(props, option.id);
         const disabled = option.disabled === true;
         const label = props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: props.labelLines ?? 2 });
-        return (
+        const tileFrame = [styles.visualTile, fill ? styles.visualTileFill : null, columnBasis];
+        const accessory = props.renderOptionAccessory;
+        const tile = (
           <Pressable
             key={option.id}
             {...tileKeyboardProps(index)}
@@ -454,9 +463,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
               handleToggle(props, option.id);
             }}
             style={({ pressed }) => [
-              styles.visualTile,
-              fill ? styles.visualTileFill : null,
-              columnBasis,
+              ...(accessory ? [styles.visualTileBody] : tileFrame),
               { opacity: pressOpacity(disabled, pressed) },
             ]}
           >
@@ -479,10 +486,40 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
               : null}
           </Pressable>
         );
+        if (!accessory) return tile;
+        return (
+          <VisualTileAccessoryFrame key={option.id} style={tileFrame} selected={selected}
+            renderAccessory={(revealed) => accessory({ option, selected, revealed })}>
+            {tile}
+          </VisualTileAccessoryFrame>
+        );
       })}
     </View>
   );
 }
+
+/**
+ * A visual tile with its own quiet operations: the choice and its "…" are siblings in one frame (a button never
+ * nests in the choice), and the frame tracks the pointer so the operations appear over the tile it is on.
+ */
+function VisualTileAccessoryFrame(props: Readonly<{
+  style: ComponentProps<typeof View>['style'];
+  selected: boolean;
+  renderAccessory: (revealed: boolean) => ReactNode;
+  children: ReactNode;
+}>) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Pressable accessible={false} focusable={false} style={props.style}
+      onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}>
+      {props.children}
+      <View style={visualAccessoryStyles.slot} pointerEvents="box-none">
+        {props.renderAccessory(hovered || props.selected)}
+      </View>
+    </Pressable>
+  );
+}
+
 
 export function HappierSelectionTiles<T extends string, I extends string = string>(props: HappierSelectionTilesProps<T, I>) {
   if (props.variant === 'action') {
@@ -808,6 +845,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         // A reserved description line lays the tile out like its described siblings.
         const subtitleLine = hasSubtitle || anySubtitle;
         const hasPreview = compact && option.preview != null;
+        // A regular card whose body sits below leads with its preview at the card's width (an option you try on).
+        const leadingPreview = !compact && below && option.preview != null;
         const footer = props.renderOptionFooter?.({ option, selected, disabled });
         // A spanning tile takes the measured row (the whole grid before measurement); the others keep their column.
         const spans = option.span === 'row' && !sheet;
@@ -862,6 +901,10 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
+              {leadingPreview ? (
+                <View style={[styles.cardLeadingPreview, { aspectRatio: props.previewAspectRatio ?? CARD_LEADING_PREVIEW_ASPECT_RATIO }]}
+                  pointerEvents="none" aria-hidden>{option.preview}</View>
+              ) : null}
               <View style={[styles.headerRow, sheet || compact && (!subtitleLine || hasPreview) ? styles.headerRowCentered : null]}>
                 {hasPreview ? <View style={styles.cardPreview} pointerEvents="none" aria-hidden>{option.preview}</View> : null}
                 <View style={[styles.titleRow, sheet || compact && (!subtitleLine || hasPreview) ? styles.titleRowCentered : null]}>
@@ -926,6 +969,17 @@ const VISUAL_RING_WIDTH_PX = 1.5;
 const VISUAL_GRID_GAP_PX = 10;
 /** A filling tile keeps the proportions of a small app window rather than a fixed height. */
 const VISUAL_FILL_PREVIEW_ASPECT_RATIO = 2.2;
+/** A regular card's leading preview (`descriptionPlacement="below"`): a small app window. */
+const CARD_LEADING_PREVIEW_ASPECT_RATIO = 1.6;
+
+const visualAccessoryStyles = StyleSheet.create({
+  // Inside the ring's gap, at the preview's top-right corner.
+  slot: {
+    position: 'absolute',
+    top: VISUAL_RING_WIDTH_PX + VISUAL_RING_GAP_PX + 4,
+    right: VISUAL_RING_WIDTH_PX + VISUAL_RING_GAP_PX + 4,
+  },
+});
 
 const ACTION_TILE_MIN_WIDTH_PX = 180;
 const ACTION_GRID_GAP_PX = 10;
@@ -1020,6 +1074,11 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       alignItems: 'stretch',
       gap: 7,
     },
+    // The choice inside a frame that also holds the tile's operations: the frame owns the column.
+    visualTileBody: {
+      alignItems: 'stretch',
+      gap: 7,
+    },
     visualTileFill: {
       flexBasis: 0,
       minWidth: 0,
@@ -1060,6 +1119,14 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       height: 'auto',
       minHeight: VISUAL_PREVIEW_HEIGHT_PX,
       aspectRatio: VISUAL_FILL_PREVIEW_ASPECT_RATIO,
+    },
+    // Inside the card's padding, its corners concentric with the tile's.
+    cardLeadingPreview: {
+      width: '100%',
+      marginBottom: 10,
+      borderRadius: 6,
+      overflow: 'hidden',
+      backgroundColor: colors.previewBackground,
     },
     cardPreview: {
       width: VISUAL_TILE_WIDTH_PX,

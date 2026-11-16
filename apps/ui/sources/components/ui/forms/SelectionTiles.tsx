@@ -79,7 +79,8 @@ type SelectionTilesBaseProps<T extends string> = {
      * decision (theme mode).
      */
     tileSizing?: 'natural' | 'fill';
-    /** Visual `fill` only: the preview's width ÷ height (a picture or swatch picker's own proportions). */
+    /** Visual `fill`: the preview's width ÷ height (a picture or swatch picker's own proportions); a regular card
+     *  with `descriptionPlacement="below"` uses it for the preview it leads with. */
     previewAspectRatio?: number;
     /** Visual only: `hidden` drops the captions of previews that speak for themselves; tiles keep their names. */
     labels?: 'shown' | 'hidden';
@@ -100,6 +101,8 @@ type SelectionTilesBaseProps<T extends string> = {
     /** Card variant: `below` sets each description, and the footer, under the title row at the card's full width. */
     descriptionPlacement?: 'beside' | 'below';
     renderOptionFooter?: SelectionTileFooterRenderer<T>;
+    /** Visual only: a tile's own quiet operations (its "…"), over the preview's corner; `revealed` on hover or when chosen. */
+    renderOptionAccessory?: (params: Readonly<{ option: SelectionTile<T>; selected: boolean; revealed: boolean }>) => React.ReactNode;
 };
 
 type SingleSelectionTilesProps<T extends string> = SelectionTilesBaseProps<T> & {
@@ -173,6 +176,11 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         const option = props.options.find((candidate) => candidate.id === params.option.id);
         return option && footer ? footer({ ...params, option }) : null;
     }, [props.options, footer]);
+    const accessory = props.variant === 'action' ? undefined : props.renderOptionAccessory;
+    const renderOptionAccessory = React.useCallback((params: Readonly<{ option: { id: T }; selected: boolean; revealed: boolean }>) => {
+        const option = props.options.find((candidate) => candidate.id === params.option.id);
+        return option && accessory ? accessory({ ...params, option }) : null;
+    }, [props.options, accessory]);
 
     const listPresentation = useListPresentation();
     const pageTheme = React.useMemo(() => props.variant === 'action' ? projectPluginUiTheme(theme) : undefined, [props.variant, theme]);
@@ -181,7 +189,8 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         return <AppActionSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph}
             renderOptionFooter={footer ? renderOptionFooter : undefined} listPresentation={listPresentation} theme={pageTheme} pageColors={pageColors} />;
     }
-    return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} renderOptionFooter={footer ? renderOptionFooter : undefined} />;
+    return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} renderOptionFooter={footer ? renderOptionFooter : undefined}
+        renderOptionAccessory={accessory ? renderOptionAccessory : undefined} />;
 }
 
 /** Bind app-owned preferences to the shared action owner without another layout decision. */

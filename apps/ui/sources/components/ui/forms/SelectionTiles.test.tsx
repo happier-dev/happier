@@ -342,6 +342,25 @@ describe('SelectionTiles', () => {
     await screen.unmount();
   });
 
+  it('leads a regular card with its preview when its body sits below, and keeps compact previews beside the title (agent theme options)', async () => {
+    const { SelectionTiles } = await import('./SelectionTiles');
+    const preview = (id: string) => <PreviewMark testID={`preview:${id}`} />;
+    const options = [
+      { id: 'notebook', title: 'Notebook', subtitle: 'Cream page', preview: preview('notebook') },
+      { id: 'linen', title: 'Linen', subtitle: 'Off-white', preview: preview('linen') },
+    ];
+    const regular = await renderScreen(
+      <SelectionTiles options={options} value="linen" onChange={vi.fn()} descriptionPlacement="below" testIdPrefix="opt" />,
+    );
+    expect(regular.tree.findAll((node) => node.props?.testID === 'preview:notebook').length, 'a regular below-card shows its preview').toBeGreaterThan(0);
+    await regular.unmount();
+    const beside = await renderScreen(
+      <SelectionTiles options={options} value="linen" onChange={vi.fn()} testIdPrefix="opt" />,
+    );
+    expect(beside.tree.findAll((node) => node.props?.testID === 'preview:notebook').length, 'a regular card without the below body keeps today\'s anatomy').toBe(0);
+    await beside.unmount();
+  });
+
   it('keeps every existing card the same when neither option is used', async () => {
     const { SelectionTiles } = await import('./SelectionTiles');
     const screen = await renderScreen(
@@ -769,6 +788,41 @@ describe('SelectionTiles', () => {
     expect(onChange).toHaveBeenCalledWith('detailed');
   });
 
+  it('draws a visual tile\'s own operations beside the choice, revealed on the chosen tile and on hover', async () => {
+    const onChange = vi.fn();
+    const { SelectionTiles } = await import('./SelectionTiles');
+    const screen = await renderScreen(
+      <SelectionTiles
+        variant="visual"
+        accessibilityLabel="Themes"
+        options={[
+          { id: 'paper', title: 'Paper', preview: React.createElement('Preview') },
+          { id: 'ink', title: 'Ink', preview: React.createElement('Preview') },
+        ]}
+        value="ink"
+        onChange={onChange}
+        testIdPrefix="theme"
+        renderOptionAccessory={({ option, revealed }) => revealed
+          ? React.createElement('Accessory', { testID: `menu:${option.id}` })
+          : null}
+      />,
+    );
+
+    // Only the chosen tile shows its "…" at rest; the operations never sit inside the radio.
+    expect(screen.findByTestId('menu:ink')).not.toBeNull();
+    expect(screen.findByTestId('menu:paper')).toBeNull();
+    const paper = screen.findByTestId('theme:paper')!;
+    expect(paper.findAll((node) => node.props?.testID === 'menu:paper')).toHaveLength(0);
+    const frame = screen.tree.findAll((node) => typeof node.props?.onHoverIn === 'function' && node.props?.accessible === false
+      && node.findAll((child) => child.props?.testID === 'theme:paper').length > 0)[0]!;
+    await act(async () => { frame.props.onHoverIn?.(); });
+    expect(screen.findByTestId('menu:paper')).not.toBeNull();
+    expect(paper.findAll((node) => node.props?.testID === 'menu:paper')).toHaveLength(0);
+    await act(async () => { frame.props.onHoverOut?.(); });
+    expect(screen.findByTestId('menu:paper')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('renders action tiles as buttons that run their action and never hold a selection', async () => {
     const onPress = vi.fn();
     const { SelectionTiles } = await import('./SelectionTiles');
@@ -909,3 +963,7 @@ describe('SelectionTiles', () => {
     });
   });
 });
+
+function PreviewMark(props: Readonly<{ testID: string }>) {
+  return <React.Fragment>{React.createElement('View', { testID: props.testID })}</React.Fragment>;
+}
