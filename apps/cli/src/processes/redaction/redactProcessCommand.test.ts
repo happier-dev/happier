@@ -4,6 +4,25 @@ import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUser
 import { createWindowsJobCustodyName } from '@/subprocess/supervision/processCustody';
 
 describe('redactProcessCommand', () => {
+    it.each(['/usr/local/bin/codex', String.raw`C:\Program Files\Codex\codex.exe`])('hides relay bearer inline-table assignments in %s argv and native command strings', executable => {
+        const bearer = 'b'.repeat(43);
+        for (const prefix of ['', 'PUBLIC_MODE="development",']) {
+            const override = `mcp_servers.happier.env={${prefix}HAPPIER_SESSION_MCP_BEARER="${bearer}"}`;
+            const argv = [executable, '-c', override, '--port=5173'];
+            const windows = executable.endsWith('.exe');
+            const nativeCommand = windows
+                ? `"${executable}" -c "${override.replaceAll('"', '\\"')}" --port=5173`
+                : argv.join(' ');
+            for (const command of [argv, nativeCommand]) {
+                const redacted = redactProcessCommand(command);
+                expect(redacted.includes(bearer)).toBe(false);
+                expect(redacted).toContain('HAPPIER_SESSION_MCP_BEARER=[REDACTED]');
+                expect(redacted).toContain('mcp_servers.happier.env={');
+                if (Array.isArray(command) || !windows) expect(redacted).toContain('--port=5173');
+                if (prefix) expect(redacted).toContain('PUBLIC_MODE=');
+            }
+        }
+    });
     it.each(['TOKEN', 'PASSWORD', 'API_KEY', 'SECRET', 'MY_TOKEN', 'OPENAI_API_KEY'])('hides bare and prefixed %s assignments in argv and command strings', name => {
         const value = 'ordinary credential with spaces';
         expect(redactProcessCommand(['env', `${name}=${value}`, 'MODE=development', 'agent', '--port=5173']))

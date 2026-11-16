@@ -6,7 +6,7 @@ const SECRET_VALUE_SOURCE = String.raw`(?:"(?:\\[\s\S]|[^"\\])*(?:"|$)|'[^']*(?:
 const SECRET_FLAG_PATTERN = new RegExp(String.raw`((?:--?|\/)(?:api[-_]?key|auth|bearer|password|passwd|pwd|secret|token)(?:=|\s+))(${SECRET_VALUE_SOURCE})`, 'gi');
 const SECRET_ENV_NAME_SOURCE = '(?=[A-Za-z_])[A-Za-z0-9_]*(?:api[-_]?key|auth|bearer|password|passwd|pwd|secret|token)[A-Za-z0-9_]*';
 const QUOTED_SECRET_ENV_ASSIGNMENT_PATTERN = new RegExp(String.raw`(^|\s)(?:"(${SECRET_ENV_NAME_SOURCE})=(?:\\[\s\S]|[^"\\])*(?:"|$)|'(${SECRET_ENV_NAME_SOURCE})=[^']*(?:'|$))`, 'gi');
-const SECRET_ENV_ASSIGNMENT_PATTERN = new RegExp(`((?:^|\\s)${SECRET_ENV_NAME_SOURCE}=)(${SECRET_VALUE_SOURCE})`, 'gi');
+const SECRET_ENV_ASSIGNMENT_PATTERN = new RegExp(`((?:^|[\\s{,])${SECRET_ENV_NAME_SOURCE}=)(${SECRET_VALUE_SOURCE})`, 'gi');
 const URL_USERINFO_PATTERN = /([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s\/?#"'<>]*@/gu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const PROVIDER_KEY_PATTERN = /\b(?:sk|pk|rk|ghp|github_pat|glpat|xox[baprs])[-_][A-Za-z0-9._-]{8,}\b/g;
