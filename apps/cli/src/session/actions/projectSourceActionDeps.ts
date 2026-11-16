@@ -74,14 +74,14 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       catch {
         if (response.status === 404 || response.status === 405 || response.status === 501) return failure('unsupported_action');
         if (response.status === 401 || response.status === 403) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
-        return failure(method === 'GET' ? 'invalid_action_output' : 'outcome_unknown');
+        return projectConfirmedActionHttpRefusal(failure(method === 'GET' ? 'invalid_action_output' : 'outcome_unknown'), response.status, response.data);
       }
       if (method === 'GET') {
         context.signal?.throwIfAborted();
         const changed = await params.admitAccount(serverId, context);
         if (changed) return changed;
       }
-      return projectConfirmedActionHttpRefusal(output, response.status);
+      return projectConfirmedActionHttpRefusal(output, response.status, response.data);
     } catch (error) {
       const outcome = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: context.signal?.aborted === true });
       if (outcome === 'cancelled' || context.signal?.aborted) return { ...failure('cancelled'), failureCause: projectActionFailureCauseV1(error, actionId) };

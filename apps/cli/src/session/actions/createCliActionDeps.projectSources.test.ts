@@ -371,6 +371,17 @@ describe('Source Actions through the CLI Account front door', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it('retains the captured Source create HTTP 503 cause instead of erasing it at approval execution', async () => {
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 503, data: { error: 'database_transaction_conflict_exhausted', statusCode: 503 } });
+    const owner = createActionExecutor(deps());
+    const result = await owner.execute('projects.sources.create', { serverId: 'source-home',
+      requestKey: 'w1-residual-164-source-retry1', name: source.name, repository: source.repository },
+    { surface: 'cli', bypassApprovals: true });
+    expect(result).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted', effectAttempted: false,
+      failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+        errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } });
+  });
+
   it('retains the caller create request key across explicit recovery without replacing it with an Action invocation id', async () => {
     const request = vi.spyOn(axios, 'request').mockRejectedValueOnce(new Error('connection_reset'))
       .mockResolvedValueOnce({ status: 200, data: { ok: true, source, canManage: true } });
