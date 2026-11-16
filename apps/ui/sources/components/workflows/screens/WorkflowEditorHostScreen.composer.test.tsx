@@ -1344,11 +1344,10 @@ describe('editor workflow composer', () => {
             if (block.kind !== 'step') throw new Error('Expected the workflow authoring step');
             return block;
         };
-        const engine = readStep().execution?.engine;
-        if (!engine || !('agentTarget' in engine)) throw new Error('Expected the workflow Agent engine');
-        expect(engine.agentTarget).toBeDefined();
-        expect(readStep().execution?.agentTarget).toBeUndefined();
-        expect(readStep().execution?.modelSelection).toBeUndefined();
+        expect(readStep().execution?.agentTarget).toBeDefined();
+        expect(readStep().execution?.engine).toBeUndefined();
+        expect(readStep().execution?.roleId).toBeUndefined();
+        expect(readStep().execution?.modelSelection).toBeNull();
         await act(async () => body.props.onChange({ ...body.props.draftStore.get(), blocks: [{ ...readStep(),
             execution: { ...readStep().execution, sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
                 overrides: { budget: { value: 42, updatedAt: 1 } } } } }] }));
@@ -1359,9 +1358,9 @@ describe('editor workflow composer', () => {
         if (!onSelectionChange) throw new Error('Missing workflow engine detail selection handler');
         await act(async () => onSelectionChange({ modelId: 'selected-model', modelSelection: null, modelLabel: null,
             sessionModeId: 'default', configOverrides: { reasoning_effort: 'high' } }));
-        expect(readStep().execution?.engine).toMatchObject({
-            modelSelection: { ref: { modelId: 'selected-model' } }, effort: 'high',
-        });
+        expect(readStep().execution?.modelSelection).toMatchObject({ ref: { modelId: 'selected-model' } });
+        expect(readStep().execution?.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value).toBe('high');
+        expect(readStep().execution?.engine).toBeUndefined();
         expect(detail.props.selectedModelId).toBe('selected-model');
         expect(detail.props.selectedConfigOverrides?.reasoning_effort).toBe('high');
         expect(readStep().execution?.sessionConfigOptionOverrides?.overrides.budget?.value).toBe(42);
@@ -1369,7 +1368,8 @@ describe('editor workflow composer', () => {
         expect(validateWorkflowEditorDraft(body.props.draftStore.get()).valid).toBe(true);
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:roles');
         await screen.pressByTestIdAsync('roles-rail-option:local-reviewer');
-        expect(readStep().execution?.engine).toEqual({ role: 'local-reviewer' });
+        expect(readStep().execution?.roleId).toBe('local-reviewer');
+        expect(readStep().execution?.engine).toBeUndefined();
         expect(readStep().execution?.agentTarget).toBeUndefined();
         expect(readStep().execution?.modelSelection).toBeUndefined();
         expect(validateWorkflowEditorDraft(body.props.draftStore.get()).valid).toBe(true);
