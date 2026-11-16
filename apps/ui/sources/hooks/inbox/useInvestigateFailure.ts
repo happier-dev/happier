@@ -20,9 +20,8 @@ export function useInvestigateFailure(subject: FailureInvestigationSubject | nul
     const key = subject ? failureInvestigationSubjectKey(subject) : null;
     const externalActionTarget = options?.externalActionTarget;
     const investigation = React.useMemo((): BoundHealthNoticeInvestigation | null => !subject ? null : ({
-        readChoices: options => owner.readChoices(subject, { ...options, externalActionTarget }),
-        resume: options => owner.resume(subject, { ...options, externalActionTarget }),
-        run: (selection, options) => owner.run(subject, selection, { ...options, externalActionTarget }),
+        readAgentActions: (includeDefault, options) => owner.readAgentActions(subject, includeDefault, { ...options, externalActionTarget }),
+        launch: (intent, options) => owner.launch(subject, intent, { ...options, externalActionTarget }),
     }), [owner, key, externalActionTarget]);
     return useBoundFailureInvestigation(investigation, options);
 }

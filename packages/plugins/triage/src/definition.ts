@@ -19,6 +19,9 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1 } from './workItems/runtime.js';
+import { TRIAGE_LEGACY_TASK_ROUTE_ALIASES } from './ui/navigation/legacyTaskRoutes.js';
+import { TRIAGE_DECLARED_FAILURE_ACTIONS } from './ui/inbox/declaredActions.js';
+import { TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1, TriageNativeFailureInputV1Schema, TriageNativeFailureResultV1Schema } from './actions/nativeFailureProtocol.js';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1,
@@ -194,6 +197,7 @@ export { TRIAGE_DISPLAY_NAME };
  */
 /** Named schema references keep declaration emit from expanding every Action payload. */
 type TriageActionSchemas = TriageAccountActionSchemas & {
+  readonly [TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageNativeFailureInputV1Schema, typeof TriageNativeFailureResultV1Schema];
   readonly 'attention/publish-v1': readonly [typeof TriagePublishAttentionInputV1Schema.jsonSchema, typeof TriagePublishAttentionResultV1Schema.jsonSchema];
   readonly [TRIAGE_COMPLETE_PULL_REQUEST_LINK_ACTION_LOCAL_ID_V1]: readonly [typeof SessionPullRequestLinkCompletionInputV1Schema, typeof SessionPullRequestLinkCompletionResultV1Schema];
   readonly [TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageTaskDraftV1Schema, typeof TriageMountedUiResultV1Schema];
@@ -373,6 +377,12 @@ function createTriagePlugin(): TriagePlugin {
         execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
         inputSchema: TriageMountedSourceInsertInputV1Schema, resultSchema: TriageMountedUiResultV1Schema,
       },
+      [TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1]: {
+        title: 'Investigate a native failure', dangerLevel: 'safe',
+        surfaces: ['ui'], placementBindings: [],
+        execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
+        inputSchema: TriageNativeFailureInputV1Schema, resultSchema: TriageNativeFailureResultV1Schema,
+      },
       [TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1]: {
         title: 'Control the mounted PRs & Issues view',
         dangerLevel: 'safe',
@@ -468,6 +478,7 @@ function createTriagePlugin(): TriagePlugin {
         // opens exactly this local id, which is why the constant is imported
         // from the navigation owner rather than spelled twice.
         id: TRIAGE_APP_PAGE_LOCAL_ID_V1,
+        failureActions: { action: TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1, declaredActions: TRIAGE_DECLARED_FAILURE_ACTIONS },
         container: 'appPage',
         target: { kind: 'app' },
         renderer: 'list-page',
@@ -481,6 +492,7 @@ function createTriagePlugin(): TriagePlugin {
         // Both entrances consume the same list, lens, selection and detail owners.
         id: TRIAGE_TASKS_PAGE_LOCAL_ID_V1,
         container: 'appPage', target: { kind: 'app' }, renderer: 'tasks-page', headerStyle: 'toolbar',
+        routeAliases: TRIAGE_LEGACY_TASK_ROUTE_ALIASES,
         title: { key: 'plugins.triage.tasks.title', fallback: 'Tasks' },
         description: { key: 'plugins.triage.tasks.description', fallback: 'Your work, and the agents working with you.' },
         icon: 'list',

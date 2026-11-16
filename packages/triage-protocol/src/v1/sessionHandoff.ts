@@ -11,6 +11,7 @@ import {
     ActionSessionAddressV1Schema, SessionMessageSendResultV1ProtocolSchema, SessionTargetV1Schema,
 } from '@happier-dev/plugin-sdk/sessions';
 import { AgentTargetKeyV2Schema } from '@happier-dev/plugin-sdk/agents';
+import { FailureActionPlacementReasonV1Schema } from '@happier-dev/plugin-sdk/ui';
 import { ForgeCiFailureSummaryV1Schema } from '../ci/v1/failureSummary.js';
 import { ForgeReleaseNotesContextV1Schema } from '../releases/v1/operations.js';
 import { TriageActionIdV1Schema, TriageActionSubjectV1Schema, TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
@@ -179,10 +180,8 @@ const handoffResult = defineProtocolUnion([
         defineProtocolObject({ kind: defineProtocolLiteral('existing'), session: ActionSessionAddressV1Schema }, closed),
     ]) }, closed),
     handoffSendResult,
-    defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: defineProtocolUnion([
-        defineProtocolLiteral('controller_required'), defineProtocolLiteral('machine_unreachable'),
-        defineProtocolLiteral('ambiguous_workspace'), defineProtocolLiteral('agent_required'),
-    ]), candidates: defineProtocolArray(defineProtocolObject({
+    defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: FailureActionPlacementReasonV1Schema,
+        candidates: defineProtocolArray(defineProtocolObject({
         machine: ProtocolServiceHealthNoticeMachineV1Schema, workspace: ProtocolWorkspaceAddressV1Schema.optional(),
         reachable: bool,
     }, closed)), agents: defineProtocolArray(defineProtocolObject({ targetKey: AgentTargetKeyV2Schema, label: text }, closed)) }, closed),

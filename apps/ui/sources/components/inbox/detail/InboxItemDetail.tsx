@@ -210,9 +210,8 @@ function bindNoticeInvestigation(
   entry: AccountNoticeArtifact,
 ): BoundHealthNoticeInvestigation {
   return {
-    readChoices: (options) => investigation.readChoices(entry, options),
-    resume: (options) => investigation.resume(entry, options),
-    run: (selection, options) => investigation.run(entry, selection, options),
+    readAgentActions: (includeDefault, options) => investigation.readAgentActions(entry, includeDefault, options),
+    launch: (intent, options) => investigation.launch(entry, intent, options),
   };
 }
 

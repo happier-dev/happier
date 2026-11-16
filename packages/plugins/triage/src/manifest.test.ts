@@ -11,6 +11,7 @@ import { PLUGIN_MANIFEST as GITHUB_MANIFEST, GITHUB_TRIAGE_ACTION_IDS_V1 } from 
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from '../../scm-github/src/triage/fileViewedContracts.js';
 import { PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../channels/src/manifest.js';
 import {
+  buildTriageEntryRouteSegmentV1,
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -44,6 +45,21 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it('owns retained Zen links as aliases of its Tasks page', () => {
+    const page = PLUGIN_MANIFEST.contributes.ui.views.find(view => view.id === 'tasks');
+    if (page?.container !== 'appPage' || page.target.kind !== 'app') throw new Error('Missing Tasks app page');
+    const aliases = page.routeAliases;
+    expect(aliases?.map(alias => alias.pathname)).toEqual(['/zen', '/zen/new', '/zen/view', '/zen/[id]']);
+    const id = 'task/a,%2F Ω';
+    const selected = buildTriageEntryRouteSegmentV1({
+      source: { pluginId: PLUGIN_MANIFEST.id, localId: 'internal' },
+      kindId: 'task', collisionScope: 'personal', entryId: id,
+    });
+    for (const path of ['/zen/view', '/zen/[id]']) {
+      expect(aliases?.find(alias => alias.pathname === path)?.subPath?.replace('{id}', encodeURIComponent(id))).toBe(selected);
+    }
+    expect(aliases?.find(alias => alias.pathname === '/zen/new')?.subPath).toBeUndefined();
+  });
   it('conforms to the public source contract for its built-in task source', () => {
     const result = checkTriageSourceContributionV1(PLUGIN_MANIFEST);
     expect(result.ok, result.ok ? undefined : result.errors.join('\n')).toBe(true);

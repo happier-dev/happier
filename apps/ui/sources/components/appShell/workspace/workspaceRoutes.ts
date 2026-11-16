@@ -3,7 +3,7 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import type { TranslationKeyNoParams } from '@/text';
 import { createWorkspaceRouteMatcher } from './workspaceRouteMatch';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
-import { resolveZenTasksHref } from '@/components/zen/navigation/zenTasksHref';
+import { resolvePluginAppPageRouteAlias } from '@/components/plugins/pages/pluginPageRouteAliases';
 
 // A navigator's root declaration and its index name describe the same location.
 // The Settings registry owns the actual leaf module name (including /index).
@@ -147,9 +147,8 @@ export function workspaceMachinePageRouteKey(routeKey: string): string | null {
 
 /** Expo search params include path params; only the remaining params belong in the URL query. */
 export function workspaceRouteHref(pathname: string, params: Readonly<Record<string, string | string[] | undefined>>): string {
-    // A retired Zen link has one canonical path, the Tasks page it redirects to.
-    const zenTasks = resolveZenTasksHref(pathname, params);
-    if (zenTasks !== null) return zenTasks;
+    const pluginPage = resolvePluginAppPageRouteAlias(pathname, params);
+    if (pluginPage !== null) return pluginPage;
     const route = matchWorkspaceDestinationRoute(pathname);
     // A machine's pushed page has one canonical path. Query deep links enter
     // that same route; Storage/Guard's own `page` values remain query state.

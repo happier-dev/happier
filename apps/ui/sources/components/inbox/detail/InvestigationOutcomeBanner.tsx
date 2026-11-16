@@ -7,15 +7,12 @@ import { t } from '@/text';
 
 import type { HealthNoticeInvestigationOutcome, HealthNoticeInvestigationPlacement } from './healthNoticeInvestigation';
 import { InvestigationPlacementChooser } from './InvestigationPlacementChooser';
-import { useOpenTriageActionEditor } from './useOpenTriageActionEditor';
+import { useOpenFailureActionEditor } from './useOpenFailureActionEditor';
 
 /**
  * What happened after Investigate, for every failure surface that offers it (Inbox notices, failed
  * receipts, managed setup failures): one banner per outcome; a started handoff already opened its page.
  */
-// `catalogUnavailable` is a catalog read that did not answer (transport, reconnecting Account): the unavailable
-// copy, never the set-up step.
-const NOT_SET_UP: ReadonlySet<string> = new Set(['configuredActionUnavailable']);
 
 /** One sentence for what happened after Investigate; a started handoff already opened its page. */
 export function InvestigationOutcomeBanner(props: Readonly<{
@@ -30,7 +27,7 @@ export function InvestigationOutcomeBanner(props: Readonly<{
 }>) {
   const testID = props.testID ?? 'inbox.notice.investigate';
   const { outcome } = props;
-  const openEditor = useOpenTriageActionEditor();
+  const openEditor = useOpenFailureActionEditor();
   if (outcome.kind === 'started') return null;
   if (outcome.kind === 'placement_choice_required') return <InvestigationPlacementChooser choice={outcome}
     serverId={props.serverId} pending={props.pending} onChoose={props.onChoosePlacement} testID={`${testID}.placement`} />;
@@ -39,7 +36,7 @@ export function InvestigationOutcomeBanner(props: Readonly<{
       ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.selectionTitle'), description: t('inbox.work.healthNotice.selectionBody') }
       : outcome.kind === 'uncertain'
         ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.uncertainTitle'), description: t('inbox.work.healthNotice.uncertainBody') }
-        : NOT_SET_UP.has(outcome.code)
+        : outcome.recovery === 'configure'
           // No configured investigation is a setup step, not a failure: it opens the actions editor on the record
           // pressed (or the list when none answered), the same open as Edit action….
           ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.notSetUpTitle'), description: t('inbox.work.healthNotice.notSetUpBody'),

@@ -10,7 +10,8 @@ import type { Message } from '@happier-dev/session-core/messages';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { act, renderHook, flushHookEffects, standardCleanup, createSessionFixture } from '@/dev/testkit';
-import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createTriageFailureActionBoundaryFixture as createActionExecutorBoundaryFixture, TRIAGE_FAILURE_TEST_BINDING } from '@/dev/testkit/harness/triageFailureActionBoundary';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildGuidedAutomationRequest } from '@/components/workflows/triggers/guidedAutomation';
 import { createDefaultWhen } from '@/components/workflows/triggers/sessionTriggerForm';
@@ -147,6 +148,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
             }) });
         },
         invokeContributedAction: async request => {
+            if (request.action.localId === 'actions/read-v1') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [{ label: 'Investigate', selection: { configuredActionId: 'investigate', sessionChoice: { kind: 'new' }, agentChoice: { kind: 'target', targetKey }, delivery: 'configured' } }] } };
             if (request.action.localId === 'sessions/read-source-links-v1') return { ok: true,
                 result: await readTestkitSourceSessionLinks(request.input, { collections, contributions }) };
             const input = TriageRunConfiguredActionInputV1Schema.parse(request.input);
@@ -158,7 +160,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         },
     }), scope.accountId);
     const execute = createFrontDoorActionExecute(executor);
-    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+    const owner = createAccountNoticeInvestigation({ scope, binding: TRIAGE_FAILURE_TEST_BINDING, isCurrent: () => true,
         execute });
     const session = createSessionFixture({ id: 'repair', serverId: scope.serverId,
         encryptionMode: 'e2ee', encryptedContentAvailability: 'ready', latestTurnId: 'review', latestTurnStatus: 'completed',
@@ -179,10 +181,8 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         sessionListRowsByServerId: { home: { repair: buildSessionListRenderableFromSession(session) } } });
     publish(1);
     try {
-        const investigation = await owner.run(subject, { configuredActionId: 'investigate', sessionChoice: { kind: 'new' },
-            agentChoice: { kind: 'target', targetKey }, delivery: 'configured' }, { placement: { machine, workspace } });
-        expect(investigation, JSON.stringify({ investigation, sessionBoundaryCalls: invoker.calls })).toMatchObject({ ok: true,
-            result: { handoff: { kind: 'sendResult', result: { status: 'accepted' } } } });
+        const investigation = await owner.launch(subject, { actionId: 'investigate' }, { placement: { machine, workspace } });
+        expect(investigation, JSON.stringify({ investigation, sessionBoundaryCalls: invoker.calls })).toMatchObject({ kind: 'started', handoff: { kind: 'sendResult', result: { status: 'accepted' } } });
         const guided = buildGuidedAutomationRequest({ when: createDefaultWhen('schedule'),
             lookAt: ['logs', 'receipts', 'health'], mode: 'chain', channels: [],
             selection: { agentTarget },
@@ -228,7 +228,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
             expect(commandProposal).toMatchObject({ ok: true,
                     result: { kind: 'approval_request_created', artifactId: 'approval',
-                        approvalProfile: { status: 'missing', requestedId: 'builtin:read-propose' } } });
+                        approvalProfile: { effectiveId: 'builtin:read-propose' } } });
         });
         expect(ApprovalRequestSchema.parse(stored)).toMatchObject({ status: 'open', actionId: 'projects.compute.exec',
             executionOriginV1: { approvalProfileId: 'builtin:read-propose' } });
@@ -284,8 +284,8 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
             environmentId: receipt.environmentId, deploymentId: 'new-receipt' }));
         expect(rows[0]?.links[0]).toMatchObject({ kind: 'operation' });
         expect(projectOperationsRunOutcome({ subject, finding: result.finding, produced: result.produced, subjectReceipt: receipt,
-            healthServerId: 'home', health: { healthFeed: { environmentId: receipt.environmentId, status: 'ready', members: [] },
-                healthAggregate: { v: 1, environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, protection: 'nonProduction',
+            healthServerId: 'home', health: { environmentId: receipt.environmentId, status: 'ready', members: [],
+                aggregate: { v: 1, environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, protection: 'nonProduction',
                     status: 'up', n: 1, down: 0, degraded: 0, unknown: 0, members: [], affectedMachineIds: [],
                     edgeUnreachable: false, authoritativeRecovery: false } } }).recovery)
             .toMatchObject({ kind: 'observed', health: { status: 'up' } });

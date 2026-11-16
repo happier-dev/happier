@@ -5,27 +5,21 @@ import { AgentActionButton, Row, Stack } from '@happier-dev/plugin-ui/components
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { t } from '@/text';
-import { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1, type TriageActionSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { readFailureActionsBinding } from '@/hooks/inbox/failureActionsBinding';
 import type { InvestigationAgentAction } from './healthNoticeInvestigation';
-import { useOpenTriageActionEditor } from './useOpenTriageActionEditor';
+import { useOpenFailureActionEditor } from './useOpenFailureActionEditor';
 
 /** A record to draw; the default record before the catalog answers has no id yet. */
 export type InvestigationAgentActionButtonModel = Readonly<Omit<InvestigationAgentAction, 'actionId'> & { actionId?: string }>;
 
-const declaredBySubject = new Map<TriageActionSubjectV1, readonly InvestigationAgentActionButtonModel[]>();
 /**
  * A subject's statically declared records, drawn waiting until the person's catalog answers, so the row they settle
  * into is the row at first paint and nothing arrives later to push the page (VISUAL-136 D1, DEPLOY-ACCEPT-143 A6).
  */
-export function declaredSubjectAgentActions(subject: TriageActionSubjectV1): readonly InvestigationAgentActionButtonModel[] {
-  let declared = declaredBySubject.get(subject);
-  if (!declared) {
-    declared = Object.freeze(TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1.filter(declaration => declaration.appliesTo.includes(subject))
-      .map(declaration => ({ actionId: declaration.actionId, label: declaration.label,
-        launchMode: declaration.launchMode ?? 'review', startable: true })));
-    declaredBySubject.set(subject, declared);
-  }
-  return declared;
+export function declaredSubjectAgentActions(subject: string): readonly InvestigationAgentActionButtonModel[] {
+  return readFailureActionsBinding(getActiveServerAccountScope())?.declaredActions
+    ?.filter(action => action.subjects.includes(subject)) ?? [];
 }
 
 /**
@@ -45,7 +39,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   emphasis?: 'primary' | 'secondary';
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
 }>): React.ReactElement | null {
-  const openEditor = useOpenTriageActionEditor();
+  const openEditor = useOpenFailureActionEditor();
   // A phone-width window recomposes a banner's actions (rowStackBelowWidthPx), whatever device class the page passed.
   const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
   if (props.actions.length === 0) return null;

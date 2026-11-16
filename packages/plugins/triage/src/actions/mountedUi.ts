@@ -16,6 +16,9 @@ const TRIAGE_SESSION_DETAILS_DESTINATION_V1 = Object.freeze({
 import { stageTriageTaskDraft } from '../ui/taskDraftHandoff.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedSourceRevealInputV1Schema, TriageMountedSourceInsertInputV1Schema, type TriageMountedUiInputV1, type TriageMountedUiResultV1 } from './mountedUiProtocol.js';
 
+import { TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1 } from './nativeFailureProtocol.js';
+import { handleTriageNativeFailure } from './nativeFailure.js';
+
 function proposeMessageTaskTitle(quote: string | null | undefined): string | undefined {
   const firstLine = quote?.split(/\r?\n/u).find(line => line.trim().length > 0)?.trim();
   if (firstLine === undefined) return undefined;
@@ -48,6 +51,7 @@ export function createTriageMountedSourceInsertActionHandler(): PluginClientActi
 }
 
 export function activate(api: PluginClientApi): void {
+  api.actions.register(TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1, handleTriageNativeFailure);
   api.actions.register(TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1, async (input, context) => {
     const parsed = TriageCheckTaskWriteInputV1Schema.parse(input);
     const resolved = await checkTriageTaskWrite(context.ephemeralSharedScope, parsed.entryRef, context.ui, context.signal);

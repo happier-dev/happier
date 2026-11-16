@@ -31,8 +31,12 @@ export function AccountNoticeInvestigationBoundary(props: Readonly<{ children: R
     return existing ? <>{props.children}</> : <AccountNoticeInvestigationProvider>{props.children}</AccountNoticeInvestigationProvider>;
 }
 
+export function useOptionalAccountNoticeInvestigation() {
+    return React.useContext(InvestigationContext);
+}
+
 export function useAccountNoticeInvestigation() {
-    const owner = React.useContext(InvestigationContext);
+    const owner = useOptionalAccountNoticeInvestigation();
     if (!owner) throw new Error('Investigate requires AccountNoticeInvestigationBoundary');
     return owner;
 }

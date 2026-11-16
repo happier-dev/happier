@@ -527,13 +527,16 @@ Investigate retains the configured handoff's existing create/send recovery.
 `TriageFailureSubjectV1` extends the same configured Investigate handoff with
 exact deployment receipt, managed Machine operation, backup operation, service,
 Domain or Workflow Run addresses. The Account-scoped notice investigation owner accepts
-these subjects too; `useInvestigateFailure(subject)` borrows that owner and its
-existing uncertain-create/send recovery from `AccountNoticeInvestigationBoundary`.
+these subjects too; `useInvestigateFailure(subject)` borrows the host's Account
+admission through `AccountNoticeInvestigationBoundary`. Triage's declared
+`failureActions` client Action owns catalog selection, handoff-result presentation,
+editor navigation and existing uncertain-create/send recovery in its admitted
+generation's ephemeral shared scope.
 The app shell mounts this small provider beside the Inbox summary, so receipts,
 managed setup and other failure pages do not mount the Inbox model. Inbox consumes
 the same owner. Mounting the provider issues no reads; surfaces rendering
-configured agent-action buttons read their choices through its shared catalog
-reader. Pages do not create investigators or select replacement Machines.
+configured agent-action buttons request generic button presentation through the
+contributed Action. Pages do not create investigators or select replacement Machines.
 For receipts, Environment health and Domain attention, the handoff reads the
 controller and accepted Source workspace from the exact receipt/current Environment
 as evidence. The controller alone never becomes a fixed execution preference.

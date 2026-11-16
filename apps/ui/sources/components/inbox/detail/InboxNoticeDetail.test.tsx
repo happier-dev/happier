@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { HealthNoticeInvestigationOutcome } from './healthNoticeInvestigation';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -32,12 +32,7 @@ afterEach(() => {
 
 const { InboxNoticeDetail } = await import('./InboxItemDetail');
 
-const selection = {
-  configuredActionId: 'investigate', sessionChoice: { kind: 'configured' as const },
-  agentChoice: { kind: 'configured' as const }, delivery: 'configured' as const,
-};
-
-function render(answer: ActionExecuteResult | ((call: number, options: unknown, delivery: unknown) => ActionExecuteResult)) {
+function render(answer: HealthNoticeInvestigationOutcome | ((call: number, options: unknown, delivery: unknown) => HealthNoticeInvestigationOutcome)) {
   let call = 0;
   return renderScreen(
     <InboxNoticeDetail
@@ -49,9 +44,8 @@ function render(answer: ActionExecuteResult | ((call: number, options: unknown, 
       onDismiss={async () => {}}
       subject={{ kind: 'service', machineId: 'machine-1', service: 'checkout-api', open: true, investigable: true }}
       investigation={{
-        readChoices: async () => ({ v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [{ label: 'Investigate', launchMode: 'start', selection }] }),
-        resume: () => null,
-        run: async (selection, options) => typeof answer === 'function' ? answer(call++, options, selection.delivery) : answer,
+        readAgentActions: async () => [{ actionId: 'investigate', label: 'Investigate', launchMode: 'start', startable: true }],
+        launch: async (intent, options) => typeof answer === 'function' ? answer(call++, options, intent.delivery) : answer,
       }}
     />,
   );
@@ -97,10 +91,7 @@ describe('Inbox notice detail: the way to the cause (COR5B #162 "1 of 1 servers 
 
 describe('Inbox notice detail', () => {
   it('shows the typed refusal when the Session exists but its input was rejected', async () => {
-    const screen = await render({ ok: true, result: { v: 1, handoff: {
-      kind: 'sendResult', session: { serverId: 'home-a', sessionId: 'diagnosis' },
-      result: { status: 'rejected', code: 'session_input_target_unavailable' },
-    } } });
+    const screen = await render({ kind: 'unavailable', code: 'session_input_target_unavailable' });
     await act(async () => { await screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('start'); });
     expect(screen.findByTestId('inbox.notice.investigate.unavailable')).not.toBeNull();
     await screen.pressByTestIdAsync('inbox.notice.investigate.unavailable.details');
@@ -108,14 +99,14 @@ describe('Inbox notice detail', () => {
   });
 
   it('offers the configured action launch and edit modes and keeps Dismiss secondary', async () => {
-    const screen = await render({ ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } });
+    const screen = await render({ kind: 'started' });
     const button = (testID: string) => screen.findAllByType(RoundButton).find((node) => node.props.testID === testID);
     expect(screen.findAllByType(AgentActionButton)[0]?.props.launchMode).toBe('start');
     expect(button('inbox.notice.dismiss')?.props.display).toBe('secondary');
   });
 
   it('answers an approval Investigate asked for with the canonical waiting notice and its way to the review', async () => {
-    const screen = await render({ ok: true, result: { kind: 'approval_request_created', artifactId: 'artifact-7', actionId: 'action.invoke' } });
+    const screen = await render({ kind: 'approval', artifactId: 'artifact-7' });
     await act(async () => { await screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('start'); });
     expect(screen.findByTestId('inbox.notice.investigate.approval')).not.toBeNull();
     await screen.pressByTestIdAsync('inbox.notice.investigate.approval.open');
@@ -127,12 +118,11 @@ describe('Inbox notice detail', () => {
       { machine: { serverId: 'home-a', machineId: 'machine-1' }, workspace: folder('machine-1', '/srv/checkout'), reachable: true },
       { machine: { serverId: 'home-a', machineId: 'machine-2' }, workspace: folder('machine-2', '/srv/checkout-b'), reachable: true },
       { machine: { serverId: 'home-a', machineId: 'machine-3' }, reachable: false },
-    ], agents: [{ targetKey: 'agent:happier.agent.claude/claude', label: 'Claude Code' }, { targetKey: 'agent:happier.agent.codex/codex', label: 'Codex' }] };
+    ], agents: [{ targetKey: 'agent:happier.agent.claude/claude', label: 'Claude Code' }, { targetKey: 'agent:happier.agent.codex/codex', label: 'Codex' }] } as const;
     const deliveries: unknown[] = [];
     const screen = await render((call, _options, delivery) => {
       deliveries.push(delivery);
-      return call === 0 ? { ok: true, result: { v: 1, handoff: choice } }
-        : { ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
+      return call === 0 ? choice : { kind: 'started' };
     });
     await act(async () => { await screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('start'); });
     expect(deliveries).toEqual(['send', 'compose']);

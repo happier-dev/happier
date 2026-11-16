@@ -4,7 +4,7 @@ import { createReducer } from '@happier-dev/session-core/reducer';
 import type { Message } from '@happier-dev/session-core/messages';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { act, renderHook, standardCleanup, createSessionFixture } from '@/dev/testkit';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createTriageFailureActionBoundaryFixture as createActionExecutorBoundaryFixture, TRIAGE_FAILURE_TEST_BINDING } from '@/dev/testkit/harness/triageFailureActionBoundary';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -107,6 +107,7 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
             return { success: true, content: 'services:\n  app:\n    ports: ["3000:3000"]' };
         },
         invokeContributedAction: async request => {
+        if (request.action.localId === 'actions/read-v1') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [{ label: 'Investigate', selection: { configuredActionId: 'investigate', sessionChoice: { kind: 'new' }, agentChoice: { kind: 'target', targetKey }, delivery: 'configured' } }] } };
         if (request.action.localId === 'sessions/read-source-links-v1') return { ok: true,
             result: await readTestkitSourceSessionLinks(request.input, { collections, contributions }) };
         const input = TriageRunConfiguredActionInputV1Schema.parse(request.input);
@@ -115,13 +116,12 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
         return { ok: true, result: await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
             input.handoff, { entries: [], signal: new AbortController().signal }) };
     } }));
-    const makeOwner = () => createAccountNoticeInvestigation({ scope, isCurrent: () => true, execute: createFrontDoorActionExecute(executor) });
+    const makeOwner = () => createAccountNoticeInvestigation({ scope, binding: TRIAGE_FAILURE_TEST_BINDING, isCurrent: () => true, execute: createFrontDoorActionExecute(executor) });
     const owner = makeOwner();
     let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useInvestigationSessionResult>>>> | undefined;
     try {
-        const started = await owner.run(subject, { configuredActionId: 'investigate', sessionChoice: { kind: 'new' },
-            agentChoice: { kind: 'target', targetKey }, delivery: 'configured' }, { placement: { machine, workspace } });
-        expect(started, JSON.stringify({ started, sessionBoundaryCalls: invoker.calls })).toMatchObject({ ok: true, result: { handoff: { kind: 'sendResult', result: { status: 'accepted' } } } });
+        const started = await owner.launch(subject, { actionId: 'investigate' }, { placement: { machine, workspace } });
+        expect(started, JSON.stringify({ started, sessionBoundaryCalls: invoker.calls })).toMatchObject({ kind: 'started', handoff: { kind: 'sendResult', result: { status: 'accepted' } } });
         expect(reads).toEqual([{ id: 'deployments.receipts.get', input: { serverId: scope.serverId,
             environmentId: subject.environmentId, deploymentId: subject.deploymentId } }]);
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({ executionTarget: machine, agentTarget,
@@ -185,7 +185,7 @@ it('reopens the receipt Finding from its durable linked Session, follows complet
         return { ok: true, result: { kind: 'complete', lanes: [], links: [{ entryRef: input.entryRef,
             sessionId: 'investigation', linkedAtMs: 1, displayPath: 'Deployment' }] } };
     } }));
-    const makeOwner = () => createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+    const makeOwner = () => createAccountNoticeInvestigation({ scope, binding: TRIAGE_FAILURE_TEST_BINDING, isCurrent: () => true,
         execute: createFrontDoorActionExecute(executor) });
     const session = createSessionFixture({ id: 'investigation', serverId: scope.serverId,
         encryptionMode: 'e2ee', encryptedContentAvailability: 'ready', latestTurnId: 'diagnostic', latestTurnStatus: 'completed',

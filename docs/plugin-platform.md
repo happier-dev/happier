@@ -13126,6 +13126,44 @@ them. Protocol's reference script aliases delegate to this registry; do not run
 both aliases and the complete docs batch for the same inputs. The renderer uses
 canonical Protocol freshness and a fresh subprocess module cache.
 
+## Native failure investigation contributions (0.3 development source)
+
+An App `appPage` may declare `failureActions: { action, declaredActions? }`.
+`action` names the plugin's client Action for reading button presentation,
+launching an investigation, opening its editor, and reading an exact linked
+Session. Optional `declaredActions` provides the same button presentation before
+the configured catalog answers. The ordinary closed surface declaration
+projection carries both fields; no executable hydration is required to discover
+the binding. An ambiguous binding is unavailable.
+
+The host admits the Account and notice identity, invokes the contributed Action
+through the existing Action front door, and renders its generic failure outcome.
+The plugin owns catalog selection, domain-result parsing, editor navigation, and
+continuation custody in the existing generation-bound ephemeral shared scope.
+Triage supplies the current binding and normalizes its configured Session
+handoff there. No host runtime import chooses a Triage Action or parses its
+handoff. This is an unreleased 0.3 source contract; matching declaration readers
+and authors load together.
+
+## App-page route aliases (0.3 development source)
+
+An App `appPage` view can declare `routeAliases`, an array of closed
+`{ pathname, subPath? }` objects. Paths use the host's existing Expo route
+matcher, including static-route precedence and malformed-URI refusal. A
+`{parameter}` in `subPath` receives the URI-encoded path operand or first query
+value; an absent or empty operand opens the page root. The page owns the local
+location grammar. The host builds the qualified plugin page address.
+
+Aliases travel through the ordinary declared surface projection. Workspace
+hosting and retained Expo entrances consume the same current-Account declaration
+reader, independently of executable hydration. Triage's Tasks page declares the
+retained `/zen`, `/zen/new`, `/zen/view?id=…`, and `/zen/<id>` entrances; host
+navigation contains no Triage source identity or selection codec.
+
+Matching development author schemas, projection readers, and hosts reload
+together. The routing objects remain closed; this adds no persisted format,
+runtime ABI, released wire epoch, registry, or reverse-development adapter.
+
 ## Page Tabs navigation (0.3 development source)
 
 Public `Tabs` can declare `presentation="page"` with a qualified `pageKind`. Its Items remain the declaration for panels, labels, badges, disabled state and portable navigation metadata. The installed HostApi `setPageNavigation(descriptor | null)` lends that declaration to the physical page mount; it adds no Resource read or backend request. Nested `tabList="host"` Tabs retain their panel behavior and do not publish another declaration.

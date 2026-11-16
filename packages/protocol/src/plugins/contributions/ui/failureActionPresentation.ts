@@ -23,6 +23,11 @@ export const FailureActionPlacementV1Schema = defineProtocolObject({
 }, closed);
 export type FailureActionPlacement = ReturnType<typeof FailureActionPlacementV1Schema.parse>;
 
+export const FailureActionPlacementReasonV1Schema = defineProtocolUnion([
+  defineProtocolLiteral('controller_required'), defineProtocolLiteral('machine_unreachable'),
+  defineProtocolLiteral('ambiguous_workspace'), defineProtocolLiteral('agent_required'),
+]);
+
 /** The single presentation grammar; plugins normalize their domain results before returning it. */
 export const FailureActionOutcomeV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('started'), handoff: defineProtocolJsonValue().optional() }, closed),
@@ -32,10 +37,8 @@ export const FailureActionOutcomeV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), code: text, configuredActionId: text.optional(),
     recovery: defineProtocolLiteral('configure').optional(), handoff: defineProtocolJsonValue().optional(),
     detail: defineProtocolJsonValue().optional() }, closed),
-  defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: defineProtocolUnion([
-    defineProtocolLiteral('controller_required'), defineProtocolLiteral('machine_unreachable'),
-    defineProtocolLiteral('ambiguous_workspace'), defineProtocolLiteral('agent_required'),
-  ]), candidates: defineProtocolArray(defineProtocolObject({ machine, workspace: workspace.optional(),
+  defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: FailureActionPlacementReasonV1Schema,
+    candidates: defineProtocolArray(defineProtocolObject({ machine, workspace: workspace.optional(),
     reachable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed)),
     agents: defineProtocolArray(defineProtocolObject({ targetKey: text, label: text }, closed)),
   }, closed),

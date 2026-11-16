@@ -13,6 +13,8 @@ import type { PluginContributionIntrospectionPresentationV1 } from '@happier-dev
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetAreas';
+import type { PluginUiAppPageRouteAliasV1 } from '@happier-dev/protocol/plugins/contributions/ui/routeAliases';
+import type { PluginUiFailureActionsBindingV1 } from '@happier-dev/protocol/plugins/contributions/ui/failureActions';
 import { PluginUiResourceLinkV1Schema, type PluginUiResourceLinkV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { PluginLocalizedStringV2Schema, PluginPolicyExpressionV2Schema, type PluginPolicyExpressionV2, type PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey, createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -233,6 +235,8 @@ type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     /** An app page's own shell column: its admitted binding, renderer and availability. */
     column?: PluginUiAppPageColumnProjection;
     widgetAreas?: readonly PluginUiWidgetAreaDeclarationV1[];
+    routeAliases?: readonly PluginUiAppPageRouteAliasV1[];
+    failureActions?: PluginUiFailureActionsBindingV1;
     resourceLinks?: readonly PluginUiResourceLinkV1[];
 }>;
 

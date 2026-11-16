@@ -7,21 +7,20 @@ import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/ag
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { TriageSessionHandoffResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { createTriageRunConfiguredActionHandler } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-configured-action-native';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { OpenNewSessionRequest } from '@happier-dev/plugin-sdk/ui';
 import { buildAgentTargetKeyV2, type AgentExecutionTargetV1 } from '@happier-dev/plugin-sdk/agents';
 
 import { renderHook } from '@/dev/testkit';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createTriageFailureActionBoundaryFixture as createActionExecutorBoundaryFixture, TRIAGE_FAILURE_TEST_BINDING } from '@/dev/testkit/harness/triageFailureActionBoundary';
 import { createAccountNoticeArtifactFixture, createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInvestigation';
 import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-import { readNoticeInvestigationSubject, readHealthNoticeInvestigationOutcome, useHealthNoticeInvestigate,
+import { readNoticeInvestigationSubject, useHealthNoticeInvestigate,
   useInvestigationAgentActions } from './healthNoticeInvestigation';
 
 installSessionActionRpcBoundary(() => { throw new Error('Unexpected Session RPC'); });
@@ -55,7 +54,7 @@ async function press(input: Readonly<{ choices: unknown; run?: unknown }>) {
       },
     }),
   );
-  const investigation = createAccountNoticeInvestigation({
+  const investigation = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING,
     scope,
     isCurrent: () => true,
     execute: createFrontDoorActionExecute(executor),
@@ -65,11 +64,7 @@ async function press(input: Readonly<{ choices: unknown; run?: unknown }>) {
     artifact,
     header: readAccountNoticeArtifactHeader(artifact, scope.accountId)!,
   };
-  const bound = {
-    readChoices: (options: Parameters<typeof investigation.readChoices>[1]) => investigation.readChoices(entry, options),
-    resume: (options: { signal: AbortSignal }) => investigation.resume(entry, options),
-    run: (selection: Parameters<typeof investigation.run>[1], options: Parameters<typeof investigation.run>[2]) => investigation.run(entry, selection, options),
-  };
+  const bound = bindFailureOwner(investigation, entry);
   const hook = await renderHook(() => useHealthNoticeInvestigate(bound));
   expect(calls).toEqual([]);
   await act(async () => {
@@ -80,6 +75,14 @@ async function press(input: Readonly<{ choices: unknown; run?: unknown }>) {
   return { calls, outcome, pending };
 }
 
+
+function bindFailureOwner(owner: ReturnType<typeof createAccountNoticeInvestigation>, entry: Parameters<typeof owner.launch>[0]) {
+  return {
+    readAgentActions: (includeDefault: boolean, options: Parameters<typeof owner.readAgentActions>[2]) => owner.readAgentActions(entry, includeDefault, options),
+    launch: (intent: Parameters<typeof owner.launch>[1], options: Parameters<typeof owner.launch>[2]) => owner.launch(entry, intent, options),
+  };
+}
+
 const offered = {
   v: 1,
   kind: 'choices',
@@ -88,6 +91,16 @@ const offered = {
 };
 
 describe('useHealthNoticeInvestigate', () => {
+  it('consumes a contributed failure presentation without selecting or parsing a Triage handoff', async () => {
+    const hook = await renderHook(() => useHealthNoticeInvestigate({
+      readAgentActions: async () => [],
+      launch: async () => ({ kind: 'started' as const }),
+    }));
+    try {
+      await act(async () => { await hook.getCurrent().investigate(); });
+      expect(hook.getCurrent().outcome).toEqual({ kind: 'started' });
+    } finally { await hook.unmount(); }
+  });
   it.each([
     { mode: 'start', truncated: false }, { mode: 'review', truncated: false },
     { mode: 'start', truncated: true }, { mode: 'review', truncated: true },
@@ -168,13 +181,9 @@ describe('useHealthNoticeInvestigate', () => {
         return { ok: true, result };
       },
     }));
-    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+    const owner = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true,
       execute: createFrontDoorActionExecute(executor) });
-    const bound = {
-      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(entry, options),
-      resume: (options: { signal: AbortSignal }) => owner.resume(entry, options),
-      run: (selection: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(entry, selection, options),
-    };
+    const bound = bindFailureOwner(owner, entry);
     const hook = await renderHook(() => useBoundFailureInvestigation(bound));
     try {
       await act(async () => { await hook.getCurrent().launch(mode); });
@@ -203,29 +212,6 @@ describe('useHealthNoticeInvestigate', () => {
     expect(result.calls).toHaveLength(2);
   });
 
-  it('retains the exact Session handoff for outcome links without calling it a finding', () => {
-    const handoff = { kind: 'composed', destination: { kind: 'existing', session: { serverId: scope.serverId, sessionId: 'diagnosis' } } } as const;
-    expect(readHealthNoticeInvestigationOutcome({ ok: true, result: { v: 1, handoff } }))
-      .toEqual({ kind: 'started', handoff });
-  });
-  it('keeps a durably admitted input started while its Session is still starting', () => {
-    const handoff = { kind: 'sendResult', session: { serverId: scope.serverId, sessionId: 'diagnosis' },
-      result: { status: 'accepted', localId: 'receipt-input' } } as const;
-    expect(readHealthNoticeInvestigationOutcome({ ok: true, result: { v: 1, handoff } }))
-      .toEqual({ kind: 'started', handoff });
-  });
-  it.each([
-    { kind: 'entryExecution', status: 'bulk' },
-    { kind: 'sendResult', session: { serverId: scope.serverId, sessionId: 'diagnosis' },
-      result: { kind: 'fanout', results: [{ target: { serverId: scope.serverId, sessionId: 'diagnosis' },
-        result: { ok: true, result: { status: 'rejected', code: 'session_input_target_unavailable' } } }] } },
-  ])('does not claim an exact notice investigation started from an unrelated result %#', value => {
-    // Entry batches and selector fanout are valid shared protocol results, but the notice
-    // invokes one non-entry handoff to one exact Session.
-    const handoff = TriageSessionHandoffResultV1Schema.parse(value);
-    expect(readHealthNoticeInvestigationOutcome({ ok: true, result: { v: 1, handoff } }))
-      .toEqual({ kind: 'unavailable', code: 'invalid_result' });
-  });
   it.each([{ phase: 'create', recoverable: true }, { phase: 'send', recoverable: true },
     { phase: 'create', recoverable: false }] as const)(
     'resumes the original configured operation after an uncertain $phase reply (recovery=$recoverable)', async ({ phase, recoverable }) => {
@@ -256,15 +242,11 @@ describe('useHealthNoticeInvestigate', () => {
           : { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
       },
     }));
-    const model = createAccountNoticeInvestigation({ scope, isCurrent: () => current,
+    const model = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => current,
       execute: createFrontDoorActionExecute(executor) });
     const artifact = createServiceHealthNoticeArtifactFixture(scope.serverId);
     const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
-    const bound = {
-      readChoices: (options: Parameters<typeof model.readChoices>[1]) => model.readChoices(entry, options),
-      resume: (options: { signal: AbortSignal }) => model.resume(entry, options),
-      run: (selection: Parameters<typeof model.run>[1], options: Parameters<typeof model.run>[2]) => model.run(entry, selection, options),
-    };
+    const bound = bindFailureOwner(model, entry);
     let hook = await renderHook(() => useHealthNoticeInvestigate(bound));
     const placement = { machine: { serverId: scope.serverId, machineId: 'chosen-machine' } };
     try {
@@ -273,18 +255,18 @@ describe('useHealthNoticeInvestigate', () => {
       expect(hook.getCurrent().pending).toBe(false);
       await hook.unmount();
       const anotherArtifact = createServiceHealthNoticeArtifactFixture(scope.serverId, { id: 'second-notice' });
-      await model.run({ artifact: anotherArtifact, header: readAccountNoticeArtifactHeader(anotherArtifact, scope.accountId)! }, investigate);
+      await model.launch({ artifact: anotherArtifact, header: readAccountNoticeArtifactHeader(anotherArtifact, scope.accountId)! }, {});
       hook = await renderHook(() => useHealthNoticeInvestigate(bound));
       await act(async () => { await hook.getCurrent().investigate(); });
       if (!recoverable) {
         expect(requests).toHaveLength(2);
-        expect(choiceReads).toBe(1);
+        expect(choiceReads).toBe(2);
         expect(hook.getCurrent().outcome).toEqual({ kind: 'unavailable', code: 'action_outcome_unknown' });
         return;
       }
       expect(requests).toHaveLength(3);
       expect(requests[2]).toEqual({ ...requests[0] as object, resumeStart: recovery });
-      expect(choiceReads).toBe(1);
+      expect(choiceReads).toBe(2);
       expect(hook.getCurrent().outcome).toEqual({ kind: 'started', handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });
       current = false;
       await act(async () => { await hook.getCurrent().investigate(); });
@@ -305,7 +287,7 @@ describe('useHealthNoticeInvestigate', () => {
           : { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
       },
     }));
-    const model = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+    const model = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true,
       execute: createFrontDoorActionExecute(executor) });
     const artifact = createAccountNoticeArtifactFixture({ header: {
       source: { kind: 'host', topic: 'service_health', subject: {
@@ -316,11 +298,7 @@ describe('useHealthNoticeInvestigate', () => {
       type: 'blocked', healthPhase: 'open',
     } });
     const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
-    const bound = {
-      readChoices: (options: Parameters<typeof model.readChoices>[1]) => model.readChoices(entry, options),
-      resume: (options: { signal: AbortSignal; placement?: import('./healthNoticeInvestigation').HealthNoticeInvestigationPlacement }) => model.resume(entry, options),
-      run: (selection: Parameters<typeof model.run>[1], options: Parameters<typeof model.run>[2]) => model.run(entry, selection, options),
-    };
+    const bound = bindFailureOwner(model, entry);
     let hook = await renderHook(() => useHealthNoticeInvestigate(bound));
     try {
       expect(calls).toHaveLength(0);
@@ -372,7 +350,7 @@ describe('useHealthNoticeInvestigate', () => {
     expect(result.calls).toEqual(['actions/read-v1']);
     expect(result.outcome).toEqual({
       kind: 'unavailable',
-      code: 'configuredActionUnavailable',
+      code: 'configuredActionUnavailable', recovery: 'configure',
     });
   });
 
@@ -452,13 +430,9 @@ describe('agent actions on a native subject page', () => {
         return { ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
       },
     }));
-    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+    const owner = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true,
       execute: createFrontDoorActionExecute(executor) });
-    const bound = {
-      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(subject, options),
-      resume: (options: { signal: AbortSignal }) => owner.resume(subject, options),
-      run: (picked: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(subject, picked, options),
-    };
+    const bound = bindFailureOwner(owner, subject);
     const hook = await renderHook(() => ({
       actions: useInvestigationAgentActions(bound, { includeDefault: true }),
       intent: useHealthNoticeInvestigate(bound),
@@ -488,13 +462,9 @@ describe('agent actions before the catalog answers', () => {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
       invokeContributedAction: () => new Promise((resolve) => { answer = resolve as (value: unknown) => void; }),
     }));
-    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true, execute: createFrontDoorActionExecute(executor) });
+    const owner = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true, execute: createFrontDoorActionExecute(executor) });
     const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'receipt' } as const;
-    const bound = {
-      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(subject, options),
-      resume: (options: { signal: AbortSignal }) => owner.resume(subject, options),
-      run: (picked: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(subject, picked, options),
-    };
+    const bound = bindFailureOwner(owner, subject);
     const hook = await renderHook(() => useInvestigationAgentActions(bound, { includeDefault: true }));
     try {
       await act(async () => {});
@@ -521,17 +491,13 @@ describe('a pressed record its owner cannot start', () => {
         ] }
         : { v: 1, handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' } } }),
     }));
-    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+    const owner = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true,
       execute: createFrontDoorActionExecute(executor) });
-    const bound = {
-      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(subject, options),
-      resume: (options: { signal: AbortSignal }) => owner.resume(subject, options),
-      run: (picked: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(subject, picked, options),
-    };
+    const bound = bindFailureOwner(owner, subject);
     const hook = await renderHook(() => useHealthNoticeInvestigate(bound));
     try {
       await act(async () => { await hook.getCurrent().launch('review', 'deployments.set-up'); });
-      expect(hook.getCurrent().outcome).toEqual({ kind: 'unavailable', code: 'configuredActionUnavailable',
+      expect(hook.getCurrent().outcome).toEqual({ kind: 'unavailable', code: 'configuredActionUnavailable', recovery: 'configure',
         configuredActionId: 'deployments.set-up' });
     } finally { await hook.unmount(); }
   });
@@ -539,7 +505,7 @@ describe('a pressed record its owner cannot start', () => {
 
 describe('readNoticeInvestigationSubject', () => {
   // The notice's own data hook decides eligibility; the drawer only asks it.
-  const hook = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+  const hook = createAccountNoticeInvestigation({ binding: TRIAGE_FAILURE_TEST_BINDING, scope, isCurrent: () => true,
     execute: createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({}))) });
   const subjectOf = (artifact: ReturnType<typeof createAccountNoticeArtifactFixture>) => {
     const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
