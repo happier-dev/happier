@@ -42,8 +42,8 @@ The permission mediation store gives each request-scoped native human command
 its own settlement address using the existing idempotency key. Its transport
 request operand is an opaque digest; the sealed record retains the original
 request, turn, native choice and human attribution. Reads restore that logical
-identity before recovery or completion. Existing tuple-addressed settlements
-remain readable for exact retries. Replaying a committed answer does not claim
+identity before recovery or completion. Native settlements use that command
+address for exact retries. Replaying a committed answer does not claim
 a later pending stage. This changes no Channels/provider schema or database
 schema; daemon source must reload together, and rollback to an earlier 0.3
 mediation reader is not supported for the new addresses.

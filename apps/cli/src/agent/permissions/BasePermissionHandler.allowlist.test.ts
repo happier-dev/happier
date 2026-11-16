@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 import { SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX } from '@happier-dev/protocol';
+import type { SessionPermissionMediationRecordStored } from '@happier-dev/protocol';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { SessionPermissionRemotePendingListOutputV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createAcpNativePermissionChoices } from '@/agent/acp/permissions/permissionMapping';
@@ -12,6 +14,7 @@ import type {
   PermissionMediationRecordStore,
   PermissionMediationStoredRecord,
 } from './mediation/permissionMediationRecordStore';
+import { createPermissionMediationRecordStore } from './mediation/permissionMediationRecordStore';
 
 class FakeRpcHandlerManager {
   rawHandlers = new Map<string, (payload: any, context?: any) => any>();
@@ -5578,31 +5581,32 @@ describe('remote native offered permission admission', () => {
     }
   });
 
-  it.each([['allow', false], ['deny', false], ['deny', true]] as const)('settles a two-decision staged chat approval ending in %s with legacy=%s and one reused request and turn', async (lastDecision, legacy) => {
+  it.each([['allow', false], ['deny', false], ['allow', true]] as const)('settles a two-decision staged chat approval ending in %s with misaddressed record=%s and one reused request and turn', async (lastDecision, misaddressed) => {
     // The System Record transport is the boundary; offer serialization, pending
     // ownership, native selection and replay all use the production owners.
-    const rows = new Map<string, PermissionMediationStoredRecord>();
+    const rows = new Map<string, SessionPermissionMediationRecordStored>();
     let mediationReads = 0;
-    const recordStore: PermissionMediationRecordStore = {
-      read: async ({ identity }) => {
+    const transport = {
+      getStoredContentEncryptionContext: () => ({ mode: 'plain' as const }),
+      readPermissionMediationRecord: async ({ identity }) => {
         mediationReads += 1;
-        const stored = rows.get(JSON.stringify(identity));
-        return stored ? { status: 'found', stored } : { status: 'absent' };
+        return rows.get(JSON.stringify(identity)) ?? null;
       },
-      createExpectedAbsent: async input => {
-        if (rows.has(JSON.stringify(input.identity))) return { status: 'conflict' };
-        const identity = legacy && rows.size === 0
-          ? { sessionId: input.identity.sessionId, turnId: input.identity.turnId, requestId: input.identity.requestId }
-          : input.identity;
-        const stored: PermissionMediationStoredRecord = { ...input, identity, revision: `ssr1.${input.identity.requestId}` };
+      writePermissionMediationRecord: async ({ identity, request }) => {
+        if (rows.has(JSON.stringify(identity))) throw Object.assign(new Error('Record already exists'), { code: 'permission_mediation_record_conflict' });
+        const stored = { ...identity, kind: request.kind, content: request.content,
+          revision: 'ssr1.AAAACnJlY29yZC1vbmUAAAAB' };
         rows.set(JSON.stringify(identity), stored);
-        return { status: 'created', stored };
+        return stored;
       },
-      list: async () => ({ status: 'ready', records: [...rows.values()], nextCursor: null, hasNext: false }),
-      pruneInactive: async () => ({ status: 'unavailable' }),
-      compareAndSet: async () => ({ status: 'unavailable' }),
-    };
-    const session = new FakeSession();
+      listPermissionMediationRecords: async () => ({ records: [...rows.values()], nextCursor: null, hasNext: false }),
+      prunePermissionMediationRecord: async ({ identity }) => { rows.delete(JSON.stringify(identity)); },
+    } satisfies Pick<SessionClientPort, 'getStoredContentEncryptionContext' | 'readPermissionMediationRecord'
+      | 'writePermissionMediationRecord' | 'listPermissionMediationRecords' | 'prunePermissionMediationRecord'>;
+    const session = Object.assign(new FakeSession(), transport);
+    // The Session transport is the boundary; the concrete mediation store remains real.
+    const recordStore = createPermissionMediationRecordStore(session as unknown as SessionClientPort);
+    if (!recordStore) throw new Error('Expected the current mediation store');
     const handler = new TestPermissionHandler(session as any, { mediationRecordStore: recordStore });
     const sourceAuthority = { kind: 'mediatedExternal', mediatorPluginId: 'happier.channels',
       sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42', admittedPermissionCeiling: 'default',
@@ -5637,23 +5641,34 @@ describe('remote native offered permission admission', () => {
         responses.push(response);
         const nativeChoice = { requirementId: nativeChoices.requirementId,
           choiceId: `${decision === 'allow' ? 'run' : 'stop'}-${requestId}` };
+        if (misaddressed && sourceIndex === 1) {
+          // A stored native answer at another address is not a fresh command.
+          const previous = [...rows.values()][0]!;
+          const invalidRow = { ...previous, requestId };
+          rows.delete(JSON.stringify({ sessionId: previous.sessionId, turnId: previous.turnId, requestId: previous.requestId }));
+          rows.set(JSON.stringify({ sessionId: session.sessionId, turnId, requestId }), invalidRow);
+          await expect(handler.respondToMediatedPendingPermission(responses[0]!)).resolves.toMatchObject({ status: 'rejected' });
+          await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'rejected' });
+          expect(session.agentState.requests[requestId]?.nativeChoices?.requirementId).toBe(nativeChoices.requirementId);
+          break;
+        }
         const readsBeforeDecision = mediationReads;
         await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'applied', decision });
-        // One command probes at most its own address and the historical tuple, never the staged-set inventory.
+        // A command reads its own address and the ordinary non-native tuple, never the staged-set inventory.
         expect(mediationReads - readsBeforeDecision).toBeLessThanOrEqual(2);
         await expect(pending).resolves.toMatchObject({ decision: decision === 'allow' ? 'approved' : 'denied', nativeChoice });
         expect(session.agentState.requests[requestId]).toBeUndefined();
         expect(session.agentState.completedRequests[requestId]).toMatchObject({
           status: decision === 'allow' ? 'approved' : 'denied',
         });
-        expect([...rows.values()].at(-1)?.record).toMatchObject({ nativeChoice });
+        expect([...rows.values()].at(-1)?.content).toMatchObject({ t: 'plain', v: { nativeChoice } });
         await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'alreadyApplied' });
         await expect(handler.respondToMediatedPendingPermission({ ...response,
           decision: decision === 'allow' ? 'deny' : 'allow',
         })).resolves.toMatchObject({ status: 'rejected' });
         sourceIndex += 1;
       }
-      expect(rows.size).toBe(2);
+      expect(rows.size).toBe(misaddressed ? 1 : 2);
     } finally {
       await handler.reset();
     }

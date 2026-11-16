@@ -2431,13 +2431,6 @@ export abstract class BasePermissionHandler {
                 sessionId: parsedInput.data.sessionId, turnId: parsedInput.data.turnId, requestId,
             }, signal: params.signal });
         }
-        // Older native settlements used only the request tuple. They remain
-        // exact-retry evidence, but cannot occupy another human command's row.
-        if (existingRecord.status === 'found' && existingRecord.stored.kind === 'remote_settlement.v1'
-            && existingRecord.stored.record.nativeChoice
-            && existingRecord.stored.record.idempotencyKey !== parsedInput.data.idempotencyKey) {
-            existingRecord = { status: 'absent' };
-        }
         if (existingRecord.status === 'unavailable' || this.mediationRecordStore !== store)
             return { status: 'rejected', code: 'mediationStateUnavailable' };
         const selected = this.prepareMediatedPermissionResponse({ input: parsedInput.data, mediator: params.mediator },
@@ -3515,9 +3508,7 @@ export abstract class BasePermissionHandler {
         status: 'applied' | 'alreadyApplied',
     ): SessionPermissionRemoteRespondOutputV1 {
         const record = stored.record;
-        const expectedIdentity = { ...mediationRecordIdentity(input),
-            ...(stored.identity.responseKey === undefined ? { responseKey: undefined } : {}),
-        };
+        const expectedIdentity = mediationRecordIdentity(input);
         if (
             mediationRecordIdentityKey(stored.identity) !== mediationRecordIdentityKey(expectedIdentity)
             || record.turnId !== stored.identity.turnId
