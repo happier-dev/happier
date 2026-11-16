@@ -92,6 +92,32 @@ it('keeps a page\'s own menu trigger at the bar\'s trailing edge, after the fold
     }
 });
 
+it('keeps a page header\'s own list controls on the phone bar, and in the page where no bar shows the title', async () => {
+    const { PageHeader, NavigationTitleChromeProvider } = await import('../PageHeader');
+    const trailing = <View testID="add-menu-trigger" />;
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    try {
+        navigation.setOptions.mockClear();
+        await act(async () => root.render(<NavigationTitleChromeProvider showsTitle>
+            <PageHeader title="Credentials" navigationTrailing={trailing} />
+        </NavigationTitleChromeProvider>));
+        const options = navigation.setOptions.mock.calls.at(-1)?.[0] as { headerRight: () => React.ReactElement<{ children: React.ReactNode }> };
+        const children = React.Children.toArray(barOf(options.headerRight())).filter(React.isValidElement);
+        // Nothing folds into a "…": the controls stay as they are at the bar's trailing edge.
+        expect(children.some(child => child.type === PageHeaderMenu)).toBe(false);
+        expect((children.at(-1) as React.ReactElement<{ testID?: string }>).props.testID).toBe('add-menu-trigger');
+        expect(host.querySelector('[data-testid="add-menu-trigger"]')).toBeNull();
+
+        await act(async () => root.render(<NavigationTitleChromeProvider showsTitle={false}>
+            <PageHeader title="Credentials" navigationTrailing={trailing} />
+        </NavigationTitleChromeProvider>));
+        expect(host.querySelector('[data-testid="add-menu-trigger"]')).not.toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+    }
+});
+
 it('keeps an entity\'s one state switch visible on the bar and folds its labelled buttons into the one menu', async () => {
     const test = vi.fn();
     const remove = vi.fn();

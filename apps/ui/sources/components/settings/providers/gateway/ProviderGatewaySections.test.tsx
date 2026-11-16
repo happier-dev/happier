@@ -58,15 +58,17 @@ describe('ProviderGatewaySections (lab rgateway GW1/GW2)', () => {
     });
 
     it('distinguishes unread, loading, failed, and observed empty helper catalogs', async () => {
-        const modelRoles = [{ id: 'reviewer', title: 'Code reviewer' }];
+        const modelRoles = [{ id: 'reviewer', title: 'Code reviewer' }, { id: 'fast', title: 'Fast' }];
+        // An unread list is said once for the section with what it waits on, never "Unavailable" on every role.
         const unread = await render({ modelRoles, models: null });
-        expect(unread.getTextContent()).toContain(t('common.unavailable'));
+        expect(unread.getTextContent()).not.toContain(t('common.unavailable'));
+        expect(unread.getTextContent().split(t('settingsProvidersCollection.gateway.helperCatalogUnread')).length - 1).toBe(1);
         const loading = await render({ modelRoles, models: null, modelsLoading: true });
         expect(loading.getTextContent()).toContain(t('common.loading'));
         expect(loading.findByTestId('provider-gateway-helper:reviewer')?.props.disabled).toBe(true);
         const error = createProviderErrorV1('provider_endpoint_unreachable');
         const failed = await render({ modelRoles, models: null, modelsError: error });
-        expect(failed.getTextContent()).toContain(t(presentProviderError(error).descriptionKey));
+        expect(failed.getTextContent().split(t(presentProviderError(error).descriptionKey)).length - 1).toBe(1);
         const empty = await render({ modelRoles, models: [] });
         expect(empty.getTextContent()).not.toContain(t('common.unavailable'));
         expect(empty.findByTestId('provider-gateway-helper:reviewer')?.props.disabled).toBe(false);

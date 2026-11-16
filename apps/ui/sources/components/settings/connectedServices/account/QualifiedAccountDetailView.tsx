@@ -17,6 +17,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { t } from '@/text';
 import { type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -461,6 +462,11 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ) : undefined}
                         rightElementOutsidePressable
                     /> : null}
+                    {/* A running or waiting sign-in continues the row above it, drawn on this sheet rather than as a
+                        second box inside it. */}
+                    {props.signInFlow ? <SectionContentRow>
+                        <SurfaceFreshnessOnSheetProvider>{props.signInFlow}</SurfaceFreshnessOnSheetProvider>
+                    </SectionContentRow> : null}
                     {/* One row, one decision: the row names what it checks and its last result; the button is the verb. */}
                     <Item
                         testID={`${testID}:test-connection`}
@@ -480,7 +486,6 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         />}
                         rightElementOutsidePressable
                     />
-                    {props.signInFlow ? <SectionContentRow>{props.signInFlow}</SectionContentRow> : null}
                     {/* A fact, not a control: the key exists because the account connected; its value stays sealed. */}
                     {props.includedApiKey ? <Item
                         testID={`${testID}:included-api-key`}

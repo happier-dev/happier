@@ -87,7 +87,10 @@ function readAuthenticationCauseMessage(errorLike: ErrorLike): string | null {
  * What the failing step was doing. `load`: reading a sign-in (its description, its form, a waiting
  * attempt) — nothing was changed, so an unexplained failure there says the sign-in couldn't load.
  */
-export type ConnectedServiceSettingsErrorContext = Readonly<{ phase: 'load'; serviceName: string }>;
+export type ConnectedServiceSettingsErrorContext =
+    | Readonly<{ phase: 'load'; serviceName: string }>
+    /** `usage`: reading or refreshing an account's usage; an unexplained failure says usage couldn't refresh. */
+    | Readonly<{ phase: 'usage' }>;
 
 export function resolveConnectedServiceSettingsErrorMessage(error: unknown, context?: ConnectedServiceSettingsErrorContext): string {
     const errorLike = asErrorLike(error);
@@ -95,7 +98,9 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
     const code = rawCode === null ? null : normalizeLegacyConnectedServiceUxDiagnosticCode(rawCode);
     const unexplained = context?.phase === 'load'
         ? t('connectedServices.errors.signInLoadFailed', { service: context.serviceName })
-        : t('connectedServices.errors.generic');
+        : context?.phase === 'usage'
+            ? t('connectedServices.errors.quotaRefreshFailed')
+            : t('connectedServices.errors.generic');
     // The typed cause names what actually failed, so it wins over any generic copy for the code.
     const cause = readAuthenticationCauseMessage(errorLike);
     if (cause) return cause;

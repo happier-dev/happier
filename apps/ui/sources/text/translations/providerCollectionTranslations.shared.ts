@@ -63,6 +63,7 @@ export const en = {
             helperDefault: 'Default',
             helperStrongest: 'Strongest',
             helperSameAsSession: 'Same as session',
+            helperCatalogUnread: 'You can pin a model once the gateway lists its models.',
             detailsTitle: 'Details',
             whatToKnow: 'What to know',
             whatToKnowTitle: 'Your subscriptions, outside their own apps',

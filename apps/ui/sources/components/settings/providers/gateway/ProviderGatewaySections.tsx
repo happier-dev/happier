@@ -35,6 +35,7 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -249,10 +250,12 @@ export const ProviderGatewaySections = React.memo(
     const computerTrouble = chosen !== null && chosen.machine?.online !== true;
 
     const helperCatalogPending = props.models === null && props.modelsLoading === true;
+    // The list's state is one fact for every role: said once above the roles, never on each of them.
     const helperCatalogStatus = props.modelsError
       ? t(presentProviderError(props.modelsError).descriptionKey)
       : helperCatalogPending ? t('common.loading')
-        : props.models === null ? t('common.unavailable') : undefined;
+        : props.models === null ? t('settingsProvidersCollection.gateway.helperCatalogUnread') : undefined;
+    const helperCatalogStatusKind = props.modelsError ? 'error' as const : helperCatalogPending ? 'loading' as const : 'empty' as const;
     const sessionHelperItem = React.useMemo(() => ({ id: SAME_AS_SESSION,
       title: t('settingsProvidersCollection.gateway.helperSameAsSession') }), []);
     const helperItems = React.useMemo(() => helperMenuOpen === null ? [sessionHelperItem] : [
@@ -411,6 +414,10 @@ export const ProviderGatewaySections = React.memo(
             'settingsProvidersCollection.gateway.helperDescription',
           )}
         >
+          {helperCatalogStatus && props.modelRoles.length > 0 ? (
+            <SurfaceStateCard testID="provider-gateway-helpers:catalog" size="line"
+              kind={helperCatalogStatusKind} title={helperCatalogStatus} />
+          ) : null}
           <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.helpers}><>{props.modelRoles.map(({ id: role, title }) => {
             const pinned = props.helperModels?.[role] ?? SAME_AS_SESSION;
             const selectedModel = helperMenuOpen !== role && pinned !== SAME_AS_SESSION
@@ -434,7 +441,6 @@ export const ProviderGatewaySections = React.memo(
                 emptyLabel={helperCatalogStatus}
                 itemTrigger={{
                   title,
-                  subtitle: helperCatalogStatus,
                   // A pin whose model left the gateway still says which model it names.
                   detailFormatter: (selected) => selected?.title ?? pinned,
                   field: { quietValue: pinned === SAME_AS_SESSION },

@@ -314,9 +314,16 @@ export const ConnectedAccountSignInRecovery = React.memo(function ConnectedAccou
 export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccountIndexRowView(props: ConnectedAccountIndexRowViewProps) {
     const { facts } = props;
     const accessMode = props.accessMode ?? resolveConnectedAccountAccessMode(null, facts.subscription);
+    // On a sheet that mixes services a mode alone ("Subscription", "API key") doesn't say whose: the service
+    // leads it unless a plan already names the product ("ChatGPT Pro").
+    // A service already named for its mode ("OpenAI API key") is not followed by the mode again.
+    const planNamesProduct = Boolean(facts.planLabel?.trim()) && accessMode?.kind !== 'apiKey';
+    const service = planNamesProduct ? null : props.serviceFact;
+    const mode = accessMode ? presentConnectedAccountAccessMode(accessMode, facts.planLabel) : facts.planLabel;
     const fact = [
         props.identityLabel,
-        accessMode ? presentConnectedAccountAccessMode(accessMode, facts.planLabel) : facts.planLabel ?? props.serviceFact ?? null,
+        service,
+        service && mode && service.toLocaleLowerCase().includes(mode.toLocaleLowerCase()) ? null : mode,
     ].filter(Boolean).join(' · ');
     // A page row lends its trailing control the row's padding; a stack of meters is taller than one control, so it
     // keeps that padding and the row grows around it instead of the stack crossing its dividers (R137 Credentials).

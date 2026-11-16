@@ -77,6 +77,8 @@ const EMPTY_VIEW: QualifiedQuotaSnapshotStoreEntry = Object.freeze({
     read: false,
 });
 
+/** Reading usage changes nothing: an unexplained failure says usage couldn't refresh, never that a change failed. */
+const USAGE_READ = { phase: 'usage' } as const;
 const entries = new Map<string, InternalEntry>();
 const listenersByKey = new Map<string, Set<() => void>>();
 let detachProfileChanges: (() => void) | null = null;
@@ -323,7 +325,7 @@ async function runLoad(
                 && (entry.refreshSinceFetchedAt !== null || !snapshot?.meters.length)) {
                 // Provider messages, headers and status codes stay diagnostic-only, never user-facing copy.
                 const error = diagnostic?.code
-                    ? resolveConnectedServiceSettingsErrorMessage({ code: diagnostic.code })
+                    ? resolveConnectedServiceSettingsErrorMessage({ code: diagnostic.code }, USAGE_READ)
                     : t('connectedServices.errors.quotaRefreshFailed');
                 // A retry time already past is no guidance; the next read says what is true then.
                 entry.error = typeof diagnostic?.retryAtMs === 'number' && diagnostic.retryAtMs > Date.now()
@@ -352,7 +354,7 @@ async function runLoad(
                 entry.usageRecordId = null;
             }
             entry.producerRefreshPending = false;
-            entry.error = resolveConnectedServiceSettingsErrorMessage(error);
+            entry.error = resolveConnectedServiceSettingsErrorMessage(error, USAGE_READ);
             entry.nextFetchAtMs = Number.POSITIVE_INFINITY;
             return null;
         } finally {
@@ -517,7 +519,7 @@ export async function refreshQualifiedQuotaSnapshot(
                 entry.supported = false;
             }
             entry.producerRefreshPending = false;
-            entry.error = resolveConnectedServiceSettingsErrorMessage(error);
+            entry.error = resolveConnectedServiceSettingsErrorMessage(error, USAGE_READ);
             entry.refreshSinceFetchedAt = null;
             entry.refreshing = false;
         } finally {

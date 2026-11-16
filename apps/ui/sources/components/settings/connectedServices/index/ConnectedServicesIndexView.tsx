@@ -455,7 +455,10 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                     description: t('connectedServicesCollection.indexDescription'),
                 })}
                 detailsPlacement="column"
-                actions={props.compact ? props.headerActions : switcher}
+                // The phone's privacy eye and "+" are the list's frequent controls (crPhone): they stay
+                // visible at the navigation bar's edge instead of folding into its "…".
+                navigationTrailing={props.compact ? props.headerActions : undefined}
+                actions={props.compact ? undefined : switcher}
                 details={(
                     <View style={styles.details}>
                         {accountCount > 0 ? (

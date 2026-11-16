@@ -50,4 +50,26 @@ describe('account list row', () => {
             expect(refresh).not.toHaveBeenCalled();
         });
     }
+
+    // The Overview mixes services on one sheet: a mode alone ("Subscription", "API key") would not say whose.
+    it.each([
+        [{ kind: 'subscription' } as const, null, 'Muse · Subscription'],
+        [{ kind: 'apiKey', keySuffix: null } as const, null, 'Gemini · API key'],
+        [{ kind: 'subscription' } as const, 'Muse Plus', 'Muse Plus'],
+        // A service whose name already says it is a key is not followed by "API key" again.
+        [{ kind: 'apiKey', keySuffix: null } as const, null, 'OpenAI API key'],
+    ])('names the service beside an account mode no plan names (%o, plan %s)', async (accessMode, planLabel, expected) => {
+        const facts: ConnectedAccountIndexFacts = {
+            usage: { kind: 'none' }, planLabel, subscription: null, recoveryCredits: null,
+            fetchedAt: null, staleSince: null, refreshing: false, refresh: null,
+        };
+        const service = expected.startsWith('Gemini') ? 'Gemini' : expected.startsWith('OpenAI') ? 'OpenAI API key' : 'Muse';
+        const screen = await renderScreen(<ConnectedAccountIndexRowView
+            testID="account" title="we-are@happier.dev" identityLabel={null} roles={[]} signedOut={null}
+            legacyServiceId={null} accountId="a" star={null} onOpen={vi.fn()} accessMode={accessMode}
+            serviceFact={service} facts={facts} now={2_000} compact={false}
+        />);
+        expect(screen.getTextContent()).toContain(expected);
+        expect(screen.getTextContent()).not.toContain(`${expected} · `);
+    });
 });

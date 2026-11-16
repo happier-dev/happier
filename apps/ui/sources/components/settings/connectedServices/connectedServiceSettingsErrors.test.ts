@@ -208,6 +208,15 @@ describe('connected-service settings errors', () => {
         .toBe(t('connectedServices.errors.accountServiceUnavailable'));
     });
 
+  // Reading an account's usage changes nothing either: an unexplained failure says usage could not be read.
+  it.each([
+    ['an unrecognised code', { code: 'boat_quota_unreadable' }],
+    ['no code at all', new Error('private transport diagnostics')],
+  ])('says usage could not refresh, not that a change failed, for %s', (_case, error) => {
+    expect(resolveConnectedServiceSettingsErrorMessage(error, { phase: 'usage' }))
+      .toBe(t('connectedServices.errors.quotaRefreshFailed'));
+  });
+
   // Loading a sign-in (its description, its form, a waiting attempt) changes nothing: an unexplained
   // failure there says the sign-in could not load, never that a change or a save did not finish.
   describe('while the sign-in loads', () => {

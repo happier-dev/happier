@@ -114,6 +114,11 @@ export type PageHeaderProps = Readonly<{
     /** Keep an entity's frequent operations in its page instead of the phone navigation overflow. */
     actionsPlacement?: 'navigation' | 'page';
     /**
+     * A list's own frequent controls (its "+" add menu, a privacy eye): kept as they are at the phone
+     * navigation bar's trailing edge, after the folded menu, and closing the page's actions elsewhere.
+     */
+    navigationTrailing?: React.ReactNode;
+    /**
      * Prefer the title row, wrapping controls beneath when the title needs its readable width
      * (`wrap`); keep them on it (`inline`); or hang the mark and controls from the title's line with
      * the description and facts beneath at full width (`hang`).
@@ -232,7 +237,10 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const routeActions = useClaimedStackHeaderActions();
     // A page that is a pane host's main column offers "Hide <page>" as its header's last control.
     const hideMain = usePaneMainHideAvailable() ? <PaneMainHideButton /> : null;
-    const ownActions = chromeShowsTitle && props.actionsPlacement !== 'page' ? null : props.actions;
+    const pageActions = chromeShowsTitle && props.actionsPlacement !== 'page' ? null : props.actions;
+    const ownActions = !chromeShowsTitle && props.navigationTrailing != null
+        ? <>{pageActions}{props.navigationTrailing}</>
+        : pageActions;
     const actions = pageButtons || routeActions
         ? <View style={stylesheet.actions}>{ownActions}{routeActions}{pageButtons}{hideMain}</View>
         : hideMain ? <>{ownActions}{hideMain}</> : ownActions;
@@ -271,9 +279,10 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
 
     return (
         <>
-        {props.primaryAction || props.cancelAction || props.actions ? (
+        {props.primaryAction || props.cancelAction || props.actions || props.navigationTrailing ? (
             <NavigationHeaderActions primary={primaryInPage ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
-                actions={props.actionsPlacement === 'page' ? undefined : props.actions} onPrimaryDoesNotFit={onPrimaryDoesNotFit} />
+                actions={props.actionsPlacement === 'page' ? undefined : props.actions} trailing={props.navigationTrailing}
+                onPrimaryDoesNotFit={onPrimaryDoesNotFit} />
         ) : null}
         <HappierPageHeader
             title={titleNode}
