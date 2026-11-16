@@ -11,6 +11,7 @@ import { MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/ac
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machine/agentIsolation';
+import { resolveMachineAgentIsolationOperationTimeoutMs } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
 import { MACHINE_STORAGE_ACTION_INPUT_SCHEMAS, MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/storage';
 import { MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS, MACHINE_PROCESSES_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineProcesses';
 import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
@@ -305,6 +306,7 @@ export function createCliMachineResourceActionDeps(
         };
         const invoke = (options = {}) => callMachineAction({ machineId: request.machineId, serverId, method: actionId,
           request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
+          timeoutMs: resolveMachineAgentIsolationOperationTimeoutMs(actionId),
           ...(signal ? { signal } : {}), ...options });
         if (actionId === 'machines.agentIsolation.preview' || actionId === 'machines.agentIsolation.status') { await assertCurrent(); return invoke(); }
         const { executeCapturedMachineAction } = await import('@/api/machine/capturedMachineAction');

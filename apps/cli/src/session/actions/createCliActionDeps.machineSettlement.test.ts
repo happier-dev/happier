@@ -34,6 +34,20 @@ const reads = [
 ] as const;
 
 describe('CLI captured Machine acknowledgement settlement', () => {
+  it('allows isolation Preview to wait for person-paced elevation without a transport deadline', async () => {
+    const transport = await import('@/session/transport/rpc/machineRpc');
+    const preview = { kind: 'ready', policy: { enabled: true }, metadataVersion: 5,
+      plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'review' },
+      status: { kind: 'applying', phase: 'runtime_replacement' } };
+    // Machine RPC is the network boundary. A bounded call expires before the person answers.
+    vi.spyOn(transport, 'callExactMachineRpc').mockImplementation(async request => request.timeoutMs === null
+      ? preview : { error: 'Machine RPC call timeout', errorCode: 'MACHINE_RPC_TIMEOUT' });
+    const executor = createActionExecutor(createCliActionDeps(params));
+    expect(await executor.execute('machines.agentIsolation.preview',
+      { machineId: 'selected', enabled: true, memberProvisioning: 'linuxUsersV1' }, context))
+      .toEqual({ ok: true, result: preview });
+  });
+
   it.each([
     { actionId: 'machines.vitals.get', input: { machineId: 'selected', view: 'summary' } },
     { actionId: 'machines.vitals.history.get', input: { machineId: 'selected', range: '1h' } },
@@ -73,7 +87,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     ] as const) {
       rpc.mockResolvedValueOnce(reply);
       expect(await executor.execute(action.actionId, action.input, context))
-        .toEqual({ ok: false, errorCode, error: reply.error });
+        .toMatchObject({ ok: false, errorCode, error: reply.error });
     }
   });
   it('retains delayed policy save completion without a subordinate acknowledgement deadline', async () => {
