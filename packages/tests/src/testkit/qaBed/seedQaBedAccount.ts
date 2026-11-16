@@ -95,8 +95,9 @@ export async function seedQaBedAccount(params: Readonly<{
       const host = `${label}-dev-${String(index).padStart(3, '0')}`;
       const registered = await registerMachineIdentity({
         baseUrl, token: auth.token, machineId: perfFixtureId(seed, 'machine', index),
+        // The fields a released daemon publishes; the client rejects metadata without them.
         metadata: encryptDataKeyBase64({ host, platform: ['linux', 'darwin', 'win32'][index % 3], homeDir: '/home/qa',
-          version: '0.0.0-qa-bed-fixture', displayName: host }, dataKey),
+          happyHomeDir: '/home/qa/.happier', happyCliVersion: '0.0.0-qa-bed-fixture', displayName: host }, dataKey),
         dataEncryptionKey: wrapDataKey(dataKey),
       });
       if (registered.status !== 200) throw new Error(`QA bed Machine registration failed (status=${registered.status})`);
