@@ -10,7 +10,7 @@ import type {
 import type { BundledConversationRuntimeHost } from '@/voice/registry/bundledConversationRuntimeHost';
 import type { BundledConversationRuntimeEntry } from '@/voice/registry/bundledConversationRuntimes';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
-import { createDeferred, createMachineFixture, createSessionFixture } from '@/dev/testkit';
+import { createDeferred, createHydratedPlainMachineFixture, createSessionFixture } from '@/dev/testkit';
 import {
   audioSessionRelease,
   localVoiceHomeId,
@@ -23,6 +23,7 @@ import {
 } from '@/voice/local/localVoiceEngine.testHarness';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
 afterAll(() => restoreHarnessModuleLoader());
@@ -121,15 +122,13 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     sessionRpcBoundary.sessionRpc.mockClear();
     machineRpcBoundary.machineRpc.mockClear();
     clearDaemonMergedProjectionCacheForTests();
+    const scope = storage.getState().profileScope;
+    if (!scope) throw new Error('Adapter test Account scope was not applied');
     const machines = ['machine-voice-agent-race-a', 'machine-voice-agent-race-b',
-      'machine-voice-generation-cleanup'].map(id => createMachineFixture({
-        id, active: true, activeAt: Date.now(),
+      'machine-voice-generation-cleanup'].map(id => createHydratedPlainMachineFixture({
+        id, accountId: scope.accountId, machine: { active: true, activeAt: Date.now() },
       }));
-    storage.setState(state => ({
-      machines: { ...state.machines, ...Object.fromEntries(machines.map(machine => [machine.id, machine])) },
-      machineListByServerId: { ...state.machineListByServerId,
-        [requireTestServerId()]: [...Object.values(state.machines), ...machines] },
-    }));
+    await publishMachineInventoryForTest(scope, [...Object.values(storage.getState().machines), ...machines]);
     const [{ resetBundledConversationRuntimeGenerationForTests }, store] = await Promise.all([
       import('@/voice/registry/bundledConversationRuntimeGeneration'),
       import('@/voice/runtime/machine/voiceConversationRuntimeStore'),
