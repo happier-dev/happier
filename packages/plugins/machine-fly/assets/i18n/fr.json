@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Des machines avec un volume persistant. Le calcul et le stockage conservé sont facturés séparément.",
   "machineFly.presentation.ready": "Compte connecté",
-  "machineFly.presentation.unavailable": "Compte indisponible"
+  "machineFly.presentation.unavailable": "Compte indisponible",
+  "machineFly.presentation.customSize": "Taille personnalisée"
 }

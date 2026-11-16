@@ -8,5 +8,6 @@
   "machineModal.presentation.kind": "沙盒",
   "machineModal.presentation.description": "隨需提供並遵循原生執行期限的雲端沙盒。",
   "machineModal.presentation.ready": "帳戶已連接",
-  "machineModal.presentation.unavailable": "帳戶不可用"
+  "machineModal.presentation.unavailable": "帳戶不可用",
+  "machineModal.presentation.customSize": "自訂規格"
 }

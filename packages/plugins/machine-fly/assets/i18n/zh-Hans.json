@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "虚拟机",
   "machineFly.presentation.description": "带持久卷的机器。计算和保留存储分别计费。",
   "machineFly.presentation.ready": "账户已连接",
-  "machineFly.presentation.unavailable": "账户不可用"
+  "machineFly.presentation.unavailable": "账户不可用",
+  "machineFly.presentation.customSize": "自定义规格"
 }

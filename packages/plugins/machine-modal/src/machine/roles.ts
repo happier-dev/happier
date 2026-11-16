@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { machinePresentationLabel } from '../ui/translations.js';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { MachineProvisionerDestroyResultV1, MachineProvisionerNativeCauseV1, MachineProvisionerObservationV1, MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -52,7 +53,7 @@ export function createModalProvisionerRoles(client: ModalNativeClient, observedA
       // The SDK cannot enumerate Apps or registry images. Shared schema-backed
       // inputs supply the explicit reviewed variant; no fabricated native catalog.
       const image = { id: launch.imageReference, title: launch.imageReference };
-      const size = { id: `${launch.resources.cpu}:${launch.resources.memoryMb}`, title: `${launch.resources.cpu} CPU · ${launch.resources.memoryMb} MiB`,
+      const size = { id: `${launch.resources.cpu}:${launch.resources.memoryMb}`, title: machinePresentationLabel('customSize'),
         cpuCores: launch.resources.cpu, memoryBytes: launch.resources.memoryMb * 1024 * 1024 };
       // The host persists these reviewed create limits. Inspect only supplies a
       // native expiry if one exists; it must never turn this duration into a clock time.

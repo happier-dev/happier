@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { describeManagedSize } from '@happier-dev/protocol/machines/managed/configurationPresentation';
 import type { Image } from 'modal';
 import { readInputPath, writeInputPath } from '@happier-dev/plugin-sdk/actions';
 import { compilePluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
@@ -83,6 +84,10 @@ describe('Modal public machine provisioner roles', () => {
     const selected = projectOptions(options);
     expect(selected.kind).toBe('ready');
     if (selected.kind !== 'ready') throw new Error('Expected reviewed Modal form to project a launch');
+    const size = selected.nativeFacts.size;
+    if (!size) throw new Error('Expected selected size');
+    const title = typeof size.title === 'string' ? size.title : size.title.fallback;
+    expect(describeManagedSize(title, size)).toBe('Custom size · 0.125\u00a0cores · 0.5\u00a0GiB');
     const acquired = MODAL_ROLE_SCHEMAS.acquireResult.parse(await roles.acquire(MODAL_ROLE_SCHEMAS.acquireInput.parse({ launch: selected.launch, managedId: 'managed-retained' })));
     expect(acquired).toMatchObject({ kind: 'bound', resource: { value: resource } });
     expect(client.sandboxes.create).toHaveBeenCalledWith({ appId: resource.appId }, expect.objectContaining({ imageId: 'im-selected' }),

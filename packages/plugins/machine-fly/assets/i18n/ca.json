@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Màquines amb volum persistent. El còmput i l’emmagatzematge conservat es facturen per separat.",
   "machineFly.presentation.ready": "Compte connectat",
-  "machineFly.presentation.unavailable": "Compte no disponible"
+  "machineFly.presentation.unavailable": "Compte no disponible",
+  "machineFly.presentation.customSize": "Mida personalitzada"
 }

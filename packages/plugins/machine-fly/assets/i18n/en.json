@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Machines with a persistent volume. Compute and retained storage are billed separately.",
   "machineFly.presentation.ready": "Account connected",
-  "machineFly.presentation.unavailable": "Account unavailable"
+  "machineFly.presentation.unavailable": "Account unavailable",
+  "machineFly.presentation.customSize": "Custom size"
 }

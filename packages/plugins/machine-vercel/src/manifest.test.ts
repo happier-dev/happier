@@ -10,6 +10,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { describeManagedSize } from '@happier-dev/protocol/machines/managed/configurationPresentation';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { deliverManagedNativeFile } from '../../../../apps/cli/src/machines/managed/nativeFileDelivery';
 import { PLUGIN, PLUGIN_MANIFEST, MACHINE_PROVISIONER, ROLE_SCHEMAS } from './index.js';
@@ -290,6 +291,10 @@ describe('public Vercel provisioner composition', () => {
             selection: { ...selection, duration: String(duration) }, launchSchema: VercelLaunchSchema.jsonSchema });
           expect(projected).toMatchObject({ kind: 'ready', launch: { timeoutMs: duration },
             nativeFacts: { duration: { afterMs: duration } } });
+          if (projected.kind !== 'ready' || !projected.nativeFacts.size) throw new Error('Expected selected size');
+          const size = projected.nativeFacts.size;
+          const title = typeof size.title === 'string' ? size.title : size.title.fallback;
+          expect(describeManagedSize(title, size)).toBe('Custom size · 2\u00a0cores · 4\u00a0GiB');
         }
       } finally { await kit.dispose(); }
     });

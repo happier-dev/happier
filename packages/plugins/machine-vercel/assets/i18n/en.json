@@ -23,5 +23,6 @@
   "machineVercel.nativeCredentialConfirmTitle": "Apply Vercel credential delivery?",
   "machineVercel.nativeCredentialConfirmBody": "The selected credential key may be disclosed to Vercel’s control plane, separate from the provisioning token. Vercel keeps the key outside the guest, but the source custodian and Vercel remain trusted. Installed requests bypass Happier’s per-request authorization, body/model policy and request, token or cost limits. Vendor matchers narrow key substitution; they do not inspect model JSON or deny unmatched requests. Configure budgets and key restrictions at the Gateway/vendor; coverage is not verified here. Installed rules may continue while the controller is offline, when changes and removal cannot be guaranteed. Upstream key rotation or revocation is the independent hard stop; previously disclosed bytes cannot be recalled. Attribution is observational, not authenticated member identity or chargeback. Members sharing an OS user can read and reuse each other’s placeholders; these are not private between members.",
   "machineVercel.deleteTitle": "Delete this sandbox?",
-  "machineVercel.deleteBody": "Deletes this sandbox and its owned snapshots. Its files cannot be recovered after deletion."
+  "machineVercel.deleteBody": "Deletes this sandbox and its owned snapshots. Its files cannot be recovered after deletion.",
+  "machineVercel.customSize": "Custom size"
 }

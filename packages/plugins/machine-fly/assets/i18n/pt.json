@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Máquinas com volume persistente. Computação e armazenamento mantido são cobrados separadamente.",
   "machineFly.presentation.ready": "Conta conectada",
-  "machineFly.presentation.unavailable": "Conta indisponível"
+  "machineFly.presentation.unavailable": "Conta indisponível",
+  "machineFly.presentation.customSize": "Tamanho personalizado"
 }

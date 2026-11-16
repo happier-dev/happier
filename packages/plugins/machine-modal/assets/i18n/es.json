@@ -8,5 +8,6 @@
   "machineModal.presentation.kind": "sandbox",
   "machineModal.presentation.description": "Sandboxes en la nube bajo demanda con duración nativa.",
   "machineModal.presentation.ready": "Cuenta conectada",
-  "machineModal.presentation.unavailable": "Cuenta no disponible"
+  "machineModal.presentation.unavailable": "Cuenta no disponible",
+  "machineModal.presentation.customSize": "Tamaño personalizado"
 }

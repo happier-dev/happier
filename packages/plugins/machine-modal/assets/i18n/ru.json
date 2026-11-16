@@ -8,5 +8,6 @@
   "machineModal.presentation.kind": "песочница",
   "machineModal.presentation.description": "Облачные песочницы по запросу с нативным сроком работы.",
   "machineModal.presentation.ready": "Аккаунт подключён",
-  "machineModal.presentation.unavailable": "Аккаунт недоступен"
+  "machineModal.presentation.unavailable": "Аккаунт недоступен",
+  "machineModal.presentation.customSize": "Свой размер"
 }

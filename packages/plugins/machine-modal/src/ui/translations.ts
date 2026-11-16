@@ -14,7 +14,7 @@ export const MODAL_CONFIGURATION_LABELS = {
 } as const;
 
 export const MACHINE_PRESENTATION_LABELS = {
-  "en": {"kind":"sandbox","description":"On-demand cloud sandboxes with a native lifetime.","ready":"Account connected","unavailable":"Account unavailable"},
+  "en": {"customSize":"Custom size","kind":"sandbox","description":"On-demand cloud sandboxes with a native lifetime.","ready":"Account connected","unavailable":"Account unavailable"},
 } as const;
 
 export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {

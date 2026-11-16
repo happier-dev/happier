@@ -8,5 +8,6 @@
   "machineModal.presentation.kind": "sandbox",
   "machineModal.presentation.description": "Des sandboxes cloud à la demande avec une durée de vie native.",
   "machineModal.presentation.ready": "Compte connecté",
-  "machineModal.presentation.unavailable": "Compte indisponible"
+  "machineModal.presentation.unavailable": "Compte indisponible",
+  "machineModal.presentation.customSize": "Taille personnalisée"
 }

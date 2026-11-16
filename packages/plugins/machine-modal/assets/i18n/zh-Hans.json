@@ -8,5 +8,6 @@
   "machineModal.presentation.kind": "沙盒",
   "machineModal.presentation.description": "按需提供并遵循原生运行期限的云沙盒。",
   "machineModal.presentation.ready": "账户已连接",
-  "machineModal.presentation.unavailable": "账户不可用"
+  "machineModal.presentation.unavailable": "账户不可用",
+  "machineModal.presentation.customSize": "自定义规格"
 }

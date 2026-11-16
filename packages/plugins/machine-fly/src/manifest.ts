@@ -188,7 +188,7 @@ export const PLUGIN = definePlugin({
         const selected = resolveFlyLaunchQueryCandidate(input);
         if (selected.success) {
           const launch = selected.data;
-          const size = { id: `${launch.guest.cpuKind}/${launch.guest.cpus}/${launch.guest.memoryMb}`, title: `${launch.guest.cpus} CPU · ${launch.guest.memoryMb} MB`,
+          const size = { id: `${launch.guest.cpuKind}/${launch.guest.cpus}/${launch.guest.memoryMb}`, title: machinePresentationLabel('customSize'),
             cpuCores: launch.guest.cpus, memoryBytes: launch.guest.memoryMb * 1024 * 1024,
             ...(launch.volume.kind === 'create' ? { diskBytes: launch.volume.sizeGb * 1024 * 1024 * 1024 } : {}) };
           const image = { id: launch.imageReference ?? FLY_DEFAULT_IMAGE, title: launch.imageReference ?? 'Ubuntu 24.04' };

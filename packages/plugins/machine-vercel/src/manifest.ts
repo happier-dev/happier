@@ -113,7 +113,7 @@ export const PLUGIN = definePlugin({
           if (!parsed.success) return { dimensions };
           const launch = parsed.data;
           const image = { id: launch.image, title: launch.image };
-          const size = { id: String(launch.vcpus), title: String(launch.vcpus) + ' vCPU', cpuCores: launch.vcpus, memoryBytes: launch.vcpus * 2048 * 1024 * 1024 };
+          const size = { id: String(launch.vcpus), title: label('customSize'), cpuCores: launch.vcpus, memoryBytes: launch.vcpus * 2048 * 1024 * 1024 };
           const location = { id: launch.region, title: launch.region };
           const duration = { id: String(launch.timeoutMs), title: String(launch.timeoutMs / 1000) + ' s', afterMs: launch.timeoutMs };
           // This is the reviewed native form draft, not a Cartesian catalog. The

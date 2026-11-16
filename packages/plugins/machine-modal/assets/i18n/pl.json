@@ -8,5 +8,6 @@
   "machineModal.presentation.kind": "piaskownica",
   "machineModal.presentation.description": "Piaskownice w chmurze na żądanie z natywnym czasem działania.",
   "machineModal.presentation.ready": "Konto połączone",
-  "machineModal.presentation.unavailable": "Konto niedostępne"
+  "machineModal.presentation.unavailable": "Konto niedostępne",
+  "machineModal.presentation.customSize": "Własny rozmiar"
 }

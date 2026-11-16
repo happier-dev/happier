@@ -3,6 +3,7 @@ import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 const en = {
   "kind": "sandbox",
   "description": "Sandboxes that keep their files between runs.",
+  "customSize": "Custom size",
   "image": "Image",
   "region": "Region",
   "vcpus": "vCPUs",

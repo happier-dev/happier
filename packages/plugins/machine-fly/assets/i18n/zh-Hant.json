@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "虛擬機",
   "machineFly.presentation.description": "附持久磁碟區的機器。運算和保留的儲存空間分別計費。",
   "machineFly.presentation.ready": "帳戶已連接",
-  "machineFly.presentation.unavailable": "帳戶不可用"
+  "machineFly.presentation.unavailable": "帳戶不可用",
+  "machineFly.presentation.customSize": "自訂規格"
 }

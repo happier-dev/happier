@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "ВМ",
   "machineFly.presentation.description": "Машины с постоянным томом. Вычисления и хранение данных оплачиваются отдельно.",
   "machineFly.presentation.ready": "Аккаунт подключён",
-  "machineFly.presentation.unavailable": "Аккаунт недоступен"
+  "machineFly.presentation.unavailable": "Аккаунт недоступен",
+  "machineFly.presentation.customSize": "Свой размер"
 }

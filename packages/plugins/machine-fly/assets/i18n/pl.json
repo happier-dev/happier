@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Maszyny z trwałym woluminem. Obliczenia i przechowywanie danych są rozliczane oddzielnie.",
   "machineFly.presentation.ready": "Konto połączone",
-  "machineFly.presentation.unavailable": "Konto niedostępne"
+  "machineFly.presentation.unavailable": "Konto niedostępne",
+  "machineFly.presentation.customSize": "Własny rozmiar"
 }

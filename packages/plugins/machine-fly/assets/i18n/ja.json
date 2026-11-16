@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "永続ボリュームを持つマシン。コンピューティングと保持するストレージは別々に課金されます。",
   "machineFly.presentation.ready": "アカウント接続済み",
-  "machineFly.presentation.unavailable": "アカウント利用不可"
+  "machineFly.presentation.unavailable": "アカウント利用不可",
+  "machineFly.presentation.customSize": "カスタムサイズ"
 }

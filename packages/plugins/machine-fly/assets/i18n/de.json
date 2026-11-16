@@ -26,5 +26,6 @@
   "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Maschinen mit dauerhaftem Volume. Rechenleistung und gespeicherte Daten werden getrennt berechnet.",
   "machineFly.presentation.ready": "Konto verbunden",
-  "machineFly.presentation.unavailable": "Konto nicht verfügbar"
+  "machineFly.presentation.unavailable": "Konto nicht verfügbar",
+  "machineFly.presentation.customSize": "Eigene Größe"
 }

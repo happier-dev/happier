@@ -16,7 +16,7 @@ export const FLY_CONFIGURATION_LABELS = {
 } as const satisfies Readonly<Record<string, Readonly<Record<keyof typeof en, string>>>>;
 
 export const MACHINE_PRESENTATION_LABELS = {
-  "en": {"kind":"VM","description":"Machines with a persistent volume. Compute and retained storage are billed separately.","ready":"Account connected","unavailable":"Account unavailable",
+  "en": {"customSize":"Custom size","kind":"VM","description":"Machines with a persistent volume. Compute and retained storage are billed separately.","ready":"Account connected","unavailable":"Account unavailable",
     "rootFilesystem":"Stopped root disk","volumeStorage":"Volume","snapshotStorage":"Snapshots over allowance"},
 } as const;
 

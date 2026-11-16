@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { describeManagedSize } from '@happier-dev/protocol/machines/managed/configurationPresentation';
 import { definePlugin, type PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { ConnectedAccountMaterializationRequest, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -102,6 +103,11 @@ describe('public fly machine provisioner', () => {
       ? [{ id: 'vol-1', region: 'ams', state: 'created', attached_machine_id: null }] : {});
     const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(launch, runtime.context));
     expect(options.base).toMatchObject({ available: true, launch });
+    const selected = projectOptions(options);
+    if (selected.kind !== 'ready' || !selected.nativeFacts.size) throw new Error('Expected selected size');
+    const size = selected.nativeFacts.size;
+    const title = typeof size.title === 'string' ? size.title : size.title.fallback;
+    expect(describeManagedSize(title, size)).toBe('Custom size · 1\u00a0cores · 1\u00a0GiB');
     expect([...new Set(runtime.requests.map(request => new URL(request.url).origin))].sort())
       .toEqual(['https://api.fly.io', 'https://api.machines.dev']);
     expect(runtime.materializations.filter(request => request.kind === 'environment')).toHaveLength(1);
