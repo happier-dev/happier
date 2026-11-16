@@ -3,6 +3,7 @@ import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -83,13 +84,13 @@ describe('managed approval references', () => {
         const content = { v: 1 as const, name: 'Private preset title', launch, setup };
         const reviewedFacts = { launch, optionStatus: 'current' as const,
             billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const }, prerequisites: [],
-            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] as const },
-            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } satisfies ManagedConfigurationFactsV1;
         const nativeResult = { kind: 'bound' as const,
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native-private' } } };
         const sealed = mode === 'plain' ? sealManagedMachinePresetContentV1({ presetId: 'snapshot-preset', mode, content })
             : sealManagedMachinePresetContentV1({ presetId: 'snapshot-preset', mode, content, randomBytes: length => new Uint8Array(length).fill(19),
-                recipientCensus: [{ account: { kind: 'account', accountId: 'account', firstName: null, lastName: null,
+                recipientCensus: [{ account: { kind: 'account', accountId: 'account', name: null, firstName: null, lastName: null,
                     username: null, avatarUrl: null }, envelopeStatus: 'missing', readiness: { status: 'available',
                     contentPublicKey: encodeBase64(encryption!.contentDataKey, 'base64'),
                     contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption!.contentDataKey) } }] });

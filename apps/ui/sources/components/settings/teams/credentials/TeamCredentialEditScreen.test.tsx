@@ -848,6 +848,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
         const listPath = machinePoolActionEndpointPathV1('machines.pools.list');
         const priorReads = harness.requestsFor(listPath).length;
         const retainedPools = storage.getState().machinePoolListByServerId[serverId];
+        if (!retainedPools) throw new Error('Expected the settled Pool list before retrying');
         const retainedChoices = brokerChoiceTestIds(screen);
         harness.answer(serverId, listPath, {
             body: MachinePoolListOutputV1Schema.parse({ pools: retainedPools.map(row => ({

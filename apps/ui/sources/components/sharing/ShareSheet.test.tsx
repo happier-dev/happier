@@ -51,7 +51,7 @@ describe('ShareSheet full presentation', () => {
             kind, title: kind, candidates: [], status: 'loading',
             cursor: null, hasMore: false, loadingMore: false, resolveCandidates: async () => [],
         })) };
-        const render = (settled: boolean) => <SelectionList testID="directory-test" inputValue="Ada" onSelect={noop}
+        const render = (settled: boolean) => <SelectionList testID="directory-test" inputValue="Ada" onSelect={noop} onRequestClose={noop}
             rootStep={buildShareSheetSelectionStep({ model: { ...model, revision: settled ? 1 : 0, directory: {
                 ...directory, sections: directory.sections.map(section => ({ ...section, status: settled ? 'idle' : 'loading', resolved: settled })),
             } }, actions, adapter, presentation: 'full', idPrefix: '', onExpand: noop })} />;

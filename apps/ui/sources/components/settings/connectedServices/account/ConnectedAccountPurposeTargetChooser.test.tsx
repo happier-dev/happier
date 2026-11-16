@@ -388,7 +388,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
       id: 'resource-pool',
       teamId: 'team-acme',
-      displayName: 'Acme shared pool',
+      displayName: { content: { t: 'plain', v: 'Acme shared pool' }, recipientEnvelope: null },
       resourceRevision: 3,
       readiness: { kind: 'available' },
       recoveryAction: null,
@@ -421,6 +421,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       {...props}
       teamCredentialCatalog={{
         resources: [resource],
+        displayNames: { [resource.id]: 'Acme shared pool' },
         teamNameById: { 'team-acme': 'Acme' },
         resourceStatusByKey: new Map([['team-acme:resource-pool', { kind: 'current' as const }]]),
       }}
