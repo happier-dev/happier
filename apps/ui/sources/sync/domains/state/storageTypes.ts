@@ -538,6 +538,8 @@ export interface ScmWorkingSnapshot {
      * 'summary' carries `summary` (the shared counts); 'facts' measured no working copy at all.
      */
     detail?: 'summary' | 'facts';
+    /** Content revision of a full changed-file list; offered back so an unchanged re-read sends no list. */
+    listRevision?: string;
     summary?: Readonly<{ changedFiles: number; includedAdded: number; includedRemoved: number; pendingAdded: number; pendingRemoved: number }>;
     totals: {
         isComplete?: boolean;

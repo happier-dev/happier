@@ -108,6 +108,7 @@ export function mapProtocolSnapshotToUiSnapshot(
         entries: snapshot.entries.map(mapProtocolEntryToUiEntry),
         ...(snapshot.entriesPage ? { entriesPage: { ...snapshot.entriesPage } } : {}),
         ...(snapshot.detail ? { detail: snapshot.detail } : {}),
+        ...(snapshot.listRevision ? { listRevision: snapshot.listRevision } : {}),
         ...(snapshot.summary ? { summary: { ...snapshot.summary } } : {}),
         totals: {
             includedFiles: snapshot.totals.includedFiles,

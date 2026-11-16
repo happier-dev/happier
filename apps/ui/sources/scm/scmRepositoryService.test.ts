@@ -268,6 +268,31 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(statusRpcMock).toHaveBeenCalledTimes(2);
     });
 
+    it('re-reads a held full list by its revision and keeps the held snapshot when the Machine answers unchanged', async () => {
+        setScmState({ sessions: { session_1: createSessionFixture({ id: 'session_1',
+            metadata: { machineId: 'machine-a', path: '/repo', host: 'tester.local' } }) } });
+        const listed = makeScmSnapshot({ listRevision: 'rev-1' });
+        statusRpcMock.mockResolvedValueOnce({ success: true, snapshot: listed });
+        const service = new ScmRepositoryService();
+        const held = await service.fetchSnapshotForSession('session_1');
+        expect(statusRpcMock.mock.calls[0]?.[0].payload.knownListRevision).toBeUndefined();
+
+        statusRpcMock.mockResolvedValueOnce({ success: true, unchanged: true });
+        await expect(service.fetchSnapshotForSession('session_1')).resolves.toBe(held);
+        expect(statusRpcMock.mock.calls[1]?.[0].payload.knownListRevision).toBe('rev-1');
+        // A poorer delivery is another answer: it never offers the full list's revision.
+        statusRpcMock.mockResolvedValueOnce({ success: true, snapshot: makeScmSnapshot({ detail: 'summary', entries: [] }) });
+        await service.fetchSnapshotForSession('session_1', { detail: 'summary' });
+        expect(statusRpcMock.mock.calls[2]?.[0].payload.knownListRevision).toBeUndefined();
+
+        statusRpcMock.mockResolvedValueOnce({ success: true, snapshot: makeScmSnapshot({ listRevision: 'rev-2', entries: [] }) });
+        const changed = await service.fetchSnapshotForSession('session_1');
+        expect(statusRpcMock.mock.calls[3]?.[0].payload.knownListRevision).toBe('rev-1');
+        expect(changed).not.toBe(held);
+        expect(changed?.listRevision).toBe('rev-2');
+        expect(service.readCachedSnapshotForSession('session_1')).toBe(changed);
+    });
+
     it('returns null when session metadata path is unavailable', async () => {
         setScmState({
             sessions: {
@@ -880,6 +905,17 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
         expect(statusRpcMock).toHaveBeenCalledTimes(4);
         expect(service.readCachedSnapshotForMachinePath(target)).toBe(complete);
         expect(statusRpcMock.mock.calls[3]?.[0].payload.entriesPage).toEqual({ limit: 1, cursor: 1, path: 'second.ts' });
+    });
+
+    it('re-reads a held machine-path full list by its revision and keeps the held snapshot when unchanged', async () => {
+        statusRpcMock.mockResolvedValueOnce({ success: true, snapshot: makeScmSnapshot({ projectKey: '', repo: { rootPath: '/Users/tester/repo' }, listRevision: 'rev-1' }) });
+        const service = new ScmRepositoryService();
+        const target = { machineId: 'machine-a', path: '~/repo' };
+        const held = await service.fetchSnapshotForMachinePath(target);
+        statusRpcMock.mockResolvedValueOnce({ success: true, unchanged: true });
+        await expect(service.fetchSnapshotForMachinePath(target)).resolves.toBe(held);
+        expect(statusRpcMock.mock.calls[1]?.[0].payload.knownListRevision).toBe('rev-1');
+        expect(service.readCachedSnapshotForMachinePath(target)).toBe(held);
     });
 
     it('does not retain a standalone page as a complete snapshot', async () => {

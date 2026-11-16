@@ -170,6 +170,11 @@ function isScmStatusSnapshotResponse(response: unknown): response is ScmStatusSn
     );
 }
 
+/** The Machine's answer to `knownListRevision`: the held full list is still current. */
+function isUnchangedListResponse(response: unknown): boolean {
+    return isScmStatusSnapshotResponse(response) && response.success === true && response.unchanged === true;
+}
+
 function readSuccessfulSnapshot(response: unknown): ProtocolScmWorkingSnapshot | undefined {
     if (!isScmStatusSnapshotResponse(response) || response.success !== true) {
         return undefined;
@@ -618,18 +623,20 @@ export class ScmRepositoryService {
             // Session SCM RPC runs within the session working directory already. Passing an absolute
             // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
             // the CLI security layer resolves `cwd` relative to the working directory.
+            // A full re-read offers the held list's revision; an unchanged answer keeps that snapshot.
+            const held = !detail && !options?.entriesPage ? this.readCachedSnapshotForSession(sessionId) : null;
             const response = await sessionScmStatusSnapshot(sessionId, {
                 ...(detail ? { detail } : {}),
                 ...(options?.entriesPage ? { entriesPage: options.entriesPage } : {}),
+                ...(held?.listRevision ? { knownListRevision: held.listRevision } : {}),
             });
-            const projectKey = resolveCanonicalScmProjectKey({
-                fallbackProjectKey: request.repoIdentityKey,
-                machineId: request.machineId,
-                snapshot: readSuccessfulSnapshot(response) ?? null,
-            });
-            const snapshot = normalizeScmSnapshotResponseOrThrow({
+            const snapshot = held?.listRevision && isUnchangedListResponse(response) ? held : normalizeScmSnapshotResponseOrThrow({
                 response,
-                projectKey,
+                projectKey: resolveCanonicalScmProjectKey({
+                    fallbackProjectKey: request.repoIdentityKey,
+                    machineId: request.machineId,
+                    snapshot: readSuccessfulSnapshot(response) ?? null,
+                }),
                 fetchedAt,
                 emptyRootPath: null,
             });
@@ -675,24 +682,26 @@ export class ScmRepositoryService {
         return await this.fetchSnapshotForRepoIdentity(cacheNamespaceKey, async () => {
             const fetchedAt = Date.now();
             const lifetime = captureActiveServerAccountScopeLifetime();
+            // A full re-read offers the held list's revision; an unchanged answer keeps that snapshot.
+            const held = !detail && !input.entriesPage ? this.readCachedSnapshotForMachinePath(input) : null;
             const snapshotRequest = {
                 cwd: request.resolvedPath,
                 ...(includeWorktreeStatus ? { includeWorktreeStatus: true } : {}),
                 ...(detail ? { detail } : {}),
                 ...(input.entriesPage ? { entriesPage: input.entriesPage } : {}),
+                ...(held?.listRevision ? { knownListRevision: held.listRevision } : {}),
             };
             const serverId = typeof input.serverId === 'string' ? input.serverId.trim() : '';
             const response = serverId
                 ? await machineScmStatusSnapshot(request.machineId, snapshotRequest, { serverId })
                 : await machineScmStatusSnapshot(request.machineId, snapshotRequest);
-            const projectKey = resolveCanonicalScmProjectKey({
-                fallbackProjectKey: `${request.machineId}:${request.resolvedPath}`,
-                machineId: request.machineId,
-                snapshot: readSuccessfulSnapshot(response) ?? null,
-            });
-            const snapshot = normalizeScmSnapshotResponseOrThrow({
+            const snapshot = held?.listRevision && isUnchangedListResponse(response) ? held : normalizeScmSnapshotResponseOrThrow({
                 response,
-                projectKey,
+                projectKey: resolveCanonicalScmProjectKey({
+                    fallbackProjectKey: `${request.machineId}:${request.resolvedPath}`,
+                    machineId: request.machineId,
+                    snapshot: readSuccessfulSnapshot(response) ?? null,
+                }),
                 fetchedAt,
                 emptyRootPath: request.resolvedPath,
             });
