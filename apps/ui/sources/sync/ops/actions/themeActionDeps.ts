@@ -1,0 +1,130 @@
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
+import type { ThemeActionRequest, ThemeCssCoverage, ThemeCssDetailedCoverage } from '@happier-dev/protocol/actions/themeActionFamily';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { mergeThemeProfileDocumentEdit, type ThemeProfileLibrary, type ThemeProfileMode, type ThemeReference, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+
+import { importThemeProfileFromJson, exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
+import { randomUUID } from '@/platform/randomUUID';
+
+import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
+import type { ThemeSurfacePaintDescriptor } from '@happier-dev/plugin-ui';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { THEME_PROFILE_TOKEN_DEFINITIONS } from '@/theme/profiles/themeProfileTokenRegistry';
+
+export interface ThemeActionRuntime {
+    preview: ThemeTryOnOwner;
+    coverage(document: ThemeProfileDocument): ThemeCssCoverage;
+    detailedCoverage(document: ThemeProfileDocument): ThemeCssDetailedCoverage;
+    surfaceMap(): readonly ThemeSurfacePaintDescriptor[];
+}
+
+/** The capturing Action host supplies the Account-scoped library and live socket id. */
+export interface ThemeActionHost {
+    withLibrary<TResult>(operation: (library: ThemeProfileLibrary) => Promise<TResult>, signal?: AbortSignal): Promise<TResult>;
+    runtime?: ThemeActionRuntime;
+    clientId(): string;
+    readSelection(): Readonly<Record<ThemeProfileMode, ThemeReference | null>>;
+    dispatchClientAction?(request: Extract<ThemeActionRequest, { actionId: typeof THEME_ACTION_IDS.list | typeof THEME_ACTION_IDS.apply }>): ReturnType<NonNullable<ActionExecutorDeps['themeAction']>>;
+}
+
+export function createThemeActionExecute(host: ThemeActionHost): NonNullable<ActionExecutorDeps['themeAction']> {
+    return async request => {
+        if ((request.actionId === THEME_ACTION_IDS.list && request.input.includeDevices)
+            || (request.actionId === THEME_ACTION_IDS.apply && request.input.clientId
+                && request.input.clientId !== host.clientId())) {
+            return host.dispatchClientAction ? await host.dispatchClientAction(request)
+                : clientActionUnavailable(request.actionId);
+        }
+        return await host.withLibrary(async library => {
+            switch (request.actionId) {
+                case THEME_ACTION_IDS.list: {
+                    const entries = await library.list();
+                    return { themes: request.input.mode ? entries.filter(entry => entry.mode === request.input.mode) : entries };
+                }
+                case THEME_ACTION_IDS.get: {
+                    const { ref, include = [] } = request.input;
+                    const entry = (await library.list()).find(row => sameStrictJsonValue(row.reference, ref));
+                    if (!entry) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    const runtime = host.runtime;
+                    if ((include.includes('coverage') || include.includes('surfaceMap') || include.includes('guide')) && !runtime) return clientActionUnavailable(request.actionId);
+                    const document = include.includes('document') || include.includes('coverage') ? await library.get(ref) : undefined;
+                    if (document === null) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    return { entry,
+                        ...(include.includes('document') ? { document } : {}),
+                        ...(include.includes('coverage') && document ? { coverage: runtime!.detailedCoverage(document) } : {}),
+                        ...(include.includes('surfaceMap') ? { surfaceMap: runtime!.surfaceMap() } : {}),
+                        ...(include.includes('guide') ? { guide: themeGuide(runtime!.surfaceMap()) } : {}),
+                    };
+                }
+                case THEME_ACTION_IDS.tryOn: {
+                    const runtime = host.runtime;
+                    if (!runtime) return clientActionUnavailable(request.actionId);
+                    const preview = runtime.preview.begin(request.input);
+                    return { previewRef: preview.previewRef, coverage: runtime.coverage(request.input.document), compatibility: request.input.document.compatibility };
+                }
+                case THEME_ACTION_IDS.revert:
+                    if (!host.runtime) return clientActionUnavailable(request.actionId);
+                    host.runtime.preview.revert(request.input.previewRef);
+                    return { restored: host.readSelection() };
+                case THEME_ACTION_IDS.keep: {
+                    if (!host.runtime) return clientActionUnavailable(request.actionId);
+                    const preview = host.runtime.preview.read();
+                    const result = await host.runtime.preview.keep(request.input.previewRef);
+                    const clientId = host.clientId();
+                    return { entry: result.entry!, applied: { mode: preview!.mode, ...(clientId ? { clientId } : {}) }, undoHandle: result.undo! };
+                }
+                case THEME_ACTION_IDS.apply: {
+                    const result = await library.select({ reference: request.input.ref, mode: request.input.mode });
+                    const clientId = host.clientId();
+                    return { applied: { mode: request.input.mode, ...(clientId ? { clientId } : {}) }, undoHandle: result.undo! };
+                }
+                case THEME_ACTION_IDS.save: {
+                    if (request.input.ref && request.input.ref.kind !== 'artifact') {
+                        return { ok: false as const, errorCode: 'theme_immutable_source', error: 'theme_immutable_source' };
+                    }
+                    const document = request.input.ref
+                        ? mergeThemeProfileDocumentEdit(request.input.document, { id: request.input.ref.id })
+                        : request.input.document;
+                    const result = await library.save({ document });
+                    if (!result.entry) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    return { entry: result.entry, ...(result.undo ? { undoHandle: result.undo } : {}) };
+                }
+                case THEME_ACTION_IDS.undo:
+                    await library.undo(request.input.undoHandle);
+                    return { restored: host.readSelection() };
+                case THEME_ACTION_IDS.import: {
+                    const imported = importThemeProfileFromJson(request.input.file.text, { now: new Date().toISOString(),
+                        generateId: randomUUID, existingProfileIds: new Set((await library.list()).map(entry => entry.id)) });
+                    if (!imported.ok) return { ok: false as const, errorCode: 'theme_document_invalid', error: 'theme_document_invalid' };
+                    const result = await library.save({ document: imported.document });
+                    if (!result.entry) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    return { entry: result.entry };
+                }
+                case THEME_ACTION_IDS.export: {
+                    const document = await library.get(request.input.ref);
+                    if (!document) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    return { file: { name: 'happier-theme.json', text: exportThemeProfileToJson(document) } };
+                }
+                case THEME_ACTION_IDS.duplicate:
+                    return { entry: (await library.duplicate({ reference: request.input.ref })).entry! };
+                case THEME_ACTION_IDS.delete:
+                    if (request.input.ref.kind !== 'artifact') {
+                        return { ok: false as const, errorCode: 'theme_immutable_source', error: 'theme_immutable_source' };
+                    }
+                    await library.delete(request.input.ref.id);
+                    return { deleted: request.input.ref };
+                default:
+                    return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
+            }
+        }, request.context.signal);
+    };
+}
+
+function themeGuide(surfaceMap: readonly ThemeSurfacePaintDescriptor[]): string {
+    return [
+        'Try a theme on this device before saving. Ask how it looks. Keep saves only the current proposal; Revert restores the previous selection.',
+        'Prefer editable colour tokens to CSS. CSS supports the published surface hooks; coverage reports which rules also work on native devices.',
+        JSON.stringify({ tokens: THEME_PROFILE_TOKEN_DEFINITIONS, surfaceMap }),
+    ].join('\n');
+}

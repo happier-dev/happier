@@ -7560,6 +7560,8 @@
     "sources/sync/ops/actions/sessionSpawnNewAction.transport.test.ts",
     "sources/sync/ops/actions/sessionSpawnNewAction.transportDiagnostics.test.ts",
     "sources/sync/ops/actions/settingsDeclarationAction.test.ts",
+    "sources/sync/ops/actions/themeActionDeps.lifecycle.test.ts",
+    "sources/sync/ops/actions/themeActionDeps.routing.test.ts",
     "sources/sync/ops/actions/usagePriceActions.test.ts",
     "sources/sync/ops/actions/usageRecapAction.test.ts",
     "sources/sync/ops/actions/voiceConversationAction.test.ts",

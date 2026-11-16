@@ -3359,6 +3359,7 @@
     "sources/sync/ops/actions/resolveActionExecutionFailureMessage.ts",
     "sources/sync/ops/actions/rpcFailureCode.ts",
     "sources/sync/ops/actions/sessionAuthoringActions.ts",
+    "sources/sync/ops/actions/themeActionDeps.ts",
     "sources/sync/ops/machineContributionRegistryProjectionRevision.ts",
     "sources/sync/ops/machineMetadataMerge.ts",
     "sources/sync/ops/machinePluginActionRequest.ts",
