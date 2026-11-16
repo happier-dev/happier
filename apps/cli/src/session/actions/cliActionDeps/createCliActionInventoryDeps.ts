@@ -367,6 +367,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   ActionExecutorDeps,
   | 'pathsListRecent'
   | 'machinesList'
+  | 'deploymentSuggestionTargets'
   | 'machineRecipesRead'
   | 'serversList'
   | 'reviewEnginesList'
@@ -582,11 +583,16 @@ export function createCliActionInventoryDeps(params: Readonly<{
         revokedAt: machine.revokedAt, replacedByMachineId: machine.replacedByMachineId,
         ...(machine.platform === undefined ? {} : { platform: machine.platform }),
         ...(machine.arch === undefined ? {} : { arch: machine.arch }),
+        ...(machine.homeDir === undefined ? {} : { homeDir: machine.homeDir }),
         ...(machine.access ? { access: machine.access } : {}),
       }));
       return {
         items: limitItems(items, args.limit),
       };
+    },
+    deploymentSuggestionTargets: async () => {
+      const { listDeploymentTargetsV1, projectDeploymentSuggestionTargetsV1 } = await import('@happier-dev/deployments');
+      return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1(readCurrentContributionRegistry().deploymentTargets));
     },
     serversList: async (args) => {
       const { listServerProfiles } = await import("@/server/serverProfiles");

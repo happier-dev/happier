@@ -198,7 +198,7 @@ describe('resolveCurrentAccountMachineTarget', () => {
     const machines = await listCurrentAccountMachines({ token: 'token', credentials: {
       token: 'token', encryption: mode === 'plain' ? null : { type: 'legacy', secret },
     } });
-    expect(machines).toEqual([expect.objectContaining({ id: 'machine', kind: 'persistent', platform: 'linux', arch: 'arm64', activeAt: 123,
+    expect(machines).toEqual([expect.objectContaining({ id: 'machine', kind: 'persistent', platform: 'linux', arch: 'arm64', homeDir: '/home/worker', activeAt: 123,
       agentInventory: metadata.agentInventory })]);
     boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('machine'), metadata: 'unreadable',
       storageMode: mode, dataEncryptionKey: 'broken-key' }] });
@@ -207,6 +207,7 @@ describe('resolveCurrentAccountMachineTarget', () => {
     } });
     expect(unavailable[0]).not.toHaveProperty('platform');
     expect(unavailable[0]).not.toHaveProperty('arch');
+    expect(unavailable[0]).not.toHaveProperty('homeDir');
     expect(unavailable[0]).not.toHaveProperty('agentInventory');
   });
   it('reads the Account mode in the exact Home when legacy Machine rows do not declare it', async () => {

@@ -9,7 +9,7 @@ import {
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { resolveDeploymentCreationDefaultsV1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
+import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolveDeploymentCreationDefaultsV1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import type { DeploymentCreationDefaultInputsForHost } from '@/deployments/readCreationDefaultsForHost';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { projectDeploymentConfigurePreflightV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
@@ -44,7 +44,8 @@ export function createPublishCatalogPreparation(host: Readonly<{
         machine: { machineId: input.machineId, installationId: input.installationId }, template: selected.template,
         recommendation: resolvePublishTargetRecommendation({ definition: { from: 'compose' },
           explicitTarget: { id: input.machineId, targetClass: 'ownServer' },
-          targets: [{ id: input.machineId, targetClass: 'ownServer', availability: 'unknown' }] }),
+          targets: [{ id: input.machineId, targetClass: 'ownServer', availability: 'unknown',
+            accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs }] }),
         creationDefaults, ...(input.configure ? { configurePreflight: projectDeploymentConfigurePreflightV1(input.configure) } : {}),
         ...(selected.defaultInputs.reviewBasis ? { creationDefaultsBasis: selected.defaultInputs.reviewBasis } : {}) });
     } catch (error) {

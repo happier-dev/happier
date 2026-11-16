@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PluginPortableReleaseManifestV1Schema, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import { resolveEffectiveActionInputFields, type EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { DeploySuggestionCatalogV1Schema } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 
 import {
   buildPlatformTargetDraft,
@@ -63,6 +66,11 @@ const manifest = {
         role: 'runtime',
         title: 'Vercel',
         targetKind: 'vercel',
+        accepts: ['static'],
+        needs: ['repository'],
+        icon: 'server-outline',
+        targetSchema: { type: 'object', properties: {}, additionalProperties: false },
+        linkSchema: { type: 'object', properties: {}, additionalProperties: false },
         actions: {
           inspect: 'targets-inspect-v1',
           link: 'project-link',
@@ -75,6 +83,9 @@ const manifest = {
         role: 'data',
         title: 'Not a runtime',
         targetKind: 'vercel-data',
+        icon: 'server-outline',
+        targetSchema: { type: 'object', properties: {}, additionalProperties: false },
+        linkSchema: { type: 'object', properties: {}, additionalProperties: false },
       },
     ],
   },
@@ -86,6 +97,24 @@ const repository = {
 };
 
 describe('platform target link model', () => {
+  it('offers the same runtime target identities as the registered suggestions catalog Action', async () => {
+    const declarations = [{ manifest }];
+    const read = await createActionExecutor({
+      // Registry, Account and Machine inventory reads terminate at their transport ports.
+      registryActionExecute: async () => ({ pages: [] }),
+      machinesList: async () => ({ items: [] }),
+      connectedServiceAction: async () => ({ accounts: [], pools: [], healthBasis: 'credentials', source: { completeness: 'complete', observedAtMs: 1 } }),
+      deploymentSuggestionTargets: async () => projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(declarations)),
+    }).execute('deployments.suggestions.catalog', {}, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' });
+    expect(read, JSON.stringify(read)).toMatchObject({ ok: true });
+    if (!read.ok) throw new Error(read.errorCode);
+    const catalog = DeploySuggestionCatalogV1Schema.parse(read.result);
+    expect(catalog.targets.filter(target => target.targetClass === 'platform').map(target => ({
+      id: target.id, title: target.title, accepts: target.accepts, needs: target.needs,
+    }))).toEqual(readDeploymentPlatformTargets(declarations).map(target => ({
+      id: target.key, title: target.title, accepts: target.accepts, needs: target.needs,
+    })));
+  });
   it('offers teardown only when the runtime target declares it', () => {
     const runtime = manifest.contributes.deploymentTargets![0]!;
     if (runtime.role !== 'runtime') throw new Error('Expected the runtime target descriptor');

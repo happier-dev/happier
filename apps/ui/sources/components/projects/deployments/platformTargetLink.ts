@@ -14,6 +14,8 @@ import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
+import { listDeploymentTargetsFromManifestsV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
@@ -36,6 +38,8 @@ export type DeploymentPlatformTarget = Readonly<{
   service: Readonly<{ pluginId: string; localId: string }>;
   fields: readonly EffectiveActionInputField[];
   sourceMethods: readonly DeploymentSourceMethodV1[];
+  accepts?: DeploySuggestionCatalogV1['targets'][number]['accepts'];
+  needs?: DeploySuggestionCatalogV1['targets'][number]['needs'];
   runtimeLogs?: true;
   teardown?: true;
   teardownConsequence?: string;
@@ -90,9 +94,12 @@ export function readDeploymentPlatformTargets(
 ): readonly DeploymentPlatformTarget[] {
   return declarations.flatMap(({ manifest }) => {
     const contributes = manifest.contributes as unknown as UnknownRecord;
-    const targets = Array.isArray(contributes.deploymentTargets)
-      ? contributes.deploymentTargets
-      : [];
+    const normalizedTargets = listDeploymentTargetsFromManifestsV1([{ manifest }]);
+    const targets = normalizedTargets.flatMap(target => {
+      if (target.source.kind !== 'plugin' || target.role !== 'runtime') return [];
+      const localId = target.source.contribution.localId;
+      return (manifest.contributes.deploymentTargets ?? []).filter(declaration => declaration.id === localId);
+    });
     const actions = Array.isArray(contributes.actions)
       ? contributes.actions
       : [];
@@ -152,6 +159,14 @@ export function readDeploymentPlatformTargets(
           service: { pluginId: service.pluginId, localId: service.localId },
           fields: hints as EffectiveActionInputField[],
           sourceMethods,
+          ...(() => {
+            const normalized = normalizedTargets.find(candidate => candidate.source.kind === 'plugin'
+              && candidate.source.contribution.localId === target.id);
+            return normalized?.role === 'runtime' ? {
+              ...(normalized.accepts === undefined ? {} : { accepts: normalized.accepts }),
+              ...(normalized.needs === undefined ? {} : { needs: normalized.needs }),
+            } : {};
+          })(),
           ...(record(target.actions) && text(target.actions.teardown) ? { teardown: true as const,
             ...readTeardownConsequence(actions, target.actions.teardown) } : {}),
           ...(record(target.actions) && record(target.actions.logs) && text(target.actions.logs.runtime)

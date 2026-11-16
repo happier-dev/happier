@@ -26,6 +26,8 @@ import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 
 /** Both deployment roots route through the person's admitted checkout census. */
 /** Loose output members keep `errorCode` in their index signature, so `'errorCode' in` alone does not narrow them out. */
@@ -80,7 +82,7 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
 
 /** Account-bound storage and the existing Machine Action transport; no UI native effects. */
 export function createUiDeploymentActionDeps(account: LazyActionAccountContext): Pick<ActionExecutorDeps,
-    'deploymentAction' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
+    'deploymentAction' | 'deploymentSuggestionTargets' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
     | 'deploymentPrepare' | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation' | 'deploymentMoveToRepository'> & Readonly<{
         readEnvironmentCreateController(input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentCreateIntentInputV1, context: ActionExecutorContext):
             ReturnType<typeof resolveDeploymentPreviewExecutionMachineIdV1>;
@@ -184,6 +186,14 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         return approval.success ? approval.data : DeploymentMoveToRepositoryResultV1Schema.parse(result.result);
     };
     return { readEnvironmentController, readEnvironmentCreateController, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
+        deploymentSuggestionTargets: async () => {
+            account.assertCurrent();
+            const read = await readPluginAccountAvailability(account.accountLifetime.scope)
+                .ensureCurrentAccountExecutionDeclarations({ family: 'deploymentTargets' });
+            account.assertCurrent();
+            if (read.kind !== 'available') throw Object.assign(new Error(read.code), { code: read.code });
+            return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(read.declarations));
+        },
         deploymentPrepare: async (input, context) => {
             const selected = await createUiDeploymentWorkspaceMachineReader(account, context)(input.workspace);
             if (!selected.ok) return selected;

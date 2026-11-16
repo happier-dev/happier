@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { storage } from '@/sync/domains/state/storageStore';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { listMachinesForVoiceTool } from './machinesList';
@@ -46,7 +47,7 @@ it('retains a shared Use target installation in the Action inventory without sto
     expect(result).not.toHaveProperty('items.0.dataEncryptionKey');
 });
 
-it('keeps retained input presence unknown until the exact Account observes the Machine, including a fresh offline row', async () => {
+it('keeps retained input presence unknown until admitted activity arrives, including a fresh offline row', async () => {
     const machine = createMachineFixture({ id: 'voice-machine', activeAt: Date.now() });
     const { serverId } = account.scope;
     storage.setState({ machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
@@ -56,19 +57,19 @@ it('keeps retained input presence unknown until the exact Account observes the M
     expect(await listMachinesForVoiceTool({ purpose: 'input', serverId })).toMatchObject({ items: [{ presence: 'unknown' }] });
     machine.active = false;
     machine.activeAt = Date.now() - 60_001;
-    captureMachinePresenceObservation(account.scope)([machine.id]);
+    publishMachineActivityForTest([machine]);
     expect(await listMachinesForVoiceTool({ purpose: 'input', serverId })).toMatchObject({ items: [{ presence: 'offline' }] });
 });
 
 it('provides decoded platform facts to Action input consumers without guessing an absent architecture', async () => {
     const metadata = createMachineFixture().metadata;
     if (!metadata) throw new Error('Expected canonical Machine metadata fixture');
-    const known = createMachineFixture({ id: 'known', metadata: { ...metadata, host: 'known.local', platform: 'linux', arch: 'x64' } });
+    const known = createMachineFixture({ id: 'known', metadata: { ...metadata, host: 'known.local', platform: 'linux', arch: 'x64', homeDir: '/home/dev' } });
     const unknown = createMachineFixture({ id: 'unknown', metadata: { ...metadata, host: 'unknown.local', platform: 'win32', arch: undefined } });
     const { serverId } = account.scope;
     storage.setState({ machineListByServerId: { [serverId]: [known, unknown] }, machineListStatusByServerId: { [serverId]: 'idle' } });
     expect(await listMachinesForVoiceTool({ purpose: 'input', serverId })).toMatchObject({ items: [
-        { machineId: known.id, platform: 'linux', arch: 'x64' },
+        { machineId: known.id, platform: 'linux', arch: 'x64', homeDir: '/home/dev' },
         { machineId: unknown.id, platform: 'win32', arch: null },
     ] });
 });
@@ -77,6 +78,7 @@ it('presents input machines as unavailable after request failure while retaining
     const machine = createMachineFixture({ id: 'voice-machine', activeAt: Date.now() });
     const { serverId } = account.scope;
     storage.setState({ machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    publishMachineActivityForTest([machine]);
     expect(await listMachinesForVoiceTool({ purpose: 'input', serverId })).toMatchObject({ items: [{ machineId: machine.id, presence: 'online' }] });
     recordMachineRequestFailed({ ...account.scope, machineId: machine.id });
     expect(await listMachinesForVoiceTool({ purpose: 'input', serverId })).toMatchObject({

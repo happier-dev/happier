@@ -42,6 +42,7 @@ export type CurrentAccountMachineInventoryItem = Readonly<{
   activeAt?: number | null;
   presenceProtocolVersion?: MachinePresenceV1['presenceProtocolVersion'];
   platform?: string;
+  homeDir?: string;
   arch?: string;
   agentInventory?: MachinePublishedMetadataV1['agentInventory'];
   access?: AccessibleMachineAccessV1;
@@ -154,7 +155,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
           revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
           ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),
           ...(row.presenceProtocolVersion === undefined ? {} : { presenceProtocolVersion: row.presenceProtocolVersion }),
-          ...(metadata ? { platform: metadata.platform, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
+          ...(metadata ? { platform: metadata.platform, homeDir: metadata.homeDir, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
           ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
           ...(row.access ? { access: row.access } : {}),
           ...(params.projection !== 'hostFacts' && row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),

@@ -45,6 +45,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
           return verdict === 'reachable' ? 'online' : verdict === 'unreachable' ? 'offline' : 'unknown';
         })(),
         platform: normalizeNonEmptyString(m?.metadata?.platform), arch: normalizeNonEmptyString(m?.metadata?.arch),
+        ...(normalizeNonEmptyString(m?.metadata?.homeDir) ? { homeDir: normalizeNonEmptyString(m?.metadata?.homeDir) } : {}),
         revokedAt: m.revokedAt, replacedByMachineId: m.replacedByMachineId } : {}),
       ...(normalizeNonEmptyString(m?.metadata?.host) ? { host: normalizeNonEmptyString(m?.metadata?.host) } : {}),
       ...(m.access ? { access: m.access } : {}),
