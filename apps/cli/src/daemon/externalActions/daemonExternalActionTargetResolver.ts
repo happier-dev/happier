@@ -508,7 +508,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
     ...(input.isAutomationRunCurrent ? { isAutomationRunCurrent: input.isAutomationRunCurrent } : {}),
     ...(input.isSessionCallerCurrent ? { isSessionCallerCurrent: input.isSessionCallerCurrent } : {}),
     workflowDiscussionModelReservationCustody: {
-      storage: createWorkflowRunStorageClient({ token: input.credentials.token, serverHttpBaseUrl: input.serverApiUrl }),
+      storage: createWorkflowRunStorageClient({ token: input.credentials.token, get serverHttpBaseUrl() { return input.serverApiUrl; } }),
       resolveAccountEncryption: signal => createCredentialedWorkflowRunEncryptionResolver({
         credentials: input.credentials, serverHttpBaseUrl: input.serverApiUrl,
       })({ ...(signal ? { signal } : {}) }),

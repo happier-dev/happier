@@ -10,9 +10,24 @@ vi.mock('axios', () => ({ default: { defaults: {}, post } }));
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
+import { captureServerHttpBaseUrl, publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 
 describe('workflow Run storage client', () => {
   beforeEach(() => { post.mockReset(); });
+
+  it('follows an explicit live Home binding when its carrier is replaced', async () => {
+    let release = publishServerHttpRuntimeOrigin('https://first-home.test', 'https');
+    const readHome = captureServerHttpBaseUrl();
+    const client = createWorkflowRunStorageClient({ token: 'token', get serverHttpBaseUrl() { return readHome(); } });
+    post.mockResolvedValue({ data: null });
+    try {
+      await client.execute({ operation: 'get', runId: 'run-1' });
+      release();
+      release = publishServerHttpRuntimeOrigin('https://next-home.test', 'https');
+      await client.execute({ operation: 'get', runId: 'run-1' });
+      expect(post.mock.calls.map(call => new URL(call[0]).origin)).toEqual(['https://first-home.test', 'https://next-home.test']);
+    } finally { release(); }
+  });
 
   it('notifies Follow after storage commits a terminal, attention or progress Workflow revision', async () => {
     const transport = await import('../controlHttp');
@@ -25,19 +40,19 @@ describe('workflow Run storage client', () => {
       createPublisherHeader: async () => 'signed-publisher' });
     try {
       await client.execute({ operation: 'transition', runId: committed.id });
-      expect(hint.mock.calls).toContainEqual(['/session-activity-changed', { sessionId: committed.origin.originSessionId,
+      expect(hint.mock.calls.map(([path, body]) => [path, body])).toContainEqual(['/session-activity-changed', { sessionId: committed.origin.originSessionId,
         followOccurrence: { original: { source: { kind: 'workflow_run', runId: committed.id }, revision: 4 }, event: { kind: 'finished' } },
       }]);
       hint.mockClear();
       post.mockResolvedValueOnce({ data: { ...committed, state: 'running' } });
       await client.execute({ operation: 'transition', runId: committed.id });
-      expect(hint.mock.calls).toContainEqual(['/session-activity-changed', { sessionId: committed.origin.originSessionId,
+      expect(hint.mock.calls.map(([path, body]) => [path, body])).toContainEqual(['/session-activity-changed', { sessionId: committed.origin.originSessionId,
         followOccurrence: { original: { source: { kind: 'workflow_run', runId: committed.id }, revision: 4 }, event: { kind: 'update_posted' } },
       }]);
       hint.mockClear();
       post.mockResolvedValueOnce({ data: { ...committed, state: 'running', attentionRequired: true } });
       await client.execute({ operation: 'transition', runId: committed.id });
-      expect(hint.mock.calls).toContainEqual(['/session-activity-changed', { sessionId: committed.origin.originSessionId,
+      expect(hint.mock.calls.map(([path, body]) => [path, body])).toContainEqual(['/session-activity-changed', { sessionId: committed.origin.originSessionId,
         followOccurrence: { original: { source: { kind: 'workflow_run', runId: committed.id }, revision: 4 },
           event: { kind: 'needs_you', type: 'decision' } },
       }]);

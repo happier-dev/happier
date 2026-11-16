@@ -1949,7 +1949,7 @@ export async function startDaemon(
       acquireServiceExportForward,
       deploymentAccountExecution: {
         credentials,
-        serverUrl: readDaemonHomeServerHttpBaseUrl(),
+        get serverUrl() { return readDaemonHomeServerHttpBaseUrl(); },
         serverId: deploymentAccountHomeServerId,
         serverIdentityId: managedPolicyHomeId ?? deploymentAccountHomeServerId,
         ...(machineId ? { machineId } : {}),

@@ -45,9 +45,8 @@ export function createWorkflowRunStorageClient(params: Readonly<{
   createPublisherHeader?: CreatePluginInstallationPublisherHeader;
   resolveAuthorizationHeaders?: (request: Readonly<{ method: 'POST'; path: string; body: unknown }>) => Readonly<Record<string, string>> | null;
 }>) {
-  const explicitBaseUrl = params.serverHttpBaseUrl;
-  const readBaseUrl = explicitBaseUrl === undefined
-    ? captureServerHttpBaseUrl() : () => explicitBaseUrl;
+  const readDefaultBaseUrl = captureServerHttpBaseUrl();
+  const readBaseUrl = () => params.serverHttpBaseUrl ?? readDefaultBaseUrl();
   const createPublisherHeader = params.createPublisherHeader ?? createDefaultPluginInstallationPublisherHeader;
   const client = {
     observeChanges: (runId: string, onChange: () => void, onError: (error: unknown) => void) =>

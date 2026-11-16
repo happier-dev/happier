@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -8,6 +8,7 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { configuration } from '@/configuration';
+import { captureServerHttpBaseUrl, publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import * as persistence from '@/persistence';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
@@ -27,6 +28,17 @@ it('retains captured daemon deployment custody through startup and registry repl
     const pluginId = 'acme.daemon-environment-scope';
     const serverId = configuration.activeServerId;
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
+    let expectedOrigin = 'https://captured-home.test';
+    let releaseOrigin = publishServerHttpRuntimeOrigin(expectedOrigin, 'https', undefined, serverId);
+    // Exercise the composition root's actual custody binding, as the Machine
+    // rotation regression does, without starting the daemon's OS lifecycle.
+    const source = await readFile(new URL('../../daemon/startDaemon.ts', import.meta.url), 'utf8');
+    const member = source.match(/deploymentAccountExecution: (\{[\s\S]*?\n      \}),\n      agentIsolation,/u)?.[1];
+    if (!member) throw new Error('Missing daemon deployment custody binding');
+    const deploymentAccountExecution = new Function('credentials', 'readDaemonHomeServerHttpBaseUrl',
+        'deploymentAccountHomeServerId', 'managedPolicyHomeId', 'machineId', 'homeTransportCancellation', 'configuration',
+        `return (${member});`)({ token, encryption: null }, captureServerHttpBaseUrl(), serverId, serverId,
+            'machine-1', new AbortController(), configuration) as NonNullable<Parameters<typeof createDaemonPluginRuntimeOwner>[0]['deploymentAccountExecution']>;
     const template = createDeploymentEnvironmentHeaderV1({ serverId });
     const environment = createDeploymentEnvironmentHeaderV1({ serverId, id: 'preview-child', purpose: 'preview',
         previewTemplateEnvironmentId: template.id, previewRepositoryId: 'source-app',
@@ -34,7 +46,7 @@ it('retains captured daemon deployment custody through startup and registry repl
     // Home HTTP and credential persistence are boundaries; startup, activation,
     // source admission, replacement, approval policy and the handler stay real.
     const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
-        expect(new URL(request.url!).origin).toBe('https://captured-home.test');
+        expect(new URL(request.url!).origin).toBe(expectedOrigin);
         expect(new URL(request.url!).pathname).toBe(`/v1/deployments/environments/${environment.id}`);
         expect(request.headers?.Authorization).toBe(`Bearer ${token}`);
         return { status: 200, data: { ok: true, environment, targetLinks: [] } };
@@ -43,8 +55,7 @@ it('retains captured daemon deployment custody through startup and registry repl
     const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, staleCandidateCleanup: 'disabled', reloadController: controller,
         connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
         resolveCurrentMachineId: () => 'machine-1',
-        deploymentAccountExecution: { credentials: { token, encryption: null }, serverUrl: 'https://captured-home.test',
-            serverId, serverIdentityId: serverId, machineId: 'machine-1', isCurrent: async () => true },
+        deploymentAccountExecution,
     });
     const actionId = formatQualifiedPluginActionId({ pluginId, localId: 'publish' });
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, scopedApprovalPreferences: [{
@@ -74,13 +85,18 @@ it('retains captured daemon deployment custody through startup and registry repl
         const first = await invoke();
         expect(first, JSON.stringify(first)).toMatchObject({ matched: true, result: { ok: true, result: { published: true } } });
         expect(http).toHaveBeenCalledTimes(1);
+        expectedOrigin = 'https://replacement-home.test';
+        releaseOrigin();
+        releaseOrigin = publishServerHttpRuntimeOrigin(expectedOrigin, 'https', undefined, serverId);
+        expect(await invoke()).toMatchObject({ matched: true, result: { ok: true, result: { published: true } } });
         const initial = controller.getState().activeRegistry;
         expect(await owner.changeService.requestPluginChange({ kind: 'setUpdatePolicy', pluginId, policy: 'pinned' }))
             .toMatchObject({ kind: 'committed', pluginId });
         expect(controller.getState().activeRegistry).not.toBe(initial);
         expect(await invoke()).toMatchObject({ matched: true, result: { ok: true, result: { published: true } } });
-        expect(http).toHaveBeenCalledTimes(2);
+        expect(http).toHaveBeenCalledTimes(3);
     } finally {
+        releaseOrigin();
         await owner.changeService.shutdown();
         await controller.shutdown();
         await rm(root, { recursive: true, force: true });
