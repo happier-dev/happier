@@ -5,6 +5,8 @@ import {
 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 
 const backing = {
+    accessibility_snapshot: { ios: false, android: false },
+    accessibility_press: { ios: false, android: false },
     boot: { ios: true, android: true },
     power_off: { ios: true, android: true },
     app_launch: { ios: true, android: true },

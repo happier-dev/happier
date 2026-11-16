@@ -2379,6 +2379,17 @@ export type DevicesSimulatorActionInputById = {
         [x: string]: unknown;
         type: 'simulator.sideband.request';
     };
+    readonly "devices.simulator.accessibility.snapshot": {
+        operation: 'accessibility_snapshot';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.accessibility.press": {
+        operation: 'accessibility_press';
+        identifier: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
     readonly "devices.simulator.device.boot": {
         operation: 'boot';
         platform: 'android' | 'ios';
@@ -2498,7 +2509,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -3787,6 +3798,46 @@ export type DevicesSimulatorActionResultById = {
         status: 'unavailable';
         reasonCode: string;
     };
+    readonly "devices.simulator.accessibility.snapshot": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        snapshot: {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+    };
+    readonly "devices.simulator.accessibility.press": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        pressedIdentifier: string;
+    };
     readonly "devices.simulator.device.boot": {
         ok: false;
         errorCode: string;
@@ -3821,7 +3872,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -3840,6 +3891,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.device.powerOff": {
         ok: false;
@@ -3875,7 +3950,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -3894,6 +3969,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.app.launch": {
         ok: false;
@@ -3929,7 +4028,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -3948,6 +4047,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.app.terminate": {
         ok: false;
@@ -3983,7 +4106,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4002,6 +4125,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.url.open": {
         ok: false;
@@ -4037,7 +4184,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4056,6 +4203,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.screenshot.capture": {
         ok: false;
@@ -4113,7 +4284,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4132,6 +4303,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.textSize.set": {
         ok: false;
@@ -4167,7 +4362,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4186,6 +4381,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.location.set": {
         ok: false;
@@ -4221,7 +4440,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4240,6 +4459,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.location.clear": {
         ok: false;
@@ -4275,7 +4518,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4294,6 +4537,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.permission.set": {
         ok: false;
@@ -4329,7 +4596,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4348,6 +4615,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.push.send": {
         ok: false;
@@ -4383,7 +4674,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4402,6 +4693,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.hardware.button": {
         ok: false;
@@ -4437,7 +4752,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4456,6 +4771,30 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
     readonly "devices.simulator.rotation.set": {
         ok: false;
@@ -4491,7 +4830,7 @@ export type DevicesSimulatorActionResultById = {
             state?: 'running' | 'stopped' | 'unavailable' | undefined;
             runtimeId?: string | undefined;
             avdName?: string | undefined;
-            supportedDeviceOperations?: ('app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
             supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
             appId?: string | undefined;
             unavailableReason?: string | undefined;
@@ -4510,5 +4849,29 @@ export type DevicesSimulatorActionResultById = {
                 mimeType: 'image/png';
             };
         };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
     };
 };

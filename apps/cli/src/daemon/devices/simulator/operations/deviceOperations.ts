@@ -101,6 +101,7 @@ export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOp
                     }
                 }
                 switch (input.operation) {
+                    case 'accessibility_snapshot': case 'accessibility_press': return unavailable();
                     case 'boot': args = ['simctl', 'boot', input.deviceId]; break;
                     case 'power_off': args = ['simctl', 'shutdown', input.deviceId]; break;
                     case 'app_launch': args = ['simctl', 'launch', input.deviceId, input.appId]; break;
@@ -139,6 +140,7 @@ export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOp
                 }
                 let shell: readonly string[] | undefined;
                 switch (input.operation) {
+                    case 'accessibility_snapshot': case 'accessibility_press': return unavailable();
                     case 'app_launch': shell = ['monkey', '-p', input.appId, '-c', 'android.intent.category.LAUNCHER', '1']; args = []; break;
                     case 'app_terminate': shell = ['am', 'force-stop', input.appId]; args = []; break;
                     case 'open_url': shell = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', input.url]; args = []; break;

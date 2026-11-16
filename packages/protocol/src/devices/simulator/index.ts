@@ -1,5 +1,6 @@
 export * from './v1.js';
 export * from './operationsV1.js';
+export * from './accessibilityV1.js';
 export * from './androidV1.js';
 export * from './inputV1.js';
 export * from './iosV1.js';

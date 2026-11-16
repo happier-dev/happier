@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { SessionImageMediaReferenceV1Schema } from '../../sessions/media/imageReferenceV1.js';
 import { SimulatorDeviceResourceV1Schema } from './v1.js';
+import { SimulatorAccessibilitySnapshotV1Schema } from './accessibilityV1.js';
 
 const TextSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PlatformSchema = lazyZodSchema(() => z.enum(['ios', 'android']));
@@ -12,6 +13,8 @@ export type SimulatorDeviceHardwareButtonV1 = z.infer<typeof SimulatorDeviceHard
 
 /** The platform command boundary; screenshot destinations are Session media, never caller paths. */
 export const SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1 = {
+  accessibility_snapshot: lazyZodSchema(() => z.strictObject({ ...DeviceShape, operation: z.literal('accessibility_snapshot') })),
+  accessibility_press: lazyZodSchema(() => z.strictObject({ ...DeviceShape, operation: z.literal('accessibility_press'), identifier: TextSchema })),
   boot: lazyZodSchema(() => z.strictObject({ ...DeviceShape, operation: z.literal('boot') })),
   power_off: lazyZodSchema(() => z.strictObject({ ...DeviceShape, operation: z.literal('power_off') })),
   app_launch: lazyZodSchema(() => z.strictObject({ ...DeviceShape, operation: z.literal('app_launch'), appId: TextSchema })),
@@ -44,7 +47,8 @@ const OperationFailureSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export const SimulatorDeviceOperationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
-  z.strictObject({ ok: z.literal(true), device: z.optional(SimulatorDeviceResourceV1Schema), media: z.optional(SessionImageMediaReferenceV1Schema) }),
+  z.strictObject({ ok: z.literal(true), device: z.optional(SimulatorDeviceResourceV1Schema), media: z.optional(SessionImageMediaReferenceV1Schema),
+    snapshot: z.optional(SimulatorAccessibilitySnapshotV1Schema), pressedIdentifier: z.optional(TextSchema) }),
   OperationFailureSchema,
 ]));
 export type SimulatorDeviceOperationResultV1 = z.infer<typeof SimulatorDeviceOperationResultV1Schema>;
@@ -54,3 +58,15 @@ export const SimulatorDeviceScreenshotResultV1Schema = lazyZodSchema(() => z.dis
   OperationFailureSchema,
 ]));
 export type SimulatorDeviceScreenshotResultV1 = z.infer<typeof SimulatorDeviceScreenshotResultV1Schema>;
+
+export const SimulatorAccessibilitySnapshotResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), snapshot: SimulatorAccessibilitySnapshotV1Schema }),
+  OperationFailureSchema,
+]));
+export type SimulatorAccessibilitySnapshotResultV1 = z.infer<typeof SimulatorAccessibilitySnapshotResultV1Schema>;
+
+export const SimulatorAccessibilityPressResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), pressedIdentifier: TextSchema }),
+  OperationFailureSchema,
+]));
+export type SimulatorAccessibilityPressResultV1 = z.infer<typeof SimulatorAccessibilityPressResultV1Schema>;

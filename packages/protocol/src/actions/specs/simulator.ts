@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1, type RuntimeActionIdV1 } from '../actionIds.js';
-import { SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1, SimulatorDeviceOperationResultV1Schema, SimulatorDeviceScreenshotResultV1Schema, type SimulatorDeviceOperationKindV1 } from '../../devices/simulator/operationsV1.js';
+import { SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1, SimulatorDeviceOperationResultV1Schema, SimulatorDeviceScreenshotResultV1Schema, SimulatorAccessibilitySnapshotResultV1Schema, SimulatorAccessibilityPressResultV1Schema, type SimulatorDeviceOperationKindV1 } from '../../devices/simulator/operationsV1.js';
 import {
   SimulatorPreviewActionResultV1Schema,
   SimulatorPreviewActionV1Schema,
@@ -44,14 +44,21 @@ const DEVICE_OPERATION_INPUT_SCHEMAS = Object.fromEntries(
 ) as DeviceOperationInputSchemas;
 type DeviceOperationOutputSchemas = {
   [K in SimulatorDeviceOperationKindV1 as typeof SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1[K]]:
-    K extends 'screenshot' ? typeof SimulatorDeviceScreenshotResultV1Schema : typeof SimulatorDeviceOperationResultV1Schema;
+    K extends 'screenshot' ? typeof SimulatorDeviceScreenshotResultV1Schema
+      : K extends 'accessibility_snapshot' ? typeof SimulatorAccessibilitySnapshotResultV1Schema
+      : K extends 'accessibility_press' ? typeof SimulatorAccessibilityPressResultV1Schema
+      : typeof SimulatorDeviceOperationResultV1Schema;
 };
 const DEVICE_OPERATION_OUTPUT_SCHEMAS = Object.fromEntries(
   Object.entries(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1).map(([operation, actionId]) =>
-    [actionId, operation === 'screenshot' ? SimulatorDeviceScreenshotResultV1Schema : SimulatorDeviceOperationResultV1Schema]),
+    [actionId, operation === 'screenshot' ? SimulatorDeviceScreenshotResultV1Schema
+      : operation === 'accessibility_snapshot' ? SimulatorAccessibilitySnapshotResultV1Schema
+      : operation === 'accessibility_press' ? SimulatorAccessibilityPressResultV1Schema
+      : SimulatorDeviceOperationResultV1Schema]),
 ) as DeviceOperationOutputSchemas;
 
 const DEVICE_OPERATION_TITLES = {
+  accessibility_snapshot: 'Inspect simulator accessibility', accessibility_press: 'Press simulator element by identifier',
   boot: 'Start simulator device', power_off: 'Power off simulator device',
   app_launch: 'Launch simulator app', app_terminate: 'Terminate simulator app',
   open_url: 'Open simulator URL', screenshot: 'Capture simulator screenshot',

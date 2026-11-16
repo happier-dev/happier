@@ -2,6 +2,8 @@ import type { SimulatorDeviceOperationKindV1 } from '../devices/simulator/operat
 
 /** One operation-to-Action projection for device commands, consumed by every surface. */
 export const SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1 = {
+  accessibility_snapshot: 'devices.simulator.accessibility.snapshot',
+  accessibility_press: 'devices.simulator.accessibility.press',
   boot: 'devices.simulator.device.boot',
   power_off: 'devices.simulator.device.powerOff',
   app_launch: 'devices.simulator.app.launch',
@@ -44,7 +46,8 @@ export const SIMULATOR_INPUT_ACTION_IDS_V1 = [
 ] as const;
 
 export const SIMULATOR_MUTATING_DEVICE_ACTION_IDS_V1 = Object.values(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1)
-  .filter((id) => id !== SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1.screenshot);
+  .filter((id) => id !== SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1.screenshot
+    && id !== SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1.accessibility_snapshot);
 
 export const SIMULATOR_STATICALLY_BACKED_ACTION_IDS_V1 = [
   'devices.simulator.list', 'devices.simulator.lease.acquire', 'devices.simulator.lease.renew',
