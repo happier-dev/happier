@@ -3034,6 +3034,45 @@ describe('createPiRuntimeOperations', () => {
     await runtime.dispose();
   });
 
+  it.each(['admitted', 'rejected'] as const)('preserves a wrapped Copilot HTTP refusal through a %s prompt into the transcript', async disposition => {
+    const capture: Capture = { specs: [], written: [], warnings: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    // The sanitized native Row38 refusal, with no grant or request body.
+    const errorMessage = 'OAuth refresh failed for github-copilot: 403 Forbidden: 403 Forbidden. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service).';
+    try {
+      const prompt = sendPrompt(runtime, 'hello');
+      await waitForWrittenCount(capture, 1);
+      if (disposition === 'admitted') {
+        await ackLastCommand(capture);
+        await expect(prompt).resolves.toMatchObject({ status: 'admitted' });
+        await emit(capture, { type: 'message_end', message: {
+          role: 'assistant', provider: 'github-copilot', content: [], stopReason: 'error', errorMessage,
+        } });
+        await emit(capture, { type: 'agent_end', willRetry: false });
+      } else {
+        await failLastCommand(capture, errorMessage);
+        await expect(prompt).resolves.toMatchObject({ status: 'rejected', retryable: false });
+      }
+      const failure = events.find(event => event.kind === (disposition === 'admitted' ? 'turn-failed' : 'input-rejected'));
+      if (!failure || (failure.kind !== 'turn-failed' && failure.kind !== 'input-rejected')) throw new Error('Missing Pi failure');
+      const writes: unknown[] = [];
+      const project = createRuntimeFailureTranscriptProjector({ provider: 'pi', providerName: 'Pi',
+        session: { sessionId: 'happier-session-1', enqueueAgentMessageCommitted: async (_provider, body, options) => {
+          writes.push({ body, meta: options.meta });
+          return { persisted: true, delivered: true, committedSequence: writes.length };
+        } },
+      });
+      await project(failure);
+      expect(writes).toContainEqual(expect.objectContaining({ meta: expect.objectContaining({ runtimeIssueV1:
+        expect.objectContaining({ source: 'auth_error',
+          failureCause: expect.objectContaining({ httpStatus: 403 }) }),
+      }) }));
+      expect(events.some(event => event.kind === 'turn-complete')).toBe(false);
+    } finally { await runtime.dispose(); }
+  });
+
   it.each([
     { disposition: 'admitted', providerCode: 'API_KEY_INVALID', knownCause: false, source: 'auth_error', failureReason: 'authentication_required' },
     { disposition: 'rejected', providerCode: 'API_KEY_INVALID', knownCause: false, source: 'auth_error', failureReason: 'authentication_required' },

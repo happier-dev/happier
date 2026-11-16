@@ -134,7 +134,7 @@ function parseProviderError(value: string): Readonly<Record<string, unknown>> | 
 }
 
 function readLeadingHttpStatus(value: string): number | null {
-  const match = /^\s*([1-5]\d{2})\s*:?(?:\s|\{)/u.exec(value);
+  const match = /^\s*(?:OAuth refresh failed for [^:\r\n]+:\s*)?([1-5]\d{2})\s*:?(?:\s|\{)/u.exec(value);
   if (!match?.[1]) return null;
   return Number(match[1]);
 }

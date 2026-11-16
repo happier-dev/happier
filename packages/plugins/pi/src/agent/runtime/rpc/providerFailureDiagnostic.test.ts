@@ -60,6 +60,24 @@ describe('readPiProviderFailureDiagnostic', () => {
       failureCause: { failureReason: 'authentication_required', httpStatus: status },
     });
   });
+  it.each([
+    ['github-copilot', 403, 'Forbidden: 403 Forbidden. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service).'],
+    ['openai-codex', 401, 'Unauthorized'],
+  ] as const)('retains the native HTTP status inside the %s OAuth exchange wrapper', (provider, status, detail) => {
+    // Row38's sanitized native refusal: Pi wraps the upstream response before RPC delivery.
+    const errorMessage = `OAuth refresh failed for ${provider}: ${status} ${detail}`;
+    const diagnostic = readPiProviderFailureDiagnostic({ type: 'message_end', message: {
+      role: 'assistant', provider, stopReason: 'error', errorMessage,
+    } });
+    expect(diagnostic).toMatchObject({ piRetryable: false,
+      sanitizedPreview: errorMessage,
+      failureCause: { httpStatus: status },
+    });
+    expect(readPiPromptRejectionDiagnostic(errorMessage)).toMatchObject({
+      piRetryable: false, failureCause: { httpStatus: status },
+    });
+  });
+
   it('preserves and classifies provider timeouts as retryable', () => {
     expect(readPiProviderFailureDiagnostic({
       type: 'message_end',
