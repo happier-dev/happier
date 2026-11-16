@@ -37,8 +37,11 @@ export const DeploymentBackupRestoreSourceV1Schema = z.discriminatedUnion('kind'
   DeploymentBackupRestoreRepositorySourceV1Schema,
   z.strictObject({ kind: z.literal('upload'), transferId: id }),
 ]);
+export const DeploymentBackupRestoreDatabaseDestinationV1Schema = z.strictObject({
+  kind: z.literal('database'), service: id, database: id,
+});
 export const DeploymentBackupRestoreDestinationV1Schema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('database'), service: id, database: id }),
+  DeploymentBackupRestoreDatabaseDestinationV1Schema,
   z.strictObject({ kind: z.literal('volume'), service: id, volume: id }),
 ]);
 /** Uses the incumbent encrypted finite-transfer RPC, without a caller-selected path. */

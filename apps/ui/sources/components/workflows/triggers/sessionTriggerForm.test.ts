@@ -3,6 +3,7 @@ import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/work
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationTriggerDefinitionBindingV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 import {
     buildTriggerDefinition,
@@ -19,6 +20,27 @@ import {
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    it.each([
+        { phase: 'before', mode: 'wait', onFailure: 'ask',
+            subject: { kind: 'machine', serverId: 'home-one', machineId: 'machine-one' } },
+        { phase: 'before', mode: 'notify' },
+        { phase: 'after' },
+    ])('round-trips an opened $phase Action attachment without changing its subject or failure policy', config => {
+        const when = AutomationActionTriggerSchema.parse({ kind: 'action',
+            actionIds: ['machines.command.run'], ...config });
+        // The Account trigger owner has already opened the private Action definition.
+        // Its form projection contains authored facts, not the server's sealed envelope.
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'action-attachment', revision: 1,
+            enabled: true, health: 'available', scopeSessionId: null,
+            target: { kind: 'workflow', ref: '00000000-0000-4000-8000-000000000001' },
+            triggers: [{ id: '00000000-0000-4000-8000-000000000002', revision: 1,
+                enabled: true, createdAt: 1, updatedAt: 1, ...when }] });
+        const form = readWorkflowTriggerSetForm(set, set.triggers[0]!.id);
+        expect(form?.when).toEqual(when);
+        if (!form) throw new Error('Expected an editable Action attachment');
+        expect(buildTriggerDefinition({ when: form.when, enabled: false, sessionId: null }))
+            .toEqual({ ...when, enabled: false });
+    });
     it('resolves relative schedules at save time and refuses invalid dates or delays', async () => {
         const { resolveOnceSchedule } = await import('./triggerSchedule');
         const draft = { date: '', time: '', relative: 'in 20 min' };

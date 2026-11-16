@@ -312,7 +312,7 @@ export function WorkflowTriggerBlock(
 }
 
 function formatListedWhen(when: TriggerWhenValue): string {
-  if (when.kind === 'runLifecycle') return formatTriggerSummary(when);
+  if (when.kind === 'runLifecycle' || when.kind === 'action') return formatTriggerSummary(when);
   if (when.kind === 'prComment' || when.kind === 'ciFailed') {
     return formatTriggerSummary({
       kind: when.kind,

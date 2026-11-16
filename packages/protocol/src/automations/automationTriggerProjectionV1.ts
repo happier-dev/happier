@@ -4,6 +4,7 @@ import { AutomationEventSourceStatusV1Schema, AutomationEventSourceCatalogStatus
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationScheduleTriggerSchema } from './automationTriggerDefinition.js';
+import { AutomationActionTriggerStructuralV1Schema, AutomationActionConsentTriggerSchema } from './automationActionTriggerV1.js';
 import { AutomationSessionLifecycleConfigurationSchema } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleTriggerSchema } from './automationRunLifecycle.js';
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
@@ -132,7 +133,14 @@ export const AutomationSessionLifecycleTriggerProjectionSchema = lazyZodSchema((
   status: AutomationSessionLifecycleTriggerStatusSchema,
 })));
 
-export const AutomationTriggerListItemSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const AutomationActionTriggerProjectionSchema = lazyZodSchema(() => z.extend(AutomationTriggerProjectionBaseSchema, {
+  ...AutomationActionTriggerStructuralV1Schema.shape,
+}));
+export const AutomationActionConsentTriggerProjectionSchema = lazyZodSchema(() => z.extend(AutomationTriggerProjectionBaseSchema, {
+  ...AutomationActionConsentTriggerSchema.shape,
+}));
+
+export const AutomationTriggerListItemSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('prComment'), sourceSessionId: IDENTIFIER_SCHEMA })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('ciFailed'), sourceSessionId: IDENTIFIER_SCHEMA })),
   AutomationScheduleTriggerProjectionSchema,
@@ -140,10 +148,12 @@ export const AutomationTriggerListItemSchema = lazyZodSchema(() => z.discriminat
   AutomationSessionLifecycleTriggerProjectionSchema,
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { ...AutomationRunLifecycleTriggerSchema.shape,
     remainingOccurrences: z.number().check(z.int(), z.minimum(0), z.maximum(1)), status: AutomationSessionLifecycleTriggerStatusSchema })),
+  AutomationActionTriggerProjectionSchema,
+  AutomationActionConsentTriggerProjectionSchema,
 ]));
 export type AutomationTriggerListItem = z.infer<typeof AutomationTriggerListItemSchema>;
 
-export const AutomationTriggerDetailSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const AutomationTriggerDetailSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('prComment'), sourceSessionId: IDENTIFIER_SCHEMA,
     triggerDefinitionEnvelope: z.string().check(z.minLength(1)) })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('ciFailed'), sourceSessionId: IDENTIFIER_SCHEMA,
@@ -158,5 +168,7 @@ export const AutomationTriggerDetailSchema = lazyZodSchema(() => z.discriminated
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { ...AutomationRunLifecycleTriggerSchema.shape,
     remainingOccurrences: z.number().check(z.int(), z.minimum(0), z.maximum(1)), status: AutomationSessionLifecycleTriggerStatusSchema,
     triggerDefinitionEnvelope: z.null() })),
+  z.extend(AutomationActionTriggerProjectionSchema, { triggerDefinitionEnvelope: z.string().check(z.minLength(1)) }),
+  z.extend(AutomationActionConsentTriggerProjectionSchema, { triggerDefinitionEnvelope: z.null() }),
 ]));
 export type AutomationTriggerDetail = z.infer<typeof AutomationTriggerDetailSchema>;

@@ -1,5 +1,7 @@
 import type { AutomationSessionLifecycleEvent} from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
+import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AutomationPluginEventTrigger } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import type { AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
@@ -11,6 +13,7 @@ import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations
 import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { joinList } from '@/utils/text/joinList';
+import { resolveActionTitle } from '@/text/actionTitles';
 
 import { formatCalendarDate, formatClockTime, formatMonthName, parseCalendarSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
 
@@ -88,6 +91,7 @@ export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | nul
  * kind and the fields this reads. A plugin event without a display label names its event.
  */
 export type TriggerSummarySource =
+    | Pick<AutomationActionTrigger, 'kind' | 'phase' | 'actionIds' | 'mode' | 'onFailure'>
     | Readonly<{
         kind: 'schedule';
         schedule: Readonly<{ kind: 'once'; scheduledAt: number }>
@@ -165,7 +169,26 @@ export type TriggerSummaryContext = Readonly<{
     serverId?: string | null;
     projection?: Pick<DaemonMergedProjectionInputs, 'automationEligibleEvents' | 'pluginUiProjection'> | null;
     localize?: PluginLocalizedTextResolver;
+    /** A mounted Action catalog may supply its already-localized contributed titles. */
+    actionTitle?: (actionId: string) => string | undefined;
 }>;
+
+export type ActionTriggerSummaryFacts = Readonly<Pick<AutomationActionTrigger, 'phase' | 'mode' | 'onFailure'> & {
+    actions: readonly Readonly<{ actionId: string; title: string }>[];
+}>;
+
+/** Authored Action policy and canonical catalog labels, without inventing matching or defaults. */
+export function readActionTriggerSummaryFacts(
+    trigger: Pick<AutomationActionTrigger, 'phase' | 'actionIds' | 'mode' | 'onFailure'>,
+    context?: TriggerSummaryContext,
+): ActionTriggerSummaryFacts {
+    return { phase: trigger.phase,
+        actions: trigger.actionIds.map(actionId => ({ actionId,
+            title: context?.actionTitle?.(actionId) ?? resolveActionTitle(actionId, findActionSpec(actionId) ?? null) })),
+        ...(trigger.mode === undefined ? {} : { mode: trigger.mode }),
+        ...(trigger.onFailure === undefined ? {} : { onFailure: trigger.onFailure }),
+    };
+}
 
 function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>, context?: TriggerSummaryContext): string | null {
     const observation = trigger.observation;
@@ -189,6 +212,8 @@ function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: '
 
 export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
+        case 'action':
+            return joinList(readActionTriggerSummaryFacts(trigger, context).actions.map(action => action.title));
         case 'schedule':
             if (trigger.schedule.kind === 'once') return t('workflows.triggers.once.at', {
                 time: formatWithCachedDateTimeFormatter(trigger.schedule.scheduledAt, getPreferredLanguage(), {

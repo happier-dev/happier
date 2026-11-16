@@ -3,7 +3,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionSurfaceSchema } from './metadata.js';
 import type { ActionSettingsOverride, ActionsSettingsV1 } from './actionSettings.js';
 
-export const ApprovalProfileIdV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
+import { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
+export { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
 const ApprovalProfileSurfaceListV1Schema = lazyZodSchema(() => z.array(z.keyof(ActionSurfaceSchema)));
 /**
  * The Account Approval-settings policy fields of one Action. Placements and tool exposure

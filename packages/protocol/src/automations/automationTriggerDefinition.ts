@@ -30,6 +30,8 @@ import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, AutomationSessionLifecycl
 import { FOLLOW_EVENT_KINDS_V1, type FollowEventKindV1 } from '../sessions/follow/sessionFollowPolicyV1.js';
 import { SessionPersonalEventKindV1Schema, resolveSessionPersonalFollowEventV1, type SessionPersonalEventKindV1 } from '../sessions/personal/eventEligibility.js';
 import { AutomationRunLifecycleTriggerSchema, AutomationRunLifecycleTriggerInputSchema } from './automationRunLifecycle.js';
+import { AutomationActionTriggerSchema, AutomationActionEncryptedTriggerSchema, AutomationActionConsentTriggerSchema, AutomationActionTriggerInputSchema } from './automationActionTriggerV1.js';
+export * from './automationActionTriggerV1.js';
 export * from './automationRunLifecycle.js';
 
 import { AutomationScheduleSchema } from './automationSchedule.js';
@@ -171,6 +173,9 @@ export const AutomationTriggerDefinitionSchema = lazyZodSchema(() => z.union([
   AutomationRunLifecycleTriggerSchema,
   AutomationPullRequestTriggerSchema,
   AutomationPullRequestEncryptedTriggerSchema,
+  AutomationActionTriggerSchema,
+  AutomationActionEncryptedTriggerSchema,
+  AutomationActionConsentTriggerSchema,
 ]));
 export type AutomationTriggerDefinition = z.infer<typeof AutomationTriggerDefinitionSchema>;
 
@@ -180,6 +185,7 @@ export const AutomationTriggerDefinitionInputSchema = lazyZodSchema(() => z.unio
   AutomationSessionLifecycleTriggerInputSchema,
   AutomationRunLifecycleTriggerInputSchema,
   AutomationPullRequestTriggerInputSchema,
+  AutomationActionTriggerInputSchema,
 ]));
 export type AutomationTriggerDefinitionInput = z.infer<
   typeof AutomationTriggerDefinitionInputSchema

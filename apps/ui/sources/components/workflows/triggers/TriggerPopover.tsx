@@ -291,6 +291,7 @@ function whenDescription(kind: TriggerWhenValue['kind'], sessionScoped: boolean)
             return sessionScoped ? t(`workflows.triggers.kindDescription.${kind}`) : undefined;
         case 'ciFailed':
         case 'runLifecycle':
+        case 'action':
             return undefined;
     }
 }
@@ -420,7 +421,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const promptDestination = useSessionReferenceTarget(
         needsTarget && then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
     );
-    const unavailableWhen = when.kind === 'runLifecycle' ? undefined : props.unavailableKinds?.[when.kind];
+    const unavailableWhen = when.kind === 'runLifecycle' || when.kind === 'action' ? undefined : props.unavailableKinds?.[when.kind];
     const refused = props.submitRefusal !== undefined || failure?.code === 'legacy_conversion_unsupported';
     // Saved forms may omit the private definition. Retain their When until the user
     // changes it; only a changed When needs to build a replacement definition.
@@ -617,8 +618,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                         >
                             {props.submitNotice ? <Item mode="info" title={props.submitNotice} titleLines={0} showChevron={false} /> : null}
                             {props.submitRefusal === undefined ? <>
-                            {props.manual || when.kind === 'runLifecycle' ? <Item mode="info" title={t('workflows.triggers.popover.when')}
-                                detail={when.kind === 'runLifecycle' ? formatTriggerSummary(when) : t('workflows.triggers.summary.manual')} showChevron={false} />
+                            {props.manual || when.kind === 'runLifecycle' || when.kind === 'action' ? <Item mode="info" title={t('workflows.triggers.popover.when')}
+                                detail={when.kind === 'runLifecycle' || when.kind === 'action' ? formatTriggerSummary(when) : t('workflows.triggers.summary.manual')} showChevron={false} />
                                 // Two to four short choices stay visible side by side; longer lists keep the field select.
                                 : props.whenKinds.length >= 2 && props.whenKinds.length <= 4 ? <SegmentedChoiceItem<SessionTriggerWhenKind>
                                 testID={`${props.testID}-when`}

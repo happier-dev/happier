@@ -9,6 +9,7 @@ import type { WorkflowIntendedTriggerV1, WorkflowTriggerAddRequestV1, WorkflowTr
 import type { WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import type { WorkflowDraftTriggerSnapshotV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import { buildTriggerDefinition, readTriggerWhen } from './sessionTriggerForm';
 
 /**
  * A workflow's trigger edits while its editor is open (FIN 04 §5.4 "Save"; 07 S4): trigger edits are
@@ -64,6 +65,10 @@ export class WorkflowTriggerSnapshotRestoreError extends Error {
 function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][number],
     acknowledged?: WorkflowTriggerKnownDefinitions): AutomationTriggerDefinitionInput | null {
     switch (saved.kind) {
+        case 'action': {
+            const when = readTriggerWhen(saved);
+            return when ? buildTriggerDefinition({ when, enabled: saved.enabled, sessionId: null }) : null;
+        }
         case 'schedule': return { kind: saved.kind, schedule: saved.schedule, enabled: saved.enabled };
         case 'sessionLifecycle': return { kind: saved.kind, sourceSessionId: saved.sourceSessionId, events: saved.events,
             policy: saved.policy, enabled: saved.enabled };

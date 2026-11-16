@@ -11,6 +11,7 @@ import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../../automations/automationOccurrenceV1.js';
 import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchema,
   AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema,
+  AutomationActionTriggerProjectionSchema,
   AutomationCheckpointedPullObservationSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -26,6 +27,7 @@ import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
 import { HealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { HealthCheckSourceConfigV1Schema } from '../../deployments/healthCheckSourceV1.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
+import { AutomationActionTriggerSchema } from '../../automations/automationActionTriggerV1.js';
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Only public list-safe inputs consumed by the shared human-readable trigger summary. */
@@ -37,6 +39,8 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
     enabled: zMini.optional(z.boolean()),
   };
   return z.discriminatedUnion('kind', [
+    zMini.extend(zMini.pick(AutomationActionTriggerProjectionSchema, { kind: true, phase: true, actionIds: true,
+      subjectKind: true, subjectKey: true, mode: true, onFailure: true }), historyIdentity),
     zMini.extend(zMini.pick(AutomationScheduleTriggerProjectionSchema, { kind: true, schedule: true }), {
       ...historyIdentity,
       /** Exact enabled occurrence from the scheduler; older summaries omit it. */
@@ -80,6 +84,14 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
     for (const trigger of row.triggers) {
       const historyIdentity = { automationId: row.id, triggerId: trigger.id, enabled: row.enabled && trigger.enabled };
       switch (trigger.kind) {
+        case 'action': {
+          if ('consentFor' in trigger) break;
+          summary.triggers.push({ ...historyIdentity, kind: trigger.kind, phase: trigger.phase, actionIds: trigger.actionIds,
+            ...(trigger.subjectKind === undefined ? {} : { subjectKind: trigger.subjectKind, subjectKey: trigger.subjectKey }),
+            ...(trigger.mode === undefined ? {} : { mode: trigger.mode }),
+            ...(trigger.onFailure === undefined ? {} : { onFailure: trigger.onFailure }) });
+          break;
+        }
         case 'schedule': {
           const nextRunAt = row.enabled && trigger.enabled ? trigger.nextRunAt : null;
           summary.triggers.push({ ...historyIdentity, kind: trigger.kind, schedule: trigger.schedule, nextRunAt,
@@ -183,6 +195,10 @@ const OpenedPullRequestTriggerDetailSchema = lazyZodSchema(() => z.strictObject(
   sourceSessionId: asProtocolZod(SessionIdSchema), triggerDefinitionEnvelope: z.string().check(z.minLength(1)),
   ...AutomationPullRequestTriggerSchema.shape,
 }));
+const OpenedActionTriggerDetailSchema = lazyZodSchema(() => z.extend(AutomationActionTriggerSchema,
+  z.pick(AutomationActionTriggerProjectionSchema, {
+    id: true, revision: true, enabled: true, createdAt: true, updatedAt: true,
+  }).shape));
 export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Display facts from the already-admitted Account record, not another lookup. */
   name: z.optional(z.string()),
@@ -215,6 +231,7 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
     }),
     AutomationTriggerDetailSchema._zod.def.options[4], AutomationTriggerDetailSchema._zod.def.options[5],
     OpenedPullRequestTriggerDetailSchema,
+    OpenedActionTriggerDetailSchema, AutomationTriggerDetailSchema._zod.def.options[7],
   ])),
 }));
 const WorkflowTriggerEventDefinitionV1Schema = lazyZodSchema(() => z.strictObject({

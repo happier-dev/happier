@@ -11,7 +11,7 @@ import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowT
  * What a saved trigger reads as. A run event is created from the run it follows and a Session's
  * pull-request trigger from that Session; the card lists them but does not author them.
  */
-export type WorkflowTriggerStart = 'schedule' | 'pluginEvent' | 'sessionEvent' | 'runEvent' | 'sessionPullRequest';
+export type WorkflowTriggerStart = 'schedule' | 'pluginEvent' | 'sessionEvent' | 'runEvent' | 'sessionPullRequest' | 'action';
 
 /** A session that already exists cannot start again, so "A session starts" is not offered for a chosen Session. */
 export const WORKFLOW_SESSION_EVENT_KINDS = ['turnEnds', 'needsYou', 'sessionArchived'] as const;
@@ -21,6 +21,7 @@ export function readWorkflowTriggerStart(when: TriggerWhenValue): WorkflowTrigge
     switch (when.kind) {
         case 'schedule':
         case 'pluginEvent':
+        case 'action':
             return when.kind;
         case 'turnEnds':
         case 'needsYou':
