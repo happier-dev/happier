@@ -111,6 +111,8 @@ import { resolveAccountDirectSaveTarget } from './accountDirectSaveTarget';
 import { randomUUID } from '@/platform/randomUUID';
 import { rankConnectedAccountSetupModes, resolveConnectedAccountSetupMode } from '../setup/rankConnectedAccountSetupModes';
 import { ConnectedServiceSetupFlowActions, ConnectedServiceSetupFlowBody } from '../setup/ConnectedServiceSetupFlowBody';
+import { ConnectedAccountMachineInstallation } from '../setup/ConnectedAccountMachineInstallation';
+import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import {
     type PluginLocalizedTextResolver,
 } from '@/sync/domains/plugins/ui/i18n';
@@ -348,6 +350,15 @@ const ConnectedAccountServiceController = React.memo(
     const declaredAuthentication = service ? getConnectedAccountAuthentication(service, connectedServicesRegistry) : null;
     const selectedSetupMode = resolveConnectedAccountSetupMode(declaredAuthentication?.modes ?? [], activeModeId);
     const panelIntent = controllerProps.panel?.intent ?? null;
+    const installationScope = JSON.stringify([serverId, selectedSetupMode?.id, targetSelection.selectedTarget?.serverIdentityId,
+        targetSelection.selectedTarget?.machineId]);
+    const [completedInstallation, setCompletedInstallation] = React.useState<Readonly<{
+        scope: string; configuration: Record<string, PluginJsonValueV2>;
+    }> | null>(null);
+    const machineSetupDeclaration = panelIntent?.kind === 'add' && selectedSetupMode?.kind === 'manual'
+        ? selectedSetupMode.machineSetup : undefined;
+    const machineInstallationPending = machineSetupDeclaration !== undefined
+        && completedInstallation?.scope !== installationScope && !attempt && !configuration;
     // Re-entering an Account-direct key edits it through the same Account-direct owner (convert on edit), never the daemon.
     const reconnectedAccount = panelIntent?.kind === 'reconnect' && service
         ? profile.connectedAccountsV4.find(account => account.ref.accountId === panelIntent.accountId
@@ -510,9 +521,9 @@ const ConnectedAccountServiceController = React.memo(
                 && accountServiceDescription.current?.machineId === machineId ? accountDescription : null
         : accountDescription;
     React.useEffect(() => {
-        controllerProps.onMachineRequirementChange?.(machineRequired, browserMachineAvailability);
-        controllerProps.panel?.onMachineRequirementChange?.(machineRequired, browserMachineAvailability);
-    }, [controllerProps.onMachineRequirementChange, controllerProps.panel?.onMachineRequirementChange, machineRequired, browserMachineAvailability]);
+        controllerProps.onMachineRequirementChange?.(machineRequired || machineInstallationPending, machineInstallationPending ? undefined : browserMachineAvailability);
+        controllerProps.panel?.onMachineRequirementChange?.(machineRequired || machineInstallationPending, machineInstallationPending ? undefined : browserMachineAvailability);
+    }, [controllerProps.onMachineRequirementChange, controllerProps.panel?.onMachineRequirementChange, machineRequired, machineInstallationPending, browserMachineAvailability]);
     React.useEffect(() => {
         if (accountDirectMode || !accountServiceDescription.current) return;
         if (accountAuthenticationModes?.status === 'unavailable') {
@@ -1725,7 +1736,8 @@ const ConnectedAccountServiceController = React.memo(
                     configuration={combinesManualConfiguration && activeMode.configuration
                         && (!attempt || configuration || combinedDraftSubmitted) ? {
                             fields: activeMode.configuration.fields,
-                            values: configuration?.configuration.values ?? {},
+                            values: configuration?.configuration.values
+                                ?? (completedInstallation?.scope === installationScope ? completedInstallation.configuration : {}),
                             configuredSecretFieldIds: configuration?.configuration.configuredSecretFieldIds ?? [],
                             ...(configuration?.target.kind === 'service' ? { secretRefs: configuration.configuration.secretRefs ?? {} } : {}),
                             accountLifetime: 'scope' in accountLifetime ? accountLifetime : undefined,
@@ -1925,11 +1937,19 @@ const ConnectedAccountServiceController = React.memo(
                 }}
             />
         ) : null;
+        const installation = machineInstallationPending && machineSetupDeclaration ? (
+            <ConnectedAccountMachineInstallation key={installationScope} declaration={machineSetupDeclaration}
+                serverId={serverId} machineId={selectedMachineId}
+                machineName={selectedExecutionTarget?.displayName ?? selectedMachineId}
+                online={selectedExecutionTarget ? targetSelection.state.kind === 'online' : null}
+                localize={localizeServiceText} onCancel={panelCancel}
+                onReady={configurationValues => setCompletedInstallation({ scope: installationScope, configuration: configurationValues })} />
+        ) : null;
         return (
             <>
             <ConnectedAccountActionApprovalNotice execution={actionExecution} testID="connected-account-approval-pending" />
             <ConnectedServiceSetupFlowBody
-                state={browserMachineUnavailableCode || choosingMethod || flowActive || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
+                state={installation || browserMachineUnavailableCode || choosingMethod || flowActive || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
                 methods={ranked.map((entry) => ({
                     id: entry.mode.id,
                     title: resolveConnectedAccountSetupMethodTitle(entry.mode, localizeServiceText),
@@ -1946,7 +1966,7 @@ const ConnectedAccountServiceController = React.memo(
                     setActiveModeId(modeId);
                     panelRef.current?.onModeChange?.(modeId);
                 }}
-                flow={browserMachineUnavailableCode ? machineRequirement : choosingMethod ? activeMode?.kind === 'manual' ? renderFlow(true) : methodStart : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId && !attempt && !configuration ? machineRequirement : flowActive ? renderFlow(true) : methodStart}
+                flow={installation ?? (browserMachineUnavailableCode ? machineRequirement : choosingMethod ? activeMode?.kind === 'manual' ? renderFlow(true) : methodStart : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId && !attempt && !configuration ? machineRequirement : flowActive ? renderFlow(true) : methodStart)}
             />
             </>
         );

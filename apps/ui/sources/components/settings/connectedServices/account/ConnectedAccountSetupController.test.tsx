@@ -1337,6 +1337,31 @@ describe('ConnectedAccountSetupController real ownership', () => {
                 .toEqual({ ok: true, result: { status: 'pendingAttempts', attempts: [] } });
         } finally { await screen.unmount(); }
     });
+    it('offers the declared Machine recipe before first-administrator credentials and keeps existing deployments on the same manual path', async () => {
+        const mode = { ...authentication.modes[0]!, configuration: {
+            scope: 'account' as const, changeBehavior: 'reconnect' as const,
+            fields: [{ id: 'endpoint', title: 'Endpoint', secret: false as const, required: true,
+                schema: { type: 'string' as const } }],
+        }, machineSetup: {
+            title: 'Install Acme', recipe: { pluginId: 'acme.recipes', recipeId: 'server', revision: '1' },
+            inputPrefill: [{ path: 'accessUrl', source: { kind: 'privateNetworkHttps' as const,
+                provider: { kind: 'builtin' as const, id: 'tailscale' as const } } }],
+            afterApply: { modeId: 'manual', configurationFromInputs: { endpoint: 'accessUrl' } },
+        } };
+        installDescription({ ...described, descriptor: { ...described.descriptor,
+            authentication: { ...authentication, modes: [mode] } } });
+        const screen = await renderScreen(element());
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-machine-setup')).not.toBeNull());
+            expect(screen.findHostByTestId('connected-account-manual:token')).toBeNull();
+            expect(authenticationCommands).toEqual([]);
+            await screen.pressByTestIdAsync('connected-account-machine-setup:skip');
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
+            expect(authenticationCommands).toEqual([]);
+            expect(onConnected).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
     it.each([false, true])('shows the single manual draft immediately and waits for its submit before beginning native authentication (configuration %s)', async configurationRequired => {
         const draftService = service;
         const manualMode = { ...authentication.modes[0]!,

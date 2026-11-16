@@ -33,6 +33,27 @@ then an observed subscribed status when the mode is unknown. Stored credential
 kind and sign-in provenance do not establish the mode. Observed usage owns plan
 labels; an explicit API-key mode does not display a subscription plan.
 
+## Install a service before signing in
+
+In unreleased 0.3 development source, a manual authentication mode can declare
+`machineSetup` to offer an existing Machine recipe before its sign-in form.
+The Connect sheet collects the recipe's own inputs, reviews the normal Machine
+setup Plan and follows its Apply operation. Sign-in appears after that operation
+succeeds. People with an existing deployment can go directly to the same form.
+
+The declaration names a recipe by plugin, recipe ID and revision. Optional
+`inputPrefill` entries with `source.kind: 'privateNetworkHttps'` use the selected
+Machine's observed ready private network and the declared access provider. An
+unavailable observation leaves the field empty; the person can supply the URL.
+This suggestion does not establish that a service or HTTPS endpoint is ready.
+
+`afterApply` names the containing manual mode and maps recipe input paths through
+`configurationFromInputs` to its public configuration fields. Credentials and
+secret configuration are excluded from this mapping. Keep passwords in the
+authentication form and runtime's existing attempt credential custody, rather
+than recipe inputs, scripts or setup output. Account completion and purpose
+binding continue through the ordinary connected-account flow.
+
 ## Request headers in development
 
 In unreleased 0.3 development source, the public request-auth client returns the

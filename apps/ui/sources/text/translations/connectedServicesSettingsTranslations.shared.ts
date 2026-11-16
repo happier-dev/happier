@@ -5,6 +5,12 @@ export type ConnectedServicesSettingsCopy = typeof en;
 
 
 export const setupFidelityCopy = {
+    setupInstallChooseMachine: 'Pick a machine to install this service on, or continue with an existing deployment.',
+    setupExistingDeployment: 'Already installed',
+    setupInstallReview: 'Review installation',
+    setupInstallHelp: 'Review the machine changes before installation. Sign in after installation succeeds.',
+    setupInstallLoading: 'Loading installation options…',
+    setupInstallUnavailable: 'Installation options are unavailable.',
     catalogClaude: 'Pro or Max plan. Sign in with a browser, or paste a setup token.',
     catalogChatGpt: 'Plus, Pro or Team plan. Sign in with a code or a browser.',
     catalogGemini: 'API key or a Google Cloud service account.',

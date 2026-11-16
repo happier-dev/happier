@@ -18,6 +18,7 @@ it('preserves an explicitly declared API-key mode through the public catalog des
   expect(projection.authentication.modes[0]).toMatchObject({ apiKey: true });
   expect(projection.authentication.modes[1]).not.toHaveProperty('apiKey');
   expect(projection.authentication.modes[2]).not.toHaveProperty('apiKey');
+  for (const mode of projection.authentication.modes) expect(mode).not.toHaveProperty('machineSetup');
 });
 
 it('preserves manual credential-check reachability through the UI projection', () => {
@@ -143,6 +144,47 @@ it('refuses unsafe manual setup destinations and undeclared setup authority', ()
   expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, setup: {
     url: 'https://provider.example/tokens', checklist: ['Select only the required scope.'], credentialScope: '*',
   } }).success).toBe(false);
+});
+
+describe('manual Machine setup', () => {
+  const machineSetup = {
+    title: 'Install Coder on a Machine',
+    recipe: { pluginId: 'happier.machine.recipes', recipeId: 'coder', revision: '1' },
+    inputPrefill: [{ path: 'accessUrl', source: { kind: 'privateNetworkHttps', provider: { kind: 'builtin', id: 'tailscale' } } }],
+    afterApply: { modeId: 'first-admin', configurationFromInputs: { endpoint: 'accessUrl' } },
+  };
+  const mode = {
+    id: 'first-admin', kind: 'manual', outcomeReconciliation: 'none', machineSetup,
+    fields: [{ id: 'password', title: 'Password', secret: true, schema: { type: 'string', minLength: 1 } }],
+    configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+      { id: 'endpoint', title: 'Endpoint', secret: false, required: true, schema: { type: 'string', minLength: 1 } },
+    ] },
+  };
+
+  it('preserves a recipe and its public configuration handoff through the real UI projection', () => {
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: 'coder', title: 'Coder', authentication: { defaultModeId: mode.id, modes: [mode] },
+    });
+    const projection = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+      descriptor, serviceId: 'coder', pluginId: 'happier.coder', provenance: 'external', sourceKind: 'installed',
+      availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+    }));
+    expect(projection.authentication.modes[0]).toMatchObject({ machineSetup });
+    expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode,
+      machineSetup: { ...machineSetup, inputPrefill: undefined },
+    }).success).toBe(true);
+  });
+
+  it('refuses a handoff to another mode, a credential, or an undeclared or secret configuration field', () => {
+    for (const candidate of [
+      { ...mode, machineSetup: { ...machineSetup, afterApply: { ...machineSetup.afterApply, modeId: 'token' } } },
+      { ...mode, machineSetup: { ...machineSetup, afterApply: { ...machineSetup.afterApply, configurationFromInputs: { password: 'accessUrl' } } } },
+      { ...mode, machineSetup: { ...machineSetup, afterApply: { ...machineSetup.afterApply, configurationFromInputs: { missing: 'accessUrl' } } } },
+      { ...mode, configuration: undefined },
+      { ...mode, configuration: { ...mode.configuration, fields: [{ ...mode.configuration.fields[0], secret: true }] } },
+      { id: mode.id, kind: 'oauthDeviceCode', outcomeReconciliation: 'none', machineSetup },
+    ]) expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(candidate).success).toBe(false);
+  });
 });
 
 it('distinguishes a declared native credential import from a new manual authentication', () => {

@@ -2,7 +2,10 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { CanonicalHttpOriginSchema } from '../http/canonicalHttpOrigin.js';
+import { InputPathSchema } from '../inputs/inputPredicates.js';
+import { MachineRecipeReferenceV1Schema } from '../machines/setup/machineRecipeReferenceV1.js';
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import { AccessProviderRefV1Schema } from '../plugins/contributions/accessProviderSelection.js';
 import { PluginClientExecutionReferenceV1Schema } from '../plugins/contributions/clientExecution.js';
 import {
   PluginConfigurationSettingFieldV2Schema,
@@ -242,6 +245,21 @@ export const PluginConnectedAccountSetupGuideV2Schema = lazyZodSchema(() => z.st
 /** Only measured browser-unreachable modes change placement; omission preserves execution. */
 const browserReachabilitySchema = z.literal('unreachable');
 
+/** A native recipe prepares public configuration before the same manual authentication mode continues. */
+export const PluginConnectedAccountMachineSetupV1Schema = lazyZodSchema(() => z.strictObject({
+  title: PluginLocalizedStringV2Schema,
+  recipe: MachineRecipeReferenceV1Schema,
+  inputPrefill: z.optional(z.array(z.strictObject({
+    path: InputPathSchema,
+    source: z.strictObject({ kind: z.literal('privateNetworkHttps'), provider: AccessProviderRefV1Schema }),
+  }))),
+  afterApply: z.strictObject({
+    modeId: asProtocolZod(PluginContributionLocalIdSchema),
+    configurationFromInputs: z.record(PluginSettingFieldIdV2Schema, InputPathSchema),
+  }),
+}));
+export type PluginConnectedAccountMachineSetupV1 = z.infer<typeof PluginConnectedAccountMachineSetupV1Schema>;
+
 export const PluginConnectedAccountAuthenticationModeV2Schema =
   lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({
@@ -254,6 +272,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       outcomeReconciliation: z.literal('none'),
       fields: PluginConnectedAccountAuthenticationFieldsV2Schema,
       setup: z.optional(PluginConnectedAccountSetupGuideV2Schema),
+      machineSetup: z.optional(PluginConnectedAccountMachineSetupV1Schema),
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       directExport: z.optional(PluginConnectedAccountDirectExportV2Schema),
       accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
@@ -266,6 +285,18 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
         fieldKeys: z.record(PluginSettingFieldIdV2Schema, QualifiedConnectedAccountCredentialKeyV1Schema),
       })])),
     }).check(z.superRefine((mode, context) => {
+      if (mode.machineSetup) {
+        if (mode.machineSetup.afterApply.modeId !== mode.id) context.addIssue({
+          code: 'custom', path: ['machineSetup', 'afterApply', 'modeId'],
+          message: 'Machine setup must continue its declaring manual authentication mode.',
+        });
+        for (const fieldId of Object.keys(mode.machineSetup.afterApply.configurationFromInputs)) {
+          if (!mode.configuration?.fields.some(field => field.id === fieldId && field.secret === false)) context.addIssue({
+            code: 'custom', path: ['machineSetup', 'afterApply', 'configurationFromInputs', fieldId],
+            message: 'Machine setup inputs may populate only declared public configuration fields.',
+          });
+        }
+      }
       if (mode.directExport && mode.accessOnlyExport) context.addIssue({ code: 'custom', path: ['accessOnlyExport'],
         message: 'A mode has one direct export contract.' });
       if (mode.credentialFieldKeys) {

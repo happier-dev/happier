@@ -9071,6 +9071,19 @@ new field. The scoped-clean `../0.2` frontier at
 `c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no deployment target role contract.
 No request, authority, wire epoch, migration, capability or adapter is added.
 
+Unreleased 0.3 manual Connected Account modes add optional `machineSetup` for
+the existing Machine recipe review/Apply followed by the same mode's public
+configuration and authentication form. The executable mode, recipe reference,
+prefill/source and `afterApply` objects remain closed. Older strict development
+readers reject this field; matching Protocol, SDK projections, bundled
+declarations, CLI and UI readers reload together and use the canonical API
+governance/publication producers. Modes omitting the field retain their existing
+flow. This is an unpublished development-contract cut, independent of package
+SemVer, with no migration, new wire epoch, fallback parser or compatibility
+adapter. The inspected clean `../0.2` frontier at
+`c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has no corresponding authentication-mode
+schema at `packages/protocol/src/connect/pluginConnectedAccountAuthenticationV2.ts`.
+
 Unreleased 0.3 Agent Provider requirements add optional `reasoningEffortValues`
 to the closed executable declaration. Omission retains existing Provider-tier
 application; a declared list narrows picker controls and explicit launch

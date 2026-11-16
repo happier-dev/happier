@@ -45,6 +45,17 @@ describe('Coder public authoring entry and portable authentication', () => {
     expect(mode).not.toHaveProperty('directExport');
     expect(mode).not.toHaveProperty('credentialFieldKeys');
   });
+  it('consumes the existing Coder recipe and observed Tailscale HTTPS URL before first-administrator sign-in', () => {
+    const mode = PLUGIN.manifest.contributes.connectedAccountDescriptors?.find(entry => entry.id === ACCOUNT_SERVICE.localId)
+      ?.authentication.modes.find(entry => entry.id === 'first-admin');
+    expect(mode).toMatchObject({ machineSetup: {
+      recipe: { pluginId: 'happier.machine.recipes', recipeId: 'coder', revision: '1' },
+      inputPrefill: [{ path: 'accessUrl', source: { kind: 'privateNetworkHttps', provider: { kind: 'builtin', id: 'tailscale' } } }],
+      afterApply: { modeId: 'first-admin', configurationFromInputs: { endpoint: 'accessUrl' } },
+    } });
+    expect(PLUGIN.manifest.contributes.connectedAccountDescriptors?.find(entry => entry.id === ACCOUNT_SERVICE.localId)
+      ?.authentication.modes.find(entry => entry.id === 'token')).not.toHaveProperty('machineSetup');
+  });
   it.each(['missing', 'ready'] as const)('uses the host dependency %s result and preserves actionable CLI remediation', async state => {
     const h = await deployment();
     // The managed-dependency service is the genuine host boundary for a plugin;

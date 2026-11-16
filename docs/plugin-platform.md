@@ -10188,6 +10188,22 @@ anonymous only when the provider observes public repository visibility.
 
 ### Connected Account purpose setup (0.3 development)
 
+Manual authentication modes can declare optional `machineSetup` in unreleased
+0.3 source. It references one existing Machine recipe and may prefill recipe
+inputs from the selected Machine's observed private-network HTTPS name. Missing
+or unavailable Network observations supply no hostname. The Connect sheet uses
+the ordinary Machine setup inputs, Plan review, approval and Apply operation;
+only a succeeded operation advances to the same manual authentication form.
+The existing-deployment choice opens that form without applying a recipe.
+
+`afterApply.configurationFromInputs` maps reviewed recipe inputs to declared
+public authentication configuration fields. It cannot target credential fields
+or secret configuration. The descriptor binds `afterApply.modeId` to its own
+manual mode. Authentication secrets enter the existing attempt custody only
+after the person submits the authentication form; recipe inputs and setup
+operations carry no authentication password. Purpose selection and the account
+completion callback retain their existing owners.
+
 Home public OAuth clients are deliberate non-secret `serverConfig` entries
 (`editable: 'home'`). Connected Services feature delivery carries optional
 qualified-service client IDs and mode-specific registered scopes. The existing

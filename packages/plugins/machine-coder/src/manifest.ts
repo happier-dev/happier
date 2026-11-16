@@ -62,6 +62,10 @@ export const PLUGIN = definePlugin({
       }, {
         id: 'first-admin', title: 'Create the first administrator', kind: 'manual', browserReachability: 'unreachable',
         outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+        machineSetup: { title: 'Install Coder on a Machine',
+          recipe: { pluginId: 'happier.machine.recipes', recipeId: 'coder', revision: '1' },
+          inputPrefill: [{ path: 'accessUrl', source: { kind: 'privateNetworkHttps', provider: { kind: 'builtin', id: 'tailscale' } } }],
+          afterApply: { modeId: 'first-admin', configurationFromInputs: { endpoint: 'accessUrl' } } },
         setup: { url: 'https://coder.com/docs/install', checklist: ['Use this after installing Coder on your Machine. Happier creates the first administrator, signs in, and keeps only the returned session token in Connected services. Your password stays with Coder.'] },
         configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
           { id: 'endpoint', title: 'Coder deployment URL', semantic: 'connectedAccountBase', required: true, secret: false,
