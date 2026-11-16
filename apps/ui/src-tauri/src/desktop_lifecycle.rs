@@ -183,7 +183,7 @@ pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>) -> bool {
             state.handoff_used.store(true, Ordering::SeqCst);
             let pending = payload(app, &state);
             let failed_recording = pending.recording_failure.is_some();
-            if failed_recording { crate::window_chrome::request_show_main_window(app); }
+            if failed_recording { crate::window_chrome::request_show_main_window(app, crate::window_chrome::MainWindowRevealRequest::App); }
             // A failure remains readable if the main renderer is still mounting or publication fails.
             if app.emit(APP_EXIT_REQUESTED_EVENT, pending).is_err() { return failed_recording; }
             true

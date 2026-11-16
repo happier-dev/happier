@@ -50,7 +50,7 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     };
     match action {
         DesktopMenuAction::ShowMainWindow => {
-            crate::window_chrome::request_show_main_window(app);
+            crate::window_chrome::request_show_main_window(app, crate::window_chrome::MainWindowRevealRequest::User);
         }
         DesktopMenuAction::NewWindow => {
             let target = app.webview_windows().into_iter().find(|(label, window)| {
@@ -59,7 +59,7 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
                         || crate::app_window::uses_full_chrome(app, label))
             }).map(|(label, _)| label);
             let label = target.unwrap_or_else(|| {
-                crate::window_chrome::request_show_main_window(app);
+                crate::window_chrome::request_show_main_window(app, crate::window_chrome::MainWindowRevealRequest::User);
                 crate::desktop_window::MAIN_WINDOW_LABEL.to_string()
             });
             if let Err(error) = app.emit_to(label, NEW_WINDOW_REQUESTED_EVENT, ()) {

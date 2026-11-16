@@ -116,7 +116,8 @@ pub(super) fn emit_action(
         PENDING_RESPONSES.lock().unwrap().push(response);
         if let Some(app) = app {
             #[cfg(desktop)]
-            crate::window_chrome::request_show_main_window(app);
+            // A notification click or action: the user asked.
+            crate::window_chrome::request_show_main_window(app, crate::window_chrome::MainWindowRevealRequest::User);
             // Events wake the one consumer; draining also recovers pre-subscription arrivals.
             if let Err(error) = app.emit_to("main", "desktop-notification-action", ()) {
                 log::warn!("Failed to wake desktop notification response consumer: {error}");

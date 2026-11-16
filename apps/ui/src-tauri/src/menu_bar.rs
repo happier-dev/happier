@@ -241,7 +241,8 @@ pub fn open_main_window_at(app: &AppHandle, destination: MainWindowDestination) 
             inner.pending_destination = Some(destination);
         }
     }
-    crate::window_chrome::request_show_main_window(app);
+    // Only menu, tray and Dock-menu items reach this: the user asked.
+    crate::window_chrome::request_show_main_window(app, crate::window_chrome::MainWindowRevealRequest::User);
 }
 
 /// A window gets the existing quit handoff; tray-only Quit follows the same Stop owner when OFF.

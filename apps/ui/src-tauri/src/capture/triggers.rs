@@ -31,7 +31,8 @@ fn route(app: &AppHandle, urls: Vec<Url>, present_main: bool) {
             NativeUrlIntent::Ignore => {},
         }
     }
-    if present_main && show_main { crate::window_chrome::request_show_main_window(app); }
+    // A Happier link the user opened from another app.
+    if present_main && show_main { crate::window_chrome::request_show_main_window(app, crate::window_chrome::MainWindowRevealRequest::User); }
 }
 
 /// The deep-link plugin emits live URLs before its single-instance callback.

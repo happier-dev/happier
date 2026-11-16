@@ -7,6 +7,9 @@ mod preferences;
 mod presentation;
 
 #[cfg(desktop)]
+pub(crate) use presentation::MainWindowRevealRequest;
+
+#[cfg(desktop)]
 #[derive(Default)]
 struct MainWindowPresentationState(Mutex<presentation::MainWindowPresentation>);
 
@@ -1079,7 +1082,10 @@ fn record_desktop_window_state_change(
 /// before showing the window, so macOS restores its Dock icon first and a construction failure
 /// leaves the tray-only lifecycle intact.
 #[cfg(desktop)]
-pub(crate) fn show_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+pub(crate) fn show_main_window(
+    app: &tauri::AppHandle,
+    request: presentation::MainWindowRevealRequest,
+) -> tauri::Result<()> {
     let window = match app.get_webview_window(MAIN_WINDOW_LABEL) {
         Some(window) => window,
         None => {
@@ -1091,22 +1097,90 @@ pub(crate) fn show_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             window
         }
     };
-    if !app.state::<MainWindowPresentationState>().0.lock().unwrap().request_show() {
+    let Some(request) = app.state::<MainWindowPresentationState>().0.lock().unwrap().request_show(request) else {
+        return Ok(());
+    };
+    reveal_main_window(app, &window, request)
+}
+
+/// One reveal for every path: the user's request (or an already active Happier) brings the window
+/// forward with focus; the app's own request (a login-item or `open -g` launch) shows it without
+/// taking focus from the app the user is working in.
+#[cfg(desktop)]
+fn reveal_main_window(
+    app: &tauri::AppHandle,
+    window: &WebviewWindow,
+    request: presentation::MainWindowRevealRequest,
+) -> tauri::Result<()> {
+    if presentation::reveal_takes_focus(request, app_is_active(app)) {
+        window.unminimize()?;
+        window.show()?;
+        return window.set_focus();
+    }
+    show_main_window_without_focus(app, window)
+}
+
+/// Whether Happier is the active (frontmost) app. macOS answers for the app, including a launch the
+/// user just activated before any window exists; elsewhere a focused Happier window does.
+#[cfg(desktop)]
+pub(crate) fn app_is_active(app: &tauri::AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        use objc2::{msg_send, runtime::{AnyClass, AnyObject, Bool}};
+        // NSRunningApplication is thread-safe; this runs on reveal worker threads too.
+        let Some(class) = AnyClass::get(c"NSRunningApplication") else {
+            return false;
+        };
+        let current: *mut AnyObject = unsafe { msg_send![class, currentApplication] };
+        if current.is_null() {
+            return false;
+        }
+        let active: Bool = unsafe { msg_send![current, isActive] };
+        active.as_bool()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.webview_windows().values().any(|window| window.is_focused().unwrap_or(false))
+    }
+}
+
+/// A minimized window stays minimized. On macOS `show()` orders the window in front of every app's
+/// windows, so it is ordered behind them instead; the user's next activation brings it forward.
+#[cfg(desktop)]
+fn show_main_window_without_focus(app: &tauri::AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
+    if window.is_minimized()? {
         return Ok(());
     }
-    window.unminimize()?;
-    window.show()?;
-    window.set_focus()?;
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        let window = window.clone();
+        crate::desktop_panel::run_on_main_thread(app, move || {
+            let pointer = window.ns_window().map_err(|error| error.to_string())?;
+            let native: &objc2_app_kit::NSWindow = unsafe { &*pointer.cast() };
+            native.orderBack(None);
+            Ok::<_, String>(())
+        }, "Main window background reveal did not return")
+            .and_then(|result| result)
+            .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        window.show()
+    }
 }
 
 /// WebView2 creation deadlocks in synchronous event handlers (Tauri 2.8.2's builder contract).
 /// Menu, reopen and second-instance events all schedule the existing presentation owner here.
 #[cfg(desktop)]
-pub(crate) fn request_show_main_window(app: &tauri::AppHandle) {
+pub(crate) fn request_show_main_window(
+    app: &tauri::AppHandle,
+    request: presentation::MainWindowRevealRequest,
+) {
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Err(error) = show_main_window(&app) {
+        if let Err(error) = show_main_window(&app, request) {
             log::warn!("failed to show the main window: {error}");
         }
     });
@@ -1115,7 +1189,8 @@ pub(crate) fn request_show_main_window(app: &tauri::AppHandle) {
 #[cfg(desktop)]
 fn show_existing_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(MAIN_WINDOW_LABEL).is_some() {
-        show_main_window(app)?;
+        // App ready: the launch itself, which may be a login item or a background `open -g`.
+        show_main_window(app, presentation::MainWindowRevealRequest::App)?;
     }
     Ok(())
 }
@@ -1127,7 +1202,8 @@ pub(crate) fn present_main_window_for_lifecycle_event(
 ) {
     let result = match resolve_desktop_main_window_presentation_intent(event) {
         DesktopMainWindowPresentationIntent::Show => {
-            request_show_main_window(app);
+            // The Dock or app icon (reopen), or launching Happier again.
+            request_show_main_window(app, MainWindowRevealRequest::User);
             Ok(())
         }
         DesktopMainWindowPresentationIntent::ShowExisting => show_existing_main_window(app),
@@ -1149,7 +1225,8 @@ pub(crate) fn create_main_window(
         let mut presentation = state.0.lock().unwrap();
         *presentation = presentation::MainWindowPresentation::default();
         if initial_visibility == crate::window_sizing::InitialWindowVisibility::Visible {
-            presentation.request_show();
+            // A caller acting for the user requests again with `User` (`show_main_window`).
+            presentation.request_show(presentation::MainWindowRevealRequest::App);
         }
     }
     let mut config = app
@@ -1189,10 +1266,13 @@ pub async fn desktop_main_window_content_rendered(window: Window) -> Result<bool
     }
     let reveal = window.state::<MainWindowPresentationState>().0.lock()
         .map_err(|error| error.to_string())?.content_rendered();
-    if reveal {
-        show_main_window(window.app_handle()).map_err(|error| error.to_string())?;
-    }
-    Ok(reveal)
+    let Some(request) = reveal else {
+        return Ok(false);
+    };
+    let main = window.app_handle().get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or("main window unavailable")?;
+    reveal_main_window(window.app_handle(), &main, request).map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 #[cfg(desktop)]
@@ -1316,7 +1396,8 @@ pub async fn desktop_close_window(window: Window) -> Result<bool, String> {
 #[tauri::command]
 pub async fn desktop_show_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     let has_main_window = app.get_webview_window(MAIN_WINDOW_LABEL).is_some();
-    show_main_window(&app).map_err(|error| error.to_string())?;
+    // The renderer's own request: it moves focus only inside an already active Happier.
+    show_main_window(&app, MainWindowRevealRequest::App).map_err(|error| error.to_string())?;
     Ok(has_main_window)
 }
 

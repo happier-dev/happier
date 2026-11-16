@@ -346,7 +346,10 @@ fn reveal(window: &WebviewWindow) -> Result<(), String> {
     crate::window_sizing::recover_app_window_frame(window)?;
     window.unminimize().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())?;
+    // A window restored by a background launch must not take focus from the app in use.
+    if crate::window_chrome::app_is_active(window.app_handle()) {
+        window.set_focus().map_err(|error| error.to_string())?;
+    }
     crate::window_sizing::note_presented_work_window(window);
     Ok(())
 }
@@ -681,7 +684,7 @@ pub fn desktop_app_windows_auth_changed(
             .map_err(|error| error.to_string());
         if notification.is_ok() { notification = delivery; }
     }
-    let reveal = crate::window_chrome::show_main_window(&app).map_err(|error| error.to_string());
+    let reveal = crate::window_chrome::show_main_window(&app, crate::window_chrome::MainWindowRevealRequest::App).map_err(|error| error.to_string());
     retirement?;
     notification?;
     reveal
