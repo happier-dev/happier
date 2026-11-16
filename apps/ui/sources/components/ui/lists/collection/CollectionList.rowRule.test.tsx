@@ -30,12 +30,14 @@ import {
 
 const noop = () => {};
 
-function rows(selectedIndex: number | null, count: number) {
+/** Two-line rows (a title and a line under it): the rule's own case. */
+function rows(selectedIndex: number | null, count: number, lines: 1 | 2 = 2) {
   return Array.from({ length: count }, (_, index) => (
     <CollectionNavigationRow
       key={index}
       testID={`row-${index}`}
       title={`Row ${index}`}
+      {...(lines === 2 ? { subtitle: `Line under row ${index}` } : {})}
       selected={index === selectedIndex}
       onPress={noop}
     />
@@ -106,12 +108,23 @@ describe("the rule between a column's rows (owner 2026-11-15: inset hairlines in
       <CollectionList title="Store">
         {rows(null, 2)}
         <CollectionListGroupLabel title="Browse" />
-        <CollectionNavigationRow testID="row-2" title="Row 2" selected={false} onPress={noop} />
-        <CollectionNavigationRow testID="row-3" title="Row 3" selected={false} onPress={noop} />
+        <CollectionNavigationRow testID="row-2" title="Row 2" subtitle="Line" selected={false} onPress={noop} />
+        <CollectionNavigationRow testID="row-3" title="Row 3" subtitle="Line" selected={false} onPress={noop} />
       </CollectionList>,
     );
     try {
       expect(ruledRows(screen, 4)).toEqual([0, 2]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('parts one-line rows by spacing alone (owner 2026-11-15 ~20:40Z)', async () => {
+    const screen = await renderScreen(
+      <CollectionList title="Workflows"><CollectionRows>{rows(null, 4, 1)}</CollectionRows></CollectionList>,
+    );
+    try {
+      expect(screen.tree.root.findAll((node) => node.props?.testID === 'happier-list-row-rule')).toHaveLength(0);
     } finally {
       await screen.unmount();
     }

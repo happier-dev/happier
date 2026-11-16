@@ -85,6 +85,19 @@ import {
     resolveHappierListRowRuleShown,
 } from '@happier-dev/plugin-ui/presentation';
 
+const NO_MARGINS = Object.freeze({ start: 0, end: 0 });
+
+/** A press target's horizontal margins (a column row's fill gutter), when its style states them. */
+function readHorizontalMargins(style: StyleProp<ViewStyle>): Readonly<{ start: number; end: number }> {
+    const flat = RNStyleSheet.flatten(style) as ViewStyle | undefined;
+    const read = (value: unknown) => (typeof value === 'number' ? value : null);
+    const both = read(flat?.marginHorizontal) ?? read(flat?.margin) ?? 0;
+    return {
+        start: read(flat?.marginLeft) ?? read(flat?.marginStart) ?? both,
+        end: read(flat?.marginRight) ?? read(flat?.marginEnd) ?? both,
+    };
+}
+
 /** A row's own leading padding, when its style states one (a collection column row's gutter and indent). */
 function readLeadingPadding(style: StyleProp<ViewStyle>): number | null {
     const flat = RNStyleSheet.flatten(style) as ViewStyle | undefined;
@@ -1581,6 +1594,8 @@ export const Item = React.memo<ItemProps>((props) => {
     const listRuleRow = rowFollowed !== null && (inCollectionColumn || (pageSheet === null && !isMenuRow));
     const listRuleShown = listRuleRow && resolveHappierListRowRuleShown({
         followed: rowFollowed,
+        // A row with a line under its title; one-line rows part by spacing alone.
+        multiline: hasSubtitleContent,
         selected: selected === true,
         precedesSelected: rowPrecedesSelected,
         hovered: isHovered,
@@ -1589,7 +1604,15 @@ export const Item = React.memo<ItemProps>((props) => {
         : isPageRow && flatDividerInset !== null ? flatDividerInset.marginStart
         : (readLeadingPadding(style) ?? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity])
             + (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0);
-    const listRule = listRuleShown ? <HappierListRowRule startPx={listRuleStartPx} color={theme.colors.border.subtle} /> : null;
+    // A row whose control stands outside its press target draws its rule outside the press target's fill too (beside it,
+    // not inside it): the rule then steps in by that fill's own margins, so every row's line starts and ends alike.
+    const ruleOutsideFill = listRuleShown && isInteractive && (
+        (sharedItemBehavior.accessoryPlacement === 'outside' && Boolean(rightAccessory))
+        || (leftElementOutsidePressable && Boolean(leftAccessory))
+        || (Boolean(bottomElement) && bottomElementOutsidePressable));
+    const fillMargins = ruleOutsideFill ? readHorizontalMargins(pressableStyle) : NO_MARGINS;
+    const listRule = listRuleShown ? <HappierListRowRule startPx={listRuleStartPx + fillMargins.start}
+        endPx={fillMargins.end} color={theme.colors.border.subtle} /> : null;
     const dividerNode = listRuleRow ? listRule : (sharedItemBehavior.dividerVisible ? (
         <HappierDivider
             color={flatDividerColor ?? theme.colors.border.default}
