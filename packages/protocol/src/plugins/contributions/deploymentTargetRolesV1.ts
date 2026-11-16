@@ -71,7 +71,11 @@ export const DeploymentTargetPreparedNativeV1Schema = lazyZodSchema(() => z.stri
     productionBranchOutcome: z.optional(DeploymentTargetProductionBranchOutcomeV1Schema),
     /** Provider-owned explanation captured with preparation and shown during approval. */
     reviewNotice: z.optional(z.string()),
-    gitSource: z.optional(z.strictObject({ type: z.literal('github'), repoId: id })),
+    gitSource: z.optional(z.discriminatedUnion('type', [
+        z.strictObject({ type: z.literal('github'), repoId: id }),
+        z.strictObject({ type: z.literal('gitlab'), projectId: id }),
+        z.strictObject({ type: z.literal('bitbucket'), repoUuid: id, workspaceUuid: id }),
+    ])),
     triggerUuid: z.optional(id),
     previewId: z.optional(id),
     gitBranch: z.optional(ScmBranchSourceRefSchema),

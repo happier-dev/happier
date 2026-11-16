@@ -1438,8 +1438,15 @@ export type ProjectExecutionActionResultById = {
                                     };
                                     reviewNotice?: string | undefined;
                                     gitSource?: undefined | {
+                                        type: 'bitbucket';
+                                        repoUuid: string;
+                                        workspaceUuid: string;
+                                    } | {
                                         type: 'github';
                                         repoId: string;
+                                    } | {
+                                        type: 'gitlab';
+                                        projectId: string;
                                     };
                                     triggerUuid?: string | undefined;
                                     previewId?: string | undefined;
@@ -3532,8 +3539,15 @@ export type ProjectExecutionActionResultById = {
                                     };
                                     reviewNotice?: string | undefined;
                                     gitSource?: undefined | {
+                                        type: 'bitbucket';
+                                        repoUuid: string;
+                                        workspaceUuid: string;
+                                    } | {
                                         type: 'github';
                                         repoId: string;
+                                    } | {
+                                        type: 'gitlab';
+                                        projectId: string;
                                     };
                                     triggerUuid?: string | undefined;
                                     previewId?: string | undefined;
@@ -5626,8 +5640,15 @@ export type ProjectExecutionActionResultById = {
                                     };
                                     reviewNotice?: string | undefined;
                                     gitSource?: undefined | {
+                                        type: 'bitbucket';
+                                        repoUuid: string;
+                                        workspaceUuid: string;
+                                    } | {
                                         type: 'github';
                                         repoId: string;
+                                    } | {
+                                        type: 'gitlab';
+                                        projectId: string;
                                     };
                                     triggerUuid?: string | undefined;
                                     previewId?: string | undefined;

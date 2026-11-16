@@ -101,6 +101,13 @@ describe('S0 deployment wire contracts', () => {
                 grantUrl: 'https://example.test/grant' } };
         expect(DeploymentTargetLinkContentV1Schema.safeParse(linkContent).success).toBe(true);
         expect(DeploymentTargetLinkContentV1Schema.parse(linkContent)).toEqual(linkContent);
+        for (const gitSource of [{ type: 'gitlab', projectId: '456' },
+            { type: 'bitbucket', repoUuid: '{repo-uuid}', workspaceUuid: '{workspace-uuid}' }]) {
+            const linked = { ...linkContent, preparedNative: { ...preparedNative, gitSource } };
+            expect(DeploymentTargetLinkContentV1Schema.parse(linked)).toEqual(linked);
+            expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linked,
+                preparedNative: { ...linked.preparedNative, gitSource: { ...gitSource, token: 'secret' } } }).success).toBe(false);
+        }
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
             preparedNative: { ...preparedNative, gitSource: { ...preparedNative.gitSource, token: 'not-native-metadata' } } }).success).toBe(false);
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,

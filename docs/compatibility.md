@@ -9004,6 +9004,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Vercel links extend the closed `preparedNative.gitSource` union
+with GitLab `{type, projectId}` and Bitbucket `{type, repoUuid, workspaceUuid}`.
+GitHub `{type, repoId}` is unchanged. These are non-secret native deployment
+operands in existing protected link content. Matching Protocol, SDK declarations,
+plugin projections and client/daemon readers reload together under the development
+direct cut; older strict development readers reject the new variants. No migration,
+wire epoch or compatibility adapter is added.
+
 Unreleased 0.3 deployment lifecycle results optionally retain `builtInUrls`,
 provider-observed built-in routing addresses separate from deployment-specific
 `urls`. The lifecycle result and receipt content remain closed V1 objects;
