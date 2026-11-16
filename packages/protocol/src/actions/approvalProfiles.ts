@@ -17,8 +17,10 @@ export const ApprovalProfileActionRowV1Schema = lazyZodSchema(() => z.object({
 /**
  * A saved Account preference: a named per-Action overlay of the Account Approval settings,
  * never authority or a copy carried by a Session. Only Actions the person changed are stored.
+ * Strict, so a row in any other shape (such as a pre-overlay `defaultMode` policy) is unusable
+ * rather than read as an empty overlay that silently follows the Account settings.
  */
-export const ApprovalProfileV1Schema = lazyZodSchema(() => z.object({
+export const ApprovalProfileV1Schema = lazyZodSchema(() => z.strictObject({
   id: ApprovalProfileIdV1Schema,
   name: z.string().check(z.trim(), z.minLength(1)),
   actions: z.optional(z.record(z.string(), ApprovalProfileActionRowV1Schema)),

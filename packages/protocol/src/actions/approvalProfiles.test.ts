@@ -3,6 +3,7 @@ import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import {
   applyApprovalProfileOverlayV1,
   readApprovalProfileV1,
+  resolveProfiledActionsSettingsV1,
   resolveSessionApprovalProfileReferenceV1,
 } from './approvalProfiles.js';
 
@@ -91,6 +92,25 @@ describe('approval profile overlay', () => {
     expect(readApprovalProfileV1(account, 'careful')).toEqual({
       profile: careful,
       resolution: { status: 'available', requestedId: 'careful' },
+    });
+  });
+
+  it('settles a stored pre-overlay profile as missing instead of an available empty overlay', () => {
+    const settings = normalizeActionsSettingsV1({
+      ...account,
+      approvalProfiles: [
+        ...account.approvalProfiles!,
+        { id: 'strict', name: 'Strict', defaultMode: 'require', categories: { danger: 'require' } },
+      ],
+    });
+    expect(settings.approvalProfiles).toEqual([careful]);
+    expect(readApprovalProfileV1(settings, 'strict')).toEqual({
+      profile: null,
+      resolution: { status: 'missing', requestedId: 'strict' },
+    });
+    expect(resolveProfiledActionsSettingsV1(settings, 'strict')).toEqual({
+      settings,
+      profile: { status: 'missing', requestedId: 'strict' },
     });
   });
 
