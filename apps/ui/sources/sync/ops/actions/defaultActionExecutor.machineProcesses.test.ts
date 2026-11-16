@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -124,7 +123,7 @@ describe('machine process Actions through the captured UI Home', () => {
             isolationOverride: 'directly' as const };
         const created = { type: 'success', disposition: 'created', sessionId: 'direct-session',
             executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
-            initialInput: { status: 'notRequested' } } as const;
+            initialInput: { status: 'notRequested' } } satisfies Parameters<typeof projectSessionSpawnNewActionResultV1>[0];
         rpc.machine.mockResolvedValue(created);
         const reviewed: unknown[] = [];
         await answerExternalActionAccountForHome(homes, savedHomeId, { actionId: 'session.spawn_new',
@@ -144,7 +143,7 @@ describe('machine process Actions through the captured UI Home', () => {
         const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
         const policy = { configuredSandboxes: { local: { provisioner: { pluginId: 'third.party.compute', localId: 'local' }, presetId: 'preset' } },
             workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
-                botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } }, agentNativeSandboxEnabled: false };
+                botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } }, agentNativeSandboxEnabled: false } satisfies NonNullable<ReturnType<typeof createMachineFixture>['metadata']>['isolationPolicyV1'];
         const machine = createMachineFixture({ id: 'isolation-machine', metadataVersion: 3, active: false,
             metadata: { ...createMachineFixture().metadata!, isolationPolicyV1: policy } });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
@@ -154,6 +153,7 @@ describe('machine process Actions through the captured UI Home', () => {
         })).toEqual({ ok: true, result: { status: 'ready', source: 'stored', policy, metadataVersion: 3 } });
         expect(rpc.machine).not.toHaveBeenCalled();
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine,
+            // @ts-expect-error Exercise malformed metadata received from the Machine boundary.
             metadata: { ...machine.metadata!, isolationPolicyV1: { malformed: true } } }]);
         expect(await executor.execute('machines.isolation.get', { serverId, machineId: machine.id }, {
             surface: 'ui', serverId, expectedAccountId: 'owner',
@@ -271,8 +271,8 @@ describe('machine process Actions through the captured UI Home', () => {
     it('routes safe service reads and watch intent through the captured Home without an approval artifact', async () => {
         await homes.addHome({ name: 'Unrelated Home', serverUrl: 'https://unrelated-services.test',
             accountId: 'unrelated-owner', currentAccount: true });
-        rpc.machine.mockResolvedValue({ kind: 'unavailable', reason: 'denied' });
         const machine = { serverId, machineId: 'service-machine' };
+        const received: unknown[] = [];
         const requests = [
             ['machines.services.list', machine],
             ['machines.services.discovery', machine],
@@ -281,15 +281,19 @@ describe('machine process Actions through the captured UI Home', () => {
             ['machines.services.unwatch', { ...machine, watchId: 'watch', expectedRevision: 'watches' }],
         ] as const;
         for (const [actionId, input] of requests) {
-            expect(await createDefaultActionExecutor().execute(actionId as never, input, {
+            await answerExternalActionAccountForHome(homes, savedHomeId, { actionId,
+                machineId: machine.machineId, installationId: 'service-installation', tokenEpoch: 0,
+                requesterInvocation: 'optional', execute: (value, context) => {
+                    received.push({ actionId, input: value, target: context.target });
+                    return { kind: 'unavailable', reason: 'denied' };
+                } });
+            expect(await createDefaultActionExecutor().execute(actionId, input, {
                 expectedAccountId: 'owner', surface: 'ui', serverId,
             })).toEqual({ ok: true, result: { kind: 'unavailable', reason: 'denied' } });
         }
-        expect(rpc.machine.mock.calls.map(call => ({ method: call[0].method, serverId: call[0].serverId,
-            accountId: call[0].accountId, machineId: call[0].machineId, payload: call[0].payload }))).toEqual(
-            requests.map(([actionId, input]) => ({ method: actionId, serverId, accountId: 'owner',
-                machineId: machine.machineId, payload: input })),
-        );
+        expect(received).toEqual(requests.map(([actionId, input]) => ({ actionId, input,
+            target: { kind: 'machine', machineId: machine.machineId } })));
+        expect(rpc.machine).not.toHaveBeenCalled();
         expect(homes.artifacts(savedHomeId).list()).toHaveLength(0);
     });
 
@@ -540,7 +544,7 @@ describe('machine process Actions through the captured UI Home', () => {
         rpc.machine.mockResolvedValue({ state: 'unavailable', series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] }, sample: null });
         expect(await fetchMachineVitalsViaMachineRpc(vitals)).toEqual({ ok: false, reason: 'request_failed', errorCode: 'action_disabled' });
         expect(await fetchMachineVitalsHistoryViaMachineRpc({ ...vitals, range: '7d' })).toEqual({ ok: false, reason: 'request_failed', errorCode: 'action_disabled' });
-        expect(await fetchMachineProcessesViaMachineRpc(processes)).toEqual({ ok: false, reason: 'request_failed' });
+        expect(await fetchMachineProcessesViaMachineRpc(processes)).toEqual({ ok: false, reason: 'request_failed', errorCode: 'action_disabled' });
         expect(rpc.machine).not.toHaveBeenCalled();
         rpc.machine.mockResolvedValue({ changed: false });
         expect(await watchMachineVitalsViaMachineRpc(vitals)).toEqual({ ok: true, value: { changed: false } });
@@ -620,16 +624,24 @@ describe('machine process Actions through the captured UI Home', () => {
         expect(await executor.execute('machines.processes.list', { machineId: 'm', serverId: 'different' }, context)).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
         expect(rpc.machine.mock.calls).toHaveLength(priorCalls);
     });
-    it('creates the existing canonical approval Artifact without signaling the machine before review', async () => {
+    it('confirms the person’s Process Action before any effect without creating a self-approval Artifact', async () => {
         await homes.requireUiApproval(savedHomeId, 'machines.processes.kill');
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear();
+        vi.mocked(Modal.confirm).mockImplementationOnce(async () => {
+            expect(rpc.machine).not.toHaveBeenCalled();
+            expect(homes.artifacts(savedHomeId).list()).toEqual([]);
+            return true;
+        });
+        const result = { status: 'ended', outcomes: [{ ref: 'r', outcome: 'ended', freedBytes: 40 }] };
+        rpc.machine.mockResolvedValueOnce(result);
         const outcome = await createDefaultActionExecutor().execute('machines.processes.kill', kill, {
             serverId, expectedAccountId: 'owner', surface: 'ui', actionRequestId: 'review-kill',
         });
-        expect(outcome, outcome.ok ? undefined : outcome.errorCode).toMatchObject({ ok: true });
-        if (!outcome.ok) throw new Error(outcome.error);
-        const approval = ActionApprovalRequestCreatedResultSchema.parse(outcome.result);
-        expect(JSON.parse(homes.artifacts(savedHomeId).readPlainBody(approval.artifactId)!)).toMatchObject({ actionId: 'machines.processes.kill', actionArgs: kill, status: 'open' });
-        expect(rpc.machine).not.toHaveBeenCalled();
+        expect(outcome).toEqual({ ok: true, result });
+        expect(Modal.confirm).toHaveBeenCalledOnce();
+        expect(rpc.machine).toHaveBeenCalledOnce();
+        expect(homes.artifacts(savedHomeId).list()).toEqual([]);
     });
     it('resolves an explicit Process Action Home from its input rather than the focused Home', async () => {
         const targetHome = await homes.addHome({ name: 'Background Home', serverUrl: 'https://background-processes.test', accountId: 'background-owner', currentAccount: true, active: false });

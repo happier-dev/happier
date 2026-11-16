@@ -25,7 +25,6 @@ import { measureMountedCollections } from '@/dev/testkit/render/renderInCollecti
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { t } from '@/text';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { TriageReadSessionHandoffChoicesInputV1Schema, TriageSessionHandoffChoicesV1Schema } from '@happier-dev/triage-protocol/v1';
@@ -572,19 +571,16 @@ describe('MachineServicesTab rendered production wiring', () => {
         const row = service('Web');
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const unwatches: unknown[] = [];
-        machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
-            if (method === RPC_METHODS.MACHINES_SERVICE_UNWATCH) {
-                unwatches.push(payload);
-                return { kind: 'applied', revision: 'revision-b' };
-            }
-            return { kind: 'service', service: row };
+        answerAction('machines.services.unwatch', envelope => {
+            unwatches.push(envelope.input);
+            return { kind: 'applied', revision: 'revision-b' };
         });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-more');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-unwatch')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-unwatch');
-        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId: resolveServerProfileScopeIdForIdentifier(serverId), machineId,
+        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId, machineId,
             watchId: row.watchId, expectedRevision: row.watchRevision }]));
     });
 
@@ -717,8 +713,8 @@ describe('MachineServicesTab rendered production wiring', () => {
             adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'postgresql.service',
         }, native: { phase: 'running', readiness: 'ready', displayName: 'PostgreSQL service' } });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
-        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row,
-            accounting: { kind: 'sample', samples: [{ nativeResourceId: 'postgresql.service', cpuPercent: 3, memoryBytes: 64 * 1024 * 1024 }] } });
+        answerAction('machines.services.detail', () => ({ kind: 'service', service: row,
+            accounting: { kind: 'sample', samples: [{ nativeResourceId: 'postgresql.service', cpuPercent: 3, memoryBytes: 64 * 1024 * 1024 }] } }));
         answerResource(ManagedServiceNativeLogResultV1Schema.parse({ kind: 'page', page: {
             sourceRevision: 'native-source', text: 'database ready [REDACTED]\n', nextCursor: null, truncated: false,
         } }), 'machines.services.logs.read');
@@ -730,7 +726,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await screen.pressByTestIdAsync('machine-service-postgres');
         expect(setParams).toHaveBeenLastCalledWith({ id: 'services', page: 'service', service: 'postgres' });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('database ready [REDACTED]'));
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('64 MB'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('64 MiB'));
         expect(screen.findHostByTestId('machine-service-facts')).not.toBeNull();
         expect(screen.findHostByTestId('machine-service-restart')).not.toBeNull();
         await screen.pressByTestIdAsync('machine-service-back');
@@ -1016,17 +1012,14 @@ describe('MachineServicesTab rendered production wiring', () => {
         const candidate = (name: string, unit: string) => ({ candidateId: `candidate-${name}`, revision: `revision-${name}`, name,
             adapter, nativeResourceId: unit, observation: { phase: 'running', readiness: 'not_reported', endpoint: null } });
         const watches: unknown[] = [];
-        machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
-            if (method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY) return { kind: 'snapshot', failures: [],
-                candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('redis', 'redis.service'),
-                    candidate('unpicked', 'unpicked.service'), candidate('postgres', 'postgresql.service')] };
-            if (method === RPC_METHODS.MACHINES_SERVICE_WATCH) {
-                watches.push(payload);
-                return { kind: 'applied', revision: 'next' };
-            }
-            throw new Error(`unexpected_rpc:${method}`);
+        answerAction('machines.services.discovery', () => ({ kind: 'snapshot', failures: [],
+            candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('redis', 'redis.service'),
+                candidate('unpicked', 'unpicked.service'), candidate('postgres', 'postgresql.service')] }));
+        answerAction('machines.services.watch', envelope => {
+            watches.push(envelope.input);
+            return { kind: 'applied', revision: 'next' };
         });
-        const discoveryReads = () => machineTransport.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY);
+        const discoveryReads = () => homes.requestsFor('/v1/actions/machines.services.discovery');
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.findHostByTestId(initiallyEmpty ? 'machine-services-empty' : 'machine-service-postgres')).not.toBeNull());
         // Nothing is discovered until the person asks.
@@ -1059,7 +1052,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
         const cell = (key: string) => screen.findHostByTestId(`machine-service-web:column:${key}`);
         await vi.waitFor(() => expect(cell('memory')).not.toBeNull());
-        expect(textOf(cell('memory')!)).toContain('98 MB');
+        expect(textOf(cell('memory')!)).toContain('98 MiB');
         expect(textOf(cell('up')!)).toBe(t('machineVitals.alerts.durations.hours', { hours: 4 }));
         expect(screen.findHostByTestId('machine-service-web:port')).not.toBeNull();
         // A row with nothing to report keeps the columns' places, so the figures still line up.
@@ -1070,7 +1063,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await measureMountedCollections(screen, { width: 390 });
         await vi.waitFor(() => expect(cell('memory')).toBeNull());
         expect(screen.findHostByTestId('machine-services-table:sheet-header')).toBeNull();
-        expect(screen.getTextContent()).toContain('98 MB');
+        expect(screen.getTextContent()).toContain('98 MiB');
         expect(screen.getTextContent()).toContain(t('machineVitals.header.upHours', { hours: 4 }));
         expect(screen.findHostByTestId('machine-service-web:port')).not.toBeNull();
     });
@@ -1127,7 +1120,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
         await measureMountedCollections(screen, { width: 390 });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineVitals.header.upHours', { hours: 4 })));
-        expect(screen.getTextContent()).toContain('98 MB');
+        expect(screen.getTextContent()).toContain('98 MiB');
         await screen.pressByTestIdAsync('machine-service-web');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-since')).not.toBeNull());
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('listening on :80'));
@@ -1138,10 +1131,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         const row = service('Web', { state: 'healthy' });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const reads: Array<(value: unknown) => void> = [];
-        machineTransport.rpc.mockImplementation(({ method }) => {
-            if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return new Promise(resolve => { reads.push(resolve); });
-            throw new Error(`unexpected_rpc:${method}`);
-        });
+        answerAction('machines.services.detail', () => new Promise(resolve => { reads.push(resolve); }));
         const sample = (cpuPercent: number, memoryMb: number) => ({ kind: 'service', service: row, accounting: { kind: 'sample', samples: [
             { nativeResourceId: 'shop-web-1', cpuPercent, memoryBytes: memoryMb * 1024 * 1024,
                 networkReceivedBytes: 2 * 1024 * 1024, networkSentBytes: 0, restartCount: 3 },
@@ -1152,17 +1142,17 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-usage')).not.toBeNull());
         const usage = () => textOf(screen.findHostByTestId('machine-service-usage')!);
         expect(usage()).toContain('12%');
-        expect(usage()).toContain('48 MB');
-        expect(usage()).toContain('2 MB');
+        expect(usage()).toContain('48 MiB');
+        expect(usage()).toContain('2 MiB');
         expect(usage()).toContain('0 B');
         expect(usage()).toContain(`3 · ${t('machineServices.facts.notReported')}`);
         // A replica whose sample omits its figures says so instead of reading as zero.
         expect(usage()).toContain(t('machineServices.facts.notReported'));
         await screen.pressByTestIdAsync('machine-service-measure');
         await vi.waitFor(() => expect(reads).toHaveLength(2));
-        expect(usage()).toContain('48 MB');
+        expect(usage()).toContain('48 MiB');
         await act(async () => { reads[1]!(sample(30, 64)); });
-        await vi.waitFor(() => expect(usage()).toContain('64 MB'));
+        await vi.waitFor(() => expect(usage()).toContain('64 MiB'));
         expect(usage()).toContain('30%');
     });
 });
