@@ -1,5 +1,5 @@
 import { z } from '../../zodRuntimePolicy.js';
-import semver from 'semver';
+import { gt as semverGt } from 'semver';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactRevisionV1Schema } from '../../artifacts/artifactRevisionV1.js';
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
@@ -55,6 +55,6 @@ export { compareThreeWayTextV1, resolveThreeWayTextV1 } from '../../diff/threeWa
 /** Both body review and the Info summary use this one offer decision. */
 export function readBotTemplateUpdateOfferV1(instance: BotTemplateInstanceV1, offeredVersion: string): 'available' | 'current' | 'skipped' | 'stopped' {
   if (!instance.follow) return 'stopped';
-  if (!semver.gt(offeredVersion, instance.acceptedVersion)) return 'current';
+  if (!semverGt(offeredVersion, instance.acceptedVersion)) return 'current';
   return instance.skippedVersion === offeredVersion ? 'skipped' : 'available';
 }

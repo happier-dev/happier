@@ -1,4 +1,4 @@
-import semver from 'semver';
+import { satisfies as semverSatisfies, valid as semverValid, validRange as semverValidRange } from 'semver';
 import { PLUGIN_UI_HOST_API_VERSIONS_V1 } from './hostApiDefinition.js';
 import { readMissingPluginUiHostModulesV1 } from './hostModuleAdmission.js';
 
@@ -16,11 +16,11 @@ export function isPluginUiHostApiVersionCompatibleWithVersionV1(
   const normalizedHostVersion = hostVersion.trim();
   const normalizedRange = range.trim();
   if (
-    semver.valid(normalizedHostVersion) === null
+    semverValid(normalizedHostVersion) === null
     || normalizedRange.length === 0
-    || semver.validRange(normalizedRange) === null
+    || semverValidRange(normalizedRange) === null
   ) return false;
-  return semver.satisfies(normalizedHostVersion, normalizedRange);
+  return semverSatisfies(normalizedHostVersion, normalizedRange);
 }
 
 /**

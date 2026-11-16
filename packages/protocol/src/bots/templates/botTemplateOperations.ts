@@ -1,4 +1,4 @@
-import semver from 'semver';
+import { gt as semverGt } from 'semver';
 import { RegistryFetchErrorV1 } from '../../registries/registryListV1.js';
 import { readActionFailureEnvelope } from '../../actions/executor/actionFailureEnvelope.js';
 import type { HomeHubArtifactTransportV1, HomeHubArtifactV1 } from '../../home/homeHubArtifactV1.js';
@@ -216,7 +216,7 @@ export function createBotTemplateActionExecuteV1(port: BotTemplateOperationPortV
       let revision;
       if (reused && previous?.state === 'released' && current) { release = previous.release; revision = current.revision; }
       else {
-        if (previous?.state === 'released' && !semver.gt(input.version, previous.release.version)) return failure('version_mismatch');
+        if (previous?.state === 'released' && !semverGt(input.version, previous.release.version)) return failure('version_mismatch');
         const envelope = { v: 1 as const, state: 'released' as const, release };
         // Deliberately no savedBy or source: the released Artifact contains portable reviewed bytes only.
         const write = { artifactId: draft.releaseArtifactId, header: projectBotTemplateArtifactHeaderV1(envelope), body: JSON.stringify(envelope), savedBy: null, signal };

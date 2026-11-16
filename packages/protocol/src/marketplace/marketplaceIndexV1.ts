@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import semver from 'semver';
+import { valid as semverValid } from 'semver';
 
 import { PluginDiagnosticTextV1Schema } from '../daemon/pluginContributionIntrospection.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -30,7 +30,7 @@ const HttpsUrl = z.string().check(z.trim(), z.url(), z.refine((value) => {
 }, 'Expected a credential-free HTTPS URL'));
 const ManifestDigest = z.string().check(z.trim(), z.regex(/^sha256:[a-f0-9]{64}$/));
 const NpmIntegrity = z.string().check(z.trim(), z.regex(/^sha512-[A-Za-z0-9+/]{86}==$/, 'Expected a complete SHA-512 SRI value'));
-const ExactNpmVersion = z.string().check(z.trim(), z.minLength(1), z.refine((value) => semver.valid(value) === value, 'Expected an exact canonical npm semver version'));
+const ExactNpmVersion = z.string().check(z.trim(), z.minLength(1), z.refine((value) => semverValid(value) === value, 'Expected an exact canonical npm semver version'));
 const MarketplaceDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
   code: Identifier,
   message: PluginDiagnosticTextV1Schema,

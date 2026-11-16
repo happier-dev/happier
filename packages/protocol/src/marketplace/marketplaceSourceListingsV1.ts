@@ -1,4 +1,4 @@
-import semver from 'semver';
+import { gt as semverGt } from 'semver';
 import type { MarketplaceIndexEntryV1, MarketplaceIndexSourceSnapshotV1 } from './marketplaceIndexV1.js';
 
 /** Published catalog identities have the same meaning in browsing and exact review. */
@@ -35,7 +35,7 @@ export function readMarketplaceSourceListingsV1(snapshot: MarketplaceIndexSource
       continue;
     }
     distributions.set(key, entry);
-    if (!prior || semver.gt(entry.distribution.version, prior.distribution.version)) entries.set(entry.pluginId, entry);
+    if (!prior || semverGt(entry.distribution.version, prior.distribution.version)) entries.set(entry.pluginId, entry);
   }
   // Validate the entire source before selecting a frozen version. Browsing
   // still projects latest, but an exact read must not silently substitute it.

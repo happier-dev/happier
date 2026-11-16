@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
-import semver from 'semver';
+import { valid as semverValid } from 'semver';
 import { PluginEnginesV2Schema } from './engines.js';
 export { PluginEnginesV2Schema, type PluginEnginesV2 } from './engines.js';
 
@@ -342,7 +342,7 @@ function createPluginManifestV2Schema() {
   return z.strictObject({
   schemaVersion: z.literal(2),
   id: asProtocolZod(PluginIdSchema),
-  version: z.string().check(z.trim(), z.refine((value) => semver.valid(value) === value, 'Plugin manifest version must be a canonical semver version.')),
+  version: z.string().check(z.trim(), z.refine((value) => semverValid(value) === value, 'Plugin manifest version must be a canonical semver version.')),
   displayName: PluginLocalizedStringV2Schema,
   description: z.optional(PluginLocalizedStringV2Schema),
   engines: PluginEnginesV2Schema,

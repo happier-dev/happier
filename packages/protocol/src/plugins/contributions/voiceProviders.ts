@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
-import semver from 'semver';
+import { valid as semverValid } from 'semver';
 
 import {
   PluginContributionLocalIdSchema,
@@ -805,7 +805,7 @@ export const VoiceConversationCapabilitiesSchema = lazyZodSchema(() => z.strictO
 }));
 export type VoiceConversationCapabilities = z.infer<typeof VoiceConversationCapabilitiesSchema>;
 
-const VoiceAgentRuntimeVersionSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(64), z.refine((value) => value.trim() === value && semver.valid(value) === value, 'Voice Agent runtime versions must be exact canonical semver versions.')));
+const VoiceAgentRuntimeVersionSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(64), z.refine((value) => value.trim() === value && semverValid(value) === value, 'Voice Agent runtime versions must be exact canonical semver versions.')));
 
 const VoiceConversationProviderContributionSchema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
