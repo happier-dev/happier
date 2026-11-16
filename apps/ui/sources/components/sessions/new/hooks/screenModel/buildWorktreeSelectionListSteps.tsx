@@ -147,7 +147,7 @@ export type WorktreeSelectionStepScope = Readonly<{
 }>;
 
 export type WorktreeSelectionWorkflowScope = Readonly<{
-    newWorktree: Readonly<{ onSelect: () => void }>;
+    newWorktree?: Readonly<{ onSelect: () => void }>;
     step?: WorktreeSelectionStepScope;
 }>;
 
@@ -690,7 +690,7 @@ export function buildWorktreeSelectionListSteps(params: WorktreeSelectionListBui
             icon: <Icon name="folder" size={WORKTREE_ROW_ICON_SIZE} color={params.rowIconColor} />,
             onSelect: params.onSelectCurrentDir,
         },
-        ...(params.workflowScope === undefined ? [] : [{
+        ...(params.workflowScope?.newWorktree === undefined ? [] : [{
             id: WORKSPACE_NEW_WORKTREE_OPTION_ID,
             label: t('newSession.checkout.newWorktree'),
             subtitle: t('workflows.workspace.newWorktreeSubtitle'),

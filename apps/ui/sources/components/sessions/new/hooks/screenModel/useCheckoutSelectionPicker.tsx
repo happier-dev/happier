@@ -26,7 +26,8 @@ import {
  * how each is labelled — so the two pages cannot
  * offer different checkouts for the same folder.
  *
- * Returns `null` where there is no first-party Git repository to pick within.
+ * Without a first-party Git repository, only a Workflow's folder and step choices remain.
+ * Other hosts receive `null` because they have no checkout to pick within.
  */
 export type CheckoutSelectionPicker = Readonly<{
     rootStep: SelectionListStep;
@@ -88,7 +89,7 @@ export function useCheckoutSelectionPicker(params: Readonly<{
     return React.useMemo<CheckoutSelectionPicker | null>(() => {
         const supportsRepoWorktreePicker = repoScmSnapshot?.repo.isRepo === true
             && isFirstPartyGitScmBackendId(repoScmSnapshot.repo.backendId);
-        if (!supportsRepoWorktreePicker) return null;
+        if (!supportsRepoWorktreePicker && workflowScope === undefined) return null;
 
         const labelsById = new Map<string, string>(checkoutChipModel.options.map((option) => {
             if (option.kind === 'current_path') return [option.id, t('newSession.checkout.noWorktree')];
@@ -121,7 +122,8 @@ export function useCheckoutSelectionPicker(params: Readonly<{
                     onSelectCheckoutPath(info.worktreePath)
                 ),
             }),
-            ...(workflowScope === undefined ? {} : { workflowScope }),
+            ...(workflowScope === undefined ? {} : { workflowScope: supportsRepoWorktreePicker
+                ? workflowScope : { step: workflowScope.step } }),
         });
         if (selection !== undefined) return { rootStep, selectedOptionId: selection.optionId, selectedLabel: selection.label };
 

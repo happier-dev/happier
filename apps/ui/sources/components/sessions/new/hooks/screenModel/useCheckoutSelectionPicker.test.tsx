@@ -1,9 +1,8 @@
 import * as React from 'react';
-import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
 import { installTimerCensus, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -12,12 +11,8 @@ import { NEW_SESSION_WORKTREE_STALE_THRESHOLD_MS } from './_constants';
 
 installNewSessionScreenModelCommonModuleMocks();
 installDisconnectedServerSocketBoundary();
-beforeAll(loadSyncSingletonForTests);
 
-let useCheckoutSelectionPicker: typeof import('./useCheckoutSelectionPicker')['useCheckoutSelectionPicker'];
-beforeAll(async () => {
-    ({ useCheckoutSelectionPicker } = await import('./useCheckoutSelectionPicker'));
-});
+const { useCheckoutSelectionPicker } = await import('./useCheckoutSelectionPicker');
 
 afterEach(() => {
     standardCleanup();
@@ -38,6 +33,39 @@ function makeSnapshot(lastActivityAt = Date.now() - 60_000): ScmWorkingSnapshot 
             includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
     };
 }
+
+it('keeps folder and step workspace choices available without a Git repository', async () => {
+    const snapshot = makeSnapshot();
+    const sameAsWorkflow = vi.fn();
+    const fromStep = vi.fn();
+    const currentDirectory = vi.fn();
+    const hook = await renderHook(() => useCheckoutSelectionPicker({
+        repoScmSnapshot: { ...snapshot, repo: { ...snapshot.repo, isRepo: false, worktrees: [] } },
+        checkoutChipModel: { selectedOptionId: 'current_path', options: [
+            { id: 'current_path', kind: 'current_path', path: '/folder' },
+        ] },
+        selectedMachineId: 'picker-machine', selectedPath: '/folder', onSelectCheckoutPath: currentDirectory,
+        workflowScope: {
+            newWorktree: { onSelect: vi.fn() },
+            step: { sameAsWorkflow: { subtitle: '/folder', onSelect: sameAsWorkflow },
+                fromSteps: [{ blockId: 'producer', label: 'Prepare folder', onSelect: fromStep }] },
+        },
+    }));
+    try {
+        const picker = hook.getCurrent();
+        expect(picker).not.toBeNull();
+        const options = picker!.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+        expect(options.map(option => option.id)).toEqual([
+            'workspace_same_as_workflow', 'workspace_from_step:producer', 'current_path',
+        ]);
+        options.find(option => option.id === 'workspace_same_as_workflow')!.onSelect?.();
+        options.find(option => option.id === 'workspace_from_step:producer')!.onSelect?.();
+        options.find(option => option.id === 'current_path')!.onSelect?.();
+        expect(sameAsWorkflow).toHaveBeenCalledOnce();
+        expect(fromStep).toHaveBeenCalledOnce();
+        expect(currentDirectory).toHaveBeenCalledWith('/folder');
+    } finally { await hook.unmount(); }
+});
 
 it('does no settled clock work for unrendered checkout labels', async () => {
     vi.useFakeTimers();
