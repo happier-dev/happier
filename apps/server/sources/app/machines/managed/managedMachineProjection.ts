@@ -114,6 +114,7 @@ function projectManagedMachineStructural(row: StoredManagedMachine) {
         ...(row.presetId && row.presetRevision !== null ? { preset: {
             id: row.presetId,
             revision: row.presetRevision,
+            ...(row.presetConfigurationRevision === null ? {} : { configurationRevision: row.presetConfigurationRevision }),
         } } : {}),
         ...(controller ? { controller } : {}),
         allocation: row.allocation, creationState: row.creationState,

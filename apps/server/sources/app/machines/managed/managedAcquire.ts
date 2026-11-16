@@ -130,7 +130,8 @@ export async function admitManagedAcquire(params: Readonly<{
                 const controller = selected.preset.controller ?? (request.acquisitionMode ? review.controller : undefined);
                 if (!sameManagedInput(controller, review.controller)) throw new ManagedMachineError("controller_retired");
                 if (request.acquisitionMode && selected.custodianAccountId !== params.custodianAccountId) throw new ManagedMachineError('permission_denied');
-                const preset = { id: selected.preset.id, revision: selected.preset.revision } as const;
+                const preset = { id: selected.preset.id, revision: selected.preset.revision,
+                    configurationRevision: selected.preset.configurationRevision ?? 0 } as const;
                 const presetContent = ManagedAdmissionPresetContentV1Schema.parse(selected.presetContent);
                 const presetContentOverride = request.input.presetContentOverride;
                 if (presetContentOverride && presetContentOverride.content.t !== presetContent.content.t) {
@@ -157,7 +158,7 @@ export async function admitManagedAcquire(params: Readonly<{
                     const idle = await tx.managedMachine.findFirst({ where: {
                         homeId: review.homeId, custodianAccountId: selected.custodianAccountId,
                         controllerMachineId: controller?.machineId, controllerInstallationId: controller?.installationId,
-                        presetId: preset.id, presetRevision: preset.revision, allocation: 'bound', creationState: 'active',
+                        presetId: preset.id, presetConfigurationRevision: preset.configurationRevision, allocation: 'bound', creationState: 'active',
                         archivedAt: null, desired: 'start', birthSessions: {
                             some: { archivedAt: { not: null } }, none: { archivedAt: null },
                         },
@@ -185,7 +186,7 @@ export async function admitManagedAcquire(params: Readonly<{
                     homeId: review.homeId, custodianAccountId: selected.custodianAccountId,
                     controllerMachineId: controller?.machineId ?? null, controllerInstallationId: controller?.installationId ?? null,
                     admittedActionRequestId: request.requestId, admittedInput,
-                    presetId: preset.id, presetRevision: preset.revision,
+                    presetId: preset.id, presetRevision: preset.revision, presetConfigurationRevision: preset.configurationRevision,
                     // The historical column is non-null; its value is an
                     // opaque envelope, never a launch snapshot.
                     launch: storeOpaquePresetLaunch({

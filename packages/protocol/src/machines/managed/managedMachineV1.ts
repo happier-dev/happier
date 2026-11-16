@@ -153,7 +153,8 @@ export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, 
     /** Installed-controller admission provenance for a local Session sandbox. */
     acquisitionMode: z.optional(z.literal('resource-bound')),
     /** Captured author mode for a preset snapshot; readers must not use their own Account mode. */
-    preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)), contentEncryptionMode: AccountEncryptionModeSchema })),
+    preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)),
+      configurationRevision: z.optional(z.int().check(z.gte(0))), contentEncryptionMode: AccountEncryptionModeSchema })),
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: z.optional(ManagedControllerV1Schema),
     controllerAccess: z.optional(ManagedControllerAccessV1Schema),
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),

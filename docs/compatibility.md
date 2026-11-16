@@ -29,6 +29,15 @@ reject the new field, while new readers accept its absence. The prospective
 0.2 frontier described above has no managed preset contract. No released wire
 epoch, compatibility adapter or migration is added by this client carrier.
 
+The server persists the authored integer and captures it as an immutable
+`preset.configurationRevision` on each new managed admission. Shared-kept idle
+reuse matches this counter within the selected preset; ordinary row revisions
+continue to identify Action selections and CAS writes. The append-only server
+migration initializes preset counters to zero and seeds a retained Machine's
+nullable snapshot only when its Home, preset id and admitted preset revision
+match the current preset row. Older or missing snapshots remain unknown and
+cannot be reused; their rows and opaque content are preserved.
+
 ## Workflow trigger Event references (unreleased 0.3)
 
 The closed Workflow value-reference union adds `trigger_event`, and the private

@@ -120,7 +120,7 @@ function readStoredPresetContent(row: StoredPreset) {
 function projectPreset(row: StoredPreset): ManagedMachinePresetV1 {
     const stored = readStoredPresetContent(row);
     return ManagedMachinePresetV1Schema.parse({
-        id: row.id, homeId: row.homeId, revision: row.revision, owner: ownerOf(row),
+        id: row.id, homeId: row.homeId, revision: row.revision, configurationRevision: row.configurationRevision, owner: ownerOf(row),
         contentEncryptionMode: stored.contentEncryptionMode,
         content: stored.content, recipients: stored.recipients,
         ...(stored.controllerPoolId === undefined ? {} : { controllerPoolId: stored.controllerPoolId }),
@@ -404,6 +404,7 @@ function definition(preset: ManagedMachinePresetV1): ManagedMachinePresetCreateI
 
 export async function createMachinePreset(params: PresetContext & Readonly<{ input: ManagedMachinePresetCreateInputV1 }>): Promise<PresetMutationResultV1> {
     const input = ManagedMachinePresetCreateInputV1Schema.parse(params.input);
+    input.configurationRevision ??= 0;
     if (input.teamAcquireDelegated === false) delete input.teamAcquireDelegated;
     const execute = () => inTx(async tx => {
         await acquirePresetMutationAccountsInTx(tx, { actorAccountId: params.accountId, owner: input.owner,
@@ -422,7 +423,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
         await authorizeMachinePresetCreationSaveInTx(tx, params, input);
         await validatePresetRecipientsInTx(tx, params, input, params.accountId);
         const row = await tx.managedMachinePreset.create({ data: {
-            id: input.id, homeId: input.homeId, name: '',
+            id: input.id, homeId: input.homeId, name: '', configurationRevision: input.configurationRevision,
             custodianAccountId: input.owner.kind === "account" ? input.owner.accountId : null,
             teamId: input.owner.kind === "team" ? input.owner.teamId : null,
             launch: storeOpaquePresetLaunch(input),
@@ -1019,6 +1020,7 @@ export async function updateMachinePreset(params: PresetPreparationContext & Rea
         // approver. Withdrawal needs Manage even if the selected credential retired.
         const recipientRepairOnly = input.patch.recipients !== undefined
             && input.patch.content === undefined && input.patch.contentEncryptionMode === undefined
+            && input.patch.configurationRevision === undefined
             && input.patch.controller === undefined && input.patch.controllerPoolId === undefined
             && input.patch.retention === undefined && input.patch.wakeOnAcceptedMessage === undefined
             && input.patch.teamAcquireDelegated === undefined && input.patch.simultaneousLimit === undefined;
@@ -1037,7 +1039,7 @@ export async function updateMachinePreset(params: PresetPreparationContext & Rea
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
             // `name` is a legacy storage key only; private content remains in
             // the opaque envelope and is never projected or searched here.
-            name: '', launch: storeOpaquePresetLaunch(next),
+            name: '', launch: storeOpaquePresetLaunch(next), configurationRevision: next.configurationRevision,
             controllerMachineId: next.controller?.machineId ?? null, controllerInstallationId: next.controller?.installationId ?? null,
             setup: getActivePrismaRuntime().DbNull,
             retentionOverride: next.retention ?? getActivePrismaRuntime().DbNull,

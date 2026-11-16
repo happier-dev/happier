@@ -129,6 +129,55 @@ describe("Machine preset relational owner", () => {
         expect(row.name).toBe('');
     });
 
+    it.each(['plain', 'e2ee'] as const)('persists successive %s configuration counters independently of row revisions', async mode => {
+        const accountId = `preset-configuration-counter-${mode}-owner`;
+        const homeId = await getOrCreateServerIdentityId();
+        const keys = tweetnacl.box.keyPair();
+        await db.account.create({ data: { id: accountId, encryptionMode: mode,
+            ...createSignedAccountContentBinding(keys.publicKey) } });
+        const id = `preset-configuration-counter-${mode}`;
+        const owner = { kind: 'account' as const, accountId };
+        const census = await readReadyPresetRecipientCensus(accountId, { homeId, owner });
+        const seal = (presetId: string, image: string, name = 'Counter preset') => sealManagedMachinePresetContentV1({
+            presetId, mode, content: { v: 1, name, launch: { ...launch, choices: { image } } },
+            recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes,
+        });
+        // Legacy clients omit the additive counter; the persisted initial value is zero.
+        const definition = { homeId, id, owner, contentEncryptionMode: mode, ...seal(id, 'image-a') };
+        const created = await requestPreset(accountId, 'create', definition);
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { configurationRevision: 0, revision: 0 } });
+        expect((await requestPreset(accountId, 'create', definition)).json()).toMatchObject({
+            kind: 'saved', preset: { configurationRevision: 0, revision: 0 },
+        });
+
+        for (const [image, expectedCounter] of [['image-b', 1], ['image-c', 2]] as const) {
+            const current = (await requestPreset(accountId, 'get', { homeId, id })).json().preset;
+            const updated = await requestPreset(accountId, 'update', { homeId, id, expectedRevision: current.revision,
+                patch: { ...seal(id, image), configurationRevision: (current.configurationRevision ?? 0) + 1 } });
+            expect(updated.statusCode, updated.body).toBe(200);
+            expect(updated.json()).toMatchObject({ kind: 'saved', preset: { configurationRevision: expectedCounter } });
+        }
+        const beforeOperationalWrite = (await requestPreset(accountId, 'get', { homeId, id })).json().preset;
+        const metadataSave = await requestPreset(accountId, 'update', { homeId, id,
+            expectedRevision: beforeOperationalWrite.revision, patch: { wakeOnAcceptedMessage: true } });
+        expect(metadataSave.json()).toMatchObject({ kind: 'saved', preset: { configurationRevision: 2, revision: 3 } });
+        // Rename/reseal content writes omit the authored counter.
+        const resealed = await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 3,
+            patch: seal(id, 'image-c', 'Renamed counter preset') });
+        expect(resealed.statusCode, resealed.body).toBe(200);
+        expect(resealed.json()).toMatchObject({ kind: 'saved', preset: { configurationRevision: 2, revision: 4 } });
+        expect((await requestPreset(accountId, 'list', { homeId })).json().presets).toContainEqual(resealed.json().preset);
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id } })).toMatchObject({ configurationRevision: 2 });
+
+        const copiedId = `${id}-copy`;
+        const copied = await requestPreset(accountId, 'create', { homeId, id: copiedId, owner, contentEncryptionMode: mode,
+            ...seal(copiedId, 'image-c'), configurationRevision: 2 });
+        expect(copied.statusCode, copied.body).toBe(200);
+        expect(copied.json()).toMatchObject({ kind: 'saved', preset: { configurationRevision: 2, revision: 0 } });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: copiedId } })).toMatchObject({ configurationRevision: 2 });
+    });
+
     it.each(['plain', 'e2ee'] as const)('reads retained raw %s-author presets without rewriting and seals only on normal save', async mode => {
         const accountId = `preset-legacy-${mode}-owner`;
         const homeId = await getOrCreateServerIdentityId();
@@ -146,7 +195,7 @@ describe("Machine preset relational owner", () => {
         const get = await requestPreset(accountId, 'get', target);
         expect(get.statusCode, get.body).toBe(200);
         expect(get.json()).toMatchObject({ kind: 'found', preset: {
-            id: raw.id, revision: 0, contentEncryptionMode: 'plain', content: expectedContent, recipients: [],
+            id: raw.id, revision: 0, configurationRevision: 0, contentEncryptionMode: 'plain', content: expectedContent, recipients: [],
         } });
         const listed = await requestPreset(accountId, 'list', { homeId });
         expect(listed.statusCode, listed.body).toBe(200);
@@ -1422,7 +1471,7 @@ describe("Machine preset relational owner", () => {
         })).rejects.toMatchObject({ code: 'preset_archived' });
     });
 
-    it('reuses only an unoccupied kept local resource from the same custodian and preset revision', async () => {
+    it('reuses only an unoccupied kept local resource from the same custodian and preset configuration', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const accountId = 'preset-local-reuse-owner';
         await db.account.create({ data: { id: accountId, encryptionMode: 'plain', publicKey: null } });
@@ -1431,10 +1480,10 @@ describe("Machine preset relational owner", () => {
         const definition = taggedPlainPreset({ id, homeId, owner: { kind: 'account', accountId }, name: 'Kept local',
             privateFields: { launch }, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         expect((await requestPreset(accountId, 'create', definition)).statusCode).toBe(200);
-        const request = (requestId: string) => ({ custodianAccountId: accountId, requesterAccountId: accountId,
+        const request = (requestId: string, revision = 0) => ({ custodianAccountId: accountId, requesterAccountId: accountId,
             requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false,
                 acquisitionMode: 'resource-bound' as const, reuseIdle: true as const,
-                input: { selection: { kind: 'preset' as const, homeId, id, revision: 0 }, controller } } });
+                input: { selection: { kind: 'preset' as const, homeId, id, revision }, controller } } });
         const first = await admitManagedAcquire(request('local-reuse-first'));
         await db.managedMachine.update({ where: { id: first.machine.id }, data: { allocation: 'bound' } });
         const pending = await admitManagedAcquire(request('local-reuse-pending'));
@@ -1453,11 +1502,67 @@ describe("Machine preset relational owner", () => {
         await db.session.update({ where: { id: session.id }, data: { archivedAt: new Date() } });
         expect((await admitManagedAcquire(request('local-reuse-archived'))).machine.id).toBe(first.machine.id);
 
-        await db.managedMachine.update({ where: { id: first.machine.id }, data: { presetRevision: 1 } });
-        expect((await admitManagedAcquire(request('local-reuse-revision'))).machine.id).not.toBe(first.machine.id);
-        await db.managedMachine.update({ where: { id: first.machine.id }, data: { presetRevision: 0,
+        await db.managedMachine.update({ where: { id: first.machine.id }, data: {
             custodianAccountId: (await db.account.create({ data: { encryptionMode: 'plain' } })).id } });
         expect((await admitManagedAcquire(request('local-reuse-custodian'))).machine.id).not.toBe(first.machine.id);
+        await db.managedMachine.update({ where: { id: first.machine.id }, data: { custodianAccountId: accountId } });
+
+        const renamedContent = taggedPlainPresetContent('Renamed kept local', { launch });
+        expect((await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 0,
+            patch: { content: renamedContent, configurationRevision: 0 } })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+        const beforeRenameReuse = await db.managedMachine.count({ where: { presetId: id } });
+        expect((await admitManagedAcquire(request('local-reuse-renamed', 1))).machine.id).toBe(first.machine.id);
+        expect(await db.managedMachine.count({ where: { presetId: id } })).toBe(beforeRenameReuse);
+        expect(first.machine.preset).toMatchObject({ configurationRevision: 0 });
+
+        // Prepare writes opaque private bytes through its existing admitted owner.
+        const prepared = await import('./machinePresetService').then(({ updateMachinePreset }) => updateMachinePreset({
+            accountId, presetPreparationAdmission: { homeId, id, expectedRevision: 1 },
+            input: { homeId, id, expectedRevision: 1, patch: {
+                content: taggedPlainPresetContent('Prepared kept local', { launch }),
+            } },
+        }));
+        expect(prepared).toMatchObject({ kind: 'saved', preset: { revision: 2, configurationRevision: 0 } });
+        expect((await admitManagedAcquire(request('local-reuse-prepared', 2))).machine.id).toBe(first.machine.id);
+        expect(await db.managedMachine.count({ where: { presetId: id } })).toBe(beforeRenameReuse);
+
+        // Unknown legacy snapshots must not match the preset's initial counter.
+        await db.$executeRaw`UPDATE "ManagedMachine" SET "presetConfigurationRevision" = NULL WHERE "id" = ${first.machine.id}`;
+        expect((await admitManagedAcquire(request('local-reuse-unknown-legacy', 2))).machine.id).not.toBe(first.machine.id);
+        await db.$executeRaw`UPDATE "ManagedMachine" SET "presetConfigurationRevision" = 0 WHERE "id" = ${first.machine.id}`;
+        expect((await admitManagedAcquire(request('local-reuse-known-legacy', 2))).machine.id).toBe(first.machine.id);
+
+        const changedContent = taggedPlainPresetContent('Changed launch', {
+            launch: { ...launch, choices: { image: 'changed' } }, setup: { scripts: [{ body: 'echo changed' }] },
+        });
+        expect((await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 2,
+            patch: { content: changedContent, configurationRevision: 1 } })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 3, configurationRevision: 1 } });
+        const changed = await admitManagedAcquire(request('local-reuse-changed', 3));
+        expect(changed.machine.id).not.toBe(first.machine.id);
+        expect(changed.machine.preset).toMatchObject({ revision: 3, configurationRevision: 1 });
+        await db.managedMachine.update({ where: { id: changed.machine.id }, data: { allocation: 'bound' } });
+        await db.session.create({ data: { accountId, tag: 'local-reuse-changed-session', metadata: '{}',
+            encryptionMode: 'plain', managedCreationId: changed.machine.id, archivedAt: new Date() } });
+        expect((await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 3, patch: {
+            content: taggedPlainPresetContent('Changed setup again', {
+                launch: { ...launch, choices: { image: 'changed' } }, setup: { scripts: [{ body: 'echo third' }] },
+            }), configurationRevision: 2,
+        } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 4, configurationRevision: 2 } });
+        const third = await admitManagedAcquire(request('local-reuse-third-configuration', 4));
+        expect([first.machine.id, changed.machine.id]).not.toContain(third.machine.id);
+        expect(third.machine.preset).toMatchObject({ revision: 4, configurationRevision: 2 });
+        expect(await admitManagedAcquire(request('local-reuse-changed', 3))).toMatchObject({
+            machine: { id: changed.machine.id, preset: { revision: 3, configurationRevision: 1 } },
+            presetContent: { content: changedContent },
+        });
+        expect((await admitManagedAcquire(request('local-reuse-first')))).toMatchObject({
+            machine: { id: first.machine.id, preset: { revision: 0, configurationRevision: 0 } },
+            presetContent: { content: definition.content },
+        });
+        await expect(admitManagedAcquire(request('local-reuse-stale-selection', 2)))
+            .rejects.toMatchObject({ code: 'request_conflict' });
     });
 
     it('enforces CAS, archive, replay, and simultaneous capacity without inspecting private content', async () => {
@@ -1594,6 +1699,13 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(member, 'archive', { homeId, id: definition.id, expectedRevision: 0 })).statusCode).toBe(404);
         expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 0,
             patch: { teamAcquireDelegated: false } })).json()).toEqual({ kind: 'refused', code: 'permission_denied' });
+        // A Team preset manager without controller Manage may repair recipients, never change the recipe counter.
+        expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { recipients: [] } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 0, configurationRevision: 0 } });
+        expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { recipients: [], configurationRevision: 1 } })).json()).toEqual({ kind: 'refused', code: 'permission_denied' });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } }))
+            .toMatchObject({ revision: 0, configurationRevision: 0 });
 
         await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, {
             accountId: member, homeId, id: definition.id, revision: 0,

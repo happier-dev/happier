@@ -2691,6 +2691,7 @@ model ManagedMachine {
     admittedInput Json
     presetId String?
     presetRevision Int?
+    presetConfigurationRevision Int?
     launch Json
     reviewedFacts Json?
     machineSetup Json?
@@ -2728,6 +2729,7 @@ model ManagedMachinePreset {
     team Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
     name String @db.LongText
     revision Int @default(0)
+    configurationRevision Int @default(0)
     launch Json?
     setup Json?
     controllerMachineId String?
