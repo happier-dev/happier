@@ -1,4 +1,4 @@
-import { releaseLessDeclarationIdentitySql } from './declarationReadRows';
+import { projectsDeclarationIdentities, releaseLessDeclarationIdentitySql } from './declarationReadRows';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import type { CurrentPluginDeclarationV1 } from './currentDeclaration';
@@ -36,7 +36,7 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
     const prisma = getActivePrismaRuntime();
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const mysql = provider === 'mysql';
-    const summarize = provider === 'postgres' && input.list === true && !input.omitDeclarations;
+    const summarize = projectsDeclarationIdentities() && input.list === true && !input.omitDeclarations;
     const quote = mysql ? '`' : '"';
     const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
     const column = (alias: 'a' | 'i', name: string) => prisma.sql`${prisma.raw(alias)}.${identifier(name)}`;
@@ -52,7 +52,7 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
             ${input.omitDeclarations || summarize ? prisma.sql`NULL`
                 : prisma.sql`CASE WHEN ${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL
                     THEN ${text('releaseLessDeclaration')} ELSE NULL END`} AS ${identifier('releaseLessDeclarationText')},
-            ${summarize ? prisma.sql`CASE WHEN i."enabled" AND i."desiredVersion" IS NULL
+            ${summarize ? prisma.sql`CASE WHEN ${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL
                 THEN CAST((${declarationSummary}) AS TEXT) ELSE NULL END AS "releaseLessDeclarationSummaryText",` : prisma.empty}
             ${column('i', 'revision')} AS ${identifier('revision')}
         FROM ${identifier('Account')} a LEFT JOIN ${identifier('AccountPluginIntent')} i

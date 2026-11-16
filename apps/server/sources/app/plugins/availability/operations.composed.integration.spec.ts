@@ -465,7 +465,7 @@ describe("plugin Availability operations", () => {
         });
     }
 
-    it('reads the Account cursor and intent page in one statement, then projects declarations after the snapshot', async () => {
+    it('reads the Account cursor and intent page in one statement, then projects declaration identities after the snapshot', async () => {
         await seedAccountAndMachine();
         const manifest = { ...releaseFacts().normalizedManifest, description: 'availability-transaction-probe' };
         const declaration = { manifest, manifestDigestSha256: `sha256:${'a'.repeat(64)}` };
@@ -490,12 +490,12 @@ describe("plugin Availability operations", () => {
             try { return await read(counted); } finally { insideSnapshot = false; }
         }, options));
         const parse = JSON.parse;
-        let declarationDecodes = 0;
+        let bodyDecodes = 0;
+        let summaryDecodes = 0;
         const decoding = vi.spyOn(JSON, 'parse').mockImplementation((text, reviver) => {
-            if (text.startsWith('{"manifest":') && text.includes('availability-transaction-probe')) {
-                declarationDecodes += 1;
-                expect(insideSnapshot).toBe(false);
-            }
+            // Engine responses are parsed here too: any transferred body counts.
+            if (text.includes('availability-transaction-probe')) bodyDecodes += 1;
+            else if (text.startsWith('{"manifestDigestSha256":') && !insideSnapshot) summaryDecodes += 1;
             return parse(text, reviver);
         });
         try {
@@ -503,7 +503,9 @@ describe("plugin Availability operations", () => {
             expect(listed.intentReads[0]?.response.currentDeclaration)
                 .toEqual({ declarationDigestSha256: declaration.manifestDigestSha256 });
             expect(statements).toBe(1);
-            expect(declarationDecodes).toBe(1);
+            // The page reads the body-free identity summary; no manifest body is read or decoded.
+            expect(summaryDecodes).toBe(1);
+            expect(bodyDecodes).toBe(0);
         } finally { observed.mockRestore(); decoding.mockRestore(); }
     });
 

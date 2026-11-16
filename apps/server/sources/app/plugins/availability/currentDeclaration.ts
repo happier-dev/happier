@@ -4,8 +4,7 @@ import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev
 import { PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 import type { Tx } from "@/storage/inTx";
-import { readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
-import { getDbProviderFromEnv } from '@/storage/prisma';
+import { projectsDeclarationIdentities, readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 /**
@@ -336,7 +335,7 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
         declarationRefKey(release.pluginId, release.version),
         release,
     ] as const));
-    const projected = getDbProviderFromEnv(process.env, 'postgres') === 'postgres';
+    const projected = projectsDeclarationIdentities();
     const selected = new Map(params.refs.flatMap(ref => {
         const intent = intentsByPluginId.get(ref.pluginId);
         if (!projected || !intent?.enabled || intent.desiredVersion !== null) return [];
