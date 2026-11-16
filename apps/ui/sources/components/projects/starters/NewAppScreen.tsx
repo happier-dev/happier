@@ -839,13 +839,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource' : 'newApp.deploy.builtComposeSource'), note: null }
             : { title: named ?? pastedRepository?.selector.repository.nameWithOwner ?? '…', note: deployFrame?.source?.note ?? null }} />
         <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
+          previewEnvironmentId={deploySource.kind === 'repository' && deploySource.projectSourceId === props.projectSourceId
+            ? props.previewEnvironmentId : null}
           phone={phone} steps={deploySteps} onLeave={stepAside} />
       </View>
     );
   } else if (step === 'auto') {
     const recommending = auto.view.kind === 'recommendations';
-          previewEnvironmentId={deploySource.kind === 'repository' && deploySource.projectSourceId === props.projectSourceId
-            ? props.previewEnvironmentId : null}
     body = (
       <>
         {recommending
