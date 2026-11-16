@@ -48,6 +48,8 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
 });
 import { ArtifactView } from './ArtifactView';
 import { useArtifactOperations } from './useArtifactOperations';
+import { useArtifactTitleProjections } from './useArtifactTitleProjections';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ArtifactDetailContent } from '@/app/(app)/artifacts/[id]';
 import { EditArtifactContent } from '@/app/(app)/artifacts/edit/[id]';
 
@@ -117,6 +119,32 @@ async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: P
 }
 
 describe('Artifact composed view reads', () => {
+    it('hydrates presented Doc titles only for the current Account scope', async () => {
+        const artifactHome = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        const { served, head } = await setup('document', undefined, false, request => request.path === '/v1/artifacts/read'
+            ? artifactHome.handle(request.path, { method: request.method, body: JSON.stringify(request.body) }) ?? undefined : undefined, true);
+        artifactHome.replaceStoredRow(head);
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        getStorage().setState({ profileScope: scope });
+        const artifactIds = ['document'];
+        function Presented({ children }: React.PropsWithChildren) {
+            return <PluginSurfaceFocusEligibilityProvider active={false} presentationActive>{children}</PluginSurfaceFocusEligibilityProvider>;
+        }
+        const hook = await renderHook(({ subject }) => useArtifactTitleProjections(subject, artifactIds), {
+            initialProps: { subject: { ...scope, accountId: 'retired-owner' } }, wrapper: Presented,
+        });
+        try {
+            expect(hook.getCurrent()).toEqual([null]);
+            expect(served.requests.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(0);
+            await hook.rerender({ subject: scope });
+            await vi.waitFor(() => expect(hook.getCurrent()).toEqual(['Saved']));
+            expect(served.requests.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(1);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it.each([
         { access: 'owner', canEdit: true, canManage: true, canShare: true },
         { access: 'admin', canEdit: true, canManage: true, canShare: true },

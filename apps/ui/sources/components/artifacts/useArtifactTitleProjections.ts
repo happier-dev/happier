@@ -23,13 +23,13 @@ export function useArtifactTitleProjections(scope: ServerAccountScope | null, ar
             fireAndForget(sync.refreshArtifactsByIds(missingIds, { signal: controller.signal }), { tag: 'artifacts.hydrateTitles' });
             return () => controller.abort();
         };
-        let current = presentedSignal.get();
-        let stop = start(current);
+        let presented = presentedSignal.get();
+        let stop = start(presented);
         const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
+            if (presentedSignal.get() === presented) return;
+            presented = presentedSignal.get();
             stop?.();
-            stop = start(current);
+            stop = start(presented);
         });
         return () => { unsubscribe(); stop?.(); };
     }, [active, scope?.serverId, scope?.accountId, current, artifactIds, presentedSignal]);
