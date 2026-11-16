@@ -28,7 +28,7 @@ import {
     setVoiceConversationRuntimeSnapshot,
 } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
-import { useVoiceSurfaceFixtureIntent } from '@/voice/qa/voiceSurfaceFixtureIntent';
+import { useVoiceSurfaceFixtureIntent } from './voiceSurfaceFixtureIntent';
 
 const VOICE_SURFACE_E2E_FIXTURE_SIDEBAR_HIDDEN_CONVERSATION = 'sidebar_hidden_conversation';
 const VOICE_SURFACE_E2E_FIXTURE_REALTIME_RECOVERABLE_DISCONNECT = 'realtime_recoverable_disconnect';
@@ -783,7 +783,7 @@ export function useVoiceSurfaceE2eFixtureComposition(): Readonly<{ shouldSuppres
     return React.useMemo(() => ({ shouldSuppressOnboarding }), [shouldSuppressOnboarding]);
 }
 
-export function VoiceSurfaceFixtureHost(_props: Readonly<{ enabled: boolean }>) {
+export function VoiceSurfaceFixtureHost() {
     useVoiceSurfaceE2eFixtureComposition();
     return null;
 }

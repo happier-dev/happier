@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { isVoiceQaDebugRuntime } from './voiceQaDebugRuntime';
+import { isVoiceQaDebugRuntime } from '@/voice/qa/voiceQaDebugRuntime';
 
 const VOICE_SURFACE_E2E_FIXTURE_QUERY_PARAM = 'happier_voice_e2e_fixture';
 const VOICE_SURFACE_E2E_FIXTURE_STORAGE_KEY = 'happier.voice.e2e.fixture';

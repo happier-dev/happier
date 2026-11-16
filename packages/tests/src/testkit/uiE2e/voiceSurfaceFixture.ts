@@ -44,7 +44,7 @@ export function buildVoiceSurfaceFixtureUrl(params: Readonly<{
     fixtureId: string;
     path?: string;
 }>): string {
-    const url = new URL(params.path ?? '/', params.uiBaseUrl.endsWith('/') ? params.uiBaseUrl : `${params.uiBaseUrl}/`);
+    const url = new URL(params.path ?? '/dev/voice-surface-fixture', params.uiBaseUrl.endsWith('/') ? params.uiBaseUrl : `${params.uiBaseUrl}/`);
     url.searchParams.set('happier_hmr', '0');
     url.searchParams.set('server', params.serverBaseUrl);
     url.searchParams.set(VOICE_SURFACE_E2E_FIXTURE_QUERY_PARAM, params.fixtureId);

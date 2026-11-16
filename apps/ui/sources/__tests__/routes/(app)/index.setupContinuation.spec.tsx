@@ -366,103 +366,26 @@ describe('/ (welcome) setup continuation', () => {
         } finally { persistenceFailure.mockRestore(); }
     });
 
-    it('does not auto-open the setup wizard overlay on web when a voice e2e fixture query param is present', async () => {
-        setDesktop(false);
-        seedSetupIntent(null);
-
-        // The UI e2e harness drives the voice surface via `?happier_voice_e2e_fixture=...`.
-        expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
-
-        const Screen = (await import('@/app/(app)/index')).Home;
-        const screen = await renderRoute(React.createElement(Screen));
-        await flushHookEffects({ cycles: 1, turns: 3 });
-
-        expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
-    });
-
-    it('suppresses the setup wizard overlay on web when a voice e2e fixture query param is present, even if a setup auth continuation is pending', async () => {
-        setDesktop(false);
-        seedSetupIntent({
-            branch: 'thisComputer',
-            phase: 'awaiting_auth',
-            relayUrl: 'https://relay.example.test',
-        });
-        expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
-
-        const Screen = (await import('@/app/(app)/index')).Home;
-        const screen = await renderRoute(React.createElement(Screen));
-        await flushHookEffects({ cycles: 1, turns: 3 });
-
-        expect(setPendingSetupIntentMock).toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
-        expect(pendingSetup.getPendingSetupIntent()?.phase).toBe('dismissed');
-    });
-
-    it('does not auto-open the setup wizard overlay on web when a voice e2e fixture is persisted in localStorage', async () => {
-        setDesktop(false);
-        seedSetupIntent(null);
-        globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
-
-        const Screen = (await import('@/app/(app)/index')).Home;
-        const screen = await renderRoute(React.createElement(Screen));
-        await flushHookEffects({ cycles: 1, turns: 3 });
-
-        expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
-    });
-
-    it('does not open the setup wizard overlay during a voice e2e fixture even when a setup continuation is pending', async () => {
-        setDesktop(false);
-        seedSetupIntent({
-            branch: 'thisComputer',
-            phase: 'awaiting_auth',
-            relayUrl: 'https://relay.example.test',
-        });
-        globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
-
-        const Screen = (await import('@/app/(app)/index')).Home;
-        const screen = await renderRoute(React.createElement(Screen));
-        await flushHookEffects({ cycles: 1, turns: 3 });
-
-        expect(pendingSetup.getPendingSetupIntent()?.phase).toBe('dismissed');
-        expect(screen.findAllByType(BaseModal)).toHaveLength(0);
-    });
-
-    it('ignores voice fixture query markers in production without dismissing setup', async () => {
+    it.each([
+        ['query', true], ['query', false], ['persisted', true], ['persisted', false],
+    ] as const)('ignores voice fixture markers from %s with debug runtime %s when continuing setup', async (marker, debugRuntime) => {
         const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
         const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
-        (globalThis as { __DEV__?: boolean }).__DEV__ = false;
-        process.env.EXPO_PUBLIC_DEBUG = '0';
+        (globalThis as { __DEV__?: boolean }).__DEV__ = debugRuntime;
+        process.env.EXPO_PUBLIC_DEBUG = debugRuntime ? '1' : '0';
         setDesktop(false);
-        expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
-
-        try {
-            const Screen = (await import('@/app/(app)/index')).Home;
-            const screen = await renderRoute(React.createElement(Screen));
-            await flushHookEffects({ cycles: 1, turns: 3 });
-
-            expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');
-            expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
-        } finally {
-            (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
-            if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;
-            else process.env.EXPO_PUBLIC_DEBUG = previousDebug;
+        if (marker === 'query') {
+            expoRouterMock.state.router.setParams({ happier_voice_e2e_fixture: 'local_auto_return_listening' });
+        } else {
+            globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
         }
-    });
-
-    it('ignores persisted voice fixture markers in production without dismissing setup', async () => {
-        const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
-        const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
-        (globalThis as { __DEV__?: boolean }).__DEV__ = false;
-        process.env.EXPO_PUBLIC_DEBUG = '0';
-        setDesktop(false);
-        globalThis.localStorage?.setItem('happier.voice.e2e.fixture', 'local_auto_return_listening');
-
         try {
             const Screen = (await import('@/app/(app)/index')).Home;
-            const screen = await renderRoute(React.createElement(Screen));
+            await renderRoute(<Screen />);
             await flushHookEffects({ cycles: 1, turns: 3 });
-
             expect(expoRouterMock.spies.replace).toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');
             expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'dismissed' }));
+            expect(pendingSetup.getPendingSetupIntent()).toBeNull();
         } finally {
             (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
             if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;

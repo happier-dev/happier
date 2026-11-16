@@ -302,23 +302,23 @@ test('Home keeps unopened panes, fixtures and builtin widget bodies outside its 
         '/components/projects/widgets/ProjectBuiltinWidgetBody.tsx',
         '/components/settings/usage/widgets/UsageWidgetBody.tsx',
         '/components/sessions/panes/SessionDetailsPanel.tsx',
-        '/dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition.ts',
     ];
     for (const suffix of closed) {
         assert.ok([...graph.keys()].some(file => file.endsWith(suffix)), `demand retains ${suffix}`);
         assert.deepEqual([...required].filter(file => file.endsWith(suffix)), [], `Home must not download unopened ${suffix}`);
     }
+    assert.deepEqual([...graph.keys()].filter(file => file.endsWith('/dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition.ts')), [],
+        'Home must not retain a test fixture, including through a dynamic import');
     console.log(JSON.stringify({ feature: 'Home', requiredUiModules: required.size, closedBodies: closed.length }));
 });
 
-test('native pane, fixture and builtin widget hosts keep their bodies synchronous', () => {
+test('native pane and builtin widget hosts keep their bodies synchronous', () => {
     const hosts = [
         'components/appShell/panes/PaneTabDestination',
         'components/projects/widgets/ProjectBuiltinWidgetBody',
         'components/settings/usage/widgets/UsageWidgetBody',
         'components/sessions/panes/SessionDetailsPanel',
     ].map(host => [host + 'Host', host + '.tsx']);
-    hosts.push(['voice/qa/VoiceSurfaceFixtureHost', 'dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition.ts']);
     for (const platform of ['ios', 'android']) {
         for (const [host, implementation] of hosts) {
             const origin = join(repoRoot, 'apps/ui/index.ts');

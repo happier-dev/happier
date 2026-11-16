@@ -4,7 +4,7 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { useRouter, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { MainView } from '@/components/navigation/shell/MainView';
-import { clearPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
@@ -16,8 +16,6 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveLegacySessionDeepLinkRoute } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveNewSessionAuthContinuation } from '@/components/sessions/new/navigation/newSessionAuthContinuation';
-import { useVoiceSurfaceFixtureIntent } from '@/voice/qa/voiceSurfaceFixtureIntent';
-import { VoiceSurfaceFixtureHost } from '@/voice/qa/VoiceSurfaceFixtureHost';
 import { PersonalHomeBootstrapContent, usePersonalHomeBootstrapActive } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { shouldKeepDesktopPersonalHomeShell } from '@/components/personalHome/bootstrap/personalHomeIndexRoutePolicy';
@@ -38,7 +36,6 @@ export function Home() {
     const activeServerSnapshot = useActiveServerSnapshot();
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
-    const voiceE2eFixture = useVoiceSurfaceFixtureIntent();
     const personalHomeBootstrapActive = usePersonalHomeBootstrapActive();
     // Explicit replay and a live journey own the viewport; a persisted machine-add
     // continuation routes to its draft instead of relaunching the setup journey.
@@ -56,27 +53,13 @@ export function Home() {
     ) {
         // Only the active provider owns bootstrap/adoption recovery in the shell. An explicit
         // existing Home bypasses that provider and needs real pre-auth, not Account-only loading.
-        return (
-            <>
-                <VoiceSurfaceFixtureHost enabled={voiceE2eFixture.shouldSuppressOnboarding} />
-                <PreAuthOnboardingWizardEntry />
-            </>
-        );
+        return <PreAuthOnboardingWizardEntry />;
     }
-    return (
-        <>
-            <VoiceSurfaceFixtureHost enabled={voiceE2eFixture.shouldSuppressOnboarding} />
-            <Authenticated
-                activeServerId={activeServerSnapshot.serverId}
-                shouldSuppressSetupContinuation={voiceE2eFixture.shouldSuppressOnboarding}
-            />
-        </>
-    );
+    return <Authenticated activeServerId={activeServerSnapshot.serverId} />;
 }
 
 function Authenticated(props: Readonly<{
     activeServerId: string;
-    shouldSuppressSetupContinuation: boolean;
 }>) {
     const params = useLocalSearchParams<{
         id?: string | string[];
@@ -94,7 +77,6 @@ function Authenticated(props: Readonly<{
     const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
     const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
     const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
-    const shouldSuppressSetupContinuation = props.shouldSuppressSetupContinuation;
     const legacySessionRoute = resolveLegacySessionDeepLinkRoute({ sessionId, serverId: params.serverId, messageId, jumpChildId });
     const newSessionAuthContinuation = React.useMemo(() => {
         return resolveNewSessionAuthContinuation({
@@ -105,10 +87,6 @@ function Authenticated(props: Readonly<{
     const pendingSetupIntent = usePendingSetupIntent();
     const consumedIntentRef = React.useRef<typeof pendingSetupIntent>(null);
     const pendingTerminalConnect = getPendingTerminalConnect();
-    React.useEffect(() => {
-        if (!shouldSuppressSetupContinuation || !pendingSetupIntent || pendingSetupIntent.branch === 'askHappier' || pendingSetupIntent.phase === 'dismissed') return;
-        setPendingSetupIntent({ ...pendingSetupIntent, phase: 'dismissed' });
-    }, [pendingSetupIntent, shouldSuppressSetupContinuation]);
 
     React.useEffect(() => {
         if (!newSessionAuthContinuation) return;
@@ -124,7 +102,7 @@ function Authenticated(props: Readonly<{
     React.useEffect(() => {
         if (normalizeSessionId(sessionId) || newSessionAuthContinuation) return;
         if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
-        if ((shouldSuppressSetupContinuation && pendingSetupIntent?.branch !== 'askHappier') || pendingTerminalConnect) return;
+        if (pendingTerminalConnect) return;
         if (!pendingSetupIntent || consumedIntentRef.current === pendingSetupIntent) return;
         if (pendingSetupIntent.phase !== 'awaiting_auth' && pendingSetupIntent.phase !== 'post_auth') return;
 
@@ -147,7 +125,7 @@ function Authenticated(props: Readonly<{
         router.replace(buildMachineAddHref({
             path: pendingSetupIntent.branch === 'remoteMachine' ? 'ssh' : 'thisComputer',
         }));
-    }, [activeServerAccountScope, askHappierReady, newSessionAuthContinuation, pendingSetupIntent, pendingTerminalConnect, router, sessionId, shouldSuppressSetupContinuation, startAskHappier]);
+    }, [activeServerAccountScope, askHappierReady, newSessionAuthContinuation, pendingSetupIntent, pendingTerminalConnect, router, sessionId, startAskHappier]);
 
     return (
         <View style={stylesheet.root}>
