@@ -11,7 +11,8 @@ const digest = value => createHash('sha256').update(JSON.stringify(value)).diges
 const send = (socket, event) => socket.write(JSON.stringify(event) + '\n');
 // Native EOF now owns cancellation, including fallback. Previously loaded
 // producers drain their jobs; new requests reach only this lifetime owner.
-const controllerAddress = repo => `/tmp/hstack-coalesce-${process.getuid()}/v2-${digest(realpathSync(repo))}.sock`;
+// v3 keys PATH by its resolved tools (see the client); v2 lifetimes drain.
+const controllerAddress = repo => `/tmp/hstack-coalesce-${process.getuid()}/v3-${digest(realpathSync(repo))}.sock`;
 
 function readMessages(socket, consume) {
   let pending = '';
@@ -111,7 +112,8 @@ async function serve(address) {
       }
       // Only the policy-projected environment participates. Credential-bearing
       // options and values stay inside the digest, never a printed identifier.
-      const environment = request.environmentNames.map(name => [name, request.environment[name] ?? null]);
+      const keyed = { ...request.environment, ...request.keyEnvironment };
+      const environment = request.environmentNames.map(name => [name, keyed[name] ?? null]);
       const key = digest([request.repo, request.identityCwd, request.command, environment]);
       let group = groups.get(key);
       if (!group) {
@@ -145,6 +147,15 @@ async function serve(address) {
     process.send?.({ ready: true });
   });
   process.on('disconnect', idle);
+}
+
+function resolveOnPath(name, path) {
+  for (const directory of path.split(':')) {
+    if (!directory) continue;
+    try { return realpathSync(`${directory}/${name}`); }
+    catch (error) { if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes(error.code)) throw error; }
+  }
+  return null;
 }
 
 function connect(address) {
@@ -218,12 +229,17 @@ try {
     const physicalRepo = realpathSync(repo);
     let physicalCwd = identityCwd;
     try { physicalCwd = realpathSync(identityCwd); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    // Agent sessions prepend their own shim directories to PATH. PATH changes
+    // the result only through the tools it resolves (this client is the
+    // launcher's PATH-resolved node), so the key carries those, not the string.
+    const keyEnvironment = process.env.PATH === undefined ? {}
+      : { PATH: [process.execPath, resolveOnPath('pnpm', process.env.PATH)].join('\n') };
     await attach(controllerAddress(physicalRepo), {
       repo: physicalRepo, identityCwd: physicalCwd, cwd: process.cwd(), command,
       // Older resident controllers already implement this fresh-follower bit.
       // They drain normally; callers need no second controller identity.
       typecheck: true, reuseRunning: mode === 'reuse-running',
-      environmentNames: names.split(' ').filter(Boolean), environment: process.env,
+      environmentNames: names.split(' ').filter(Boolean), environment: process.env, keyEnvironment,
     });
   }
 } catch {

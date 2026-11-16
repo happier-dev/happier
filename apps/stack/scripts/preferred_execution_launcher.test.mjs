@@ -1642,12 +1642,13 @@ test('controller coalescing shares one fresh AUTO follower with full output repl
   assert.equal((await next.result).code, 7);
 });
 
-for (const variant of ['argv', 'env', 'cwd', 'ssh-agent']) test(`controller coalescing keeps different ${variant} in distinct dispatches`, { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
+// The agent socket is not an identity: target SSH configs pin IdentityFile with
+// IdentitiesOnly, so sessions with different agents share (controller_coalescing.test.mjs).
+for (const variant of ['argv', 'env', 'cwd']) test(`controller coalescing keeps different ${variant} in distinct dispatches`, { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
   const { start, connections } = await controllerCoalescingFixture(t);
   const first = start(); await first.started;
   const second = start(variant === 'argv' ? { args: ['probe-command', 'different'] }
     : variant === 'env' ? { env: { HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' } }
-      : variant === 'ssh-agent' ? { env: { SSH_AUTH_SOCK: '/fixture/different-agent.sock' } }
       : { options: ['--cwd=apps/stack'] });
   await second.started;
   assert.equal(connections.length, 2);
@@ -9263,7 +9264,9 @@ for (const [kind, args, reusable] of [
   ['ordinary', ['probe-command'], false],
   ['search', ['rg', 'needle', 'apps/stack/scripts/utils'], false],
   ['test', ['vitest', 'run', 'fixture.test.ts'], false],
-  ['compiler', ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/cli/tsconfig.source.json'], false],
+  // Identical typechecks share one fresh follower run (2026-11-16: 6 concurrent
+  // apps/ui typecheck:local requests from different lanes, each 15-40 GiB).
+  ['compiler', ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/cli/tsconfig.source.json'], true],
   ['entry-loads', ['node', 'apps/stack/scripts/perf/entry-load.mjs'], true],
 ]) test(`coalescing process cost: ${kind}`, { skip: process.platform !== 'linux' }, async t => {
   const fixture = await memoryRoutingFixture(t, {

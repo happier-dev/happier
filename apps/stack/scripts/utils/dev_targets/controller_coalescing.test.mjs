@@ -139,6 +139,58 @@ socket.on('data', () => socket.end());
   assert.equal((await readFile(countPath, 'utf8')).length, 1);
 });
 
+test('agent sessions that differ only in transport, scratch and PATH shims share one entry-load execution', {
+  timeout: 15000, skip: process.platform !== 'linux',
+}, async t => {
+  // 2026-11-16 21:50Z: 27 identical `entry-load.mjs` requests ran as 27 groups
+  // because each agent session carries its own SSH agent socket, TMPDIR and
+  // PATH shim directory. The generated projection supplies the key names.
+  const policy = await readFile(join(import.meta.dirname, 'native_command_policy.sh'), 'utf8');
+  const names = /^controller_coalescing_environment_names='([^']*)'$/m.exec(policy)[1];
+  const fixture = await createTempFixture(t, { prefix: 'cs-' });
+  const gatePath = fixture.path('s');
+  const countPath = fixture.path('count');
+  const payload = fixture.path('payload.cjs');
+  await writeFile(payload, `require('node:fs').appendFileSync(process.argv[2], 'x');
+const socket = require('node:net').createConnection(process.argv[3]);
+socket.on('data', () => socket.end());
+`);
+  const connections = [];
+  const gate = createServer(socket => { connections.push(socket); });
+  await new Promise(resolveListen => gate.listen(gatePath, resolveListen));
+  t.after(() => { for (const socket of connections) socket.destroy(); gate.close(); });
+  const callers = [];
+  t.after(() => { for (const caller of callers) if (caller.exitCode === null) caller.kill('SIGTERM'); });
+  const start = session => {
+    const shims = fixture.path(`shims-${session}`);
+    const caller = spawn(process.execPath, [owner, fixture.root, fixture.root, '0', names,
+      '"$HAPPIER_TEST_NODE" "$HAPPIER_TEST_PAYLOAD" "$HAPPIER_TEST_COUNT" "$HAPPIER_TEST_GATE"', 'reuse-running'], {
+      env: { ...process.env, HAPPIER_TEST_NODE: process.execPath, HAPPIER_TEST_PAYLOAD: payload,
+        HAPPIER_TEST_COUNT: countPath, HAPPIER_TEST_GATE: gatePath,
+        PATH: `${shims}:${process.env.PATH}`, SSH_AUTH_SOCK: fixture.path(`agent-${session}`),
+        TMPDIR: fixture.path(`tmp-${session}`), XDG_RUNTIME_DIR: fixture.path(`run-${session}`) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    callers.push(caller);
+    return new Promise(resolveExit => caller.once('close', code => resolveExit(code)));
+  };
+  await mkdir(fixture.path('shims-a'));
+  await mkdir(fixture.path('shims-b'));
+  const first = start('a');
+  while (connections.length === 0) await new Promise(resolveTick => setTimeout(resolveTick, 10));
+  const second = start('b');
+  let status;
+  do {
+    await new Promise(resolveTick => setTimeout(resolveTick, 10));
+    status = JSON.parse(spawnSync(process.execPath, [owner, '--status', fixture.root], { encoding: 'utf8' }).stdout);
+  } while (status.attachedCallers + status.runningDispatches < 3 && connections.length < 2);
+  assert.equal(status.runningDispatches, 1);
+  assert.equal(status.duplicateCallers, 1);
+  for (const socket of connections) socket.write('finish');
+  assert.deepEqual(await Promise.all([first, second]), [0, 0]);
+  assert.equal((await readFile(countPath, 'utf8')).length, 1);
+});
+
 // Short prefixes keep Unix socket paths valid under worker TMPDIRs.
 for (const outcome of ['success', 'failure', 'signal', 'interrupt']) test(`queued controller followers progress after leader ${outcome} with inherited output`, {
   timeout: 15000, skip: process.platform !== 'linux',

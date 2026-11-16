@@ -37,12 +37,15 @@ export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } fr
 // The native transport and controller coalescer consume this same projection.
 // Only result-affecting inherited inputs participate; per-caller/session ids do
 // not travel to the worker and must not split an otherwise identical command.
+// The shared job runs with its leader's agent socket, scratch and runtime dirs,
+// so SSH_AUTH_SOCK, TMPDIR and XDG_RUNTIME_DIR are not part of its identity;
+// PATH participates through the tools it resolves (controller_coalescing.mjs).
 const COMMAND_ENVIRONMENT = Object.freeze({
   preparation: ['HAPPIER_STACK_SKIP_REFRESH_DEPS', 'HAPPIER_STACK_DISABLE_REFRESH_DEPS', 'HAPPIER_CLI_TEST_SKIP_BUILD'],
   payload: ['HAPPIER_TYPESCRIPT_COMPILER', 'GOMAXPROCS', 'HAPPIER_TYPECHECK_LOCATIONS_ONLY', 'HAPPIER_TYPECHECK_SELECTION'],
   vitest: ['HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
     'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS', 'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS'],
-  controller: ['HOME', 'PATH', 'TMPDIR', 'XDG_RUNTIME_DIR', 'NODE_OPTIONS', 'CI', 'SSH_AUTH_SOCK',
+  controller: ['HOME', 'PATH', 'NODE_OPTIONS', 'CI',
     'HAPPIER_EXEC_CONFIG_PATH', 'HAPPIER_STACK_HOME_DIR', 'HAPPIER_STACK_STORAGE_DIR',
     'HAPPIER_STACK_SANDBOX_DIR', 'HAPPIER_STACK_PM_CACHE_BASE_DIR', 'HAPPIER_WORKSPACE_BUILD_MODE',
     'HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD', 'HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES',

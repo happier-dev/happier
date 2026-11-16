@@ -615,7 +615,7 @@ run_controller_coalesced() {
   done
   exec node "$script_dir/../scripts/utils/dev_targets/controller_coalescing.mjs" \
     "$repo_root" "$invoked_cwd" 1 \
-    "$controller_coalescing_environment_names" "$coalesced_command" reuse-running
+    "$controller_coalescing_environment_names" "$coalesced_command" "$coalescing_mode"
 }
 
 explicit_remote_restart_options=
@@ -1105,9 +1105,16 @@ if [ "$policy_placement" = primary-only ]; then
   fi
   run_local -- "$@"
 fi
-# Only entry-loads reuse running results. Other commands dispatch directly;
-# they have no shared result to justify a controller client/owner lifetime.
-if [ "$policy_heavyClass" = entry-loads ] && [ "${HAPPIER_CONTROLLER_COALESCED-}" != 1 ] && [ -z "$command_repo_root" ] \
+# Entry-loads reuse a running result. Identical typechecks share one fresh
+# follower: a caller arriving during a run gets the next run, never the older
+# one (2026-11-16: up to 7 concurrent identical apps/ui typechecks, 15-40 GiB
+# each). Other commands dispatch directly; they have no shared result.
+coalescing_mode=
+case "$policy_heavyClass" in
+  entry-loads) coalescing_mode=reuse-running ;;
+  compilation|compilation-*) coalescing_mode=fresh-follower ;;
+esac
+if [ -n "$coalescing_mode" ] && [ "${HAPPIER_CONTROLLER_COALESCED-}" != 1 ] && [ -z "$command_repo_root" ] \
     && [ "$explicit_tty" != 1 ] && [ "$control_stdin" != 1 ] \
     && [ -z "$runtime_build_target" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
   run_controller_coalesced "$@"
