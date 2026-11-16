@@ -142,6 +142,11 @@ export type HappierCollectionListProps = Readonly<{
    * its space. Every list that has spaces puts them here, between the title and search.
    */
   strip?: ReactNode;
+  /**
+   * The conditions a saved-space list carries beyond its space (its removable tokens), only while something is on.
+   * They take a line of their own under the strip, so a title control that yielded to the strip's row never narrows them.
+   */
+  conditions?: ReactNode;
   /** Present only when the list is long enough to need it. */
   search?: HappierCollectionListSearch | null;
   filters?: HappierCollectionListFilters | null;
@@ -675,6 +680,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
     accessoryWidthRef.current = event.nativeEvent.layout.width;
   }, []);
   const accessoryInRow = hasAccessory && showHeader && accessoryFits;
+  const accessoryYielded = hasAccessory && !accessoryInRow;
   const search = props.search ?? null;
   const searchCollapses = search !== null && search.collapsible === true && showHeader && host.SearchToggle !== undefined;
   const onSearchChange = search?.onChangeText;
@@ -715,16 +721,18 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
           <Text role="subtitle" numberOfLines={1}>{props.subtitle.text}</Text>
         </View>
       ) : null}
-      {/* A control that yielded the title row ends the strip's row, or takes a row of its own without one. */}
-      {props.strip != null ? (
-        hasAccessory && !accessoryInRow ? (
-          <View style={[stripStyle, stripWithAccessoryStyle]}>
-            <View style={stripLeadStyle}>{props.strip}</View>
-            <View onLayout={onAccessoryLayout}>{props.titleAccessory}</View>
-          </View>
-        ) : <View style={stripStyle}>{props.strip}</View>
-      ) : hasAccessory && !accessoryInRow ? (
-        <View style={[stripStyle, stripWithAccessoryStyle]}><View onLayout={onAccessoryLayout}>{props.titleAccessory}</View></View>
+      {/* A control that yielded the title row ends the strip's row, or takes a row of its own without one; the
+          conditions always take the line under it. */}
+      {props.strip != null || accessoryYielded || props.conditions != null ? (
+        <View style={stripStyle}>
+          {accessoryYielded ? (
+            <View style={stripWithAccessoryStyle}>
+              {props.strip != null ? <View style={stripLeadStyle}>{props.strip}</View> : null}
+              <View onLayout={onAccessoryLayout}>{props.titleAccessory}</View>
+            </View>
+          ) : props.strip}
+          {props.conditions}
+        </View>
       ) : null}
       {props.search && searchOpen ? (
         <SearchField

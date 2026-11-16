@@ -375,7 +375,7 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
         // A phone page heads with the one main-screen head (F2): the Home line on a main screen, the title (or its
         // scope control), the magnifier and "+" on its row, what the title scopes right under it. The list keeps
         // only its rows, filters and footer.
-        const { title, titleControl, count: _count, subtitle, strip, titleAccessory, search, ...bodyProps } = listProps;
+        const { title, titleControl, count: _count, subtitle, strip, conditions, titleAccessory, search, ...bodyProps } = listProps;
         return (
             <CollectionPhonePageRowsContext.Provider value={pageRows}>
                 <CollectionPhonePageBack backTestID={phonePage.backTestID} />
@@ -392,7 +392,7 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
                     } : null}
                     create={create ?? null}
                     {...(headerAction === undefined ? {} : { createTrigger: headerAction })}
-                    {...(strip != null || titleAccessory != null ? { band: <>{strip}{titleAccessory}</> } : {})}
+                    {...(strip != null || conditions != null || titleAccessory != null ? { band: <>{strip}{conditions}{titleAccessory}</> } : {})}
                 />
                 <HappierCollectionList
                     host={collectionListPhonePageHost}
