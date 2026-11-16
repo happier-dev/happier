@@ -8293,8 +8293,17 @@ authority ceiling as caller attribution, which can only lower authority.
 
 **`executionPlacement`** — `account`, `machine`, `session`, or `client`. External ingress resolves
 an Action's execution target from this registry fact rather than from the id's prefix, so a new
-Action cannot silently inherit a Machine route by being added next to one. In 0.3 development,
-`client` executes on the answering app through admitted daemon reverse dispatch where that
+Action cannot silently inherit a Machine route by being added next to one.
+
+In 0.3 development, `session.status.get` and `session.activity.get` retain Session
+target authority while reading the requester's authorized Home projection. Their
+explicit empty `originalExecution.daemonIngressSurfaces` declaration lets original
+CLI reads proceed without the Session publisher, including archived shared Sessions
+without access to the owner's Machine metadata or worker. Omitted ingress declarations retain ordinary Session
+publisher routing. Agent self-Session confirmation and exact Session API-token
+targets remain unchanged; optional live status refresh stays best effort.
+
+In 0.3 development, `client` executes on the answering app through admitted daemon reverse dispatch where that
 host has a machine client; absence is typed unavailable. A client-placed Action with a declared
 CLI command is exposed through that ingress; undeclared client Actions remain closed. A
 standalone CLI without an answering app receives the typed `noClient`/unavailable result

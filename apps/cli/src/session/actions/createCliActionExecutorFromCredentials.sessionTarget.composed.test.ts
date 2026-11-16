@@ -15,6 +15,40 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+    it.each(['session.status.get', 'session.activity.get'] as const)(
+        'reads archived shared Session status without the owner publisher metadata or worker (%s)', async actionId => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-shared-status-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'recipient', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            const sessionId = 'cmwiqxdcs00r2mcnz01awx7f5';
+            // Shared detail intentionally excludes owner-only Machine/workspace metadata.
+            const session = createSessionRecordFixture({ id: sessionId, active: false, archivedAt: 123,
+                encryptionMode: 'plain', metadata: JSON.stringify({}),
+                share: { accessLevel: 'view', canApprovePermissions: false } });
+            const reads: string[] = [];
+            vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+                reads.push(url);
+                expect(options?.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+                if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            const dispatch = vi.spyOn(axios, 'post').mockRejectedValue(new Error('unexpected worker admission'));
+            const executor = createCliActionExecutorFromCredentials({ credentials, serverId: configuration.activeServerId,
+                serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const input = actionId === 'session.status.get' ? { sessionId, live: false } : { sessionId, view: 'awareness' };
+            const result = await executor.execute(actionId, input, { surface: 'cli' });
+            expect(result, JSON.stringify(result))
+                .toMatchObject({ ok: true, result: actionId === 'session.status.get'
+                    ? { session: { id: sessionId, archivedAt: 123 } } : { sessionId } });
+            expect(dispatch).not.toHaveBeenCalled();
+            expect(reads.filter(url => /\/v1\/(?:machines|actions)(?:\/|$)/.test(url))).toEqual([]);
+        });
+    });
     it.each([
         { actionId: 'session.archive', mode: 'plain' },
         { actionId: 'session.archive', mode: 'e2ee' },

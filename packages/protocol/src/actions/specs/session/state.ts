@@ -530,6 +530,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.status.get', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
+    originalExecution: { daemonIngressSurfaces: [] },
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Get session status',
     description: 'Get summary status and the content-free Connected selection for a session. Use sessionId:"self" to read your own selection for reuse in child starts. Set includeAcceptedWorkspace:true to obtain result.acceptedWorkspace.checkout, the exact accepted checkout address for Project Actions such as projects.inspect. If absent, the accepted checkout identity is unavailable; do not infer it from the Session path. Optionally refresh live agent state or inspect current execution prerequisites.',

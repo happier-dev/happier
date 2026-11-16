@@ -1921,6 +1921,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const sessionTarget = sessionPlaced && reconciliation.kind === 'ready' && reconciliation.target?.kind === 'session'
         ? reconciliation.target.sessionId : null;
       if (sessionTarget && originalCliCaller && !machineAdmissionTransport
+        && (spec.originalExecution?.daemonIngressSurfaces === undefined || declaredDaemonIngress)
         && hasStoredSessionCredentialProvenance(credentials)) {
         const signal = combineInvocationSignals(invocationSignal, context.signal);
         const transport = await resolveSessionTransportContext({

@@ -506,6 +506,7 @@ function createSessionDiscoveryActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.activity.get', executionPlacement: 'session', approval: {result: 'required'},
+    originalExecution: { daemonIngressSurfaces: [] },
     title: 'Get session activity',
     sideEffectClass: 'read',
     description: 'Get a session activity digest, operational awareness, or its existing memory/delivered-update Recap (view: recap includes content).',
