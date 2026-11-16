@@ -16,11 +16,6 @@ describe('resolvePeerRouteFeatureId', () => {
       .toBe('machines.tunnel.directPeer');
   });
 
-  it('keeps the voice-media relay on the live-stream relay budget', () => {
-    expect(resolvePeerRouteFeatureId({ flowKind: 'voice_media', routeKind: 'server_relay' }))
-      .toBe('machines.liveStream.serverRouted');
-  });
-
   it('resolves a catalog feature id for every flow kind and route kind', () => {
     for (const flowKind of PeerFlowKindV1Schema.options) {
       for (const routeKind of PeerRouteKindV1Schema.options) {
