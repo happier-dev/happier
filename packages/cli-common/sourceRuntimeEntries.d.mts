@@ -29,6 +29,9 @@ export function stripUnusedSourceRuntimeBanner(code: string): string;
 export function stripUnusedSourceRuntimeBanners(files: Iterable<string>): Promise<number>;
 /** Blanks bare chunk imports an earlier import of the same chunk already reaches; returns how many. */
 export function dropRedundantSourceRuntimeChunkImports(files: Iterable<string>): Promise<number>;
+/** Rejects emitted executable code (.js/.mjs/.cjs) that contains any non-ASCII byte. */
+export function describeNonAsciiCode(bytes: Uint8Array): string | null;
+export function assertSourceRuntimeCodeAscii(files: Iterable<string>): Promise<void>;
 export function initialize(repoDir: string): Promise<void>;
 export const resolve: import('node:module').ResolveHook;
 export function sourceExport(value: unknown, label: string): string;

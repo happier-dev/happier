@@ -39,7 +39,7 @@ import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourc
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
-import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 const SHARED_SOURCE_INPUT_MANIFEST = '.source-runtime-shared-inputs.json';
@@ -1694,6 +1694,9 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     for (const path of sidecars.codeFiles) retainedCodeFiles.push(path);
     Object.assign(result.metafile.inputs,sidecars.metafile.inputs);
     Object.assign(result.metafile.outputs,sidecars.metafile.outputs);
+    // Server graphs join once the generated public-profile renderer is regenerated
+    // from its escaped protocol regex (its checked-in output still carries one).
+    await assertSourceRuntimeCodeAscii(Object.keys(result.metafile.outputs).map(file => resolve(repoDir, file)));
     if (existsSync(join(projectDir, 'assets'))) await cp(join(projectDir, 'assets'), join(runtimeDir, 'assets'), { recursive: true });
     const projectedCli = join(daemonProjectionRoot, 'apps/cli');
     const failuresPath = join(runtimeDir, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH);

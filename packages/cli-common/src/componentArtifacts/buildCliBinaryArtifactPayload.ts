@@ -18,6 +18,7 @@ import {
   SOURCE_RUNTIME_COMMONJS_BANNER,
   SOURCE_RUNTIME_COMMONJS_DEFINE,
   SOURCE_RUNTIME_OUTPUT_OPTIONS,
+  assertSourceRuntimeCodeAscii,
   bundleCliSourceSidecars,
   createCliSourceProjectionResolver,
   createWorkspaceSourceResolver,
@@ -675,6 +676,7 @@ export async function buildCliBinaryArtifactCodePayload({
     const emitted = Object.keys(result.metafile!.outputs).map((file) => join(repoRoot, file));
     await stripUnusedSourceRuntimeBanners(emitted);
     await dropRedundantSourceRuntimeChunkImports(emitted);
+    await assertSourceRuntimeCodeAscii(Object.keys(result.metafile!.outputs).map((file) => join(repoRoot, file)));
     const assets = join(cliDir, 'assets');
     if (existsSync(assets))
       await cp(assets, join(payloadDir, 'assets'), {

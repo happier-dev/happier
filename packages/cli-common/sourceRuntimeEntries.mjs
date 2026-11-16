@@ -1,3 +1,4 @@
+import { isAscii } from 'node:buffer';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -136,6 +137,29 @@ export async function dropRedundantSourceRuntimeChunkImports(files) {
     dropped += blank.length;
   }));
   return dropped;
+}
+
+// esbuild's ASCII charset escapes strings, identifiers and templates but not
+// regular-expression literals. V8 and JavaScriptCore then hold the whole chunk
+// source as a two-byte string, so one Unicode regex doubles that chunk in memory.
+// Emitters check their executable outputs here; the fix belongs to the regex owner.
+/** Null for ASCII code; otherwise the first non-ASCII byte offset and its surrounding text. */
+export function describeNonAsciiCode(bytes) {
+  if (isAscii(bytes)) return null;
+  const at = bytes.findIndex(byte => byte > 0x7f);
+  return `byte ${at}: ${JSON.stringify(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).subarray(Math.max(0, at - 48), at + 16).toString('utf8'))}`;
+}
+
+export async function assertSourceRuntimeCodeAscii(files) {
+  const offenders = [];
+  for (const file of new Set(files)) {
+    if (!/\.[cm]?js$/.test(file)) continue;
+    const offender = describeNonAsciiCode(await readFile(file));
+    if (offender) offenders.push(`${file} (${offender})`);
+  }
+  if (offenders.length) {
+    throw new Error(`[source-runtime] emitted code must be ASCII; escape these Unicode regular expressions at their source owner:\n${offenders.join('\n')}`);
+  }
 }
 
 // Node source tools reuse the bundle resolver's authored workspace authority.
