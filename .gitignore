@@ -91,6 +91,7 @@ __pycache__/
 **/.happier-plugin-ui-staging/
 **/.happier-plugin-ui-build-*/
 /.happier-first-party-runner-matrix-*/
+/.happier-tooling-pin/
 /apps/cli/dist.probe.manual/
 /apps/ui/dist-dperf/
 /apps/cli/prime-isolated-home/

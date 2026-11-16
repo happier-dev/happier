@@ -25,10 +25,18 @@ export async function bootstrapLocalStackSourceRuntime() {
   // Inherited preloads must not turn emitted CLI/server product children into
   // source consumers. Only repository tooling participates in this bootstrap.
   if (!isToolEntry) return;
+  // Tests exercise the checkout's packages, including their own uncommitted edits.
+  if (/\.test\.[cm]?[jt]s$/u.test(entry)) process.env.HAPPIER_STACK_TOOLING_PACKAGES = 'live';
+  // Tooling runs live, product packages at the committed revision. The content
+  // hook precedes tsx (it transforms the bytes the pin supplies); the resolution
+  // hook follows the source runtime's.
+  const { registerToolingPackagePin } = await import('./localToolingPackagePin.mjs');
+  const pin = registerToolingPackagePin({ repoDir });
   // This preload precedes dependency repair and finite capacity admission.
   // Protect its installed import only, then release before the entry runs.
   const { withDependencyConsumption } = await import('../scripts/utils/proc/dependency_refresh.mjs');
   await withDependencyConsumption({ installDir: repoDir }, () => import(source.href));
+  pin.registerResolution();
   // Source-tool children inherit this registration and re-evaluate entry ownership.
   const option = `--import=${JSON.stringify(fileURLToPath(import.meta.url))}`;
   if (!String(process.env.NODE_OPTIONS ?? '').includes(option)) {
