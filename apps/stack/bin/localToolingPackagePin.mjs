@@ -13,9 +13,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
  *
  * Module URLs stay the checkout's paths, so resolution, node_modules and
  * import.meta.url are unchanged; only the bytes of a pinned module that differ
- * from HEAD are replaced by HEAD's. The controller (it has Git) writes the
- * manifest of HEAD blob ids and the HEAD bytes of every differing module it
- * loads into `.happier-tooling-pin/`; the source mirror synchronizes that
+ * from HEAD are replaced by HEAD's. When HEAD moves, the controller (it has Git)
+ * writes HEAD's bytes of every pinned module the checkout changed, then the
+ * manifest of HEAD blob ids, into `.happier-tooling-pin/`; it also records a
+ * module edited after that as it serves it. The source mirror synchronizes the
  * directory to execution hosts, whose tooling reads it without Git.
  *
  * `HAPPIER_STACK_TOOLING_PACKAGES=live` loads the checkout's packages instead
@@ -25,7 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const TOOLING_PIN_DIR = '.happier-tooling-pin';
 const MANIFEST_VERSION = 1;
 const MODULE_EXTENSION = /\.(?:ts|tsx|mts|cts|mjs|js|cjs|json)$/u;
-const NOT_TOOLING_INPUT = /\.(?:test|spec|bench)\.|\/__tests__\/|\/fixtures\/|^apps\/(?:ui\/sources|docs|website|desktop)\//u;
+const NOT_TOOLING_INPUT = /\.(?:test|spec|bench)\.|\/__tests__\/|\/fixtures\/|\/\.happier-plugin\/|^apps\/(?:ui\/sources|docs|website|desktop)\//u;
 // Blobs a running process may still need after HEAD moved; Git re-supplies them on the controller.
 const RETAINED_BLOB_MS = 24 * 60 * 60 * 1000;
 
@@ -51,7 +52,10 @@ function writeAtomic(path, bytes) {
 }
 
 function git(repoDir, args, options = {}) {
-  const result = spawnSync('git', ['-C', repoDir, ...args], { maxBuffer: 1 << 30, windowsHide: true, ...options });
+  // Read-only: never take the shared checkout's index lock (an index refresh by
+  // `git diff` would, and a killed tool would leave it behind for every lane).
+  const result = spawnSync('git', ['-C', repoDir, ...args], { maxBuffer: 1 << 30, windowsHide: true, ...options,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
   if (result.status !== 0) {
     throw new Error(`[tooling-pin] git ${args[0]} failed (${result.status}): ${String(result.stderr ?? '').trim()}`);
   }
