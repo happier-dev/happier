@@ -259,7 +259,16 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
         });
       } catch {
         params.signal?.throwIfAborted();
-        generated = null;
+        // The Run itself failed (target refused, provider auth). Later windows
+        // would fail the same way, so the pass stops and backs off.
+        params.tier1.markHintRunFailure({
+          sessionId,
+          nowMs,
+          backoffBaseMs: params.settings.hints.failureBackoffBaseMs,
+          backoffMaxMs: params.settings.hints.failureBackoffMaxMs,
+        });
+        hintRunFailed = true;
+        break;
       }
 
       if (!generated || !generated.ok) {
