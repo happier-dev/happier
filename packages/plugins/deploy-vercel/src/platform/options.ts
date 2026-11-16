@@ -66,7 +66,9 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
     const option = { value: material.env.VERCEL_TEAM_ID, label: binding.target.displayName };
     return { options: matches(option, input.query) ? [option] : [] };
   }
-  if (!input.providerAccountId) return { options: [] };
+  if (!input.providerAccountId) {
+    throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'providerAccountId' } });
+  }
   if (input.fieldPath === paths[1]) {
     const url = new URL(vercelEndpoint('/v10/projects', input.providerAccountId));
     if (input.query) url.searchParams.set('search', input.query);
@@ -81,7 +83,9 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
     const nextCursor = Array.isArray(value) ? undefined : record(value) ? pageCursor(value.pagination) : undefined;
     return { options: result, ...(nextCursor ? { nextCursor } : {}) };
   }
-  if (!input.providerResourceId) return { options: [] };
+  if (!input.providerResourceId) {
+    throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'projectId' } });
+  }
   const value = await read(new URL(vercelEndpoint(`/v9/projects/${encodeURIComponent(input.providerResourceId)}/custom-environments`, input.providerAccountId)), context);
   if (!record(value) || !Array.isArray(value.environments)) return invalid();
   const result: InputOption[] = [{ value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' }];
@@ -124,8 +128,15 @@ const runtime: PluginDynamicResourceRuntime = {
       ...(environment.kind === 'preview' && text(environment.gitBranch) ? { gitBranch: environment.gitBranch } : {}),
       ...(query.query !== undefined ? { query: query.query } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
     }, { signal: options.signal });
-    if (!result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable',
-      failureCause: projectActionFailureCauseV1(result, 'deployment.vercel.options') }), { phase: 'deployment.vercel.options', causeKind: 'native_failure', error: result });
+    if (!result.ok) {
+      const code = 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable';
+      const details = 'details' in result ? result.details : undefined;
+      const error = new PluginError({ code, failureCause: projectActionFailureCauseV1(result, 'deployment.vercel.options'),
+        ...(code === 'missing_option_dependency' && record(details) && typeof details.requiredDraftPath === 'string'
+          ? { details: { requiredDraftPath: details.requiredDraftPath } } : {}) });
+      throw code === 'missing_option_dependency' ? error : withActionFailureDiagnostic(error,
+        { phase: 'deployment.vercel.options', causeKind: 'native_failure', error: result });
+    }
     return JSON.stringify(result.result);
   },
   observe: () => ({ dispose() {} }),

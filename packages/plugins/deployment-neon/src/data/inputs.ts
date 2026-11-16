@@ -12,7 +12,13 @@ const runtime: PluginDynamicResourceRuntime = {
     if (!record(draft)) throw new PluginError({ code: 'invalid_parameters' });
     const field = options.query?.fieldPath;
     const localId = field === 'regionId' ? 'provision-options-read' : field === 'projectId' || field === 'branchId' ? 'projects-list-read' : null;
-    if (!localId || !draft.providerAccountId || field === 'branchId' && typeof draft.projectId !== 'string') return JSON.stringify({ options: [] });
+    if (!localId) return JSON.stringify({ options: [] });
+    if (!draft.providerAccountId) {
+      throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'providerAccountId' } });
+    }
+    if (field === 'branchId' && typeof draft.projectId !== 'string') {
+      throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'projectId' } });
+    }
     // Pass only the canonical custody and this read's own operands. Create fields never leak into a read Action.
     const custody = Object.fromEntries(Object.keys(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties ?? {})
       .flatMap(key => draft[key] === undefined ? [] : [[key, draft[key]!]]));

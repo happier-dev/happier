@@ -122,7 +122,8 @@ it('reads only the selected account project page with provider search and contin
     const url = new URL(h.requests[0].url);
     expect(url.pathname).toBe('/v10/projects');
     expect(Object.fromEntries(url.searchParams)).toEqual({ teamId: 'team_exact', search: 'app', until: '123' });
-    expect(await h.read('projectId')).toEqual({ options: [] });
+    await expect(h.read('projectId')).rejects.toMatchObject({ code: 'missing_option_dependency',
+      details: { requiredDraftPath: 'providerAccountId' } });
     expect(h.requests).toHaveLength(1);
   } finally { await h.kit.dispose(); }
 });
@@ -140,6 +141,15 @@ it('uses the provider continuation-token arm and omits teamId for a personal acc
 it('returns builtin and custom environment values for the exact selected project, with finite search', async () => {
   const h = await host(() => ({ environments: [{ id: 'env_staging', slug: 'staging', type: 'preview', createdAt: 1, updatedAt: 1 }], accountLimit: { total: 1 } }));
   try {
+    if (!h.resource) throw new Error('Missing Resource');
+    await expect(h.resource.read({ ...createTestResourceInvocationContext({
+      async readAction() { return { ok: false, errorCode: 'missing_option_dependency', error: 'missing_option_dependency',
+        details: { requiredDraftPath: 'projectId' } }; },
+    }), query: { fieldPath: 'providerEnvironment', draftInput: { ...draftInput, providerAccountId: 'team_exact' } } }))
+      .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: 'projectId' } });
+    await expect(h.read('providerEnvironment', { ...draftInput, providerAccountId: 'team_exact' }))
+      .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: 'projectId' } });
+    expect(h.requests).toHaveLength(0);
     const draft = { ...draftInput, providerAccountId: 'team_exact', projectId: 'prj_exact' };
     expect(await h.read('providerEnvironment', draft)).toEqual({ options: [
       { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },

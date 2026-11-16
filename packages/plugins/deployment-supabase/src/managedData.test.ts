@@ -169,6 +169,12 @@ describe('activated Supabase managed data target', () => {
           purpose: { consumer: ref } } }); return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
           { signal: cancellation?.signal, surface: 'plugin' }) }; } });
       expect(h.requests).toHaveLength(0);
+      const { providerAccountId: _account, ...withoutAccount } = preparation('projects-provision');
+      for (const fieldPath of ['regionSelection', 'projectRef']) {
+        await expect(resource.read({ ...context, query: { draftInput: withoutAccount, fieldPath } }))
+          .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: 'providerAccountId' } });
+      }
+      expect(h.requests).toHaveLength(0);
       const bytes = await resource.read({ ...context, query: { draftInput: preparation('projects-provision'), fieldPath: 'regionSelection' } });
       expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
         .toEqual({ options: [{ value: { type: 'smartGroup', code: 'emea' }, label: 'Europe' },

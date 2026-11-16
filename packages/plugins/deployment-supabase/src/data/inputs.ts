@@ -13,7 +13,10 @@ const runtime: PluginDynamicResourceRuntime = {
     if (!record(draft)) throw new PluginError({ code: 'invalid_parameters' });
     const field = options.query?.fieldPath;
     const localId = field === 'regionSelection' ? 'provision-options' : field === 'projectRef' ? 'projects-list' : null;
-    if (!localId || !draft.providerAccountId) return JSON.stringify({ options: [] });
+    if (!localId) return JSON.stringify({ options: [] });
+    if (!draft.providerAccountId) {
+      throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'providerAccountId' } });
+    }
     const custody = Object.fromEntries(Object.keys(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties ?? {})
       .flatMap(key => draft[key] === undefined ? [] : [[key, draft[key]!]]));
     // Initial choices spend the read Action's own purpose; a linked target keeps its recorded principal.

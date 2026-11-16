@@ -184,6 +184,12 @@ describe('activated Neon managed data target', () => {
           purpose: { consumer: ref } } }); return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
           { signal: cancellation?.signal, surface: 'plugin' }) }; } });
       expect(h.requests).toHaveLength(0);
+      const { providerAccountId: _account, ...withoutAccount } = preparation('projects-provision');
+      for (const fieldPath of ['regionId', 'projectId']) {
+        await expect(resource.read({ ...context, query: { draftInput: withoutAccount, fieldPath } }))
+          .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: 'providerAccountId' } });
+      }
+      expect(h.requests).toHaveLength(0);
       const bytes = await resource.read({ ...context, query: { draftInput: preparation('projects-provision'), fieldPath: 'regionId' } });
       expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
         .toMatchObject({ options: [{ value: region.region_id, label: region.name }] });
@@ -199,6 +205,9 @@ describe('activated Neon managed data target', () => {
       const context = createTestResourceInvocationContext({ context: { kind: 'global' },
         async readAction(ref, input, cancellation) { return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
           { signal: cancellation?.signal, surface: 'plugin' }) }; } });
+      await expect(resource.read({ ...context, query: { draftInput: preparation('projects-link'), fieldPath: 'branchId' } }))
+        .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: 'projectId' } });
+      expect(h.requests).toHaveLength(0);
       const bytes = await resource.read({ ...context, query: { draftInput: { ...preparation('projects-link'), projectId: project.id }, fieldPath: 'branchId' } });
       expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
         .toMatchObject({ options: [{ value: 'br-main', label: mainBranch.name }] });
