@@ -2316,11 +2316,15 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       seq: 9, createdAt: 1, updatedAt: 2,
       ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
     } });
-    mockPost.mockResolvedValueOnce({ status: 200, data: { success: false, error: 'version-mismatch' } });
-    await expect(store.update({
+    mockPost.mockResolvedValueOnce({ status: 200, data: { success: false, error: 'version-mismatch',
+      currentHeaderVersion: 5, currentBodyVersion: 6, currentHeader: 'private header', currentBody: 'private body' } });
+    await expect.soft(store.update({
       artifactId: 'artifact-1', expectedRevision: { headerVersion: 3, bodyVersion: 4 },
       header: { kind: 'example.v1' }, body: 'changed',
-    })).resolves.toEqual({ ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch', writeCommitted: false });
+    })).resolves.toEqual({ ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch', writeCommitted: false,
+      details: { operation: 'artifact.update', artifactId: 'artifact-1',
+        expectedRevision: { headerVersion: 3, bodyVersion: 4 }, actualRevision: { headerVersion: 5, bodyVersion: 6 } },
+    });
 
     mockPost.mockResolvedValueOnce({ status: 500, data: { error: 'acknowledgement_lost' } })
       .mockResolvedValueOnce({ status: 200, data: { success: false, error: 'version-mismatch' } });
@@ -2332,6 +2336,34 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     expect(uncertain).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
     expect(uncertain).not.toHaveProperty('writeCommitted');
     expect(mockPost.mock.calls.length - attemptsBefore).toBe(2);
+
+    const approval = ApprovalRequestV2Schema.parse({
+      v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+        serverId: 'home', accountId: 'owner', sessionId: 'session-1', machineId: 'machine-1',
+        runId: 'run-1', runOccurrenceId: 'occurrence-1', actionId: 'session.title.set', requestId: 'request-1' },
+      actionId: 'session.title.set', actionArgs: { sessionId: 'session-1', title: 'Approved' }, summary: 'Review',
+    });
+    mockGet.mockResolvedValue({ status: 200, data: {
+      id: 'artifact-1', header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }),
+      headerVersion: 3, bodyVersion: 4, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      seq: 9, createdAt: 1, updatedAt: 2, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+    } });
+    mockPost.mockResolvedValueOnce({ status: 200, data: { success: false, error: 'version-mismatch',
+      currentHeaderVersion: 5, currentBodyVersion: 6, currentHeader: 'private header', currentBody: 'private body' } });
+    const approvals = createCliApprovalsArtifactStore({ credentials, getAccountEncryptionMode: async () => 'plain' });
+    const approvalFailure = await approvals.approvalsUpdate({ artifactId: 'artifact-1', request: {
+      ...approval, status: 'approved', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+    } });
+    if (approvalFailure.ok) throw new Error('Expected Artifact CAS refusal');
+    expect(normalizeActionExecuteResult(approvalFailure)).toEqual({
+      ok: false, errorCode: 'version_mismatch', errorMessage: 'artifact_version_mismatch',
+      details: { operation: 'artifact.update', artifactId: 'artifact-1',
+        expectedRevision: { headerVersion: 3, bodyVersion: 4 }, actualRevision: { headerVersion: 5, bodyVersion: 6 } },
+    });
 
     mockDelete.mockResolvedValueOnce({ status: 200, data: {} });
     await expect(store.delete('artifact-1')).resolves.toEqual({ ok: true });

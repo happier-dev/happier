@@ -985,7 +985,13 @@ export function createAccountArtifactStore(params: Readonly<{
     if (response.status < 200 || response.status >= 300) return { ok: false, errorCode: 'update_failed', error: 'artifact_update_failed' } as const;
     if (response.data?.success === false && response.data?.error === 'version-mismatch') {
       // A later conflict cannot disprove an earlier attempt's lost commit acknowledgement.
+      const currentHeaderVersion: unknown = response.data.currentHeaderVersion;
+      const currentBodyVersion: unknown = response.data.currentBodyVersion;
       return { ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch',
+        details: { operation: 'artifact.update', artifactId: input.artifactId,
+          expectedRevision: { headerVersion: input.expectedRevision.headerVersion, bodyVersion: input.expectedRevision.bodyVersion },
+          actualRevision: { headerVersion: typeof currentHeaderVersion === 'number' ? currentHeaderVersion : null,
+            bodyVersion: typeof currentBodyVersion === 'number' ? currentBodyVersion : null } },
         ...(writeAttempts === 1 ? { writeCommitted: false as const } : {}) } as const;
     }
     if (response.data?.success === true) await prepared.afterCommit();

@@ -354,8 +354,7 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
         header, body: JSON.stringify(request) });
 
       if (updated.ok) return { ok: true };
-      return { ok: false, errorCode: updated.errorCode, error: updated.error,
-        ...('writeCommitted' in updated && updated.writeCommitted === false ? { writeCommitted: false as const } : {}) };
+      return updated;
     },
   };
   return store;

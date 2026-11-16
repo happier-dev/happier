@@ -2819,10 +2819,10 @@ export type ActionExecutorDeps = Readonly<{
   approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequest; serverId?: string | null; context?: ActionExecutorContext;
     /** Lifecycle basis observed by the settling owner, checked before the existing Artifact revision CAS. */
     expectedStatus?: ApprovalRequest['status'];
-  }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string;
+  }>) => Promise<{ ok: true } | (ActionExecuteFailure & {
     /** Host-only writer proof; absence preserves uncertainty after acknowledgement loss. */
     writeCommitted?: false;
-  }>;
+  })>;
   /** Host-private output diagnostics; never an Action/RPC field. */
   recordActionOutputDiagnostic?: (diagnostic: import('./resultProjection.js').ActionOutputDiagnostic) => void;
   /** Code-only host diagnostic for best-effort retirement after an already-confirmed effect. */
