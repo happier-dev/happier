@@ -120,12 +120,17 @@ describe('local service public-preview machine RPC client', () => {
         }
     });
 
-    it.each([{ error: 'HTTP request failed' }, { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN },
-        ])('recognizes refusal envelopes before success parsing: %j', async refusal => {
+    it.each([
+        { refusal: { error: 'HTTP request failed', failureCause: { phase: 'rpc.handler' } },
+            metadata: { reasonCode: 'action_failed', failureCause: { phase: 'rpc.handler',
+                errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null } } },
+        { refusal: { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN },
+            metadata: { reasonCode: RPC_ERROR_CODES.FORBIDDEN } },
+        ])('recognizes refusal envelopes before success parsing: %j', async ({ refusal, metadata }) => {
         machineRpcWithServerScopeMock.mockResolvedValue(refusal);
         for (const operation of await publicOperations()) {
             await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed',
-                ...('errorCode' in refusal ? { reasonCode: refusal.errorCode } : {}) });
+                ...metadata });
         }
     });
 

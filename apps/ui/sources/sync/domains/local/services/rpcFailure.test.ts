@@ -45,6 +45,12 @@ describe('Services transport failure projection', () => {
         await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed',
             reasonCode: returned.errorCode, failureCause });
     });
+    it.each(operations)('retains an uncoded handler exception phase in %s', async (_name, run) => {
+        const failureCause = { phase: 'rpc.handler' };
+        rpc.mockResolvedValueOnce({ error: 'private handler details', failureCause });
+        await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed',
+            reasonCode: 'action_failed', failureCause });
+    });
     it('retains a lost launcher acknowledgement as unknown with its transport cause', async () => {
         const failureCause = { phase: 'rpc.dispatch', errorClass: 'RpcError',
             errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, httpStatus: null };

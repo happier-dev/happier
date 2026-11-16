@@ -1,5 +1,5 @@
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 export type LocalServiceRpcFailureMetadata = Readonly<{
@@ -9,11 +9,14 @@ export type LocalServiceRpcFailureMetadata = Readonly<{
 
 /** Project the transport owner's typed evidence without forwarding private error prose. */
 export function readLocalServiceRpcFailure(value: unknown): LocalServiceRpcFailureMetadata | null {
-    const rpcErrorCode = readRpcErrorCode(value);
+    let carrier = value;
+    try { carrier = readMachineActionRpcResult(value); }
+    catch (error) { carrier = error; }
+    const rpcErrorCode = readRpcErrorCode(carrier);
     const failure = readActionFailureEnvelope(
-        rpcErrorCode && value && typeof value === 'object'
-            ? { ...value, ok: false, errorCode: rpcErrorCode }
-            : value,
+        rpcErrorCode && carrier && typeof carrier === 'object'
+            ? { ...carrier, ok: false, errorCode: rpcErrorCode }
+            : carrier,
         { treatReturnedErrorEnvelopeAsFailure: true },
     );
     return failure ? { reasonCode: failure.errorCode,

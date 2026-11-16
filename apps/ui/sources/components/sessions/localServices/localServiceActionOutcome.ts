@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode, readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { LocalServiceNativePrerequisiteV1Schema, type LocalServiceNativePrerequisiteV1 } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -10,6 +10,7 @@ import { isLocalServiceActionRefusedByPolicy, resolveReasonCopy } from '@/sync/d
 import { t } from '@/text';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { resolveLocalServiceStartFailure, type LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /**
  * The ONE outcome path for every local-service action (tunnels audit §9.2).
@@ -41,7 +42,7 @@ export type LocalServiceActionOutcome =
      * user must see; it just has no daemon code behind it.
      */
     | Readonly<{ kind: 'failed'; reasonCode: string | null; prerequisite?: LocalServiceNativePrerequisiteV1;
-        establishmentFailure?: LocalServiceEstablishmentFailureV1 }>;
+        establishmentFailure?: LocalServiceEstablishmentFailureV1; failureCause?: ActionFailureCauseV1 }>;
 
 function asRecord(value: unknown): UnknownRecord | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -92,12 +93,13 @@ function readFailureOutcome(result: unknown): Extract<LocalServiceActionOutcome,
     if (reasonCode === 'action_outcome_unknown') return { kind: 'outcome_unknown', reasonCode };
     if (isActionApprovalDeclinedErrorCode(reasonCode) || reasonCode === 'cancelled') return { kind: 'cancelled' };
     const record = asRecord(result);
+    const failureCause = record?.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
     const prerequisite = LocalServiceNativePrerequisiteV1Schema.safeParse(reasonCode === 'native_tool_unavailable'
         ? record?.prerequisite ?? asRecord(record?.details)?.prerequisite : undefined);
     const failure = LocalServiceEstablishmentFailureV1Schema.safeParse(reasonCode === 'plugin_managed_service_establishment_failed'
         ? record?.establishmentFailure ?? asRecord(record?.details)?.establishmentFailure : undefined);
     return { kind: 'failed', reasonCode, ...(prerequisite.success ? { prerequisite: prerequisite.data } : {}),
-        ...(failure.success ? { establishmentFailure: failure.data } : {}) };
+        ...(failure.success ? { establishmentFailure: failure.data } : {}), ...(failureCause ? { failureCause } : {}) };
 }
 
 export function readLocalServiceActionOutcome(result: unknown): LocalServiceActionOutcome {
@@ -142,6 +144,7 @@ export function describeLocalServiceActionFailure(input: Readonly<{
     servicesActionOffered?: boolean;
     prerequisite?: LocalServiceNativePrerequisiteV1;
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
+    failureCause?: ActionFailureCauseV1;
 }>): Readonly<{ title: string; body: string; details: readonly string[]; refusal: boolean; recovery?: LocalServiceOutputRecovery }> {
     const copy = resolveReasonCopy({ reasonCode: input.reasonCode, kind: 'localServiceAction', serviceName: input.serviceName,
         serviceNamedByTitle: Boolean(input.serviceName && input.title?.includes(input.serviceName)),
@@ -161,6 +164,9 @@ export function describeLocalServiceActionFailure(input: Readonly<{
             ...(failure?.signal ? [failure.signal] : []),
             ...(failure?.lastStderrLine ? [failure.lastStderrLine] : []),
             ...(input.reasonCode ? [input.reasonCode] : []),
+            ...(input.failureCause ? presentActionExecutionFailure({ ok: false,
+                errorCode: input.reasonCode ?? 'action_failed', failureCause: input.failureCause }).technicalDetails
+                .filter(detail => detail.key !== 'code').map(detail => `${detail.label}: ${detail.value}`) : []),
         ],
         refusal: input.prerequisite !== undefined || failure?.cause === 'port_in_use' || isLocalServiceActionRefusedByPolicy(input.reasonCode),
     };
@@ -178,6 +184,7 @@ export function presentLocalServiceActionFailure(input: Readonly<{
     servicesActionOffered?: boolean;
     prerequisite?: LocalServiceNativePrerequisiteV1;
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
+    failureCause?: ActionFailureCauseV1;
 }>): void {
     const { body, details } = describeLocalServiceActionFailure(input);
     Modal.alert(input.title, body, details.length > 0 ? [
@@ -196,6 +203,7 @@ export type LocalServiceActionFailure = Readonly<{
     recovery?: LocalServiceOutputRecovery;
     prerequisite?: LocalServiceNativePrerequisiteV1;
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
+    failureCause?: ActionFailureCauseV1;
     /** This Start can settle when its real native binding is observed. Other actions cannot. */
     awaitingNativeStart?: boolean;
     /** Repeats a definitively failed action; unknown outcomes must be inspected instead. */
@@ -294,6 +302,7 @@ export function useLocalServiceActionRunner(options?: Readonly<{
                 serviceTarget: input.serviceTarget,
                 ...(outcome.kind === 'failed' && outcome.prerequisite ? { prerequisite: outcome.prerequisite } : {}),
                 ...(outcome.kind === 'failed' && outcome.establishmentFailure ? { establishmentFailure: outcome.establishmentFailure } : {}),
+                ...(outcome.kind === 'failed' && outcome.failureCause ? { failureCause: outcome.failureCause } : {}),
             };
             const title = unknown ? t('localServices.rowStatus.unknown') : input.failureTitle;
             if (!inline) presentLocalServiceActionFailure({ title, ...cause, servicesActionOffered });
