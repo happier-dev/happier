@@ -10,7 +10,7 @@ import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protoc
 import type { JsonValue, PluginActionSurfaceV2, PreparedPluginJsonSchema, RehydratedPluginContributionPointOperationV1, RehydratedPluginContributionPointSemanticsV1, RehydratedPluginContributionPointSurfaceV1 } from '@happier-dev/protocol';
 import { PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { forwardDeclarationField } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
+import { forwardDeclarationField, isDeclarationFieldJsonObject } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
 
 type TargetedOperationSource = Readonly<{ occurrenceId: string; localId: string; unavailable?: true }>;
 
@@ -434,16 +434,12 @@ function toPluginDiagnosticsByPluginId(
 }
 
 function hasUsableSchema(action: TargetedContributionActionDeclaration): boolean {
-    const inputSchema = action.definition.inputSchema;
-    const outputSchema = action.definition.outputSchema;
+    const definition = action.definition;
     // An absent author input contract is unconstrained, not an unusable
     // contributor-defined input. Normalization must not fabricate a schema.
-    return (inputSchema === undefined || (Boolean(inputSchema)
-        && typeof inputSchema === 'object'
-        && !Array.isArray(inputSchema)))
-        && Boolean(outputSchema)
-        && typeof outputSchema === 'object'
-        && !Array.isArray(outputSchema);
+    // Deferred bundled schemas are JSON objects by construction: checked unread.
+    return (isDeclarationFieldJsonObject(definition, 'inputSchema') || definition.inputSchema === undefined)
+        && isDeclarationFieldJsonObject(definition, 'outputSchema');
 }
 
 /**

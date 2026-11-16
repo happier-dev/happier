@@ -10,6 +10,8 @@
  */
 
 const deferredDeclarationReaders = new WeakSet<() => unknown>();
+/** Readers whose definer guarantees a plain JSON object value (an admitted JSON Schema). */
+const deferredJsonObjectReaders = new WeakSet<() => unknown>();
 
 /** The value of an own property descriptor when it is a host-deferred declaration field. */
 export function readDeferredDeclarationDescriptor(
@@ -31,9 +33,27 @@ function defineReader(target: object, key: string, read: () => unknown): void {
   Object.defineProperty(target, key, { get: read, enumerable: true, configurable: true });
 }
 
-/** Defines `target[key]` as a deferred declaration field read on first use (memoized by `read`'s owner). */
-export function defineDeferredDeclarationField(target: object, key: string, read: () => unknown): void {
+/**
+ * Defines `target[key]` as a deferred declaration field read on first use (memoized by `read`'s owner).
+ * `jsonObject`: the definer guarantees the value is a plain JSON object (an admitted JSON Schema), so a
+ * shape check (`isDeclarationFieldJsonObject`) answers without reading it.
+ */
+export function defineDeferredDeclarationField(
+  target: object,
+  key: string,
+  read: () => unknown,
+  options?: Readonly<{ jsonObject?: true }>,
+): void {
   defineReader(target, key, read);
+  if (options?.jsonObject) deferredJsonObjectReaders.add(read);
+}
+
+/** Whether `source[key]` is a plain JSON object; a deferred field declared as one is not read. */
+export function isDeclarationFieldJsonObject(source: object, key: string): boolean {
+  const read = Object.getOwnPropertyDescriptor(source, key)?.get;
+  if (read && deferredJsonObjectReaders.has(read)) return true;
+  const value: unknown = (source as Record<string, unknown>)[key];
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** Object spread that keeps deferred declaration fields deferred (same key order and override rules). */

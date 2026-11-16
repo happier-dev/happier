@@ -7,6 +7,7 @@ import {
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { defineDeferredDeclarationField } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
 
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -138,5 +139,28 @@ describe('targeted contribution optional-role admission', () => {
                 target: { occurrenceId: targetOccurrenceId },
                 contributions: [],
             });
+    });
+
+    it('admits an operation whose Action schemas are unread deferred declaration fields without reading them', () => {
+        // Bundled Action schemas are deferred JSON Schema objects; admission only needs their shape.
+        let reads = 0;
+        const definition: Record<string, unknown> = { id: 'setup-action', dangerLevel: 'safe', contributionSurfaces: ['plugin'] };
+        for (const key of ['inputSchema', 'outputSchema']) {
+            defineDeferredDeclarationField(definition, key, () => { reads += 1; return { type: 'object' }; }, { jsonObject: true });
+        }
+        const result = resolveAdmittedTargetedContributions({
+            pluginContributionPoints: [point()],
+            targetedPluginContributions: [contribution({
+                id: 'provider-a', target: { pluginId: targetPluginId, pointId }, protocol, operations: { setup: 'setup-action' },
+            })],
+            actions: [{ pluginId: contributorPluginId, definition } as unknown as Parameters<typeof resolveAdmittedTargetedContributions>[0]['actions'][number]],
+            uiRenderersV2: [],
+            occurrenceIdsByPluginId: { [targetPluginId]: targetOccurrenceId, [contributorPluginId]: contributorOccurrenceId },
+        });
+
+        expect(result.diagnosticsByPluginId[contributorPluginId]).toBeUndefined();
+        expect(result.read({ targetPluginId, pointId, protocol })?.contributions.map((admitted) => admitted.operations.map((operation) => operation.role)))
+            .toEqual([['setup']]);
+        expect(reads).toBe(0);
     });
 });

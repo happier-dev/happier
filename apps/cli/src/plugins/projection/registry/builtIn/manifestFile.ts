@@ -123,7 +123,8 @@ function deferActionSchemaValues(
     const deferred: Record<string, unknown> = {};
     for (const key of Object.keys(action)) {
         if ((BUNDLED_DEFERRED_ACTION_KEYS as readonly string[]).includes(key) && action[key] === null) {
-            defineDeferredDeclarationField(deferred, key, createRead(actionId, key as BundledDeferredActionKey));
+            // The publisher defers only admitted Action JSON Schemas, which are JSON objects.
+            defineDeferredDeclarationField(deferred, key, createRead(actionId, key as BundledDeferredActionKey), { jsonObject: true });
         } else {
             deferred[key] = action[key];
         }
