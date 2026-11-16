@@ -35,4 +35,14 @@ describe('environmentAgentsAskFirst', () => {
       environmentAgentsAskFirst({ settings, environment, actionIds: removal }),
     ).toBe(false);
   });
+
+  it.each(removal)('answers no when only %s is allowed without asking', (actionId) => {
+    const settings = applyActionPolicyMutation(normalizeActionsSettingsV1(undefined), {
+      actionId,
+      audience: 'agent',
+      scope: { kind: 'environment', environmentId: environment.id },
+      mode: 'allowed',
+    }).settings;
+    expect(environmentAgentsAskFirst({ settings, environment, actionIds: removal })).toBe(false);
+  });
 });
