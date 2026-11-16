@@ -50,8 +50,12 @@ describe('target enablement retention offer', () => {
     for (const request of [create, link]) {
         it(`retains the CLI review surface through signed admission for ${request.actionId}`, () => {
             expect(requiresOriginalAccountMachineActionProof(request.actionId, request.input)).toBe(true);
+            // Keeping the finite policy removes only the retention edit. A Machine-placed
+            // link still declares its review demand, which needs the original requester
+            // proof whatever the retention choice (7be7c10ad6f); Account-placed create does not.
             expect(requiresOriginalAccountMachineActionProof(request.actionId,
-                { ...(request.input as Record<string, unknown>), managedRetention: 'keep' })).toBe(false);
+                { ...(request.input as Record<string, unknown>), managedRetention: 'keep' }))
+                .toBe(request.actionId === 'deployments.targets.link');
         });
     }
     const cleanup: (() => void | Promise<void>)[] = [];
