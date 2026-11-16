@@ -7705,6 +7705,21 @@ termination registration, so signals still reach every Session and the process
 ends with its last registration. The host ends when its last Session has ended;
 the next add starts a new host.
 
+Prestart on intent: while New Session is open with one of the person's own
+Machines selected, the app holds one `daemon.sessionCreation.intent.v1` Machine
+RPC to that Machine (`useNewSessionIntent.ts`; server-routed, custodian only).
+The daemon's handler (session RPC family) calls `DaemonSessionHost.prestart`,
+which ensures the host through the same single-flight launch as an add and opens
+`/v1/session-host/hold` on it. A held host loads the runner code its first
+Session command runs (`preloadSessionRunner` in `cli/commands/sessionHost.ts`) and
+does not end while held. The hold lasts while the call is open: picking another
+Machine, closing New Session, the app disconnecting, daemon shutdown (the daemon
+work signal) or the daemon process ending closes it. The host then ends by its
+ordinary rule once it has no Session and no hold, so an idle Machine runs no host
+and an abandoned New Session leaves none behind; there is no idle timer. A hold
+released just before an add makes that add meet a closing host, which the add
+already handles by starting a new one. Without an intent, nothing is prestarted.
+
 Each hosted scope captures its runtime Configuration policy from the admitted
 Session environment once. The pure `SessionRuntimeConfiguration` parser owns
 the existing policy defaults; direct `configuration` reads select that scope's
