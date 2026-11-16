@@ -29,6 +29,28 @@ const snapshot = ScmWorkingSnapshotSchema.parse({
 });
 
 describe('starter creation public Action', () => {
+  it('selects the exact registry source when catalog starters share an item id', async () => {
+    const reads: string[] = [];
+    let listedSources: unknown;
+    const executor = createActionExecutor({
+      registryActionExecute: async ({ actionId, input: request }) => {
+        const value = request as { sourceIds?: string[]; sourceId?: string };
+        if (actionId === 'registries.items.list') {
+          listedSources = value.sourceIds;
+          return { pages: ['first', 'chosen'].map(sourceId => listHappierStarterCatalogV1({ sourceId, catalog, fetchedAt: 1 })) };
+        }
+        reads.push(value.sourceId ?? '');
+        return { item: readHappierStarterCatalogItemV1({ sourceId: value.sourceId!, catalog, fetchedAt: 1, itemId: 'static-website' }) };
+      },
+      scmActionExecute: async ({ actionId }) => actionId === 'scm.hostingRepository.resolveAddress'
+        ? resolvedStarterAddress : { success: true, auth: { state: 'authentication_required', profileKind: 'no_auth' }, defaultRepositoryName: 'bakery', targets: [] },
+    });
+    const result = await executor.execute('projects.starters.create', { ...input, starterSourceId: 'chosen' },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'failed', code: 'scm_account_required' } });
+    expect(listedSources).toEqual(['chosen']);
+    expect(reads).toEqual(['chosen']);
+  });
   it('admits the reviewed operands and defaults to a private repository', () => {
     const spec = getActionSpec('projects.starters.create');
     expect(spec.inputSchema.parse(input)).toMatchObject({ repository: { visibility: 'private' } });

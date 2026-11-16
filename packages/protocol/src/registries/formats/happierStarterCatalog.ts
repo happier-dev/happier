@@ -19,6 +19,7 @@ export function listHappierStarterCatalogV1(input: Readonly<{ sourceId: string; 
   const items = input.catalog.starters.map(entry => ({
     sourceId: input.sourceId, kind: 'starter' as const, itemId: entry.itemId, title: entry.starter.title,
     description: entry.starter.description, appMetadata: { tags: entry.starter.tags },
+    ...(entry.starter.deploy ? { starterDeploy: entry.starter.deploy } : {}),
   })).filter(item => !query || `${item.itemId} ${item.title} ${item.description} ${item.appMetadata?.tags?.join(' ')}`.toLocaleLowerCase().includes(query));
   return { sourceId: input.sourceId, status: { state: 'ok', fetchedAt: input.fetchedAt }, items, total: items.length, nextCursor: null };
 }
@@ -31,6 +32,7 @@ export function readHappierStarterCatalogItemV1(input: Readonly<{ sourceId: stri
   const ref = input.packageContent ? { kind: 'packageContent' as const, ...input.packageContent, digest } : { kind: 'content' as const, digest };
   const version = ref.kind === 'packageContent' ? ref.pluginVersion : ref.digest;
   const summary: RegistryItemSummaryV1 = { sourceId: input.sourceId, kind: 'starter', itemId: entry.itemId,
-    title: entry.starter.title, description: entry.starter.description, version, appMetadata: { tags: entry.starter.tags } };
+    title: entry.starter.title, description: entry.starter.description, version, appMetadata: { tags: entry.starter.tags },
+    ...(entry.starter.deploy ? { starterDeploy: entry.starter.deploy } : {}) };
   return { summary, payload: { kind: 'starter', starter: entry.starter, ref }, fetchedAt: input.fetchedAt };
 }

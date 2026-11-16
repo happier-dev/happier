@@ -94,7 +94,7 @@ export {
   BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS, isBrowserDiagnosticsInteractionActionIdV1,
 } from './actionIdsBrowser.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './specs/machineConnectionActionIdsV1.js';
@@ -272,6 +272,7 @@ export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = [NOTIFICA
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   deployments: DEPLOYMENT_ACTION_IDS_V1,
+  deployment_suggestions: DEPLOYMENT_SUGGESTION_ACTION_IDS_V1,
   registries: REGISTRY_ACTION_IDS_V1,
   personal_saved_secrets: PERSONAL_SAVED_SECRET_ACTION_IDS_V1,
   plugin_execution_origin: PLUGIN_EXECUTION_ORIGIN_ACTION_IDS,

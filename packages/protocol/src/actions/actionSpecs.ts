@@ -30,6 +30,7 @@ import { PROFILE_ACTION_SPECS_V1 } from './specs/profiles.js';
 import { MCP_SERVER_ACTION_SPECS_V1 } from './specs/mcpServers.js';
 import { REGISTRY_ACTION_SPECS_V1 } from './specs/registries.js';
 import { DEPLOYMENT_ACTION_SPECS_V1 } from './specs/deployments.js';
+import { DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1 } from './specs/deploySuggestions.js';
 import { PROJECT_READINESS_ACTION_SPECS_V1 } from './specs/projectReadiness.js';
 export { readRegistryAgentCliLocatorV1 } from './specs/registries.js';
 import { PERSONAL_SAVED_SECRET_ACTION_SPECS_V1 } from './specs/personalSavedSecrets.js';
@@ -519,6 +520,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MCP_SERVER_ACTION_SPECS_V1)[number]
   | (typeof REGISTRY_ACTION_SPECS_V1)[number]
   | (typeof DEPLOYMENT_ACTION_SPECS_V1)[number]
+  | (typeof DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1)[number]
   | (typeof PROJECT_READINESS_ACTION_SPECS_V1)[number]
   | (typeof PERSONAL_SAVED_SECRET_ACTION_SPECS_V1)[number]
   | (typeof CAPABILITY_RULES_ACTION_SPECS_V1)[number]
@@ -571,6 +573,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MCP_SERVER_ACTION_SPECS_V1,
   ...REGISTRY_ACTION_SPECS_V1,
   ...DEPLOYMENT_ACTION_SPECS_V1,
+  ...DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1,
   ...PROJECT_READINESS_ACTION_SPECS_V1,
   ...PERSONAL_SAVED_SECRET_ACTION_SPECS_V1,
   ...CAPABILITY_RULES_ACTION_SPECS_V1,
@@ -1213,6 +1216,7 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof PROJECT_STARTER_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof PROJECT_SOURCE_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof DEPLOYMENT_ACTION_SPECS_V1>
+  | LiteralActionSpecTupleDefinition<typeof DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof PROJECT_READINESS_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof WIDGET_SNAPSHOT_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING>

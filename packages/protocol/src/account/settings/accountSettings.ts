@@ -1263,6 +1263,7 @@ const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     scmCommitMessageGeneratorBackendId: accountPreference(accountBoundedString(256), '', 'source control'),
     /** Null or `{ mode: 'auto' }`: the task runner owner picks on the executing machine. */
     scmCommitMessageGeneratorRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
+    deploySuggestionRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'deploy suggestions', 64 * 1024),
     scmCommitMessageGeneratorInstructions: accountPreference(accountBoundedString(16 * 1024), '', 'source control', 16 * 1024),
     'scm.diffSummary.enabled': accountPreference(z.boolean(), true, 'source control'),
     'scm.diffSummary.prefetch': accountPreference(z.boolean(), false, 'source control'),

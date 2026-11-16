@@ -20,7 +20,7 @@ import { ProbedCatalogOptionValueSchema } from '../../capabilities/probedCatalog
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { ScmDiffSummaryModelCatalogObservationV1Schema } from '../settings/scmDiffSummarySettings.js';
 import { LlmTaskRunnerChoiceV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
-import { LlmTaskIdV1Schema, LlmTaskRunnerResolutionWireV1Schema } from '../../llm/tasks/llmTaskRunnerSelection.js';
+import { LLM_TASK_IDS_V1, LlmTaskIdV1Schema, LlmTaskRunnerResolutionWireV1Schema } from '../../llm/tasks/llmTaskRunnerSelection.js';
 import { SessionMcpSelectionV1Schema } from '../../mcp/servers/sessionSelectionV1.js';
 import { RuntimeDescriptorV1Schema } from '../../sessions/metadata/runtimeDescriptorV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -372,7 +372,7 @@ function createAgentCatalogActionSpecs() {
     id: 'agents.models.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent models',
     sideEffectClass: 'read',
-    description: 'List available models for an agent backend. With purpose "llm_task_runner" and a task (memory_hints, scm_commit_message, scm_diff_summary, session_replay_summary), report which Agent and model that background task runs on the machine: the stored choice when one is set, otherwise what Auto picks among the ready Agents, or why nothing is ready. Omit serverId; the authenticated host binds the Home.',
+    description: `List available models for an agent backend. With purpose "llm_task_runner" and a task (${LLM_TASK_IDS_V1.join(', ')}), report which Agent and model that background task runs on the machine: the stored choice when one is set, otherwise what Auto picks among the ready Agents, or why nothing is ready. Omit serverId; the authenticated host binds the Home.`,
     safety: 'safe',
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'listAgentModels', mcpToolName: 'agents_models_list' },

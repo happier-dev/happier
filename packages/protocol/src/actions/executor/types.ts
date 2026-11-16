@@ -928,6 +928,8 @@ export type ActionExecutorContext = Readonly<{
    * the mounted target for the transport's current-Session target check.
    */
   executionRunTargetMachineId?: string | null;
+  /** Mounted host notification after the Run identity is admitted, before any composed wait. */
+  onExecutionRunStarted?: (runId: string) => void;
   /** Mounted host launch provenance/correlation; never caller-supplied Action input. */
   executionRunLaunchOrigin?: ExecutionRunLaunchOrigin;
 
@@ -1488,6 +1490,9 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown; context: ActionExecutorContext }>) => Promise<unknown>;
   registryActionExecute?: (args: Readonly<{actionId:import('../../registries/registryActionsV1.js').RegistryActionIdV1;
     input:unknown;context:ActionExecutorContext}>) => Promise<unknown>;
+  /** Admitted target descriptors projected through the same catalog used by Where it runs. */
+  deploymentSuggestionTargets?: (context: ActionExecutorContext) => Promise<Pick<
+    import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1, 'targets' | 'stores'>>;
   personalSavedSecretActionExecute?: (args: Readonly<{ actionId: import('../../account/settings/personalSavedSecretActionsV1.js').PersonalSavedSecretActionIdV1;
     input: unknown; context: ActionExecutorContext }>) => Promise<unknown>;
   /** A client relays admitted contributed-type Resource discovery to the daemon's same options owner. */

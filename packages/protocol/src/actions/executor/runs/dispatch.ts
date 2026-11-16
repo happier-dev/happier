@@ -208,6 +208,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
             ok: true,
             result: parsedStartResponse.data,
           };
+          ctx.onExecutionRunStarted?.(parsedStartResponse.data.runId);
           if (!waitForCompletion) return admittedStartResult;
 
           const runId = parsedStartResponse.data.runId;

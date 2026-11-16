@@ -1,6 +1,15 @@
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 import { isProjectReadinessActionIdV1, type ProjectReadinessActionIdV1 } from '../actions/projectReadinessActionIdsV1.js';
 
+/** Snapshot composition and pure validation are Account reads, never Environment transports. */
+export const DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1 = 'deployments.suggestions.catalog';
+export const DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 = 'deployments.suggestions.check';
+export const DEPLOYMENT_SUGGESTION_ACTION_IDS_V1 = [DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1] as const;
+export type DeploymentSuggestionActionIdV1 = typeof DEPLOYMENT_SUGGESTION_ACTION_IDS_V1[number];
+export function isDeploymentSuggestionActionIdV1(value: string): value is DeploymentSuggestionActionIdV1 {
+  return (DEPLOYMENT_SUGGESTION_ACTION_IDS_V1 as readonly string[]).includes(value);
+}
+
 /** Persisted approval history only; never part of the live Action catalog. */
 export const RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 = 'deployments.publish' as const;
 

@@ -1,3 +1,4 @@
+import { DeployShapeV1Schema } from '../deployments/deployShapeV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isCredentialFreeRepositoryLocator } from '../scm/repositoryClone.js';
@@ -11,6 +12,7 @@ export const RegistryStarterV1Schema = lazyZodSchema(() => z.strictObject({
   tags: z.array(text).check(z.minLength(1)),
   previewImage: z.optional(z.string().check(z.url())),
   buildGoal: text,
+  deploy: z.optional(DeployShapeV1Schema),
 }));
 export type RegistryStarterV1 = z.infer<typeof RegistryStarterV1Schema>;
 

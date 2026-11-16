@@ -15,6 +15,8 @@ export const ProjectStarterCreateResumeV1Schema = lazyZodSchema(() => z.strictOb
 export type ProjectStarterCreateResumeV1 = z.infer<typeof ProjectStarterCreateResumeV1Schema>;
 export const ProjectStarterCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: text(), machineId: text(), requestKey: text(), starterId: text(),
+  /** Exact registry provenance when the starter was selected from a catalog snapshot. */
+  starterSourceId: z.optional(text()),
   resume: z.optional(ProjectStarterCreateResumeV1Schema),
   // Keep the person's first message byte-for-byte, including formatting.
   description: z.string().check(z.refine(value => value.trim().length > 0)),

@@ -16,7 +16,7 @@ import {
 } from './llmTaskRunnerConfigV1.js';
 
 /** Background tasks whose runner this owner picks. */
-export const LLM_TASK_IDS_V1 = Object.freeze(['memory_hints', 'scm_commit_message', 'scm_diff_summary', 'session_replay_summary'] as const);
+export const LLM_TASK_IDS_V1 = Object.freeze(['memory_hints', 'deploy_suggestion', 'scm_commit_message', 'scm_diff_summary', 'session_replay_summary'] as const);
 export type LlmTaskIdV1 = typeof LLM_TASK_IDS_V1[number];
 export const LlmTaskIdV1Schema = lazyZodSchema(() => z.enum(LLM_TASK_IDS_V1));
 
@@ -29,11 +29,12 @@ export type LlmTaskDeclarationV1 = Readonly<{
   structuredOutput: 'required' | 'optional';
   /** Permission levels a person may choose. The first one is the task's default. */
   permissionModes: readonly [LlmTaskPermissionMode, ...LlmTaskPermissionMode[]];
-  /** `low_only`: Auto uses only low-tier models. `cheapest_first`: Auto takes the lowest tagged tier. */
-  costTiers: 'low_only' | 'cheapest_first';
+  /** `standard_first`: standard, then premium, then low. Other tasks retain their cheapest-first or low-only policy. */
+  costTiers: 'low_only' | 'cheapest_first' | 'standard_first';
 }>;
 
 export const LLM_TASK_DECLARATIONS_V1: Readonly<Record<LlmTaskIdV1, LlmTaskDeclarationV1>> = Object.freeze({
+  deploy_suggestion: { structuredOutput: 'required', permissionModes: ['no_tools'], costTiers: 'standard_first' },
   memory_hints: { structuredOutput: 'required', permissionModes: ['no_tools', 'read_only'], costTiers: 'cheapest_first' },
   // Fast: the low tier ranks first. Its prompt asks for JSON. Commit generation is never tool-capable.
   scm_commit_message: { structuredOutput: 'required', permissionModes: ['no_tools'], costTiers: 'cheapest_first' },
@@ -71,6 +72,7 @@ export type LlmTaskRunnerResolutionV1<C extends LlmTaskRunnerCandidateV1 = LlmTa
   }>;
 
 const COST_TIER_RANK = { low: 0, standard: 1, premium: 2 } as const;
+const STANDARD_FIRST_COST_TIER_RANK = { standard: 0, premium: 1, low: 2 } as const;
 
 function readPermissionMode(task: LlmTaskDeclarationV1, requested: LlmTaskPermissionMode | undefined): LlmTaskPermissionMode {
   return requested && task.permissionModes.includes(requested) ? requested : task.permissionModes[0];
@@ -79,7 +81,7 @@ function readPermissionMode(task: LlmTaskDeclarationV1, requested: LlmTaskPermis
 /**
  * The one owner of "which Agent + model + connected service + effort + permission
  * level runs this background task". The person's explicit choice always wins
- * unchanged. Auto takes the cheapest model among every enabled Agent that is ready
+ * unchanged. Auto follows the task's cost policy among every enabled Agent that is ready
  * on the machine; the Session's own Agent wins a tie, then catalog order. It asks
  * for the model's lowest effort unless the person set one. A disabled, signed-out
  * or unavailable Agent is never used; nothing fits ⇒ a typed failure.
@@ -103,8 +105,8 @@ export function resolveLlmTaskRunnerV1<C extends LlmTaskRunnerCandidateV1>(param
   const unavailableKeys = new Set(unavailableAgents.map(agent => agent.agentTargetKey));
   const ready = params.candidates.filter(candidate => !unavailableKeys.has(candidate.modelSelection.agentTargetKey));
   const eligible = ready.filter(candidate => (task.structuredOutput === 'optional' || candidate.structuredOutput === 'supported')
-    && (task.costTiers === 'cheapest_first' || candidate.costTier === 'low'));
-  const picked = pickCheapest(eligible, params.sessionAgentTargetKey ?? null);
+    && (task.costTiers !== 'low_only' || candidate.costTier === 'low'));
+  const picked = pickPreferredCost(eligible, params.sessionAgentTargetKey ?? null, task.costTiers);
   if (!picked) {
     return { ok: false, errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE', reason: ready.length > 0 ? 'no_matching_model' : 'no_ready_agent', unavailableAgents };
   }
@@ -119,18 +121,20 @@ export function resolveLlmTaskRunnerV1<C extends LlmTaskRunnerCandidateV1>(param
 }
 
 /**
- * Lowest tagged tier across all candidates; the Session's Agent wins a tie, then
+ * Task-preferred tagged tier across all candidates; the Session's Agent wins a tie, then
  * catalog order. An untagged model is never assumed cheap: only when no candidate
  * is tagged does Auto take one Agent (the Session's, else the first in catalog
  * order) and its catalog `default`, else its first model.
  */
-function pickCheapest<C extends LlmTaskRunnerCandidateV1>(models: readonly C[], sessionAgentTargetKey: string | null): C | null {
+function pickPreferredCost<C extends LlmTaskRunnerCandidateV1>(models: readonly C[], sessionAgentTargetKey: string | null,
+  policy: LlmTaskDeclarationV1['costTiers']): C | null {
+  const rank = policy === 'standard_first' ? STANDARD_FIRST_COST_TIER_RANK : COST_TIER_RANK;
   const isSession = (model: C) => model.modelSelection.agentTargetKey === sessionAgentTargetKey;
   let picked: C | null = null;
   for (const model of models) {
     if (!model.costTier) continue;
     if (!picked?.costTier) { picked = model; continue; }
-    const delta = COST_TIER_RANK[model.costTier] - COST_TIER_RANK[picked.costTier];
+    const delta = rank[model.costTier] - rank[picked.costTier];
     if (delta < 0 || (delta === 0 && isSession(model) && !isSession(picked))) picked = model;
   }
   if (picked) return picked;

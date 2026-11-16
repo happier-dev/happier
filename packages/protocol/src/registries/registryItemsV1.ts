@@ -10,6 +10,7 @@ import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRe
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
 import { RegistryStarterV1Schema } from './registryStarterV1.js';
+import { DeployShapeV1Schema } from '../deployments/deployShapeV1.js';
 export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
   RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
 export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
@@ -76,6 +77,7 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
     containerPort: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
     architectures: z.optional(z.array(z.enum(['amd64', 'arm64']))) })),
   agentDistribution: z.optional(RegistryAgentDistributionV1Schema),
+  starterDeploy: z.optional(DeployShapeV1Schema),
   pluginListing: z.optional(RegistryPluginListingSummaryV1Schema),
 }));
 export type RegistryItemSummaryV1 = z.infer<typeof RegistryItemSummaryV1Schema>;

@@ -21,10 +21,12 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
     ...(directory ? { directory } : {}), ...(repositoryUrl ? { repositoryUrl } : {}), ...(sourceId ? { sourceId } : {}), ...(workspace ? { workspace } : {}), ...(resume ? { resume } : {}), ...(remediation ? { remediation } : {}),
   } satisfies ProjectStarterCreateOutputV1 });
   if (!resume) {
-    const listed = await execute('registries.items.list', { kind: 'starter', query: input.starterId });
+    const listed = await execute('registries.items.list', { kind: 'starter', query: input.starterId,
+      ...(input.starterSourceId ? { sourceIds: [input.starterSourceId] } : {}) });
     if (!listed.ok) return listed;
     const pageResult = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(listed.result);
-    const summary = pageResult.pages.flatMap(page => page.items).find(item => item.itemId === input.starterId);
+    const summary = pageResult.pages.flatMap(page => page.items).find(item => item.itemId === input.starterId
+      && (!input.starterSourceId || item.sourceId === input.starterSourceId));
     if (!summary) return failed('starter_unavailable');
     const read = await execute('registries.items.read', { kind: 'starter', sourceId: summary.sourceId, itemId: summary.itemId, ...(summary.version ? { version: summary.version } : {}) });
     if (!read.ok) return read;

@@ -466,6 +466,9 @@ import { ExternalUrlOpenInputSchema } from './externalLinkActionFamily.js';
 import { FileSaveInputSchema } from './fileSaveActionFamily.js';
 import { executeFileSave } from './executor/fileSave.js';
 import { executeDeploymentAction } from './executor/deploymentAction.js';
+import { readDeploySuggestionCatalogV1 } from './executor/deploySuggestions.js';
+import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { validateDeploySuggestionV1 } from '../deployments/suggestions/deploySuggestionsV1.js';
 import { isInternalActionId } from './pluginActionSurface.js';
 import {
   PluginSessionHookInstallActionInputV1Schema,
@@ -6104,6 +6107,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 { ...childContext, serverId: ctx.externalActionExecutionAuthorization?.binding.serverIdentityId ?? childContext.serverId }),
             }));
           return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1) {
+          return { ok: true, result: await readDeploySuggestionCatalogV1(ctx, deps,
+            (childId, childInput) => executeHostChild(childId, childInput, ctx)) };
+        }
+        if (actionId === DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1) {
+          const input = parsed.data as AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1];
+          return { ok: true, result: validateDeploySuggestionV1(input.suggestion, input.catalog) };
         }
         if (isDeploymentActionIdV1(actionId)) {
           return executeDeploymentAction(actionId, data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>,
