@@ -1,6 +1,7 @@
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 const network = await installSessionOpsNetworkBoundary();
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,6 +41,7 @@ describe('warmDaemonVoiceInferenceOnVoiceHomeAttach', () => {
     });
     network.setRpcResponder(async request => await machineRpcWithServerScopeMock(request));
     const machine = createMachineFixture({ id: 'machine-selected', activeAt: Date.now() });
+        publishMachineActivityForTest([machine]);
         storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: {
             voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true,

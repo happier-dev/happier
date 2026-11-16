@@ -5,6 +5,7 @@ import { createMachineFixture, createPlainMachineRowFixture, createRootLayoutFea
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createExpoFileSystemFileMock } from '@/dev/testkit/mocks/expoFileSystem';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 import { DaemonVoiceInferenceSttTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
@@ -146,6 +147,7 @@ beforeEach(async ({ task }) => {
     handleRequest: (path, init) => answerHome(`https://recorded-capture.test${path}`, init) });
   primeServerFeaturesSnapshot({ serverId: account.home.id, snapshot: { status: 'ready', features } });
   const machine = createMachineFixture({ id: machineId, active: true, activeAt: Date.now() });
+  publishMachineActivityForTest([machine]);
   storage.setState({ machines: { [machineId]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
   storage.getState().applySettingsLocal({ experiments: true,
     featureToggles: { ...storage.getState().settings.featureToggles, voice: true, 'voice.agent': true,

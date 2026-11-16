@@ -14,7 +14,7 @@ import { settingsDefaults, settingsParse } from '@/sync/domains/settings/setting
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
+import { createRetainedVoiceAgentRpcBoundary, createRetainedVoiceAgentActionHttpBoundaries } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamStartV2RequestSchema,
@@ -85,6 +85,7 @@ function readBundledSpeech() { return speechSynthesizeRpc.mock.calls.map(([input
 const streamDeltas: { current: string[] } = { current: [] };
 const onInterruptDuringStream: { current: (() => void) | null } = { current: null };
 let retainedAgent: Awaited<ReturnType<typeof createRetainedVoiceAgentRpcBoundary>>;
+let actionBoundaries: Awaited<ReturnType<typeof createRetainedVoiceAgentActionHttpBoundaries>> = [];
 let turnIndex = 0;
 let streamMode: 'speech' | 'tool' | 'status' | 'cancelled' = 'speech';
 let playbackStarted: Promise<void> | undefined;
@@ -229,6 +230,7 @@ function registerStreamingPlaybackHooks(platform: 'ios' | 'web' = 'ios', ttsProv
     if (platform === 'web') webStorage = installLocalStorageMock();
     resetWebAudioContextForTests();
     retainedAgent = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: answerVoiceAgentRpc });
+    actionBoundaries = [];
     const nativeSdkRpc = speechBoundary.machineRpc.getMockImplementation();
     speechBoundary.machineRpc.mockImplementation(async request => {
       if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
@@ -246,8 +248,13 @@ function registerStreamingPlaybackHooks(platform: 'ios' | 'web' = 'ios', ttsProv
     playbackStarted = undefined;
     observedStatuses.length = 0;
     streamEvents.clear();
-    account = await serveAccountHomes({ homes: [{ key: 'voice', serverUrl: 'https://streaming-voice.test',
+    account = await serveAccountHomes({ homes: [{ key: 'voice', serverUrl: 'https://streaming-voice.test', serverIdentityId: 'srv_streaming-voice',
       accountId: 'account-a', currentAccount: true, settings: buildAccountSettings(ttsProvider) }], route: createSessionReadBatchHttpBoundary(async request => {
+        for (const boundary of actionBoundaries) {
+          const response = await boundary.handle(request.url, { method: request.method, headers: request.headers, signal: request.signal,
+            ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+          if (response) return response;
+        }
         const machineReply = speechBoundary.answerMachineHttpRequest(request.url, 'machine-1', 'account-a', request);
         if (machineReply) return machineReply;
         const metadataReply = await sessionMetadata.handle(request.url.toString(), {
@@ -294,6 +301,14 @@ function registerStreamingPlaybackHooks(platform: 'ios' | 'web' = 'ios', ttsProv
     const { sync } = await import('@/sync/sync');
     await sync.resumeSync('manual');
     const serverId = account.homes.voice.id;
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const actionAccount = await captureLazyActionAccountContext(serverId);
+    try {
+      if (!actionAccount.serverIdentityId) throw new Error('Expected the restored streaming Voice Action Home');
+      actionBoundaries = await createRetainedVoiceAgentActionHttpBoundaries({ serverUrl: actionAccount.endpointUrl,
+        serverIdentityId: actionAccount.serverIdentityId, accountId: actionAccount.accountId,
+        machineId: 'machine-1', dispatch: retainedAgent.dispatch });
+    } finally { actionAccount.dispose(); }
     await vi.waitFor(() => expect(storage.getState().machines['machine-1']?.access?.resourceMode).toBe('plain'));
     const machine = storage.getState().machines['machine-1']!;
     const target = createSessionFixture({ id: 's1', serverId, active: true, presence: 'online',
