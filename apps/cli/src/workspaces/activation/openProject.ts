@@ -7,7 +7,7 @@ import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
-import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { isWorkspaceSyncDevcontainerBindRootV1, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { WorkspaceAddressV1, WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -280,26 +280,6 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       const child = children[0];
       if (child?.managedMachine && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,
         machineId: runtime.machineId, projection: child.projection, managedMachine: child.managedMachine })) return refused('workspace_sync_child_unavailable');
-      const acceptsSelectedRoot = (rootPath: string) => {
-        if (!child) return true;
-        const canonical = resolveCanonicalAbsolutePathComparisonIdentity(rootPath);
-        return canonical !== null && canonical === resolveCanonicalAbsolutePathComparisonIdentity(child.projection.observation.workspaceFolder);
-      };
-      if (child?.projection.observation.storage.kind === 'bind') {
-        const parent = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId,
-          machineId: child.controller.machineId, rootPath: child.projection.observation.storage.hostPath });
-        if (parent.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
-        parentWorkspace = workspaceAddressFromRefV1(parent.ref);
-        facts = { ...facts,
-          ...(parent.ref.repositoryIdentity ? { repositoryIdentity: parent.ref.repositoryIdentity } : {}),
-          ...(parent.ref.source ? { source: parent.ref.source } : {}) };
-      }
-      if (input.materialization.kind === 'attach' && sourceRootPath) {
-        if (!acceptsSelectedRoot(sourceRootPath)) return refused('workspace_sync_child_unavailable');
-      }
-      if (input.materialization.kind === 'sync') {
-        if (!acceptsSelectedRoot(input.materialization.targetPath)) return refused('workspace_sync_child_unavailable');
-      }
       let sync: Parameters<typeof materializeProjectCheckout>[0]['sync'];
       let remoteSyncSource: string | undefined;
       let sameSyncEndpoint = false;
@@ -450,7 +430,16 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         selector, ref, subdir, registry: runtime.registry, signal: context.signal, sync,
         onEffectsIssued: () => { effectsIssued = true; },
       });
-      if (!acceptsSelectedRoot(checkout.rootPath)) return refused('workspace_sync_child_unavailable');
+      if (child?.projection.observation.storage.kind === 'bind'
+        && isWorkspaceSyncDevcontainerBindRootV1({ observation: child.projection.observation, rootPath: checkout.rootPath })) {
+        const parent = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId,
+          machineId: child.controller.machineId, rootPath: child.projection.observation.storage.hostPath });
+        if (parent.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
+        parentWorkspace = workspaceAddressFromRefV1(parent.ref);
+        facts = { ...facts,
+          ...(parent.ref.repositoryIdentity ? { repositoryIdentity: parent.ref.repositoryIdentity } : {}),
+          ...(parent.ref.source ? { source: parent.ref.source } : {}) };
+      }
       if (checkout.repositoryIdentity) facts = { ...facts, repositoryIdentity: checkout.repositoryIdentity };
       let parentRootPath: string | undefined;
       if (!privateCheckout && !parentWorkspace

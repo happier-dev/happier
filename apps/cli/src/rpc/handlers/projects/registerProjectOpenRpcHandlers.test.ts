@@ -1538,6 +1538,22 @@ describe('Project Open RPC', () => {
       expect(post.mock.calls.some(([url]) => url.includes('/acquire') || url.includes('/admit'))).toBe(false);
       const opened = OpenProjectResultV1Schema.parse(result);
       if (opened.kind !== 'opened') throw new Error('Actual child was not admitted');
+      const separateRoot = join(root, 'separate-guest-project');
+      await mkdir(join(separateRoot, '.happier'), { recursive: true });
+      await writeFile(join(separateRoot, '.happier/project.json'), JSON.stringify({ version: 1 }));
+      const parentIndex = rows.findIndex(row => JSON.stringify(row.key) === JSON.stringify(parentKey));
+      const [parentRow] = rows.splice(parentIndex, 1);
+      const separate = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId, serverHttpBaseUrl: 'https://home.example',
+        machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
+        serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: separateRoot }, materialization: { kind: 'attach' },
+      }, context);
+      expect(separate).toMatchObject({ kind: 'opened', directory: separateRoot,
+        workspace: { serverId: homeId, machineId: 'machine', rootPath: separateRoot } });
+      const separateOpened = OpenProjectResultV1Schema.parse(separate);
+      if (separateOpened.kind !== 'opened') throw new Error('Separate guest Project was not opened');
+      if (!separateOpened.facts) throw new Error('Separate guest Project facts were not returned');
+      expect(separateOpened.facts.projectKey).not.toBe('parent-project');
+      rows.push(parentRow!);
       parentOnline = true;
       const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
       const snapshot = await readProjectAccountRows({ serverId: homeId, credentials: { token, encryption: null },
